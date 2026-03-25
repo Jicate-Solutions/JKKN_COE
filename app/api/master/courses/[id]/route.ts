@@ -59,7 +59,8 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
         total_max_mark,
         annual_semester,
         registration_based,
-        credit_included
+        credit_included,
+        has_hall_ticket
       `)
       .eq('id', id)
       .single()
@@ -119,6 +120,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
       annual_semester: data.annual_semester ?? false,
       registration_based: data.registration_based ?? false,
       credit_included: data.credit_included ?? true,
+      has_hall_ticket: data.has_hall_ticket ?? true,
     } : null
     return NextResponse.json(mapped)
   } catch (err) {
@@ -232,6 +234,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
     if (input.annual_semester !== undefined) data.annual_semester = Boolean(input.annual_semester)
     if (input.registration_based !== undefined) data.registration_based = Boolean(input.registration_based)
     if (input.credit_included !== undefined) data.credit_included = Boolean(input.credit_included)
+    if (input.has_hall_ticket !== undefined) data.has_hall_ticket = Boolean(input.has_hall_ticket)
 
     const { data: updated, error } = await supabase
       .from('courses')
@@ -314,6 +317,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
       annual_semester: updated.annual_semester ?? false,
       registration_based: updated.registration_based ?? false,
       credit_included: updated.credit_included ?? true,
+      has_hall_ticket: updated.has_hall_ticket ?? true,
     }
 
     return NextResponse.json(mapped)

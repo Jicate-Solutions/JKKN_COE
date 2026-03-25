@@ -168,6 +168,7 @@ export default function CoursesPage() {
     no_of_qp_setter: '',
     no_of_scrutinizer: '',
     fee_exception: false,
+    has_hall_ticket: true,
     syllabus_pdf_url: '',
     description: '',
     is_active: true,
@@ -455,6 +456,7 @@ export default function CoursesPage() {
       no_of_qp_setter: '',
       no_of_scrutinizer: '',
       fee_exception: false,
+      has_hall_ticket: true,
       syllabus_pdf_url: '',
       description: '',
       is_active: true,
@@ -511,6 +513,7 @@ export default function CoursesPage() {
       no_of_qp_setter: String(row.no_of_qp_setter ?? ''),
       no_of_scrutinizer: String(row.no_of_scrutinizer ?? ''),
       fee_exception: Boolean(row.fee_exception) || false,
+      has_hall_ticket: row.has_hall_ticket ?? true,
       syllabus_pdf_url: row.syllabus_pdf_url || "",
       description: row.description || "",
       is_active: row.is_active ?? true,
@@ -767,6 +770,7 @@ export default function CoursesPage() {
       'No of QP Setter': c.no_of_qp_setter || '',
       'No of Scrutinizer': c.no_of_scrutinizer || '',
       'Fee Exception': c.fee_exception ? 'TRUE' : 'FALSE',
+      'Has Hall Ticket': c.has_hall_ticket !== false ? 'TRUE' : 'FALSE',
       'Syllabus PDF URL': c.syllabus_pdf_url || '',
       'Description': c.description || '',
       'Class Hours*': c.class_hours || 0,
@@ -828,6 +832,7 @@ export default function CoursesPage() {
       no_of_qp_setter: c.no_of_qp_setter || null,
       no_of_scrutinizer: c.no_of_scrutinizer || null,
       fee_exception: c.fee_exception || false,
+      has_hall_ticket: c.has_hall_ticket ?? true,
       syllabus_pdf_url: c.syllabus_pdf_url || '',
       description: c.description || '',
       is_active: c.is_active,
@@ -953,6 +958,7 @@ export default function CoursesPage() {
             no_of_qp_setter: Number(row['No of QP Setter'] || row.no_of_qp_setter) || null,
             no_of_scrutinizer: Number(row['No of Scrutinizer'] || row.no_of_scrutinizer) || null,
             fee_exception: typeof row.fee_exception === 'boolean' ? row.fee_exception : String(row['Fee Exception'] || row['Fee Exception (TRUE/FALSE)'] || '').toUpperCase() === 'TRUE',
+            has_hall_ticket: typeof row.has_hall_ticket === 'boolean' ? row.has_hall_ticket : row['Has Hall Ticket'] !== undefined ? String(row['Has Hall Ticket'] || '').toUpperCase() === 'TRUE' : true,
             syllabus_pdf_url: row['Syllabus PDF URL'] || row.syllabus_pdf_url || null,
             description: row['Description'] || row.description || null,
             class_hours: Number(row['Class Hours*'] || row['Class Hours'] || row['Total Class Hours'] || row.class_hours) || 0,
@@ -1276,6 +1282,9 @@ export default function CoursesPage() {
           }
           if (row['Fee Exception'] !== undefined || row['Fee Exception (TRUE/FALSE)'] !== undefined || row.fee_exception !== undefined) {
             payload.fee_exception = typeof row.fee_exception === 'boolean' ? row.fee_exception : String(row['Fee Exception'] || row['Fee Exception (TRUE/FALSE)'] || '').toUpperCase() === 'TRUE'
+          }
+          if (row['Has Hall Ticket'] !== undefined || row.has_hall_ticket !== undefined) {
+            payload.has_hall_ticket = typeof row.has_hall_ticket === 'boolean' ? row.has_hall_ticket : String(row['Has Hall Ticket'] || '').toUpperCase() === 'TRUE'
           }
           if (row['Syllabus PDF URL'] || row.syllabus_pdf_url) {
             payload.syllabus_pdf_url = row['Syllabus PDF URL'] || row.syllabus_pdf_url
@@ -1664,6 +1673,9 @@ export default function CoursesPage() {
                           </Button>
                         </TableHead>
                         <TableHead className="text-xs font-semibold">
+                          Hall Ticket
+                        </TableHead>
+                        <TableHead className="text-xs font-semibold">
                           <Button variant="ghost" size="sm" onClick={() => handleSort('is_active')} className="px-2 transition-colors">
                             Status
                             <span className="ml-1">{getSortIcon('is_active')}</span>
@@ -1675,7 +1687,7 @@ export default function CoursesPage() {
                     <TableBody>
                       {loading ? (
                         <TableRow>
-                          <TableCell colSpan={mustSelectInstitution ? 8 : 7} className="h-24 text-center">
+                          <TableCell colSpan={mustSelectInstitution ? 9 : 8} className="h-24 text-center">
                             <div className="flex items-center justify-center gap-2 text-muted-foreground">
                               <RefreshCw className="h-5 w-5 animate-spin" />
                               <span className="text-sm">Loading courses...</span>
@@ -1696,6 +1708,11 @@ export default function CoursesPage() {
                               <TableCell className="text-sm">{course.course_category || '-'}</TableCell>
                               <TableCell className="text-sm">{course.credits}</TableCell>
                               <TableCell className="text-sm">{course.qp_code || '-'}</TableCell>
+                              <TableCell>
+                                <Badge variant={course.has_hall_ticket !== false ? "default" : "secondary"} className={`text-xs ${course.has_hall_ticket !== false ? 'bg-blue-100 text-blue-700 border-blue-200' : 'bg-gray-100 text-gray-500 border-gray-200'}`}>
+                                  {course.has_hall_ticket !== false ? 'Yes' : 'No'}
+                                </Badge>
+                              </TableCell>
                               <TableCell>
                                 <Badge variant={course.is_active ? "default" : "secondary"} className={`text-xs ${course.is_active ? 'bg-emerald-100 text-emerald-700 border-emerald-200' : 'bg-red-100 text-red-700 border-red-200'}`}>
                                   {course.is_active ? "Active" : "Inactive"}
@@ -1729,7 +1746,7 @@ export default function CoursesPage() {
                         </>
                         ) : (
                           <TableRow>
-                            <TableCell colSpan={mustSelectInstitution ? 8 : 7} className="h-24 text-center">
+                            <TableCell colSpan={mustSelectInstitution ? 9 : 8} className="h-24 text-center">
                               <div className="flex flex-col items-center gap-1 text-muted-foreground">
                                 <BookText className="h-8 w-8 opacity-20" />
                                 <span className="text-sm font-medium">No courses found</span>
@@ -2337,6 +2354,13 @@ export default function CoursesPage() {
                   <div className="flex items-center gap-3">
                     <Switch checked={formData.fee_exception} onCheckedChange={(v) => setFormData({ ...formData, fee_exception: v })} />
                     <span className={`text-sm font-medium ${formData.fee_exception ? 'text-green-600' : 'text-gray-500'}`}>{formData.fee_exception ? 'Yes' : 'No'}</span>
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <Label className="text-sm font-semibold">Has Hall Ticket</Label>
+                  <div className="flex items-center gap-3">
+                    <Switch checked={formData.has_hall_ticket} onCheckedChange={(v) => setFormData({ ...formData, has_hall_ticket: v })} />
+                    <span className={`text-sm font-medium ${formData.has_hall_ticket ? 'text-green-600' : 'text-gray-500'}`}>{formData.has_hall_ticket ? 'Yes' : 'No'}</span>
                   </div>
                 </div>
                 <div className="space-y-2">

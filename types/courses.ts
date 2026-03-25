@@ -34,6 +34,7 @@ export interface Course {
 	no_of_qp_setter?: number
 	no_of_scrutinizer?: number
 	fee_exception?: boolean
+	has_hall_ticket?: boolean
 	syllabus_pdf_url?: string
 	description?: string
 	course_level: string

@@ -165,7 +165,7 @@ export async function GET(request: NextRequest) {
 					course_mapping_id,
 					program_code,
 					semester,
-					courses(id, course_code, course_name),
+					courses(id, course_code, course_name, has_hall_ticket),
 					course_mapping(id, course_order)
 				)
 			`)
@@ -248,6 +248,44 @@ export async function GET(request: NextRequest) {
 					}
 				}
 			}
+		}
+
+		// ====================================================================
+		// Fetch practical_batch_students to override dates for practical/project exams
+		// When students are assigned to batches, they may have different dates/sessions
+		// than the default timetable row for that course.
+		// Query by institution + session (via timetable join) instead of .in() with
+		// hundreds of registration IDs to avoid URL length limits.
+		// ====================================================================
+		const practicalBatchMap = new Map<string, { exam_date: string; session: string; exam_time: string }>()
+
+		{
+			const { data: batchStudents, error: batchError } = await supabase
+				.from('practical_batch_students')
+				.select(`
+					exam_registration_id,
+					exam_timetable_id,
+					exam_timetables!inner(id, exam_date, session, exam_time, examination_session_id)
+				`)
+				.eq('institutions_id', institution.id)
+				.eq('exam_timetables.examination_session_id', examination_session_id)
+				.range(0, 9999)
+
+			if (batchError) {
+				console.warn('[HallTickets] Error fetching practical_batch_students:', batchError.message)
+			} else if (batchStudents) {
+				for (const bs of batchStudents) {
+					const tt = (bs as any).exam_timetables
+					if (tt && bs.exam_registration_id) {
+						practicalBatchMap.set(bs.exam_registration_id, {
+							exam_date: tt.exam_date || 'To Be Announced',
+							session: tt.session || '',
+							exam_time: tt.exam_time || ''
+						})
+					}
+				}
+			}
+			console.log(`[HallTickets] Found ${practicalBatchMap.size} practical batch overrides for institution ${institution.id}`)
 		}
 
 		// Parse semester numbers if provided (expecting numbers like 1, 2, 3)
@@ -368,16 +406,24 @@ export async function GET(request: NextRequest) {
 			const courseMapping = courseOffering.course_mapping
 			const courseCode = course?.course_code
 
+			// Skip courses where has_hall_ticket is explicitly false
+			if (course?.has_hall_ticket === false) continue
+
 			// Get exam timetable by course_code (matches exam date correctly)
 			const timetable = courseCode ? timetablesByCourseCode.get(courseCode) : null
 
+			// Check if this registration has a practical batch override
+			// (student assigned to a specific batch with different date/session)
+			const batchOverride = practicalBatchMap.get(reg.id)
+
 			// Create subject entry with course_order for sorting
+			// For practical/project exams: use batch-specific date/session if available
 			const subject: HallTicketSubject = {
 				serial_number: 0, // Will be assigned later
 				subject_code: courseCode || 'N/A',
 				subject_name: course?.course_name || 'To Be Announced',
-				exam_date: timetable?.exam_date || 'To Be Announced',
-				exam_time: timetable?.session || '',
+				exam_date: batchOverride?.exam_date || timetable?.exam_date || 'To Be Announced',
+				exam_time: batchOverride?.session || timetable?.session || '',
 				semester: `Semester ${courseOffering.semester || 1}`,
 				course_order: courseMapping?.course_order || 999 // course_order is in course_mapping
 			}

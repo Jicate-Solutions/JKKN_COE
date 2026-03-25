@@ -25,12 +25,12 @@ export function generateCourseTemplate(referenceData: CourseReferenceData): Exce
 	// 19 Outside Class Course 20 Open Book            21 Online Course
 	// 22 Dummy Number Not Req 23 Annual Course        24 Multiple QP Set
 	// 25 No of QP Setter      26 No of Scrutinizer    27 Fee Exception
-	// 28 Syllabus PDF URL     29 Description          30 Class Hours*
-	// 31 Theory Hours*        32 Practical Hours*     33 Internal Max Mark*
-	// 34 Internal Pass Mark*  35 Internal Conv Mark*  36 External Max Mark*
-	// 37 External Pass Mark*  38 External Conv Mark*  39 Total Pass Mark*
-	// 40 Total Max Mark*      41 Annual Semester*     42 Registration Based*
-	// 43 Status
+	// 28 Has Hall Ticket      29 Syllabus PDF URL     30 Description
+	// 31 Class Hours*         32 Theory Hours*        33 Practical Hours*
+	// 34 Internal Max Mark*   35 Internal Pass Mark*  36 Internal Conv Mark*
+	// 37 External Max Mark*   38 External Pass Mark*  39 External Conv Mark*
+	// 40 Total Pass Mark*     41 Total Max Mark*      42 Annual Semester*
+	// 43 Registration Based*  44 Status
 	const courseMasterHeaders = [
 		'Institution Code*',        //  1
 		'Regulation Code*',         //  2
@@ -59,22 +59,23 @@ export function generateCourseTemplate(referenceData: CourseReferenceData): Exce
 		'No of QP Setter',          // 25
 		'No of Scrutinizer',        // 26
 		'Fee Exception',            // 27
-		'Syllabus PDF URL',         // 28
-		'Description',              // 29
-		'Class Hours*',             // 30
-		'Theory Hours*',            // 31
-		'Practical Hours*',         // 32
-		'Internal Max Mark*',       // 33
-		'Internal Pass Mark*',      // 34
-		'Internal Converted Mark*', // 35
-		'External Max Mark*',       // 36
-		'External Pass Mark*',      // 37
-		'External Converted Mark*', // 38
-		'Total Pass Mark*',         // 39
-		'Total Max Mark*',          // 40
-		'Annual Semester*',         // 41
-		'Registration Based*',      // 42
-		'Status',                   // 43
+		'Has Hall Ticket',          // 28
+		'Syllabus PDF URL',         // 29
+		'Description',              // 30
+		'Class Hours*',             // 31
+		'Theory Hours*',            // 32
+		'Practical Hours*',         // 33
+		'Internal Max Mark*',       // 34
+		'Internal Pass Mark*',      // 35
+		'Internal Converted Mark*', // 36
+		'External Max Mark*',       // 37
+		'External Pass Mark*',      // 38
+		'External Converted Mark*', // 39
+		'Total Pass Mark*',         // 40
+		'Total Max Mark*',          // 41
+		'Annual Semester*',         // 42
+		'Registration Based*',      // 43
+		'Status',                   // 44
 	]
 
 	const sampleRow = [
@@ -105,6 +106,7 @@ export function generateCourseTemplate(referenceData: CourseReferenceData): Exce
 		2,                               // No of QP Setter
 		1,                               // No of Scrutinizer
 		'FALSE',                         // Fee Exception
+		'TRUE',                          // Has Hall Ticket
 		'https://example.com/syllabus.pdf', // Syllabus PDF URL
 		'Introductory C course for UG students', // Description
 		45,                              // Class Hours*
@@ -120,7 +122,7 @@ export function generateCourseTemplate(referenceData: CourseReferenceData): Exce
 		100,                             // Total Max Mark*
 		'FALSE',                         // Annual Semester*
 		'FALSE',                         // Registration Based*
-		'TRUE',                          // Status
+		'TRUE',                          // Status (active)
 	]
 
 	// Create Course Master worksheet
@@ -170,22 +172,23 @@ export function generateCourseTemplate(referenceData: CourseReferenceData): Exce
 		17,  // 25 No of QP Setter
 		18,  // 26 No of Scrutinizer
 		15,  // 27 Fee Exception
-		30,  // 28 Syllabus PDF URL
-		40,  // 29 Description
-		15,  // 30 Class Hours*
-		15,  // 31 Theory Hours*
-		17,  // 32 Practical Hours*
-		20,  // 33 Internal Max Mark*
-		20,  // 34 Internal Pass Mark*
-		25,  // 35 Internal Converted Mark*
-		20,  // 36 External Max Mark*
-		20,  // 37 External Pass Mark*
-		25,  // 38 External Converted Mark*
-		18,  // 39 Total Pass Mark*
-		18,  // 40 Total Max Mark*
-		18,  // 41 Annual Semester*
-		20,  // 42 Registration Based*
-		10,  // 43 Status
+		17,  // 28 Has Hall Ticket
+		30,  // 29 Syllabus PDF URL
+		40,  // 30 Description
+		15,  // 31 Class Hours*
+		15,  // 32 Theory Hours*
+		17,  // 33 Practical Hours*
+		20,  // 34 Internal Max Mark*
+		20,  // 35 Internal Pass Mark*
+		25,  // 36 Internal Converted Mark*
+		20,  // 37 External Max Mark*
+		20,  // 38 External Pass Mark*
+		25,  // 39 External Converted Mark*
+		18,  // 40 Total Pass Mark*
+		18,  // 41 Total Max Mark*
+		18,  // 42 Annual Semester*
+		20,  // 43 Registration Based*
+		10,  // 44 Status
 	]
 
 	courseMasterSheet.columns = columnWidths.map((width, index) => ({
@@ -307,9 +310,10 @@ export function generateCourseTemplate(referenceData: CourseReferenceData): Exce
 		23,  // Annual Course
 		24,  // Multiple QP Set
 		27,  // Fee Exception
-		41,  // Annual Semester
-		42,  // Registration Based
-		43,  // Status
+		28,  // Has Hall Ticket
+		42,  // Annual Semester
+		43,  // Registration Based
+		44,  // Status
 	]
 	for (const col of booleanColumns) {
 		addInlineDropdown(col, ['TRUE', 'FALSE'], 'Invalid Value', 'Select: TRUE or FALSE')
