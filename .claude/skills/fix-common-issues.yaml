@@ -1,0 +1,531 @@
+name: fix-common-issues
+description: Diagnose and fix common issues in JKKN COE application
+version: 1.0.0
+
+parameters:
+  - name: issue_category
+    type: string
+    description: Category of issue to fix
+    required: true
+    enum:
+      - "auth-errors"
+      - "database-errors"
+      - "foreign-key-errors"
+      - "validation-errors"
+      - "ui-issues"
+      - "performance-issues"
+      - "build-errors"
+
+  - name: error_message
+    type: string
+    description: Specific error message or description
+    required: false
+
+  - name: affected_component
+    type: string
+    description: Component or file where issue occurs
+    required: false
+
+prompt: |
+  Diagnose and fix the following issue in the JKKN COE application:
+
+  **Issue Category:** {{issue_category}}
+  {{#if error_message}}
+  **Error Message:** {{error_message}}
+  {{/if}}
+  {{#if affected_component}}
+  **Affected Component:** {{affected_component}}
+  {{/if}}
+
+  ## Diagnostic Steps
+
+  {{#if (eq issue_category "auth-errors")}}
+  ### Authentication Issues
+
+  Common authentication problems and solutions:
+
+  #### Issue: User logged out unexpectedly
+
+  **Diagnosis:**
+  1. Check middleware.ts for session validation
+  2. Verify Supabase auth configuration
+  3. Check cookie settings and expiration
+  4. Review is_active status check
+
+  **Solutions:**
+  - Ensure NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY are set
+  - Verify session timeout settings in auth context
+  - Check middleware redirects are not too aggressive
+  - Confirm user is_active = true in database
+
+  **Code to Check:**
+  - [middleware.ts](middleware.ts)
+  - [lib/auth/auth-context.tsx](lib/auth/auth-context.tsx)
+  - [lib/supabase-server.ts](lib/supabase-server.ts)
+
+  #### Issue: Infinite redirect loop on login
+
+  **Diagnosis:**
+  1. Check public routes configuration in middleware
+  2. Verify auth callback route handling
+  3. Review ProtectedRoute logic
+
+  **Solutions:**
+  - Add login page to PUBLIC_ROUTES in middleware
+  - Ensure auth callback redirects properly
+  - Check for circular dependencies in route protection
+
+  #### Issue: "User not authenticated" despite valid session
+
+  **Diagnosis:**
+  1. Check auth context initialization
+  2. Verify Supabase client configuration
+  3. Review session refresh logic
+
+  **Solutions:**
+  - Add loading state handling in ProtectedRoute
+  - Implement proper session refresh
+  - Check for race conditions in auth state
+
+  {{/if}}
+
+  {{#if (eq issue_category "database-errors")}}
+  ### Database Issues
+
+  Common database problems and solutions:
+
+  #### Error: "relation does not exist"
+
+  **Diagnosis:**
+  - Table not created or migration not run
+  - Wrong table name in query
+  - Schema not in search path
+
+  **Solutions:**
+  ```bash
+  # Run migrations
+  npx supabase db reset
+  npx supabase migration up
+
+  # Check table exists
+  SELECT * FROM information_schema.tables WHERE table_name = 'your_table';
+  ```
+
+  #### Error: "duplicate key value violates unique constraint"
+
+  **Diagnosis:**
+  - Attempting to insert duplicate record
+  - Unique constraint on code field
+  - Race condition in concurrent inserts
+
+  **Solutions:**
+  - Check for existing record before insert
+  - Handle 23505 error code in API route
+  - Use upsert if appropriate
+  - Add proper error message in frontend
+
+  **Code Example:**
+  ```typescript
+  if (error.code === '23505') {
+    return NextResponse.json({
+      error: 'Record already exists. Please use different values.'
+    }, { status: 400 })
+  }
+  ```
+
+  #### Error: "null value in column violates not-null constraint"
+
+  **Diagnosis:**
+  - Required field not provided
+  - Field not in request payload
+  - Default value not set in database
+
+  **Solutions:**
+  - Add validation for required fields
+  - Check form validation logic
+  - Add default values in migration
+  - Provide clear error message
+
+  {{/if}}
+
+  {{#if (eq issue_category "foreign-key-errors")}}
+  ### Foreign Key Issues
+
+  Common foreign key problems and solutions:
+
+  #### Error: "insert or update violates foreign key constraint"
+
+  **Diagnosis:**
+  1. Referenced record doesn't exist
+  2. Wrong code used for lookup
+  3. Auto-mapping logic not working
+
+  **Solutions:**
+
+  **Backend Fix (API Route):**
+  ```typescript
+  // Add foreign key validation
+  if (institution_code) {
+    const { data: inst, error: instError } = await supabase
+      .from('institutions')
+      .select('id, institution_code')
+      .eq('institution_code', institution_code)
+      .single()
+
+    if (instError || !inst) {
+      return NextResponse.json({
+        error: `Institution with code "${institution_code}" not found. Please ensure the institution exists.`
+      }, { status: 400 })
+    }
+
+    institutions_id = inst.id
+  }
+  ```
+
+  **Frontend Fix (Form Validation):**
+  ```typescript
+  // Validate foreign key selection
+  if (!formData.institution_code) {
+    errors.institution_code = 'Institution is required'
+  }
+
+  // Populate dropdown
+  const fetchInstitutions = async () => {
+    const res = await fetch('/api/institutions')
+    const data = await res.json()
+    setInstitutions(data)
+  }
+  ```
+
+  #### Issue: Foreign key auto-mapping not working
+
+  **Diagnosis:**
+  - Code field doesn't match database
+  - Lookup query not finding record
+  - ID not assigned to payload
+
+  **Solutions:**
+  - Verify code field exact match (case-sensitive)
+  - Check for whitespace in codes
+  - Log lookup results for debugging
+  - Ensure both code and ID stored in database
+
+  {{/if}}
+
+  {{#if (eq issue_category "validation-errors")}}
+  ### Validation Issues
+
+  Common validation problems and solutions:
+
+  #### Issue: Form submits with invalid data
+
+  **Diagnosis:**
+  - Validation function not called
+  - Validation logic incomplete
+  - Error state not checked
+
+  **Solutions:**
+  ```typescript
+  const validate = () => {
+    const e: Record<string, string> = {}
+
+    // Required fields
+    if (!formData.code.trim()) {
+      e.code = 'Code is required'
+    }
+
+    // Format validation
+    if (formData.code && !/^[A-Za-z0-9\-_]+$/.test(formData.code)) {
+      e.code = 'Code can only contain letters, numbers, hyphens, and underscores'
+    }
+
+    // Length validation
+    if (formData.name && formData.name.length > 255) {
+      e.name = 'Name must be 255 characters or less'
+    }
+
+    // Numeric validation
+    if (formData.credits && (Number(formData.credits) < 0 || Number(formData.credits) > 10)) {
+      e.credits = 'Credits must be between 0 and 10'
+    }
+
+    setErrors(e)
+    return Object.keys(e).length === 0
+  }
+
+  const handleSubmit = async () => {
+    if (!validate()) {
+      toast({
+        title: '⚠️ Validation Error',
+        description: 'Please fix all errors before submitting.',
+        variant: 'destructive'
+      })
+      return
+    }
+
+    // Proceed with submit
+  }
+  ```
+
+  #### Issue: Validation errors not displaying
+
+  **Diagnosis:**
+  - Error state not set
+  - Error message not rendered
+  - CSS class not applied
+
+  **Solutions:**
+  ```tsx
+  <Input
+    value={formData.code}
+    onChange={(e) => setFormData({ ...formData, code: e.target.value })}
+    className={errors.code ? 'border-red-500' : ''}
+  />
+  {errors.code && (
+    <p className="text-sm text-red-500">{errors.code}</p>
+  )}
+  ```
+
+  {{/if}}
+
+  {{#if (eq issue_category "ui-issues")}}
+  ### UI Issues
+
+  Common UI problems and solutions:
+
+  #### Issue: Dark mode not working
+
+  **Diagnosis:**
+  - ThemeProvider not configured
+  - next-themes not installed
+  - Class names not applied
+
+  **Solutions:**
+  ```tsx
+  // In root layout
+  import { ThemeProvider } from 'next-themes'
+
+  <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
+    {children}
+  </ThemeProvider>
+  ```
+
+  #### Issue: Table font sizes inconsistent
+
+  **Diagnosis:**
+  - Wrong text size classes used
+  - Missing font size specifications
+
+  **Solutions:**
+  - Use text-[11px] for all table content (headers and cells)
+  - Use text-xs for buttons (h-8 for toolbar)
+  - Use h-10 for form inputs
+  - Use h-8 for search/filter inputs
+
+  **Reference:** [app/coe/degree/page.tsx](app/coe/degree/page.tsx)
+
+  #### Issue: Form sheet not responsive
+
+  **Diagnosis:**
+  - Missing sm: breakpoint classes
+  - Fixed width instead of max-width
+
+  **Solutions:**
+  ```tsx
+  <SheetContent className="sm:max-w-[800px] overflow-y-auto">
+    {/* Form content */}
+  </SheetContent>
+  ```
+
+  #### Issue: Toast notifications not showing
+
+  **Diagnosis:**
+  - useToast hook not imported
+  - Toast provider not in layout
+  - className styling missing
+
+  **Solutions:**
+  ```tsx
+  import { useToast } from '@/components/ui/use-toast'
+
+  const { toast } = useToast()
+
+  toast({
+    title: '✅ Success',
+    description: 'Operation completed successfully.',
+    className: 'bg-green-50 border-green-200 text-green-800'
+  })
+  ```
+
+  {{/if}}
+
+  {{#if (eq issue_category "performance-issues")}}
+  ### Performance Issues
+
+  Common performance problems and solutions:
+
+  #### Issue: Page loads slowly
+
+  **Diagnosis:**
+  - Too many API calls
+  - Large data fetching
+  - Missing pagination
+  - No data caching
+
+  **Solutions:**
+  - Implement pagination (limit to 10-50 items)
+  - Add loading skeletons
+  - Use React.memo for expensive components
+  - Implement data caching
+  - Optimize database queries with indexes
+
+  #### Issue: Re-renders on every keystroke
+
+  **Diagnosis:**
+  - State updates too frequently
+  - Missing debouncing
+  - Inline function definitions
+
+  **Solutions:**
+  ```typescript
+  // Debounce search input
+  import { useMemo } from 'react'
+  import debounce from 'lodash/debounce'
+
+  const debouncedSearch = useMemo(
+    () => debounce((value: string) => {
+      setSearchTerm(value)
+    }, 300),
+    []
+  )
+
+  <Input onChange={(e) => debouncedSearch(e.target.value)} />
+  ```
+
+  #### Issue: Large bundle size
+
+  **Diagnosis:**
+  - Importing entire libraries
+  - No code splitting
+  - Too many dependencies
+
+  **Solutions:**
+  - Use dynamic imports for heavy components
+  - Import only needed functions (tree shaking)
+  - Analyze bundle with next/bundle-analyzer
+
+  {{/if}}
+
+  {{#if (eq issue_category "build-errors")}}
+  ### Build Errors
+
+  Common build problems and solutions:
+
+  #### Error: "Module not found"
+
+  **Diagnosis:**
+  - Missing dependency
+  - Wrong import path
+  - Path alias not configured
+
+  **Solutions:**
+  ```bash
+  # Install missing dependency
+  npm install [package-name]
+
+  # Check import path
+  # Use @/ alias for root imports
+  import { Component } from '@/components/component'
+  ```
+
+  #### Error: TypeScript type errors
+
+  **Diagnosis:**
+  - Missing type definitions
+  - Type mismatch
+  - Incorrect interface
+
+  **Solutions:**
+  - Add proper TypeScript interfaces
+  - Use type assertions carefully
+  - Install @types packages
+  - Check tsconfig.json configuration
+
+  #### Error: "Cannot use import statement outside a module"
+
+  **Diagnosis:**
+  - ES modules configuration issue
+  - Package.json type not set
+
+  **Solutions:**
+  ```json
+  // package.json
+  {
+    "type": "module"
+  }
+  ```
+
+  {{/if}}
+
+  ## General Troubleshooting Checklist
+
+  1. **Check Console Logs**
+     - Browser console for client errors
+     - Terminal for server errors
+     - Network tab for API issues
+
+  2. **Verify Environment Variables**
+     - .env.local file exists
+     - All required variables set
+     - Values are correct
+
+  3. **Clear Cache**
+     ```bash
+     # Clear Next.js cache
+     rm -rf .next
+     npm run build
+     npm run dev
+     ```
+
+  4. **Check Database**
+     - Migrations are current
+     - Data exists where expected
+     - Constraints are correct
+
+  5. **Review Recent Changes**
+     - Git diff recent commits
+     - Check for breaking changes
+     - Review related files
+
+  6. **Test in Isolation**
+     - Create minimal reproduction
+     - Test component separately
+     - Isolate the issue
+
+  ## Next Steps
+
+  1. Apply the appropriate fix from above
+  2. Test the fix thoroughly
+  3. Add validation to prevent recurrence
+  4. Update documentation if needed
+  5. Consider adding tests for this scenario
+
+  ## Need More Help?
+
+  - Review project documentation: [CLAUDE.md](CLAUDE.md)
+  - Check development standards: [.cursor/rules/DEVELOPMENT_STANDARDS.md](.cursor/rules/DEVELOPMENT_STANDARDS.md)
+  - Review reference implementations in existing modules
+  - Check Supabase logs for database issues
+
+  Implement the appropriate fix based on the diagnosis above.
+
+execution:
+  working_directory: "."
+
+output_format: diagnostic_report
+
+tags:
+  - troubleshooting
+  - debugging
+  - error-fixing
+  - maintenance

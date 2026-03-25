@@ -1,0 +1,27 @@
+[project]
+name = "jkkn-coe-automation"
+version = "0.1.0"
+description = "Browser automation for JKKN COE exam management system"
+requires-python = ">=3.11"
+
+dependencies = [
+    "browser-use>=0.2.0",
+    "langchain-anthropic>=0.3.0",
+    "python-dotenv>=1.0.0",
+    "playwright>=1.40.0",
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "ruff>=0.4.0",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["testing"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"

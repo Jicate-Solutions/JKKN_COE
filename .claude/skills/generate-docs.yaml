@@ -1,0 +1,400 @@
+name: generate-docs
+description: Generate comprehensive documentation for JKKN COE modules and features
+version: 1.0.0
+
+parameters:
+  - name: module_name
+    type: string
+    description: Module name (e.g., "Courses", "Examinations", "Results")
+    required: true
+
+  - name: doc_type
+    type: string
+    description: Documentation type (api, user-guide, developer, architecture)
+    required: true
+    enum: ["api", "user-guide", "developer", "architecture"]
+
+  - name: endpoints
+    type: array
+    description: API endpoints to document (for api doc_type)
+    required: false
+    items:
+      - name: method
+        type: string
+        description: HTTP method
+      - name: path
+        type: string
+        description: Endpoint path
+      - name: description
+        type: string
+        description: Endpoint description
+      - name: parameters
+        type: array
+        description: Request parameters
+      - name: response
+        type: object
+        description: Response schema
+
+  - name: user_workflows
+    type: array
+    description: User workflows to document (for user-guide doc_type)
+    required: false
+    items:
+      - name: workflow_name
+        type: string
+      - name: steps
+        type: array
+      - name: screenshots
+        type: array
+
+  - name: components
+    type: array
+    description: Components to document (for developer doc_type)
+    required: false
+
+prompt: |
+  Generate comprehensive {{doc_type}} documentation for the {{module_name}} module.
+
+  ## Documentation Type: {{doc_type}}
+
+  {{#if (eq doc_type "api")}}
+  ### API Documentation
+
+  Generate OpenAPI/Swagger style documentation covering:
+
+  #### Endpoints
+
+  {{#each endpoints}}
+  **{{method}} {{path}}**
+
+  Description: {{description}}
+
+  Request Parameters:
+  {{#each parameters}}
+  - {{name}} ({{type}}): {{description}} {{#if required}}*required{{/if}}
+  {{/each}}
+
+  Response Schema:
+  ```json
+  {{response}}
+  ```
+
+  Status Codes:
+  - 200: Success
+  - 400: Bad Request (validation error)
+  - 404: Not Found
+  - 500: Internal Server Error
+
+  Example Request:
+  ```bash
+  curl -X {{method}} http://localhost:3000{{path}} \
+    -H "Content-Type: application/json" \
+    -d '{ ... }'
+  ```
+
+  Example Response:
+  ```json
+  { ... }
+  ```
+  {{/each}}
+
+  #### Authentication
+
+  All endpoints require authentication via Supabase session cookie.
+
+  #### Rate Limiting
+
+  Current implementation: No rate limiting
+  Recommendation: Implement rate limiting for production
+
+  #### Error Responses
+
+  Standard error format:
+  ```json
+  {
+    "error": "Error message",
+    "code": "ERROR_CODE",
+    "details": {}
+  }
+  ```
+
+  {{/if}}
+
+  {{#if (eq doc_type "user-guide")}}
+  ### User Guide Documentation
+
+  Generate step-by-step user documentation covering:
+
+  #### Module Overview
+
+  - Purpose and functionality
+  - Key features
+  - User roles and permissions
+  - Access requirements
+
+  #### User Workflows
+
+  {{#each user_workflows}}
+  **{{workflow_name}}**
+
+  Steps:
+  {{#each steps}}
+  {{@index}}. {{this}}
+  {{/each}}
+
+  {{#if screenshots}}
+  Screenshots:
+  {{#each screenshots}}
+  - ![{{this.caption}}]({{this.path}})
+  {{/each}}
+  {{/if}}
+
+  Tips & Best Practices:
+  - List helpful tips
+  - Common pitfalls to avoid
+  - Efficiency recommendations
+
+  Troubleshooting:
+  - Common issues and solutions
+  {{/each}}
+
+  #### Frequently Asked Questions
+
+  Generate FAQ section based on common user scenarios
+
+  {{/if}}
+
+  {{#if (eq doc_type "developer")}}
+  ### Developer Documentation
+
+  Generate technical documentation covering:
+
+  #### Architecture Overview
+
+  - Module structure
+  - File organization
+  - Dependencies
+  - Data flow
+
+  #### Component Documentation
+
+  {{#each components}}
+  **{{name}}**
+
+  Purpose: {{description}}
+
+  Props:
+  ```typescript
+  interface {{name}}Props {
+    {{#each props}}
+    {{name}}: {{type}} // {{description}}
+    {{/each}}
+  }
+  ```
+
+  Usage Example:
+  ```tsx
+  <{{name}}
+    {{#each props}}
+    {{name}}={...}
+    {{/each}}
+  />
+  ```
+
+  State Management:
+  - Local state: {{local_state}}
+  - Context usage: {{context_usage}}
+
+  Hooks Used:
+  {{#each hooks}}
+  - {{this}}
+  {{/each}}
+
+  {{/each}}
+
+  #### API Integration
+
+  - Endpoints used
+  - Data fetching patterns
+  - Error handling
+  - Loading states
+
+  #### Testing
+
+  - Unit tests location
+  - Integration tests
+  - E2E test scenarios
+  - Test coverage goals
+
+  #### Code Standards
+
+  Reference: `.cursor/rules/DEVELOPMENT_STANDARDS.md`
+
+  - Naming conventions
+  - TypeScript patterns
+  - Component structure
+  - Validation patterns
+
+  {{/if}}
+
+  {{#if (eq doc_type "architecture")}}
+  ### Architecture Documentation
+
+  Generate system architecture documentation covering:
+
+  #### System Overview
+
+  - Module purpose and scope
+  - Integration points
+  - Dependencies
+  - Data models
+
+  #### Database Schema
+
+  Tables involved:
+  - Table definitions
+  - Relationships
+  - Indexes
+  - Constraints
+  - RLS policies
+
+  #### Component Architecture
+
+  ```
+  [Client Layer]
+       ↓
+  [Page Component]
+       ↓
+  [API Routes]
+       ↓
+  [Supabase Client]
+       ↓
+  [PostgreSQL Database]
+  ```
+
+  #### Data Flow
+
+  1. User action triggers event
+  2. Component validates input
+  3. API call with payload
+  4. Server-side validation
+  5. Database operation
+  6. Response processing
+  7. UI update
+
+  #### Security Considerations
+
+  - Authentication requirements
+  - Authorization checks
+  - Data validation
+  - SQL injection prevention
+  - XSS protection
+  - Rate limiting needs
+
+  #### Performance Considerations
+
+  - Caching strategy
+  - Query optimization
+  - Pagination implementation
+  - Lazy loading
+  - Bundle size
+
+  #### Scalability
+
+  - Current limitations
+  - Scaling recommendations
+  - Load testing results
+  - Performance benchmarks
+
+  {{/if}}
+
+  ## Documentation Requirements
+
+  1. Create markdown file: `docs/{{module_name}}/{{doc_type}}.md`
+  2. Include table of contents
+  3. Use clear headings and subheadings
+  4. Add code examples with syntax highlighting
+  5. Include diagrams where helpful (mermaid.js)
+  6. Add cross-references to related docs
+  7. Include version information
+  8. Add last updated timestamp
+  9. Use consistent formatting
+  10. Include screenshots/diagrams for user guides
+
+  ## Markdown Structure
+
+  ```markdown
+  # {{module_name}} - {{doc_type}}
+
+  **Version:** 1.0.0
+  **Last Updated:** [Date]
+  **Maintained By:** [Team]
+
+  ## Table of Contents
+
+  - [Overview](#overview)
+  - [Getting Started](#getting-started)
+  - [Detailed Guide](#detailed-guide)
+  - [Reference](#reference)
+  - [FAQ](#faq)
+
+  ## Overview
+
+  Brief introduction to the module...
+
+  ## Getting Started
+
+  Quick start guide...
+
+  ## Detailed Guide
+
+  In-depth documentation...
+
+  ## Reference
+
+  Technical reference...
+
+  ## FAQ
+
+  Common questions and answers...
+
+  ---
+
+  **Related Documentation:**
+  - [Link to related doc 1]
+  - [Link to related doc 2]
+  ```
+
+  ## Best Practices
+
+  - Use active voice
+  - Keep sentences concise
+  - Include practical examples
+  - Add visual aids where helpful
+  - Maintain consistent terminology
+  - Update docs with code changes
+  - Review for accuracy regularly
+  - Consider audience expertise level
+
+  Generate complete documentation following these specifications.
+
+execution:
+  working_directory: "."
+  files_to_create:
+    - "docs/{{module_name}}/{{doc_type}}.md"
+
+  validation:
+    - Verify markdown syntax is correct
+    - Ensure all links are valid
+    - Check code examples compile
+    - Validate diagrams render properly
+    - Confirm completeness of content
+
+output_format: markdown
+
+tags:
+  - documentation
+  - markdown
+  - api-docs
+  - user-guide
+  - developer-docs

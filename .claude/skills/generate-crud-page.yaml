@@ -1,0 +1,231 @@
+name: generate-crud-page
+description: Generate complete CRUD page with frontend and backend for JKKN COE application
+version: 1.0.0
+
+parameters:
+  - name: entity_name
+    type: string
+    description: Entity name in singular form (e.g., "Course", "Degree")
+    required: true
+  
+  - name: entity_name_plural
+    type: string
+    description: Entity name in plural form (e.g., "Courses", "Degrees")
+    required: true
+  
+  - name: table_name
+    type: string
+    description: Database table name (e.g., "courses", "degrees")
+    required: true
+  
+  - name: api_route
+    type: string
+    description: API route path (e.g., "courses", "degrees")
+    required: true
+  
+  - name: page_route
+    type: string
+    description: Frontend page route (e.g., "courses", "degrees")
+    required: true
+  
+  - name: icon_name
+    type: string
+    description: Lucide icon name (e.g., "BookOpen", "GraduationCap")
+    required: true
+  
+  - name: fields
+    type: array
+    description: Array of field definitions
+    required: true
+    items:
+      - name: field_name
+        type: string
+        description: Database field name
+      - name: field_type
+        type: string
+        description: TypeScript/SQL type
+      - name: display_name
+        type: string
+        description: Human-readable field name
+      - name: is_required
+        type: boolean
+        description: Whether field is required
+      - name: max_length
+        type: integer
+        description: Maximum length for string fields
+      - name: validation_pattern
+        type: string
+        description: Regex pattern for validation
+      - name: validation_message
+        type: string
+        description: Error message for validation failure
+  
+  - name: foreign_keys
+    type: array
+    description: Foreign key relationships
+    required: false
+    items:
+      - name: fk_field
+        type: string
+        description: Foreign key field name
+      - name: fk_table
+        type: string
+        description: Referenced table name
+      - name: fk_code_field
+        type: string
+        description: Code field in referenced table
+      - name: fk_name_field
+        type: string
+        description: Name field in referenced table
+      - name: fk_id_field
+        type: string
+        description: ID field for foreign key
+      - name: fk_api_route
+        type: string
+        description: API route to fetch FK data
+      - name: fk_display_name
+        type: string
+        description: Display name for FK field
+
+prompt: |
+  Create a complete CRUD page for managing {{entity_name_plural}} in the JKKN COE application.
+
+  ## Entity Details
+
+  **Entity Name (Singular):** {{entity_name}}
+  **Entity Name (Plural):** {{entity_name_plural}}
+  **Database Table:** {{table_name}}
+  **API Route:** /api/{{api_route}}
+  **Page Route:** /{{page_route}}
+  **Icon:** {{icon_name}}
+
+  ## Database Schema
+
+  **Fields:**
+  {{#each fields}}
+  - {{field_name}}: {{field_type}} {{#if is_required}}(REQUIRED){{/if}}
+    Display Name: {{display_name}}
+    {{#if max_length}}Max Length: {{max_length}}{{/if}}
+    {{#if validation_pattern}}Pattern: {{validation_pattern}}{{/if}}
+    {{#if validation_message}}Validation Message: {{validation_message}}{{/if}}
+  {{/each}}
+
+  {{#if foreign_keys}}
+  **Foreign Key Relationships:**
+  {{#each foreign_keys}}
+  - {{fk_field}} references {{fk_table}}({{fk_code_field}})
+    - Code Field: {{fk_code_field}}
+    - Name Field: {{fk_name_field}}
+    - ID Field: {{fk_id_field}}
+    - API Route: /api/{{fk_api_route}}
+    - Display Name: {{fk_display_name}}
+  {{/each}}
+  {{/if}}
+
+  ## Implementation Requirements
+
+  ### Frontend Requirements
+  1. Create file: `app/coe/{{page_route}}/page.tsx`
+  2. Follow the reference implementation in `app/coe/degree/page.tsx`
+  3. Include all required imports from the template
+  4. Implement complete state management
+  5. Add data fetching functions with error handling
+  6. Implement form validation for all fields
+  7. Add CRUD operations (Create, Read, Update, Delete)
+  8. Include search, filter, sort, and pagination
+  9. Add export functionality (JSON, Excel, Template)
+  10. Add import functionality with detailed error tracking
+  11. Include upload summary cards and error dialog
+  12. Add scorecard section with metrics
+  13. Implement responsive design with dark mode support
+  14. Add breadcrumb navigation
+  15. Include status toggle (Active/Inactive)
+  {{#if foreign_keys}}
+  16. Add foreign key dropdown selections
+  {{/if}}
+
+  ### Backend Requirements
+  1. Create file: `app/api/{{api_route}}/route.ts`
+  2. Follow the reference implementation in `app/api/degrees/route.ts`
+  3. Implement GET endpoint with filtering
+  4. Implement POST endpoint with validation
+  {{#if foreign_keys}}
+  5. Add foreign key auto-mapping logic in POST
+  {{/if}}
+  6. Implement PUT endpoint with validation
+  {{#if foreign_keys}}
+  7. Add foreign key auto-mapping logic in PUT
+  {{/if}}
+  8. Implement DELETE endpoint
+  9. Add comprehensive error handling (codes: 23505, 23503, 23514)
+  10. Include status field normalization
+  11. Add detailed console logging
+
+  ### Validation Rules
+  {{#each fields}}
+  {{#if is_required}}
+  - **{{display_name}}**: Required field, cannot be empty
+  {{/if}}
+  {{#if max_length}}
+  - **{{display_name}}**: Maximum {{max_length}} characters
+  {{/if}}
+  {{#if validation_pattern}}
+  - **{{display_name}}**: Must match pattern {{validation_pattern}}
+    Error message: {{validation_message}}
+  {{/if}}
+  {{/each}}
+
+  ### Error Handling
+  - Show toast notifications for all operations
+  - Display detailed validation errors in form
+  - Track row-by-row upload errors with summary
+  - Provide helpful tips in error dialog
+  - Handle duplicate key constraints (23505)
+  - Handle foreign key constraints (23503)
+  - Handle check constraints (23514)
+
+  ### UI Components Required
+  - Scorecard section (Total/Active/Inactive/New This Month)
+  - Search and filter toolbar
+  - Sortable data table with pagination
+  - Form sheet with validation
+  - Delete confirmation dialog
+  - Error details dialog with upload summary
+  - Export/Import buttons with file handling
+
+  ## Reference Files
+  - Frontend Template: `UNIVERSAL_CRUD_PROMPT_TEMPLATE.md`
+  - Frontend Reference: `app/coe/degree/page.tsx`
+  - Backend Reference: `app/api/degrees/route.ts`
+  - Development Standards: `.cursor/rules/DEVELOPMENT_STANDARDS.md`
+
+  ## Output Files
+  Generate two files:
+  1. `app/coe/{{page_route}}/page.tsx` - Frontend component
+  2. `app/api/{{api_route}}/route.ts` - Backend API routes
+
+  Ensure all placeholders are replaced with actual values and follow the exact patterns from the reference implementation.
+
+execution:
+  working_directory: "."
+  files_to_create:
+    - "app/coe/{{page_route}}/page.tsx"
+    - "app/api/{{api_route}}/route.ts"
+  
+  validation:
+    - Check all imports are correct
+    - Verify TypeScript interfaces match database schema
+    - Ensure foreign key relationships are properly handled
+    - Confirm error handling is comprehensive
+    - Validate form validation rules are complete
+
+output_format: code
+
+tags:
+  - crud
+  - generator
+  - frontend
+  - backend
+  - typescript
+  - nextjs
+  - supabase

@@ -1,0 +1,36 @@
+{
+  "_comment": "Template for session-init.json. Replace placeholders with actual phase names.",
+  "session": {
+    "input": "",
+    "input_slug": "",
+    "started_at": "",
+    "session_dir": "",
+    "status": "in_progress"
+  },
+  "phases": {
+    "phase1_{PHASE1_NAME}": {
+      "status": "pending",
+      "report_path": null,
+      "completed_at": null,
+      "summary": null
+    },
+    "phase2_{PHASE2_NAME}": {
+      "status": "pending",
+      "report_path": null,
+      "completed_at": null,
+      "summary": null
+    },
+    "phase3_{PHASE3_NAME}": {
+      "status": "pending",
+      "report_path": null,
+      "completed_at": null,
+      "summary": null
+    }
+  },
+  "errors": [],
+  "final_output": {
+    "report_path": null,
+    "summary": null,
+    "completed_at": null
+  }
+}

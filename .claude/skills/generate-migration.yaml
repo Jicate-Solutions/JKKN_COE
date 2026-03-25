@@ -1,0 +1,183 @@
+name: generate-migration
+description: Generate Supabase database migration SQL for JKKN COE application
+version: 1.0.0
+
+parameters:
+  - name: table_name
+    type: string
+    description: Database table name (e.g., "exam_schedules", "question_banks")
+    required: true
+
+  - name: description
+    type: string
+    description: Migration description (e.g., "Create exam schedules table")
+    required: true
+
+  - name: columns
+    type: array
+    description: Array of column definitions
+    required: true
+    items:
+      - name: column_name
+        type: string
+        description: Column name
+      - name: data_type
+        type: string
+        description: PostgreSQL data type (UUID, VARCHAR, INTEGER, BOOLEAN, TIMESTAMP, TEXT, NUMERIC, etc.)
+      - name: constraints
+        type: string
+        description: Column constraints (PRIMARY KEY, NOT NULL, UNIQUE, DEFAULT value, etc.)
+      - name: references
+        type: string
+        description: Foreign key reference (e.g., "institutions(id)")
+
+  - name: indexes
+    type: array
+    description: Indexes to create
+    required: false
+    items:
+      - name: index_name
+        type: string
+        description: Index name
+      - name: columns
+        type: string
+        description: Columns to index (comma-separated)
+      - name: index_type
+        type: string
+        description: Index type (btree, gin, gist, etc.)
+
+  - name: rls_enabled
+    type: boolean
+    description: Enable Row Level Security
+    default: true
+
+  - name: rls_policies
+    type: array
+    description: RLS policies to create
+    required: false
+    items:
+      - name: policy_name
+        type: string
+        description: Policy name
+      - name: policy_type
+        type: string
+        description: Policy type (SELECT, INSERT, UPDATE, DELETE, ALL)
+      - name: role
+        type: string
+        description: Role for policy (authenticated, anon, service_role)
+      - name: using_clause
+        type: string
+        description: USING clause for policy
+
+prompt: |
+  Generate a Supabase database migration SQL file for the {{table_name}} table.
+
+  ## Migration Details
+
+  **Table Name:** {{table_name}}
+  **Description:** {{description}}
+  **RLS Enabled:** {{rls_enabled}}
+
+  ## Table Schema
+
+  **Columns:**
+  {{#each columns}}
+  - {{column_name}}: {{data_type}} {{#if constraints}}{{constraints}}{{/if}}
+    {{#if references}}REFERENCES {{references}} ON DELETE CASCADE{{/if}}
+  {{/each}}
+
+  {{#if indexes}}
+  **Indexes:**
+  {{#each indexes}}
+  - {{index_name}}: {{columns}} ({{index_type}})
+  {{/each}}
+  {{/if}}
+
+  {{#if rls_policies}}
+  **RLS Policies:**
+  {{#each rls_policies}}
+  - {{policy_name}}: {{policy_type}} for {{role}}
+    USING: {{using_clause}}
+  {{/each}}
+  {{/if}}
+
+  ## Requirements
+
+  1. Create migration file: `supabase/migrations/[timestamp]_{{description}}.sql`
+  2. Include proper SQL comments for documentation
+  3. Add standard audit columns:
+     - id UUID PRIMARY KEY DEFAULT gen_random_uuid()
+     - created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+     - updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+     - is_active BOOLEAN DEFAULT true
+  4. Create foreign key constraints with ON DELETE CASCADE
+  5. Create indexes for foreign keys and frequently queried columns
+  6. Enable Row Level Security (RLS) if specified
+  7. Create RLS policies for authenticated users
+  8. Add trigger for updated_at timestamp
+  9. Add comments on table and important columns
+  10. Follow PostgreSQL naming conventions (snake_case)
+
+  ## SQL Structure
+
+  ```sql
+  -- Migration: {{description}}
+  -- Created: [timestamp]
+
+  -- Create table
+  CREATE TABLE IF NOT EXISTS {{table_name}} (
+    -- Columns here
+  );
+
+  -- Create indexes
+  CREATE INDEX IF NOT EXISTS idx_{{table_name}}_... ON {{table_name}}(...);
+
+  -- Enable RLS
+  ALTER TABLE {{table_name}} ENABLE ROW LEVEL SECURITY;
+
+  -- Create RLS policies
+  CREATE POLICY "..." ON {{table_name}} FOR SELECT TO authenticated USING (...);
+
+  -- Create updated_at trigger
+  CREATE TRIGGER set_updated_at
+    BEFORE UPDATE ON {{table_name}}
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at_column();
+
+  -- Add table and column comments
+  COMMENT ON TABLE {{table_name}} IS '{{description}}';
+  ```
+
+  ## Best Practices
+
+  - Use UUID for primary keys with gen_random_uuid()
+  - Add NOT NULL constraints for required fields
+  - Use appropriate data types (VARCHAR with limits, TEXT for long content)
+  - Create composite indexes for multi-column queries
+  - Use CHECK constraints for data validation
+  - Add foreign key indexes for join performance
+  - Include rollback migration if needed
+  - Test migration with sample data
+
+  Generate the complete migration SQL file following these specifications.
+
+execution:
+  working_directory: "."
+  files_to_create:
+    - "supabase/migrations/[timestamp]_{{description}}.sql"
+
+  validation:
+    - Verify SQL syntax is valid
+    - Ensure all foreign keys reference existing tables
+    - Check constraint names are unique
+    - Validate index names follow convention
+    - Confirm RLS policies are secure
+
+output_format: code
+
+tags:
+  - migration
+  - database
+  - sql
+  - supabase
+  - postgres

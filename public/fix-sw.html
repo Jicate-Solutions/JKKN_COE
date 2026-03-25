@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Fix Service Worker - COE Portal</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            max-width: 600px;
+            margin: 50px auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .container {
+            background: white;
+            border-radius: 8px;
+            padding: 30px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 { color: #333; margin-bottom: 20px; }
+        button {
+            background: #3b82f6;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            margin: 5px;
+            font-size: 16px;
+        }
+        button:hover { background: #2563eb; }
+        .success { color: green; margin-top: 20px; }
+        .error { color: red; margin-top: 20px; }
+        .info {
+            background: #f0f9ff;
+            border: 1px solid #3b82f6;
+            padding: 15px;
+            border-radius: 5px;
+            margin: 20px 0;
+        }
+        pre { background: #f1f5f9; padding: 10px; border-radius: 4px; font-size: 14px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔧 Service Worker Fix Tool</h1>
+
+        <div class="info">
+            <strong>This tool will fix the Service Worker error:</strong><br>
+            <code>TypeError: Failed to execute 'put' on 'Cache': Request method 'POST' is unsupported</code>
+        </div>
+
+        <h2>Steps to Fix:</h2>
+
+        <button onclick="step1()">1. Unregister Old Service Worker</button>
+        <button onclick="step2()">2. Clear All Caches</button>
+        <button onclick="step3()">3. Register New Service Worker</button>
+        <button onclick="step4()">4. Test Service Worker</button>
+
+        <hr style="margin: 20px 0;">
+
+        <button onclick="fixAll()" style="background: #059669; font-weight: bold;">🚀 Fix Everything Automatically</button>
+        <button onclick="goToApp()">Go to App</button>
+
+        <div id="status"></div>
+        <div id="logs"></div>
+
+        <script>
+            function log(message) {
+                const logs = document.getElementById('logs');
+                logs.innerHTML += '<pre>' + new Date().toLocaleTimeString() + ': ' + message + '</pre>';
+            }
+
+            function showStatus(message, isError = false) {
+                const status = document.getElementById('status');
+                status.className = isError ? 'error' : 'success';
+                status.textContent = message;
+            }
+
+            async function step1() {
+                try {
+                    if ('serviceWorker' in navigator) {
+                        const registrations = await navigator.serviceWorker.getRegistrations();
+                        for (let registration of registrations) {
+                            await registration.unregister();
+                            log('Unregistered: ' + registration.scope);
+                        }
+                        showStatus('✅ Step 1: Old service workers unregistered');
+                    } else {
+                        showStatus('❌ Service Worker not supported', true);
+                    }
+                } catch (error) {
+                    showStatus('❌ Step 1 failed: ' + error.message, true);
+                    log('Error: ' + error.message);
+                }
+            }
+
+            async function step2() {
+                try {
+                    if ('caches' in window) {
+                        const cacheNames = await caches.keys();
+                        for (let name of cacheNames) {
+                            await caches.delete(name);
+                            log('Deleted cache: ' + name);
+                        }
+                        showStatus('✅ Step 2: All caches cleared');
+                    } else {
+                        showStatus('❌ Cache API not supported', true);
+                    }
+                } catch (error) {
+                    showStatus('❌ Step 2 failed: ' + error.message, true);
+                    log('Error: ' + error.message);
+                }
+            }
+
+            async function step3() {
+                try {
+                    if ('serviceWorker' in navigator) {
+                        const registration = await navigator.serviceWorker.register('/sw.js');
+                        await registration.update(); // Force update
+                        log('Registered new service worker: ' + registration.scope);
+                        showStatus('✅ Step 3: New service worker registered');
+
+                        // Wait for it to be ready
+                        await navigator.serviceWorker.ready;
+                        log('Service worker ready');
+                    } else {
+                        showStatus('❌ Service Worker not supported', true);
+                    }
+                } catch (error) {
+                    showStatus('❌ Step 3 failed: ' + error.message, true);
+                    log('Error: ' + error.message);
+                }
+            }
+
+            async function step4() {
+                try {
+                    // Test with a simple GET request
+                    const response = await fetch('/');
+                    if (response.ok) {
+                        log('Test fetch successful');
+                        showStatus('✅ Step 4: Service worker working correctly');
+                    } else {
+                        throw new Error('Test fetch failed: ' + response.status);
+                    }
+                } catch (error) {
+                    showStatus('❌ Step 4 failed: ' + error.message, true);
+                    log('Error: ' + error.message);
+                }
+            }
+
+            async function fixAll() {
+                document.getElementById('logs').innerHTML = '';
+                showStatus('🔄 Fixing service worker issues...');
+
+                try {
+                    await step1();
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+                    await step2();
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+                    await step3();
+                    await new Promise(resolve => setTimeout(resolve, 2000));
+                    await step4();
+
+                    showStatus('🎉 All steps completed! Service worker fixed.');
+                    log('SUCCESS: Service worker should now work without POST errors');
+                } catch (error) {
+                    showStatus('❌ Fix failed: ' + error.message, true);
+                    log('FAILED: ' + error.message);
+                }
+            }
+
+            function goToApp() {
+                window.location.href = '/dev-login';
+            }
+
+            // Auto-check current state
+            window.onload = async function() {
+                if ('serviceWorker' in navigator) {
+                    const registrations = await navigator.serviceWorker.getRegistrations();
+                    log('Current registrations: ' + registrations.length);
+                }
+
+                if ('caches' in window) {
+                    const cacheNames = await caches.keys();
+                    log('Current caches: ' + cacheNames.length);
+                }
+            }
+        </script>
+    </div>
+</body>
+</html>

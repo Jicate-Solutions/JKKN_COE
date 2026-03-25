@@ -1,0 +1,476 @@
+import ExcelJS from 'exceljs'
+
+export interface CourseReferenceData {
+	institutions: Array<{ institution_code: string }>
+	regulations: Array<{ regulation_code: string }>
+}
+
+/**
+ * Generates a Course Master Excel template with:
+ * - Sheet 1: Course Master (with headers, sample data, and dropdown validations)
+ * - Sheet 2: Reference Data (lookup values for user reference)
+ * - Hidden _ValidCodes sheet (for dropdown list sources)
+ */
+export function generateCourseTemplate(referenceData: CourseReferenceData): ExcelJS.Workbook {
+	const workbook = new ExcelJS.Workbook()
+
+	// ==================== SHEET 1: Course Master ====================
+	// Column layout (42 columns — "Offering Department Code" removed):
+	//  1 Institution Code*     2 Regulation Code*      3 Course Code*
+	//  4 Course Name*          5 Display Code*         6 Course Category*
+	//  7 Course Type           8 Course Part Master    9 Credit
+	// 10 Split Credit         11 Theory Credit        12 Practical Credit
+	// 13 QP Code*             14 E Code Name          15 Exam Duration Hours
+	// 16 Evaluation Type*     17 Result Type*         18 Self Study Course
+	// 19 Outside Class Course 20 Open Book            21 Online Course
+	// 22 Dummy Number Not Req 23 Annual Course        24 Multiple QP Set
+	// 25 No of QP Setter      26 No of Scrutinizer    27 Fee Exception
+	// 28 Syllabus PDF URL     29 Description          30 Class Hours*
+	// 31 Theory Hours*        32 Practical Hours*     33 Internal Max Mark*
+	// 34 Internal Pass Mark*  35 Internal Conv Mark*  36 External Max Mark*
+	// 37 External Pass Mark*  38 External Conv Mark*  39 Total Pass Mark*
+	// 40 Total Max Mark*      41 Annual Semester*     42 Registration Based*
+	// 43 Status
+	const courseMasterHeaders = [
+		'Institution Code*',        //  1
+		'Regulation Code*',         //  2
+		'Course Code*',             //  3
+		'Course Name*',             //  4
+		'Display Code*',            //  5
+		'Course Category*',         //  6
+		'Course Type',              //  7
+		'Course Part Master',       //  8
+		'Credit',                   //  9
+		'Split Credit',             // 10
+		'Theory Credit',            // 11
+		'Practical Credit',         // 12
+		'QP Code*',                 // 13
+		'E Code Name',              // 14
+		'Exam Duration Hours',      // 15
+		'Evaluation Type*',         // 16
+		'Result Type*',             // 17
+		'Self Study Course',        // 18
+		'Outside Class Course',     // 19
+		'Open Book',                // 20
+		'Online Course',            // 21
+		'Dummy Number Not Required',// 22
+		'Annual Course',            // 23
+		'Multiple QP Set',          // 24
+		'No of QP Setter',          // 25
+		'No of Scrutinizer',        // 26
+		'Fee Exception',            // 27
+		'Syllabus PDF URL',         // 28
+		'Description',              // 29
+		'Class Hours*',             // 30
+		'Theory Hours*',            // 31
+		'Practical Hours*',         // 32
+		'Internal Max Mark*',       // 33
+		'Internal Pass Mark*',      // 34
+		'Internal Converted Mark*', // 35
+		'External Max Mark*',       // 36
+		'External Pass Mark*',      // 37
+		'External Converted Mark*', // 38
+		'Total Pass Mark*',         // 39
+		'Total Max Mark*',          // 40
+		'Annual Semester*',         // 41
+		'Registration Based*',      // 42
+		'Status',                   // 43
+	]
+
+	const sampleRow = [
+		referenceData.institutions[0]?.institution_code || 'JKKN',
+		referenceData.regulations[0]?.regulation_code || 'R2021',
+		'CS101',                         // Course Code*
+		'Programming in C',              // Course Name*
+		'PGC101',                        // Display Code*
+		'Theory',                        // Course Category*
+		'Core',                          // Course Type
+		'Part I',                        // Course Part Master
+		3.00,                            // Credit
+		'FALSE',                         // Split Credit
+		3.00,                            // Theory Credit
+		0.00,                            // Practical Credit
+		'QP-2025-CS101',                 // QP Code*
+		'English',                       // E Code Name
+		3,                               // Exam Duration Hours
+		'CA + ESE',                      // Evaluation Type*
+		'Mark',                          // Result Type*
+		'FALSE',                         // Self Study Course
+		'FALSE',                         // Outside Class Course
+		'FALSE',                         // Open Book
+		'FALSE',                         // Online Course
+		'TRUE',                          // Dummy Number Not Required
+		'FALSE',                         // Annual Course
+		'FALSE',                         // Multiple QP Set
+		2,                               // No of QP Setter
+		1,                               // No of Scrutinizer
+		'FALSE',                         // Fee Exception
+		'https://example.com/syllabus.pdf', // Syllabus PDF URL
+		'Introductory C course for UG students', // Description
+		45,                              // Class Hours*
+		30,                              // Theory Hours*
+		15,                              // Practical Hours*
+		40,                              // Internal Max Mark*
+		16,                              // Internal Pass Mark*
+		25,                              // Internal Converted Mark*
+		60,                              // External Max Mark*
+		24,                              // External Pass Mark*
+		75,                              // External Converted Mark*
+		40,                              // Total Pass Mark*
+		100,                             // Total Max Mark*
+		'FALSE',                         // Annual Semester*
+		'FALSE',                         // Registration Based*
+		'TRUE',                          // Status
+	]
+
+	// Create Course Master worksheet
+	const courseMasterSheet = workbook.addWorksheet('Course Master')
+
+	// Add headers
+	courseMasterSheet.addRow(courseMasterHeaders)
+
+	// Style header row
+	const headerRow = courseMasterSheet.getRow(1)
+	headerRow.font = { bold: true }
+	headerRow.fill = {
+		type: 'pattern',
+		pattern: 'solid',
+		fgColor: { argb: 'FFE0E0E0' }
+	}
+
+	// Add sample data row
+	courseMasterSheet.addRow(sampleRow)
+
+	// Set column widths
+	const columnWidths = [
+		18,  //  1 Institution Code*
+		18,  //  2 Regulation Code*
+		15,  //  3 Course Code*
+		30,  //  4 Course Name*
+		15,  //  5 Display Code*
+		18,  //  6 Course Category*
+		15,  //  7 Course Type
+		20,  //  8 Course Part Master
+		10,  //  9 Credit
+		15,  // 10 Split Credit
+		15,  // 11 Theory Credit
+		17,  // 12 Practical Credit
+		18,  // 13 QP Code*
+		15,  // 14 E Code Name
+		15,  // 15 Exam Duration Hours
+		17,  // 16 Evaluation Type*
+		15,  // 17 Result Type*
+		18,  // 18 Self Study Course
+		20,  // 19 Outside Class Course
+		12,  // 20 Open Book
+		15,  // 21 Online Course
+		25,  // 22 Dummy Number Not Required
+		15,  // 23 Annual Course
+		17,  // 24 Multiple QP Set
+		17,  // 25 No of QP Setter
+		18,  // 26 No of Scrutinizer
+		15,  // 27 Fee Exception
+		30,  // 28 Syllabus PDF URL
+		40,  // 29 Description
+		15,  // 30 Class Hours*
+		15,  // 31 Theory Hours*
+		17,  // 32 Practical Hours*
+		20,  // 33 Internal Max Mark*
+		20,  // 34 Internal Pass Mark*
+		25,  // 35 Internal Converted Mark*
+		20,  // 36 External Max Mark*
+		20,  // 37 External Pass Mark*
+		25,  // 38 External Converted Mark*
+		18,  // 39 Total Pass Mark*
+		18,  // 40 Total Max Mark*
+		18,  // 41 Annual Semester*
+		20,  // 42 Registration Based*
+		10,  // 43 Status
+	]
+
+	courseMasterSheet.columns = columnWidths.map((width, index) => ({
+		key: courseMasterHeaders[index],
+		width
+	}))
+
+	// ==================== DATA VALIDATIONS (DROPDOWNS) ====================
+	const VALIDATION_ROWS = 100
+
+	// Helper: apply inline dropdown (for short fixed enum lists)
+	const addInlineDropdown = (
+		colNumber: number,
+		values: string[],
+		errorTitle: string,
+		errorMsg: string
+	) => {
+		const formula = `"${values.join(',')}"`
+		for (let row = 2; row <= VALIDATION_ROWS; row++) {
+			courseMasterSheet.getCell(row, colNumber).dataValidation = {
+				type: 'list',
+				allowBlank: true,
+				formulae: [formula],
+				showErrorMessage: true,
+				errorTitle,
+				error: errorMsg,
+				errorStyle: 'warning'
+			}
+		}
+	}
+
+	// Hidden sheet for dynamic/long dropdown lists
+	const validCodesSheet = workbook.addWorksheet('_ValidCodes')
+	validCodesSheet.state = 'hidden'
+	let validCodesCol = 1
+
+	// Helper: dropdown from hidden sheet reference (for dynamic/long lists)
+	const addSheetDropdown = (
+		colNumber: number,
+		values: string[],
+		errorTitle: string,
+		errorMsg: string
+	) => {
+		if (values.length === 0) return
+		const colLetter = String.fromCharCode(64 + validCodesCol)
+		values.forEach((val, idx) => {
+			validCodesSheet.getCell(idx + 1, validCodesCol).value = val
+		})
+		const ref = `'_ValidCodes'!$${colLetter}$1:$${colLetter}$${values.length}`
+		for (let row = 2; row <= VALIDATION_ROWS; row++) {
+			courseMasterSheet.getCell(row, colNumber).dataValidation = {
+				type: 'list',
+				allowBlank: true,
+				formulae: [ref],
+				showErrorMessage: true,
+				errorTitle,
+				error: errorMsg,
+				errorStyle: 'warning'
+			}
+		}
+		validCodesCol++
+	}
+
+	// --- Database-sourced dropdowns (hidden sheet — length unpredictable) ---
+
+	// Col 1: Institution Code
+	const instCodes = referenceData.institutions.map(i => i.institution_code)
+	addSheetDropdown(1, instCodes, 'Invalid Institution', 'Select from the dropdown or check Reference Data sheet')
+
+	// Col 2: Regulation Code
+	const regCodes = referenceData.regulations.map(r => r.regulation_code)
+	addSheetDropdown(2, regCodes, 'Invalid Regulation', 'Select from the dropdown or check Reference Data sheet')
+
+	// --- Enum dropdowns (inline — all under 255 chars) ---
+
+	// Col 6: Course Category
+	addInlineDropdown(6, [
+		'Theory', 'Practical', 'Project', 'Theory + Practical', 'Theory + Project',
+		'Field Work', 'Community Service', 'Group Project', 'Non Academic'
+	], 'Invalid Category', 'Select: Theory, Practical, Project, etc.')
+
+	// Col 7: Course Type (27 values — use hidden sheet)
+	addSheetDropdown(7, [
+		'Ability Enhancement', 'Additional Credit course', 'Advance learner course',
+		'Audit Course', 'Bridge course', 'Core Practical', 'Core',
+		'Discipline Specific elective Practical', 'Discipline Specific elective',
+		'Elective Practical', 'Elective', 'English',
+		'Extra Disciplinary Elective Practical', 'Extra Disciplinary',
+		'Foundation Course', 'Generic Elective Practical', 'Generic Elective',
+		'Internship', 'Language', 'Naanmuthalvan', 'Non Academic',
+		'Non Major Elective Practical', 'Non Major Elective',
+		'Practical', 'Project', 'Skill Enhancement Practical', 'Skill Enhancement'
+	], 'Invalid Course Type', 'Select from the dropdown or check Reference Data sheet')
+
+	// Col 8: Course Part Master
+	addInlineDropdown(8, ['Part I', 'Part II', 'Part III', 'Part IV', 'Part V'],
+		'Invalid Part', 'Select: Part I through Part V')
+
+	// Col 14: E Code Name
+	addInlineDropdown(14, ['None', 'Tamil', 'English', 'French', 'Malayalam', 'Hindi', 'Computer Science', 'Mathematics'],
+		'Invalid E Code', 'Select from the dropdown list')
+
+	// Col 16: Evaluation Type
+	addInlineDropdown(16, ['CA', 'ESE', 'CA + ESE'],
+		'Invalid Evaluation Type', 'Select: CA, ESE, or CA + ESE')
+
+	// Col 17: Result Type
+	addInlineDropdown(17, ['Mark', 'Status', 'comment', 'credit'],
+		'Invalid Result Type', 'Select: Mark, Status, comment, or credit')
+
+	// --- Boolean dropdowns (TRUE/FALSE) ---
+	const booleanColumns = [
+		10,  // Split Credit
+		18,  // Self Study Course
+		19,  // Outside Class Course
+		20,  // Open Book
+		21,  // Online Course
+		22,  // Dummy Number Not Required
+		23,  // Annual Course
+		24,  // Multiple QP Set
+		27,  // Fee Exception
+		41,  // Annual Semester
+		42,  // Registration Based
+		43,  // Status
+	]
+	for (const col of booleanColumns) {
+		addInlineDropdown(col, ['TRUE', 'FALSE'], 'Invalid Value', 'Select: TRUE or FALSE')
+	}
+
+	// ==================== SHEET 2: Reference Data ====================
+	const referenceSheet = workbook.addWorksheet('Reference Data')
+
+	const referenceRows: (string | number)[][] = []
+
+	const addSection = (title: string) => {
+		referenceRows.push(['', '', ''])
+		referenceRows.push([title, '', ''])
+	}
+
+	const addTableHeaders = (col1: string, col2: string, col3: string) => {
+		referenceRows.push([col1, col2, col3])
+	}
+
+	// INSTITUTION CODES Section
+	addSection('═══ INSTITUTION CODES ═══')
+	addTableHeaders('Category', 'Code', 'Description')
+	referenceData.institutions.forEach(inst => {
+		referenceRows.push(['Institution', inst.institution_code, `Institution: ${inst.institution_code}`])
+	})
+	if (referenceData.institutions.length === 0) {
+		referenceRows.push(['Institution', 'JKKN', 'Example Institution'])
+	}
+
+	// REGULATION CODES Section
+	addSection('═══ REGULATION CODES ═══')
+	addTableHeaders('Category', 'Code', 'Description')
+	referenceData.regulations.forEach(reg => {
+		referenceRows.push(['Regulation', reg.regulation_code, `Regulation: ${reg.regulation_code}`])
+	})
+	if (referenceData.regulations.length === 0) {
+		referenceRows.push(['Regulation', 'R2021', 'Example Regulation'])
+	}
+
+	// COURSE CATEGORY Section
+	addSection('═══ COURSE CATEGORY ═══')
+	addTableHeaders('Category', 'Value', 'Description')
+	const courseCategories: [string, string][] = [
+		['Theory', 'Theory-based course'],
+		['Practical', 'Practical/Lab-based course'],
+		['Project', 'Project-based course'],
+		['Theory + Practical', 'Combined theory and practical'],
+		['Theory + Project', 'Combined theory and project'],
+		['Field Work', 'Field work or internship'],
+		['Community Service', 'Community service activity'],
+		['Group Project', 'Group project work'],
+		['Non Academic', 'Non-academic activity']
+	]
+	courseCategories.forEach(([value, desc]) => {
+		referenceRows.push(['Course Category', value, desc])
+	})
+
+	// COURSE TYPE Section
+	addSection('═══ COURSE TYPE ═══')
+	addTableHeaders('Category', 'Value', 'Description')
+	const courseTypes: [string, string][] = [
+		['Ability Enhancement', 'Ability enhancement course'],
+		['Additional Credit course', 'Additional credit course'],
+		['Advance learner course', 'Advanced learner course'],
+		['Audit Course', 'Audit course (no grade)'],
+		['Bridge course', 'Bridge/Remedial course'],
+		['Core Practical', 'Core practical/lab course'],
+		['Core', 'Core/Compulsory course'],
+		['Discipline Specific elective Practical', 'DSE practical course'],
+		['Discipline Specific elective', 'Discipline specific elective'],
+		['Elective Practical', 'Elective practical course'],
+		['Elective', 'General elective course'],
+		['English', 'English language course'],
+		['Extra Disciplinary Elective Practical', 'Extra disciplinary practical'],
+		['Extra Disciplinary', 'Extra disciplinary elective'],
+		['Foundation Course', 'Foundation/Introductory course'],
+		['Generic Elective Practical', 'Generic elective practical'],
+		['Generic Elective', 'Generic elective course'],
+		['Internship', 'Internship/Industry training'],
+		['Language', 'Language course'],
+		['Naanmuthalvan', 'Naanmuthalvan program'],
+		['Non Academic', 'Non-academic activity'],
+		['Non Major Elective Practical', 'Non-major elective practical'],
+		['Non Major Elective', 'Non-major elective course'],
+		['Practical', 'Standalone practical course'],
+		['Project', 'Project-based course'],
+		['Skill Enhancement Practical', 'Skill enhancement practical'],
+		['Skill Enhancement', 'Skill enhancement course']
+	]
+	courseTypes.forEach(([value, desc]) => {
+		referenceRows.push(['Course Type', value, desc])
+	})
+
+	// COURSE PART MASTER Section
+	addSection('═══ COURSE PART MASTER ═══')
+	addTableHeaders('Category', 'Value', 'Description')
+	const courseParts: [string, string][] = [
+		['Part I', 'First part'], ['Part II', 'Second part'],
+		['Part III', 'Third part'], ['Part IV', 'Fourth part'], ['Part V', 'Fifth part']
+	]
+	courseParts.forEach(([value, desc]) => {
+		referenceRows.push(['Part Master', value, desc])
+	})
+
+	// EVALUATION TYPE Section
+	addSection('═══ EVALUATION TYPE ═══')
+	addTableHeaders('Category', 'Value', 'Description')
+	;([['CA', 'Continuous Assessment only'], ['ESE', 'End Semester Examination only'], ['CA + ESE', 'Combined CA and ESE']] as [string, string][])
+		.forEach(([value, desc]) => { referenceRows.push(['Evaluation Type', value, desc]) })
+
+	// RESULT TYPE Section
+	addSection('═══ RESULT TYPE ═══')
+	addTableHeaders('Category', 'Value', 'Description')
+	;([['Mark', 'Numeric marks'], ['Status', 'Pass/Fail status only'], ['comment', 'Comment/Grade description'], ['credit', 'Credit-only course']] as [string, string][])
+		.forEach(([value, desc]) => { referenceRows.push(['Result Type', value, desc]) })
+
+	// E CODE NAME Section
+	addSection('═══ E CODE NAME ═══')
+	addTableHeaders('Category', 'Value', 'Description')
+	;([
+		['None', 'No language code'], ['Tamil', 'Tamil language'], ['English', 'English language'],
+		['French', 'French language'], ['Malayalam', 'Malayalam language'], ['Hindi', 'Hindi language'],
+		['Computer Science', 'Computer Science elective'], ['Mathematics', 'Mathematics elective']
+	] as [string, string][]).forEach(([value, desc]) => { referenceRows.push(['E Code Name', value, desc]) })
+
+	// BOOLEAN FIELDS Section
+	addSection('═══ BOOLEAN FIELDS ═══')
+	addTableHeaders('Category', 'Value', 'Description')
+	referenceRows.push(['Boolean', 'TRUE', 'Yes/Active/Enabled (case-insensitive)'])
+	referenceRows.push(['Boolean', 'FALSE', 'No/Inactive/Disabled (case-insensitive)'])
+
+	// NOTES Section
+	addSection('═══ IMPORTANT NOTES ═══')
+	referenceRows.push(['', '• Fields marked with * are MANDATORY', ''])
+	referenceRows.push(['', '• Use EXACT values from the lists above (case-sensitive)', ''])
+	referenceRows.push(['', '• Institution and Regulation codes MUST exist in database', ''])
+	referenceRows.push(['', '• Boolean fields: Use TRUE or FALSE only (case-insensitive)', ''])
+	referenceRows.push(['', '• Course Code: Only letters, numbers, hyphens (-), and underscores (_)', ''])
+	referenceRows.push(['', '• Credits: Numbers between 0 and 99', ''])
+	referenceRows.push(['', '• If Split Credit = TRUE, both Theory and Practical credits required', ''])
+	referenceRows.push(['', '• URLs: Must start with http:// or https://', ''])
+
+	// Add all rows to reference sheet
+	referenceRows.forEach(row => {
+		referenceSheet.addRow(row)
+	})
+
+	// Set column widths for Reference Data sheet
+	referenceSheet.columns = [
+		{ width: 25 },
+		{ width: 35 },
+		{ width: 50 },
+	]
+
+	return workbook
+}
+
+/**
+ * Converts workbook to buffer for downloading
+ */
+export async function workbookToBuffer(workbook: ExcelJS.Workbook): Promise<ArrayBuffer> {
+	const buffer = await workbook.xlsx.writeBuffer()
+	return buffer as ArrayBuffer
+}

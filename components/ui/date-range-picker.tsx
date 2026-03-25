@@ -1,0 +1,92 @@
+"use client"
+
+import * as React from "react"
+import { format } from "date-fns"
+import { Calendar as CalendarIcon } from "lucide-react"
+import { DateRange } from "react-day-picker"
+
+import { cn } from "@/lib/utils"
+import { Button } from "@/components/ui/button"
+import { Calendar } from "@/components/ui/calendar"
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover"
+
+interface DateRangePickerProps {
+  className?: string
+  dateRange: DateRange | undefined
+  onDateRangeChange: (range: DateRange | undefined) => void
+  placeholder?: string
+  align?: "start" | "center" | "end"
+}
+
+export function DateRangePicker({
+  className,
+  dateRange,
+  onDateRangeChange,
+  placeholder = "Pick a date range",
+  align = "start",
+}: DateRangePickerProps) {
+  return (
+    <div className={cn("grid gap-2", className)}>
+      <Popover>
+        <PopoverTrigger asChild>
+          <Button
+            id="date"
+            variant={"outline"}
+            className={cn(
+              "w-[280px] justify-start text-left font-normal h-9 rounded-lg border-slate-300",
+              !dateRange && "text-muted-foreground"
+            )}
+          >
+            <CalendarIcon className="mr-2 h-4 w-4" />
+            {dateRange?.from ? (
+              dateRange.to ? (
+                <>
+                  {format(dateRange.from, "dd MMM yyyy")} -{" "}
+                  {format(dateRange.to, "dd MMM yyyy")}
+                </>
+              ) : (
+                format(dateRange.from, "dd MMM yyyy")
+              )
+            ) : (
+              <span>{placeholder}</span>
+            )}
+          </Button>
+        </PopoverTrigger>
+        <PopoverContent className="w-auto p-0" align={align}>
+          <Calendar
+            initialFocus
+            mode="range"
+            defaultMonth={dateRange?.from}
+            selected={dateRange}
+            onSelect={onDateRangeChange}
+            numberOfMonths={2}
+          />
+          <div className="flex items-center justify-between p-3 border-t">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => onDateRangeChange(undefined)}
+            >
+              Clear
+            </Button>
+            <div className="text-xs text-muted-foreground">
+              {dateRange?.from && dateRange?.to && (
+                <span>
+                  {Math.ceil(
+                    (dateRange.to.getTime() - dateRange.from.getTime()) /
+                      (1000 * 60 * 60 * 24)
+                  ) + 1}{" "}
+                  days selected
+                </span>
+              )}
+            </div>
+          </div>
+        </PopoverContent>
+      </Popover>
+    </div>
+  )
+}

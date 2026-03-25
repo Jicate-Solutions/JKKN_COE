@@ -1,0 +1,529 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Remove number input spinners for cleaner UI */
+input[type="number"]::-webkit-outer-spin-button,
+input[type="number"]::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+input[type="number"] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+@layer utilities {
+  .animate-slide-down {
+    animation: slide-down 0.2s ease-out;
+  }
+  
+  .animate-slide-up {
+    animation: slide-up 0.2s ease-out;
+  }
+  
+  .animate-in {
+    animation: fade-in 0.2s ease-out;
+  }
+  
+  .slide-in-from-left-2 {
+    animation: slide-in-from-left 0.2s ease-out;
+  }
+  
+  .slide-in-from-right-2 {
+    animation: slide-in-from-right 0.2s ease-out;
+  }
+}
+
+@keyframes slide-down {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes slide-up {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes slide-in-from-left {
+  from {
+    opacity: 0;
+    transform: translateX(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes slide-in-from-right {
+  from {
+    opacity: 0;
+    transform: translateX(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@layer base {
+  :root {
+    /* Brand Fonts */
+    --font-inter: 'Inter', 'Helvetica Neue', Arial, sans-serif;
+    --font-space-grotesk: 'Space Grotesk', 'Segoe UI', Arial, sans-serif;
+
+    /* Brand Colors - Light Theme */
+    --brand-green: #0b6d41;
+    --brand-yellow: #ffde59;
+    --brand-cream: #fbfbee;
+
+    /* Theme Colors - Light Mode with Brand Integration */
+    --background: 60 10% 98%;  /* Cream-tinted background */
+    --foreground: 222.2 84% 4.9%;
+    --card: 0 0% 100%;
+    --card-foreground: 222.2 84% 4.9%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 222.2 84% 4.9%;
+    --primary: 152 82% 24%;  /* Brand Green HSL */
+    --primary-foreground: 0 0% 100%;
+    --secondary: 48 100% 68%;  /* Brand Yellow HSL */
+    --secondary-foreground: 222.2 84% 4.9%;
+    --muted: 60 10% 96%;  /* Cream-tinted muted */
+    --muted-foreground: 215.4 16.3% 46.9%;
+    --accent: 48 100% 68%;  /* Brand Yellow for accents */
+    --accent-foreground: 222.2 84% 4.9%;
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 210 40% 98%;
+    --warning: 38 92% 50%;
+    --warning-foreground: 48 96% 89%;
+    --success: 152 82% 24%;  /* Brand Green for success */
+    --success-foreground: 0 0% 100%;
+    --info: 217.2 91.2% 59.8%;
+    --info-foreground: 210 40% 98%;
+    --border: 214.3 31.8% 91.4%;
+    --input: 214.3 31.8% 91.4%;
+    --ring: 152 82% 24%;  /* Brand Green ring */
+    --radius: 0.75rem;
+    --chart-1: 152 82% 24%;  /* Brand Green */
+    --chart-2: 48 100% 68%;  /* Brand Yellow */
+    --chart-3: 197 37% 24%;
+    --chart-4: 43 74% 66%;
+    --chart-5: 27 87% 67%;
+    --sidebar-background: 60 10% 98%;  /* Cream background */
+    --sidebar-foreground: 240 5.3% 26.1%;
+    --sidebar-primary: 152 82% 24%;  /* Brand Green */
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 240 4.8% 95.9%;
+    --sidebar-accent-foreground: 240 5.9% 10%;
+    --sidebar-border: 220 13% 91%;
+    --sidebar-ring: 152 82% 24%;  /* Brand Green */
+  }
+
+  .dark {
+    /* Brand Colors - Dark Theme */
+    --brand-green: #0b6d41;
+    --brand-yellow: #ffde59;
+    --brand-cream: #1a1a1a;  /* Dark mode cream alternative */
+
+    /* Theme Colors - Dark Mode with Brand Integration */
+    --background: 222.2 84% 4.9%;
+    --foreground: 210 40% 98%;
+    --card: 222.2 47% 11%;  /* Lighter card for dark mode */
+    --card-foreground: 210 40% 98%;
+    --popover: 222.2 84% 4.9%;
+    --popover-foreground: 210 40% 98%;
+    --primary: 152 76% 42%;  /* Lighter Brand Green for dark mode */
+    --primary-foreground: 0 0% 100%;
+    --secondary: 48 100% 68%;  /* Brand Yellow (same) */
+    --secondary-foreground: 222.2 84% 4.9%;
+    --muted: 217.2 32.6% 17.5%;
+    --muted-foreground: 215 20.2% 65.1%;
+    --accent: 48 100% 68%;  /* Brand Yellow for accents */
+    --accent-foreground: 222.2 84% 4.9%;
+    --destructive: 0 62.8% 50%;
+    --destructive-foreground: 210 40% 98%;
+    --warning: 38 92% 50%;
+    --warning-foreground: 48 96% 89%;
+    --success: 152 76% 42%;  /* Lighter Brand Green for dark mode */
+    --success-foreground: 0 0% 100%;
+    --info: 217.2 91.2% 59.8%;
+    --info-foreground: 210 40% 98%;
+    --border: 217.2 32.6% 20%;  /* Slightly lighter border */
+    --input: 217.2 32.6% 20%;
+    --ring: 152 76% 42%;  /* Lighter Brand Green ring */
+    --chart-1: 152 76% 42%;  /* Brand Green (lighter) */
+    --chart-2: 48 100% 68%;  /* Brand Yellow */
+    --chart-3: 30 80% 55%;
+    --chart-4: 280 65% 60%;
+    --chart-5: 340 75% 55%;
+    --sidebar-background: 222.2 84% 4.9%;
+    --sidebar-foreground: 210 40% 98%;
+    --sidebar-primary: 152 76% 42%;  /* Lighter Brand Green */
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 217.2 32.6% 17.5%;
+    --sidebar-accent-foreground: 210 40% 98%;
+    --sidebar-border: 217.2 32.6% 20%;
+    --sidebar-ring: 152 76% 42%;  /* Lighter Brand Green */
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+  }
+}
+
+@layer components {
+  /* Brand Typography - Using Space Grotesk for Headings, Inter for Body */
+  .text-display {
+    @apply text-4xl font-bold tracking-tight lg:text-5xl font-heading;
+  }
+
+  .text-heading {
+    @apply text-2xl font-semibold tracking-tight font-heading;
+  }
+
+  .text-heading-lg {
+    @apply text-3xl font-bold tracking-tight font-heading;
+  }
+
+  .text-subheading {
+    @apply text-lg font-semibold text-muted-foreground font-heading;
+  }
+
+  .text-body {
+    @apply text-base leading-7 font-normal font-inter;
+  }
+
+  .text-caption {
+    @apply text-sm text-muted-foreground font-normal font-inter;
+  }
+
+  /* Brand Buttons */
+  .btn-brand-primary {
+    @apply bg-brand-green hover:bg-brand-green-600 text-white font-medium px-6 py-3 rounded-lg transition-colors duration-200 dark:bg-brand-green-400 dark:hover:bg-brand-green-500;
+  }
+
+  .btn-brand-secondary {
+    @apply bg-brand-yellow hover:bg-brand-yellow-600 text-gray-900 font-medium px-6 py-3 rounded-lg transition-colors duration-200;
+  }
+
+  .btn-brand-outline {
+    @apply border-2 border-brand-green text-brand-green hover:bg-brand-green hover:text-white font-medium px-6 py-3 rounded-lg transition-all duration-200 dark:border-brand-green-400 dark:text-brand-green-400;
+  }
+
+  /* Brand Cards */
+  .card-brand {
+    @apply bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-sm hover:shadow-md transition-shadow p-6;
+  }
+
+  .card-brand-highlight {
+    @apply bg-gradient-to-br from-brand-green-50 to-brand-yellow-50 dark:from-brand-green-900/20 dark:to-brand-yellow-900/20 border border-brand-green-200 dark:border-brand-green-700 rounded-lg shadow-sm p-6;
+  }
+
+  /* Brand Gradients */
+  .gradient-brand-primary {
+    @apply bg-gradient-to-r from-brand-green to-brand-green-600;
+  }
+
+  .gradient-brand-secondary {
+    @apply bg-gradient-to-r from-brand-yellow-400 to-brand-yellow-600;
+  }
+
+  .gradient-brand-hero {
+    @apply bg-gradient-to-br from-brand-green via-brand-green-600 to-brand-green-700;
+  }
+
+  /* Enhanced Animations */
+  .animate-fade-in {
+    animation: fadeIn 0.5s ease-in-out;
+  }
+
+  .animate-slide-up {
+    animation: slideUp 0.3s ease-out;
+  }
+
+  .animate-slide-down {
+    animation: slideDown 0.3s ease-out;
+  }
+
+  .animate-scale-in {
+    animation: scaleIn 0.2s ease-out;
+  }
+
+  .animate-bounce-subtle {
+    animation: bounceSubtle 0.6s ease-in-out;
+  }
+
+  /* Brand Hover Effects */
+  .hover-lift {
+    @apply transition-all duration-200 hover:-translate-y-1 hover:shadow-lg;
+  }
+
+  .hover-glow {
+    @apply transition-all duration-200 hover:shadow-lg hover:shadow-brand-green/25;
+  }
+
+  .hover-glow-yellow {
+    @apply transition-all duration-200 hover:shadow-lg hover:shadow-brand-yellow/40;
+  }
+
+  .hover-scale {
+    @apply transition-transform duration-200 hover:scale-105;
+  }
+
+  /* Focus States - Brand Green Ring */
+  .focus-ring {
+    @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-green focus-visible:ring-offset-2;
+  }
+
+  .focus-ring-yellow {
+    @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-yellow focus-visible:ring-offset-2;
+  }
+
+  /* Loading States */
+  .skeleton {
+    @apply animate-pulse bg-muted rounded;
+  }
+
+  .loading-shimmer {
+    background: linear-gradient(90deg, transparent, rgba(11, 109, 65, 0.1), transparent);
+    background-size: 200% 100%;
+    animation: shimmer 1.5s infinite;
+  }
+
+  /* Brand Status Indicators */
+  .status-success {
+    @apply text-brand-green bg-brand-green/10 border-brand-green/20;
+  }
+
+  .status-warning {
+    @apply text-warning bg-warning/10 border-warning/20;
+  }
+
+  .status-error {
+    @apply text-destructive bg-destructive/10 border-destructive/20;
+  }
+
+  .status-info {
+    @apply text-info bg-info/10 border-info/20;
+  }
+
+  .status-highlight {
+    @apply text-brand-yellow-900 bg-brand-yellow/20 border-brand-yellow/40 dark:text-brand-yellow-100;
+  }
+
+  /* Brand Badges */
+  .badge-brand-green {
+    @apply inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-brand-green/10 text-brand-green border border-brand-green/20;
+  }
+
+  .badge-brand-yellow {
+    @apply inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-brand-yellow/20 text-brand-yellow-900 border border-brand-yellow/40;
+  }
+
+  /* Premium Glassmorphism Card */
+  .glass-card {
+    @apply relative overflow-hidden;
+    @apply bg-white/80 dark:bg-slate-900/60;
+    @apply backdrop-blur-xl;
+    @apply border border-slate-200/60 dark:border-white/[0.08];
+    @apply shadow-sm;
+    @apply transition-all duration-300;
+  }
+
+  .glass-card:hover {
+    @apply shadow-lg;
+    @apply border-slate-300/60 dark:border-white/[0.12];
+  }
+
+  /* Section Headers with Brand Styling */
+  .section-header {
+    @apply flex items-center gap-3 mb-6;
+  }
+
+  .section-title {
+    @apply text-heading-lg gradient-brand-primary bg-clip-text text-transparent;
+  }
+
+  .section-divider {
+    @apply h-px bg-gradient-to-r from-brand-green/20 via-brand-green/50 to-transparent;
+  }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes slideUp {
+  from { 
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to { 
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes slideDown {
+  from { 
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to { 
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes scaleIn {
+  from { 
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  to { 
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes bounceSubtle {
+  0%, 20%, 50%, 80%, 100% {
+    transform: translateY(0);
+  }
+  40% {
+    transform: translateY(-4px);
+  }
+  60% {
+    transform: translateY(-2px);
+  }
+}
+
+@keyframes shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+/* Premium Dashboard Floating Orb Animations */
+@keyframes float-slow {
+  0%, 100% {
+    transform: translate(0, 0) scale(1);
+  }
+  25% {
+    transform: translate(10px, -15px) scale(1.05);
+  }
+  50% {
+    transform: translate(-5px, -25px) scale(1);
+  }
+  75% {
+    transform: translate(-15px, -10px) scale(0.95);
+  }
+}
+
+@keyframes float-delayed {
+  0%, 100% {
+    transform: translate(0, 0) scale(1);
+  }
+  25% {
+    transform: translate(-12px, 10px) scale(0.95);
+  }
+  50% {
+    transform: translate(8px, 20px) scale(1.05);
+  }
+  75% {
+    transform: translate(15px, 5px) scale(1);
+  }
+}
+
+.animate-float-slow {
+  animation: float-slow 8s ease-in-out infinite;
+}
+
+.animate-float-delayed {
+  animation: float-delayed 10s ease-in-out infinite;
+  animation-delay: 2s;
+}
+
+/* Bug Reporter Custom Styling */
+
+/* Bug reporter SDK container */
+.bug-reporter-sdk {
+  font-family: var(--font-inter) !important;
+}
+
+.bug-reporter-sdk * {
+  font-family: var(--font-inter) !important;
+}
+
+/* Bug reporter button positioning - Bottom Left */
+[data-bug-reporter-button],
+.bug-reporter-button,
+.bug-reporter-floating-btn,
+.bug-reporter-widget,
+button[aria-label*="bug"],
+button[aria-label*="report"],
+div[class*="bug-reporter"] button:last-child {
+  bottom: 1.5rem !important;
+  left: 1.5rem !important;
+  right: auto !important;
+  z-index: 9999 !important;
+}
+
+/* Bug reporter button styling  */
+.bug-reporter-button,
+[data-bug-reporter-button],
+.bug-reporter-floating-btn {
+  background: #c70f0f !important;
+  color: white !important;
+  border-radius: 50% !important;
+  width: 40px !important;
+  height: 40px !important;
+  padding: 0 !important;
+  font-size: 10px !important;
+  font-weight: 200 !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2) !important;
+  transition: all 0.2s ease !important;
+}
+
+/* Bug reporter button hover state */
+.bug-reporter-button:hover,
+[data-bug-reporter-button]:hover,
+.bug-reporter-floating-btn:hover {
+  background: #a50d0d !important;
+  transform: translateY(-2px) scale(1.05) !important;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3) !important;
+}

@@ -1,0 +1,1088 @@
+"use client"
+
+import { useMemo, useState, useEffect } from "react"
+import { AppSidebar } from "@/components/app-sidebar"
+import { AppHeader } from "@/components/app-header"
+import { AppFooter } from "@/components/app-footer"
+import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar"
+import { Breadcrumb, BreadcrumbItem, BreadcrumbLink, BreadcrumbList, BreadcrumbPage, BreadcrumbSeparator } from "@/components/ui/breadcrumb"
+import { Card, CardContent, CardHeader } from "@/components/ui/card"
+import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { Label } from "@/components/ui/label"
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Switch } from "@/components/ui/switch"
+import { useToast } from "@/hooks/use-toast"
+import Link from "next/link"
+import { PlusCircle, Edit, Trash2, Search, ChevronLeft, ChevronRight, ArrowUpDown, ArrowUp, ArrowDown, Link2, TrendingUp, FileSpreadsheet, BookText, RefreshCw, Download, Upload, AlertTriangle } from "lucide-react"
+import * as XLSX from 'xlsx'
+
+type CourseMapping = {
+	id: string
+	course_id: string
+	institution_code: string
+	program_code: string
+	batch_code: string
+	semester_code?: string
+	course_group?: string
+	course_order?: number
+	internal_max_mark?: number
+	internal_pass_mark?: number
+	external_max_mark?: number
+	external_pass_mark?: number
+	total_pass_mark?: number
+	total_max_mark?: number
+	is_active?: boolean
+	created_at: string
+	course?: {
+		id: string
+		course_code: string
+		course_type?: string
+		credits?: number
+		institution_code: string
+		regulation_code?: string
+	}
+}
+
+const MOCK_MAPPINGS: CourseMapping[] = []
+
+export default function CourseMappingPage() {
+	const [items, setItems] = useState<CourseMapping[]>(MOCK_MAPPINGS)
+	const [loading, setLoading] = useState(false)
+	const [searchTerm, setSearchTerm] = useState("")
+	const [sortColumn, setSortColumn] = useState<string | null>(null)
+	const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc")
+	const [currentPage, setCurrentPage] = useState(1)
+	const itemsPerPage = 10
+	const { toast } = useToast()
+
+	const [sheetOpen, setSheetOpen] = useState(false)
+	const [editing, setEditing] = useState<CourseMapping | null>(null)
+	const [formData, setFormData] = useState({
+		course_id: "",
+		institution_code: "",
+		program_code: "",
+		batch_code: "",
+		semester_code: "",
+		course_group: "",
+		course_order: 1,
+		internal_max_mark: 40,
+		internal_pass_mark: 0,
+		external_max_mark: 60,
+		external_pass_mark: 0,
+		total_pass_mark: 0,
+		total_max_mark: 100,
+		is_active: true
+	})
+	const [errors, setErrors] = useState<Record<string, string>>({})
+	const [uploadErrors, setUploadErrors] = useState<string[]>([])
+	const [showErrorDialog, setShowErrorDialog] = useState(false)
+
+	// Dropdown data states
+	const [institutions, setInstitutions] = useState<any[]>([])
+	const [programs, setPrograms] = useState<any[]>([])
+	const [courses, setCourses] = useState<any[]>([])
+	const [batches, setBatches] = useState<any[]>([])
+	const [semesters, setSemesters] = useState<any[]>([])
+
+	// Fetch dropdown data and mappings
+	useEffect(() => {
+		fetchDropdownData()
+		fetchMappings()
+	}, [])
+
+	const fetchMappings = async () => {
+		try {
+			setLoading(true)
+			const res = await fetch('/api/course-mapping')
+			if (res.ok) {
+				const data = await res.json()
+				setItems(data)
+			}
+		} catch (err) {
+			console.error('Error fetching course mappings:', err)
+			toast({
+				title: '❌ Error',
+				description: 'Failed to fetch course mappings.',
+				variant: 'destructive'
+			})
+		} finally {
+			setLoading(false)
+		}
+	}
+
+	const fetchDropdownData = async () => {
+		try {
+			// Fetch institutions
+			const instRes = await fetch('/api/institutions')
+			if (instRes.ok) {
+				const instData = await instRes.json()
+				setInstitutions(instData)
+			}
+
+			// Fetch programs
+			const progRes = await fetch('/api/programs')
+			if (progRes.ok) {
+				const progData = await progRes.json()
+				setPrograms(progData)
+			}
+
+			// Fetch courses (with institution and program info)
+			const courseRes = await fetch('/api/courses')
+			if (courseRes.ok) {
+				const courseData = await courseRes.json()
+				setCourses(courseData)
+			}
+
+			// Fetch batches
+			const batchRes = await fetch('/api/batch')
+			if (batchRes.ok) {
+				const batchData = await batchRes.json()
+				setBatches(batchData)
+			}
+
+			// Fetch semesters
+			const semRes = await fetch('/api/semesters')
+			if (semRes.ok) {
+				const semData = await semRes.json()
+				setSemesters(semData)
+			}
+		} catch (err) {
+			console.error('Error fetching dropdown data:', err)
+		}
+	}
+
+	const handleRefresh = async () => {
+		setLoading(true)
+		try {
+			await fetchDropdownData()
+			await fetchMappings()
+			toast({
+				title: '✅ Refreshed',
+				description: 'Data has been refreshed successfully.',
+				className: 'bg-green-50 border-green-200 text-green-800 dark:bg-green-900/20 dark:border-green-800 dark:text-green-200'
+			})
+		} catch (err) {
+			toast({
+				title: '❌ Error',
+				description: 'Failed to refresh data.',
+				variant: 'destructive'
+			})
+		} finally {
+			setLoading(false)
+		}
+	}
+
+	const resetForm = () => {
+		setFormData({
+			course_id: "",
+			institution_code: "",
+			program_code: "",
+			batch_code: "",
+			semester_code: "",
+			course_group: "",
+			course_order: 1,
+			internal_max_mark: 40,
+			internal_pass_mark: 0,
+			external_max_mark: 60,
+			external_pass_mark: 0,
+			total_pass_mark: 0,
+			total_max_mark: 100,
+			is_active: true
+		})
+		setErrors({})
+		setEditing(null)
+	}
+
+	const handleSort = (c: string) => {
+		if (sortColumn === c) setSortDirection(sortDirection === "asc" ? "desc" : "asc")
+		else { setSortColumn(c); setSortDirection("asc") }
+	}
+
+	const getSortIcon = (c: string) => sortColumn !== c ? <ArrowUpDown className="h-3 w-3 text-muted-foreground" /> : (sortDirection === "asc" ? <ArrowUp className="h-3 w-3" /> : <ArrowDown className="h-3 w-3" />)
+
+	const filtered = useMemo(() => {
+		const q = searchTerm.toLowerCase()
+		const data = items.filter((i) => [
+			i.institution_code,
+			i.program_code,
+			i.course?.course_code,
+			i.course?.course_type,
+			i.batch_code,
+			i.semester_code,
+			i.course_group
+		].filter(Boolean).some((v) => String(v).toLowerCase().includes(q)))
+		if (!sortColumn) return data
+		return [...data].sort((a, b) => {
+			const av = (a as any)[sortColumn]
+			const bv = (b as any)[sortColumn]
+			if (av === bv) return 0
+			return sortDirection === "asc" ? (av > bv ? 1 : -1) : (av < bv ? 1 : -1)
+		})
+	}, [items, searchTerm, sortColumn, sortDirection])
+
+	const totalPages = Math.ceil(filtered.length / itemsPerPage) || 1
+	const startIndex = (currentPage - 1) * itemsPerPage
+	const endIndex = startIndex + itemsPerPage
+	const pageItems = filtered.slice(startIndex, endIndex)
+	useEffect(() => setCurrentPage(1), [searchTerm, sortColumn, sortDirection])
+
+	const openAdd = () => { resetForm(); setSheetOpen(true) }
+	const openEdit = (row: CourseMapping) => {
+		setEditing(row)
+		setFormData({
+			course_id: row.course_id,
+			institution_code: row.institution_code,
+			program_code: row.program_code,
+			batch_code: row.batch_code,
+			semester_code: row.semester_code || "",
+			course_group: row.course_group || "",
+			course_order: row.course_order || 1,
+			internal_max_mark: row.internal_max_mark || 0,
+			internal_pass_mark: row.internal_pass_mark || 0,
+			external_max_mark: row.external_max_mark || 0,
+			external_pass_mark: row.external_pass_mark || 0,
+			total_pass_mark: row.total_pass_mark || 0,
+			total_max_mark: row.total_max_mark || 0,
+			is_active: row.is_active !== false
+		})
+		setSheetOpen(true)
+	}
+
+	const validate = () => {
+		const e: Record<string, string> = {}
+
+		// Required fields
+		if (!formData.course_id.trim()) e.course_id = 'Course is required'
+		if (!formData.program_code.trim()) e.program_code = 'Program code is required'
+		if (!formData.batch_code.trim()) e.batch_code = 'Batch code is required'
+
+		// Numeric validations
+		if (formData.course_order && (Number(formData.course_order) < 0 || Number(formData.course_order) > 999)) {
+			e.course_order = 'Course order must be between 0 and 999'
+		}
+
+		if (formData.internal_max_mark && Number(formData.internal_max_mark) < 0) {
+			e.internal_max_mark = 'Internal max mark must be a positive number'
+		}
+
+		if (formData.internal_pass_mark && Number(formData.internal_pass_mark) < 0) {
+			e.internal_pass_mark = 'Internal pass mark must be a positive number'
+		}
+
+		if (formData.internal_pass_mark && formData.internal_max_mark && Number(formData.internal_pass_mark) > Number(formData.internal_max_mark)) {
+			e.internal_pass_mark = 'Pass mark cannot exceed max mark'
+		}
+
+		if (formData.external_max_mark && Number(formData.external_max_mark) < 0) {
+			e.external_max_mark = 'External max mark must be a positive number'
+		}
+
+		if (formData.external_pass_mark && Number(formData.external_pass_mark) < 0) {
+			e.external_pass_mark = 'External pass mark must be a positive number'
+		}
+
+		if (formData.external_pass_mark && formData.external_max_mark && Number(formData.external_pass_mark) > Number(formData.external_max_mark)) {
+			e.external_pass_mark = 'Pass mark cannot exceed max mark'
+		}
+
+		if (formData.total_max_mark && Number(formData.total_max_mark) < 0) {
+			e.total_max_mark = 'Total max mark must be a positive number'
+		}
+
+		if (formData.total_pass_mark && Number(formData.total_pass_mark) < 0) {
+			e.total_pass_mark = 'Total pass mark must be a positive number'
+		}
+
+		if (formData.total_pass_mark && formData.total_max_mark && Number(formData.total_pass_mark) > Number(formData.total_max_mark)) {
+			e.total_pass_mark = 'Pass mark cannot exceed max mark'
+		}
+
+		setErrors(e)
+		return Object.keys(e).length === 0
+	}
+
+	const save = async () => {
+		if (!validate()) {
+			toast({
+				title: '❌ Validation Failed',
+				description: 'Please correct the errors in the form before submitting.',
+				variant: 'destructive',
+				className: 'bg-red-50 border-red-200 text-red-800 dark:bg-red-900/20 dark:border-red-800 dark:text-red-200'
+			})
+			return
+		}
+
+		try {
+			setLoading(true)
+			const method = editing ? 'PUT' : 'POST'
+			const payload = editing ? { id: editing.id, ...formData } : formData
+
+			const res = await fetch('/api/course-mapping', {
+				method,
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify(payload)
+			})
+
+			if (!res.ok) {
+				const errorData = await res.json()
+				throw new Error(errorData.error || 'Failed to save mapping')
+			}
+
+			await fetchMappings()
+
+			toast({
+				title: editing ? '✅ Mapping Updated' : '✅ Mapping Created',
+				description: editing ? 'Course mapping has been successfully updated.' : 'Course mapping has been successfully created.',
+				className: 'bg-green-50 border-green-200 text-green-800 dark:bg-green-900/20 dark:border-green-800 dark:text-green-200'
+			})
+
+			setSheetOpen(false)
+			resetForm()
+		} catch (err: any) {
+			toast({
+				title: '❌ Error',
+				description: err.message || 'Failed to save course mapping.',
+				variant: 'destructive'
+			})
+		} finally {
+			setLoading(false)
+		}
+	}
+
+	const remove = async (id: string) => {
+		try {
+			setLoading(true)
+			const res = await fetch(`/api/course-mapping?id=${id}`, {
+				method: 'DELETE'
+			})
+
+			if (!res.ok) {
+				const errorData = await res.json()
+				throw new Error(errorData.error || 'Failed to delete mapping')
+			}
+
+			await fetchMappings()
+
+			toast({
+				title: '✅ Mapping Deleted',
+				description: 'Course mapping has been successfully deleted.',
+				className: 'bg-green-50 border-green-200 text-green-800 dark:bg-green-900/20 dark:border-green-800 dark:text-green-200'
+			})
+		} catch (err: any) {
+			toast({
+				title: '❌ Error',
+				description: err.message || 'Failed to delete course mapping.',
+				variant: 'destructive'
+			})
+		} finally {
+			setLoading(false)
+		}
+	}
+
+	// Download template
+	const downloadTemplate = () => {
+		const template = [{
+			course_id: "UUID of course from database",
+			batch_code: "2024",
+			course_group: "General",
+			semester_code: "S1",
+			course_order: 1,
+			internal_max_mark: 40,
+			internal_pass_mark: 14,
+			external_max_mark: 60,
+			external_pass_mark: 26,
+			total_max_mark: 100,
+			total_pass_mark: 40
+		}]
+
+		const ws = XLSX.utils.json_to_sheet(template)
+		const wb = XLSX.utils.book_new()
+		XLSX.utils.book_append_sheet(wb, ws, "Course Mapping Template")
+		XLSX.writeFile(wb, "course_mapping_template.xlsx")
+
+		toast({
+			title: '✅ Template Downloaded',
+			description: 'Excel template has been downloaded successfully. Institution and Program codes will be auto-fetched from the selected course.',
+			className: 'bg-green-50 border-green-200 text-green-800 dark:bg-green-900/20 dark:border-green-800 dark:text-green-200'
+		})
+	}
+
+	// Download data as Excel
+	const downloadData = () => {
+		const exportData = items.map(item => ({
+			course_id: item.course_id,
+			course_code: item.course?.course_code || '',
+			course_type: item.course?.course_type || '',
+			institution_code: item.institution_code,
+			program_code: item.program_code,
+			batch_code: item.batch_code,
+			course_group: item.course_group,
+			semester_code: item.semester_code,
+			course_order: item.course_order,
+			internal_max_mark: item.internal_max_mark,
+			internal_pass_mark: item.internal_pass_mark,
+			external_max_mark: item.external_max_mark,
+			external_pass_mark: item.external_pass_mark,
+			total_max_mark: item.total_max_mark,
+			total_pass_mark: item.total_pass_mark
+		}))
+
+		const ws = XLSX.utils.json_to_sheet(exportData)
+		const wb = XLSX.utils.book_new()
+		XLSX.utils.book_append_sheet(wb, ws, "Course Mappings")
+		XLSX.writeFile(wb, `course_mappings_${new Date().toISOString().split('T')[0]}.xlsx`)
+
+		toast({
+			title: '✅ Data Downloaded',
+			description: `${items.length} course mappings downloaded successfully.`,
+			className: 'bg-green-50 border-green-200 text-green-800 dark:bg-green-900/20 dark:border-green-800 dark:text-green-200'
+		})
+	}
+
+	// Download as JSON
+	const downloadJSON = () => {
+		const exportData = items.map(item => ({
+			course_id: item.course_id,
+			course_code: item.course?.course_code || '',
+			course_type: item.course?.course_type || '',
+			institution_code: item.institution_code,
+			program_code: item.program_code,
+			batch_code: item.batch_code,
+			course_group: item.course_group,
+			semester_code: item.semester_code,
+			course_order: item.course_order,
+			internal_max_mark: item.internal_max_mark,
+			internal_pass_mark: item.internal_pass_mark,
+			external_max_mark: item.external_max_mark,
+			external_pass_mark: item.external_pass_mark,
+			total_max_mark: item.total_max_mark,
+			total_pass_mark: item.total_pass_mark
+		}))
+
+		const dataStr = JSON.stringify(exportData, null, 2)
+		const dataUri = 'data:application/json;charset=utf-8,' + encodeURIComponent(dataStr)
+		const exportFileDefaultName = `course_mappings_${new Date().toISOString().split('T')[0]}.json`
+
+		const linkElement = document.createElement('a')
+		linkElement.setAttribute('href', dataUri)
+		linkElement.setAttribute('download', exportFileDefaultName)
+		linkElement.click()
+
+		toast({
+			title: '✅ JSON Downloaded',
+			description: `${items.length} course mappings exported as JSON.`,
+			className: 'bg-green-50 border-green-200 text-green-800 dark:bg-green-900/20 dark:border-green-800 dark:text-green-200'
+		})
+	}
+
+	const downloadReferenceSheet = async () => {
+		try {
+			const response = await fetch('/api/reference-sheet')
+			if (!response.ok) {
+				throw new Error('Failed to download reference sheet')
+			}
+
+			const blob = await response.blob()
+			const url = window.URL.createObjectURL(blob)
+			const a = document.createElement('a')
+			a.href = url
+			a.download = `Course_Master_Data_Reference_${new Date().toISOString().split('T')[0]}.xlsx`
+			document.body.appendChild(a)
+			a.click()
+			document.body.removeChild(a)
+			window.URL.revokeObjectURL(url)
+
+			toast({
+				title: '✅ Reference Sheet Downloaded',
+				description: 'Master data reference sheet with dropdown values downloaded successfully.',
+				className: 'bg-green-50 border-green-200 text-green-800 dark:bg-green-900/20 dark:border-green-800 dark:text-green-200'
+			})
+		} catch (error) {
+			console.error('Download reference sheet error:', error)
+			toast({
+				title: '❌ Download Failed',
+				description: 'Failed to download reference sheet.',
+				variant: 'destructive'
+			})
+		}
+	}
+
+	// Handle file upload
+	const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+		const file = e.target.files?.[0]
+		if (!file) return
+
+		const reader = new FileReader()
+		reader.onload = async (event) => {
+			try {
+				const data = new Uint8Array(event.target?.result as ArrayBuffer)
+				const workbook = XLSX.read(data, { type: 'array' })
+				const sheetName = workbook.SheetNames[0]
+				const worksheet = workbook.Sheets[sheetName]
+				const jsonData = XLSX.utils.sheet_to_json(worksheet)
+
+				const errorDetails: string[] = []
+				let successCount = 0
+				let errorCount = 0
+
+				for (let i = 0; i < jsonData.length; i++) {
+					const row: any = jsonData[i]
+					const rowNumber = i + 2
+					const validationErrors: string[] = []
+
+					// Validate required fields
+					if (!row.course_id?.toString().trim()) validationErrors.push('Course ID required')
+					if (!row.batch_code?.toString().trim()) validationErrors.push('Batch code required')
+
+					// Validate numeric fields
+					if (row.course_order && (Number(row.course_order) < 0 || Number(row.course_order) > 999)) {
+						validationErrors.push('Course order must be between 0 and 999')
+					}
+
+					if (row.internal_pass_mark && row.internal_max_mark && Number(row.internal_pass_mark) > Number(row.internal_max_mark)) {
+						validationErrors.push('Internal pass mark cannot exceed max mark')
+					}
+
+					if (row.external_pass_mark && row.external_max_mark && Number(row.external_pass_mark) > Number(row.external_max_mark)) {
+						validationErrors.push('External pass mark cannot exceed max mark')
+					}
+
+					if (row.total_pass_mark && row.total_max_mark && Number(row.total_pass_mark) > Number(row.total_max_mark)) {
+						validationErrors.push('Total pass mark cannot exceed max mark')
+					}
+
+					if (validationErrors.length > 0) {
+						errorCount++
+						errorDetails.push(`Row ${rowNumber}: ${validationErrors.join(', ')}`)
+						continue
+					}
+
+					// Fetch institution_code from course
+					const selectedCourse = courses.find(c => c.id === row.course_id)
+					if (!selectedCourse) {
+						errorCount++
+						errorDetails.push(`Row ${rowNumber}: Course ID not found in database`)
+						continue
+					}
+
+					// Validate program_code is provided in upload
+					if (!row.program_code?.toString().trim()) {
+						errorCount++
+						errorDetails.push(`Row ${rowNumber}: Program code required`)
+						continue
+					}
+
+					// If validation passes, create via API
+					try {
+						const res = await fetch('/api/course-mapping', {
+							method: 'POST',
+							headers: { 'Content-Type': 'application/json' },
+							body: JSON.stringify({
+								course_id: row.course_id,
+								institution_code: selectedCourse.institution_code,
+								program_code: row.program_code,
+								batch_code: row.batch_code,
+								semester_code: row.semester_code || "",
+								course_group: row.course_group || "",
+								course_order: Number(row.course_order || 1),
+								internal_max_mark: Number(row.internal_max_mark || 0),
+								internal_pass_mark: Number(row.internal_pass_mark || 0),
+								external_max_mark: Number(row.external_max_mark || 0),
+								external_pass_mark: Number(row.external_pass_mark || 0),
+								total_max_mark: Number(row.total_max_mark || 0),
+								total_pass_mark: Number(row.total_pass_mark || 0),
+								is_active: true
+							})
+						})
+
+						if (res.ok) {
+							successCount++
+						} else {
+							const errorData = await res.json()
+							errorCount++
+							errorDetails.push(`Row ${rowNumber}: ${errorData.error || 'Failed to create mapping'}`)
+						}
+					} catch (err: any) {
+						errorCount++
+						errorDetails.push(`Row ${rowNumber}: ${err.message || 'API error'}`)
+					}
+				}
+
+				// Refresh the list
+				await fetchMappings()
+
+				if (errorCount > 0) {
+					setUploadErrors(errorDetails)
+					setShowErrorDialog(true)
+				}
+
+				if (successCount > 0) {
+					toast({
+						title: '✅ Upload Complete',
+						description: `${successCount} mappings uploaded successfully${errorCount > 0 ? `, ${errorCount} failed` : ''}`,
+						className: 'bg-green-50 border-green-200 text-green-800 dark:bg-green-900/20 dark:border-green-800 dark:text-green-200'
+					})
+				}
+			} catch (err) {
+				toast({
+					title: '❌ Upload Failed',
+					description: 'Error processing file. Please check the format.',
+					variant: 'destructive'
+				})
+			}
+		}
+		reader.readAsArrayBuffer(file)
+		e.target.value = ''
+	}
+
+	return (
+		<SidebarProvider>
+			<AppSidebar />
+			<SidebarInset className="flex flex-col min-h-screen">
+				<AppHeader />
+				<div className="flex flex-1 flex-col gap-4 p-4 pt-0 overflow-y-auto">
+					<div className="flex items-center gap-2">
+						<Breadcrumb>
+							<BreadcrumbList>
+								<BreadcrumbItem>
+									<BreadcrumbLink asChild>
+										<Link href="/dashboard">Dashboard</Link>
+									</BreadcrumbLink>
+								</BreadcrumbItem>
+								<BreadcrumbSeparator />
+								<BreadcrumbItem>
+									<BreadcrumbPage>Course Mapping</BreadcrumbPage>
+								</BreadcrumbItem>
+							</BreadcrumbList>
+						</Breadcrumb>
+					</div>
+
+					{/* Scorecard Section */}
+					<div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3 flex-shrink-0">
+						<Card>
+							<CardContent className="p-3">
+								<div className="flex items-center justify-between">
+									<div>
+										<p className="text-xs font-medium text-muted-foreground">Total Mappings</p>
+										<p className="text-xl font-bold">{items.length}</p>
+									</div>
+									<div className="h-7 w-7 rounded-full bg-blue-100 dark:bg-blue-900/20 flex items-center justify-center">
+										<Link2 className="h-3 w-3 text-blue-600 dark:text-blue-400" />
+									</div>
+								</div>
+							</CardContent>
+						</Card>
+						<Card>
+							<CardContent className="p-3">
+								<div className="flex items-center justify-between">
+									<div>
+										<p className="text-xs font-medium text-muted-foreground">Active Mappings</p>
+										<p className="text-xl font-bold text-green-600">{items.length}</p>
+									</div>
+									<div className="h-7 w-7 rounded-full bg-green-100 dark:bg-green-900/20 flex items-center justify-center">
+										<Link2 className="h-3 w-3 text-green-600 dark:text-green-400" />
+									</div>
+								</div>
+							</CardContent>
+						</Card>
+						<Card>
+							<CardContent className="p-3">
+								<div className="flex items-center justify-between">
+									<div>
+										<p className="text-xs font-medium text-muted-foreground">Inactive Mappings</p>
+										<p className="text-xl font-bold text-red-600">0</p>
+									</div>
+									<div className="h-7 w-7 rounded-full bg-red-100 dark:bg-red-900/20 flex items-center justify-center">
+										<Link2 className="h-3 w-3 text-red-600 dark:text-red-400" />
+									</div>
+								</div>
+							</CardContent>
+						</Card>
+						<Card>
+							<CardContent className="p-3">
+								<div className="flex items-center justify-between">
+									<div>
+										<p className="text-xs font-medium text-muted-foreground">New This Month</p>
+										<p className="text-xl font-bold text-blue-600">{items.filter(i => { const d = new Date(i.created_at); const n = new Date(); return d.getMonth() === n.getMonth() && d.getFullYear() === n.getFullYear() }).length}</p>
+									</div>
+									<div className="h-7 w-7 rounded-full bg-purple-100 dark:bg-purple-900/20 flex items-center justify-center">
+										<TrendingUp className="h-3 w-3 text-purple-600 dark:text-purple-400" />
+									</div>
+								</div>
+							</CardContent>
+						</Card>
+					</div>
+
+					<Card className="flex-1 flex flex-col min-h-0">
+						<CardHeader className="flex-shrink-0 p-3">
+							<div className="flex items-center justify-between mb-2">
+								<div className="flex items-center gap-2">
+									<div className="h-7 w-7 rounded-lg bg-primary/10 flex items-center justify-center">
+										<Link2 className="h-3 w-3 text-primary" />
+									</div>
+									<div>
+										<h2 className="text-sm font-semibold">Course Mapping</h2>
+										<p className="text-[11px] text-muted-foreground">Map courses to program, batch and semester</p>
+									</div>
+								</div>
+							</div>
+
+							<div className="flex flex-col lg:flex-row gap-2 items-start lg:items-center justify-between">
+								<div className="flex flex-col sm:flex-row gap-2 w-full lg:w-auto">
+									<div className="relative w-full sm:w-[220px]">
+										<Search className="absolute left-2 top-1/2 h-3 w-3 -translate-y-1/2 text-muted-foreground" />
+										<Input value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} placeholder="Search…" className="pl-8 h-8 text-xs" />
+									</div>
+								</div>
+
+								<div className="flex gap-1 flex-wrap">
+									<Button variant="outline" size="sm" className="text-xs px-2 h-8" onClick={handleRefresh} disabled={loading}>
+										<RefreshCw className={`h-3 w-3 mr-1 ${loading ? 'animate-spin' : ''}`} />
+										Refresh
+									</Button>
+									<Button variant="outline" size="sm" className="text-xs px-2 h-8 bg-blue-50 hover:bg-blue-100 border-blue-200 text-blue-700" onClick={downloadReferenceSheet}>
+										<FileSpreadsheet className="h-3 w-3 mr-1" />
+										Reference
+									</Button>
+									<Button variant="outline" size="sm" className="text-xs px-2 h-8" onClick={downloadTemplate}>
+										<FileSpreadsheet className="h-3 w-3 mr-1" />
+										Template
+									</Button>
+									<Button variant="outline" size="sm" className="text-xs px-2 h-8" onClick={downloadJSON}>
+										Json
+									</Button>
+									<Button variant="outline" size="sm" className="text-xs px-2 h-8" onClick={downloadData}>
+										<Download className="h-3 w-3 mr-1" />
+										Download
+									</Button>
+									<Button variant="outline" size="sm" className="text-xs px-2 h-8" asChild>
+										<label>
+											<Upload className="h-3 w-3 mr-1" />
+											Upload
+											<input type="file" accept=".xlsx,.xls" onChange={handleFileUpload} className="hidden" />
+										</label>
+									</Button>
+									<Button size="sm" className="text-xs px-2 h-8" onClick={openAdd}>
+										<PlusCircle className="h-3 w-3 mr-1" />
+										Add
+									</Button>
+								</div>
+							</div>
+						</CardHeader>
+						<CardContent className="p-3 pt-0 flex-1 flex flex-col min-h-0">
+							<div className="rounded-md border overflow-hidden" style={{ height: "440px" }}>
+								<div className="h-full overflow-auto">
+									<Table>
+										<TableHeader className="sticky top-0 z-10 bg-slate-50 dark:bg-slate-900/50">
+											<TableRow>
+												<TableHead className="w-[110px] text-[11px]"><Button variant="ghost" size="sm" onClick={() => handleSort("institution_code")} className="h-auto p-0 font-medium hover:bg-transparent">Inst. Code <span className="ml-1">{getSortIcon("institution_code")}</span></Button></TableHead>
+												<TableHead className="w-[130px] text-[11px]"><Button variant="ghost" size="sm" onClick={() => handleSort("program_code")} className="h-auto p-0 font-medium hover:bg-transparent">Program <span className="ml-1">{getSortIcon("program_code")}</span></Button></TableHead>
+												<TableHead className="w-[120px] text-[11px]"><Button variant="ghost" size="sm" onClick={() => handleSort("course_code")} className="h-auto p-0 font-medium hover:bg-transparent">Course <span className="ml-1">{getSortIcon("course_code")}</span></Button></TableHead>
+												<TableHead className="w-[100px] text-[11px]"><Button variant="ghost" size="sm" onClick={() => handleSort("batch_code")} className="h-auto p-0 font-medium hover:bg-transparent">Batch <span className="ml-1">{getSortIcon("batch_code")}</span></Button></TableHead>
+												<TableHead className="w-[120px] text-[11px]">Group</TableHead>
+												<TableHead className="w-[100px] text-[11px]">Semester</TableHead>
+												<TableHead className="w-[80px] text-[11px]">Order</TableHead>
+												<TableHead className="w-[140px] text-[11px]">Internal (Max/Pass)</TableHead>
+												<TableHead className="w-[140px] text-[11px]">External (Max/Pass)</TableHead>
+												<TableHead className="w-[140px] text-[11px]">Total (Max/Pass)</TableHead>
+												<TableHead className="w-[120px] text-[11px] text-center">Actions</TableHead>
+											</TableRow>
+										</TableHeader>
+										<TableBody>
+											{loading ? (
+												<TableRow><TableCell colSpan={11} className="h-24 text-center text-[11px]">Loading…</TableCell></TableRow>
+											) : pageItems.length ? (
+												<>
+													{pageItems.map((row) => (
+														<TableRow key={row.id}>
+															<TableCell className="text-[11px] font-medium">{row.institution_code}</TableCell>
+															<TableCell className="text-[11px]">{row.program_code}</TableCell>
+															<TableCell className="text-[11px]">{row.course?.course_code || '-'}</TableCell>
+															<TableCell className="text-[11px]">{row.batch_code}</TableCell>
+															<TableCell className="text-[11px] text-muted-foreground">{row.course_group || '-'}</TableCell>
+															<TableCell className="text-[11px]">{row.semester_code || '-'}</TableCell>
+															<TableCell className="text-[11px]">{row.course_order}</TableCell>
+															<TableCell className="text-[11px]">{row.internal_max_mark}/{row.internal_pass_mark}</TableCell>
+															<TableCell className="text-[11px]">{row.external_max_mark}/{row.external_pass_mark}</TableCell>
+															<TableCell className="text-[11px]">{row.total_max_mark}/{row.total_pass_mark}</TableCell>
+															<TableCell>
+																<div className="flex items-center justify-center gap-1">
+																	<Button variant="outline" size="sm" className="h-7 w-7 p-0" onClick={() => openEdit(row)}><Edit className="h-3 w-3" /></Button>
+																	<AlertDialog>
+																		<AlertDialogTrigger asChild>
+																			<Button variant="outline" size="sm" className="h-7 w-7 p-0 text-red-600 hover:text-red-700 hover:bg-red-50"><Trash2 className="h-3 w-3" /></Button>
+																		</AlertDialogTrigger>
+																		<AlertDialogContent>
+																			<AlertDialogHeader>
+																				<AlertDialogTitle>Delete Mapping</AlertDialogTitle>
+																				<AlertDialogDescription>Are you sure you want to delete this mapping?</AlertDialogDescription>
+																			</AlertDialogHeader>
+																			<AlertDialogFooter>
+																				<AlertDialogCancel>Cancel</AlertDialogCancel>
+																				<AlertDialogAction onClick={() => remove(row.id)} className="bg-red-600 hover:bg-red-700">Delete</AlertDialogAction>
+																			</AlertDialogFooter>
+																		</AlertDialogContent>
+																	</AlertDialog>
+																</div>
+															</TableCell>
+														</TableRow>
+													))}
+												</>
+											) : (
+												<TableRow><TableCell colSpan={11} className="h-24 text-center text-[11px]">No data</TableCell></TableRow>
+											)}
+										</TableBody>
+									</Table>
+								</div>
+							</div>
+
+							<div className="flex items-center justify-between space-x-2 py-2 mt-2">
+								<div className="text-xs text-muted-foreground">Showing {filtered.length === 0 ? 0 : startIndex + 1}-{Math.min(endIndex, filtered.length)} of {filtered.length}</div>
+								<div className="flex items-center gap-2">
+									<Button variant="outline" size="sm" onClick={() => setCurrentPage((p) => Math.max(1, p - 1))} disabled={currentPage === 1} className="h-7 px-2 text-xs"><ChevronLeft className="h-3 w-3 mr-1" /> Previous</Button>
+									<div className="text-xs text-muted-foreground px-2">Page {currentPage} of {totalPages}</div>
+									<Button variant="outline" size="sm" onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))} disabled={currentPage >= totalPages} className="h-7 px-2 text-xs">Next <ChevronRight className="h-3 w-3 ml-1" /></Button>
+								</div>
+							</div>
+						</CardContent>
+					</Card>
+				</div>
+				<AppFooter />
+			</SidebarInset>
+
+			<Sheet open={sheetOpen} onOpenChange={(o) => { if (!o) resetForm(); setSheetOpen(o) }}>
+				<SheetContent className="sm:max-w-[800px] overflow-y-auto">
+					<SheetHeader className="pb-6 border-b bg-gradient-to-r from-blue-50 to-indigo-50 dark:from-blue-950/20 dark:to-indigo-950/20">
+						<div className="flex items-center justify-between">
+							<div className="flex items-center gap-3">
+								<div className="h-10 w-10 rounded-full bg-gradient-to-r from-blue-500 to-indigo-600 flex items-center justify-center">
+									<Link2 className="h-5 w-5 text-white" />
+								</div>
+								<div>
+									<SheetTitle className="text-2xl font-bold bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent">
+										{editing ? "Edit Mapping" : "Add Mapping"}
+									</SheetTitle>
+									<p className="text-sm text-muted-foreground mt-1">
+										{editing ? 'Update course mapping information' : 'Create a new course mapping'}
+									</p>
+								</div>
+							</div>
+						</div>
+					</SheetHeader>
+
+					<div className="mt-6 space-y-8">
+						{/* Basic Information Section */}
+						<div className="space-y-4">
+							<div className="flex items-center gap-3 pb-3 border-b border-blue-200 dark:border-blue-800">
+								<div className="h-8 w-8 rounded-lg bg-gradient-to-r from-green-500 to-emerald-600 flex items-center justify-center">
+									<BookText className="h-4 w-4 text-white" />
+								</div>
+								<h3 className="text-lg font-bold bg-gradient-to-r from-green-600 to-emerald-600 bg-clip-text text-transparent">Basic Information</h3>
+							</div>
+
+							<div className="grid grid-cols-2 gap-4">
+								<div className="space-y-2 col-span-2">
+									<Label className="text-sm font-semibold">Course <span className="text-red-500">*</span></Label>
+									<Select
+										value={formData.course_id}
+										onValueChange={(v) => {
+											const selectedCourse = courses.find(c => c.id === v)
+											if (selectedCourse) {
+												setFormData({
+													...formData,
+													course_id: v,
+													institution_code: selectedCourse.institution_code || ''
+												})
+											}
+										}}
+									>
+										<SelectTrigger className={`h-10 ${errors.course_id ? 'border-red-500' : ''}`}>
+											<SelectValue placeholder="Select course" />
+										</SelectTrigger>
+										<SelectContent>
+											{courses.map((course, idx) => (
+												<SelectItem key={course.id || `course-${idx}`} value={course.id}>
+													{course.course_code} - {course.course_title} ({course.institution_code})
+												</SelectItem>
+											))}
+										</SelectContent>
+									</Select>
+									{errors.course_id && <p className="text-xs text-red-500">{errors.course_id}</p>}
+								</div>
+								<div className="space-y-2">
+									<Label className="text-sm font-semibold">Program Code <span className="text-red-500">*</span></Label>
+									<Select value={formData.program_code} onValueChange={(v) => setFormData({ ...formData, program_code: v })}>
+										<SelectTrigger className={`h-10 ${errors.program_code ? 'border-red-500' : ''}`}>
+											<SelectValue placeholder="Select program" />
+										</SelectTrigger>
+										<SelectContent>
+											{programs.map((program, idx) => (
+												<SelectItem key={program.id || `program-${idx}`} value={program.program_code}>
+													{program.program_code} - {program.program_name}
+												</SelectItem>
+											))}
+										</SelectContent>
+									</Select>
+									{errors.program_code && <p className="text-xs text-red-500">{errors.program_code}</p>}
+								</div>
+								<div className="space-y-2">
+									<Label className="text-sm font-semibold">Batch Code <span className="text-red-500">*</span></Label>
+									<Select value={formData.batch_code} onValueChange={(v) => setFormData({ ...formData, batch_code: v })}>
+										<SelectTrigger className={`h-10 ${errors.batch_code ? 'border-red-500' : ''}`}>
+											<SelectValue placeholder="Select batch" />
+										</SelectTrigger>
+										<SelectContent>
+											{batches.map((batch, idx) => (
+												<SelectItem key={batch.id || batch.batch_code || `batch-${idx}`} value={batch.batch_code}>
+													{batch.batch_code} - {batch.batch_name}
+												</SelectItem>
+											))}
+										</SelectContent>
+									</Select>
+									{errors.batch_code && <p className="text-xs text-red-500">{errors.batch_code}</p>}
+								</div>
+								<div className="space-y-2">
+									<Label className="text-sm font-semibold">Course Group</Label>
+									<Input value={formData.course_group} onChange={(e) => setFormData({ ...formData, course_group: e.target.value })} className="h-10" />
+								</div>
+								<div className="space-y-2">
+									<Label className="text-sm font-semibold">Semester Code</Label>
+									<Select value={formData.semester_code} onValueChange={(v) => setFormData({ ...formData, semester_code: v })}>
+										<SelectTrigger className="h-10">
+											<SelectValue placeholder="Select semester" />
+										</SelectTrigger>
+										<SelectContent>
+											{semesters.map((sem, idx) => (
+												<SelectItem key={sem.id || sem.semester_code || `sem-${idx}`} value={sem.semester_code}>
+													{sem.semester_name}
+												</SelectItem>
+											))}
+										</SelectContent>
+									</Select>
+								</div>
+								<div className="space-y-2">
+									<Label className="text-sm font-semibold">Course Order</Label>
+									<Input type="number" inputMode="numeric" value={formData.course_order} onChange={(e) => setFormData({ ...formData, course_order: Number(e.target.value || 0) })} className={`h-10 ${errors.course_order ? 'border-red-500' : ''}`} />
+									{errors.course_order && <p className="text-xs text-red-500">{errors.course_order}</p>}
+								</div>
+							</div>
+						</div>
+
+						{/* Marks Configuration Section */}
+						<div className="space-y-4">
+							<div className="flex items-center gap-3 pb-3 border-b border-purple-200 dark:border-purple-800">
+								<div className="h-8 w-8 rounded-lg bg-gradient-to-r from-purple-500 to-pink-600 flex items-center justify-center">
+									<BookText className="h-4 w-4 text-white" />
+								</div>
+								<h3 className="text-lg font-bold bg-gradient-to-r from-purple-600 to-pink-600 bg-clip-text text-transparent">Marks Configuration</h3>
+							</div>
+
+							<div className="grid grid-cols-2 gap-4">
+								<div className="space-y-2">
+									<Label className="text-sm font-semibold">Internal (Max / Pass)</Label>
+									<div className="grid grid-cols-2 gap-2">
+										<div className="space-y-2">
+											<Input type="number" inputMode="numeric" value={formData.internal_max_mark} onChange={(e) => setFormData({ ...formData, internal_max_mark: Number(e.target.value || 0) })} className={`h-10 ${errors.internal_max_mark ? 'border-red-500' : ''}`} placeholder="Max" />
+											{errors.internal_max_mark && <p className="text-xs text-red-500">{errors.internal_max_mark}</p>}
+										</div>
+										<div className="space-y-2">
+											<Input type="number" inputMode="numeric" value={formData.internal_pass_mark} onChange={(e) => setFormData({ ...formData, internal_pass_mark: Number(e.target.value || 0) })} className={`h-10 ${errors.internal_pass_mark ? 'border-red-500' : ''}`} placeholder="Pass" />
+											{errors.internal_pass_mark && <p className="text-xs text-red-500">{errors.internal_pass_mark}</p>}
+										</div>
+									</div>
+								</div>
+								<div className="space-y-2">
+									<Label className="text-sm font-semibold">External (Max / Pass)</Label>
+									<div className="grid grid-cols-2 gap-2">
+										<div className="space-y-2">
+											<Input type="number" inputMode="numeric" value={formData.external_max_mark} onChange={(e) => setFormData({ ...formData, external_max_mark: Number(e.target.value || 0) })} className={`h-10 ${errors.external_max_mark ? 'border-red-500' : ''}`} placeholder="Max" />
+											{errors.external_max_mark && <p className="text-xs text-red-500">{errors.external_max_mark}</p>}
+										</div>
+										<div className="space-y-2">
+											<Input type="number" inputMode="numeric" value={formData.external_pass_mark} onChange={(e) => setFormData({ ...formData, external_pass_mark: Number(e.target.value || 0) })} className={`h-10 ${errors.external_pass_mark ? 'border-red-500' : ''}`} placeholder="Pass" />
+											{errors.external_pass_mark && <p className="text-xs text-red-500">{errors.external_pass_mark}</p>}
+										</div>
+									</div>
+								</div>
+								<div className="space-y-2 col-span-2">
+									<Label className="text-sm font-semibold">Total (Max / Pass)</Label>
+									<div className="grid grid-cols-2 gap-2">
+										<div className="space-y-2">
+											<Input type="number" inputMode="numeric" value={formData.total_max_mark} onChange={(e) => setFormData({ ...formData, total_max_mark: Number(e.target.value || 0) })} className={`h-10 ${errors.total_max_mark ? 'border-red-500' : ''}`} placeholder="Max" />
+											{errors.total_max_mark && <p className="text-xs text-red-500">{errors.total_max_mark}</p>}
+										</div>
+										<div className="space-y-2">
+											<Input type="number" inputMode="numeric" value={formData.total_pass_mark} onChange={(e) => setFormData({ ...formData, total_pass_mark: Number(e.target.value || 0) })} className={`h-10 ${errors.total_pass_mark ? 'border-red-500' : ''}`} placeholder="Pass" />
+											{errors.total_pass_mark && <p className="text-xs text-red-500">{errors.total_pass_mark}</p>}
+										</div>
+									</div>
+								</div>
+							</div>
+						</div>
+
+						{/* Status Section */}
+						<div className="space-y-4">
+							<div className="flex items-center gap-3 pb-3 border-b border-orange-200 dark:border-orange-800">
+								<div className="h-8 w-8 rounded-lg bg-gradient-to-r from-orange-500 to-amber-600 flex items-center justify-center">
+									<BookText className="h-4 w-4 text-white" />
+								</div>
+								<h3 className="text-lg font-bold bg-gradient-to-r from-orange-600 to-amber-600 bg-clip-text text-transparent">Status</h3>
+							</div>
+
+							<div className="flex items-center justify-between p-4 bg-slate-50 dark:bg-slate-900/50 rounded-lg border">
+								<div className="space-y-0.5">
+									<Label className="text-sm font-semibold">Active Status</Label>
+									<p className="text-xs text-muted-foreground">Enable or disable this course mapping</p>
+								</div>
+								<Switch
+									checked={formData.is_active}
+									onCheckedChange={(checked) => setFormData({ ...formData, is_active: checked })}
+								/>
+							</div>
+						</div>
+
+						<div className="pt-2 flex justify-end gap-3">
+							<Button variant="outline" size="sm" className="h-10 px-6" onClick={() => { setSheetOpen(false); resetForm() }}>Cancel</Button>
+							<Button size="sm" className="h-10 px-6" onClick={save}>{editing ? "Update Mapping" : "Create Mapping"}</Button>
+						</div>
+					</div>
+				</SheetContent>
+			</Sheet>
+
+			{/* Error Dialog */}
+			<AlertDialog open={showErrorDialog} onOpenChange={setShowErrorDialog}>
+				<AlertDialogContent className="max-w-3xl max-h-[80vh] overflow-hidden flex flex-col">
+					<AlertDialogHeader>
+						<AlertDialogTitle className="flex items-center gap-2 text-red-600">
+							<AlertTriangle className="h-5 w-5" />
+							Upload Errors ({uploadErrors.length} rows failed)
+						</AlertDialogTitle>
+						<AlertDialogDescription>
+							The following rows contain validation errors. Please correct them and try again.
+						</AlertDialogDescription>
+					</AlertDialogHeader>
+
+					<div className="flex-1 overflow-y-auto border rounded-lg p-4 bg-muted/30 my-4">
+						<div className="space-y-2">
+							{uploadErrors.map((error, index) => (
+								<div key={index} className="p-3 bg-background border border-red-200 rounded-md">
+									<p className="text-sm font-mono text-red-600">{error}</p>
+								</div>
+							))}
+						</div>
+					</div>
+
+					<AlertDialogFooter>
+						<AlertDialogAction onClick={() => setShowErrorDialog(false)}>
+							Close
+						</AlertDialogAction>
+					</AlertDialogFooter>
+				</AlertDialogContent>
+			</AlertDialog>
+		</SidebarProvider>
+	)
+}

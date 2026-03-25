@@ -1,0 +1,1798 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Created with Jaspersoft Studio version 6.6.0.final using JasperReports Library version 6.6.0  -->
+<jasperReport xmlns="http://jasperreports.sourceforge.net/jasperreports" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://jasperreports.sourceforge.net/jasperreports http://jasperreports.sourceforge.net/xsd/jasperreport.xsd" name="JKKN MARK STATEMENT" pageWidth="595" pageHeight="842" columnWidth="555" leftMargin="20" rightMargin="20" topMargin="20" bottomMargin="20" uuid="ab30c95b-478a-4166-b6f3-875fd3ee4dbf">
+	<property name="com.jaspersoft.studio.data.defaultdataadapter" value="One Empty Record"/>
+	<property name="background.image.path" value="C:\Users\Idrees\Videos\JKKN\Screenshot_1.png"/>
+	<property name="background.image.widht" value="601"/>
+	<property name="background.image.height" value="841"/>
+	<property name="background.image.y" value="10"/>
+	<property name="background.image.x" value="10"/>
+	<subDataset name="EXAMS" uuid="b96c5fa0-899a-4e6e-971e-90ef46280ffa">
+		<property name="com.jaspersoft.studio.data.defaultdataadapter" value="JKKN MARK STATEMENT"/>
+		<queryString language="JSON">
+			<![CDATA[Exams]]>
+		</queryString>
+		<field name="ExTypeId" class="java.lang.String">
+			<property name="net.sf.jasperreports.json.field.expression" value="ExTypeId"/>
+			<fieldDescription><![CDATA[ExTypeId]]></fieldDescription>
+		</field>
+		<field name="ExTypeNm" class="java.lang.String">
+			<property name="net.sf.jasperreports.json.field.expression" value="ExTypeNm"/>
+			<fieldDescription><![CDATA[ExTypeNm]]></fieldDescription>
+		</field>
+		<field name="SchdlId" class="java.lang.String">
+			<property name="net.sf.jasperreports.json.field.expression" value="SchdlId"/>
+			<fieldDescription><![CDATA[SchdlId]]></fieldDescription>
+		</field>
+		<field name="SubjId" class="java.lang.String">
+			<property name="net.sf.jasperreports.json.field.expression" value="SubjId"/>
+			<fieldDescription><![CDATA[SubjId]]></fieldDescription>
+		</field>
+		<field name="MExId" class="java.lang.String">
+			<property name="net.sf.jasperreports.json.field.expression" value="MExId"/>
+			<fieldDescription><![CDATA[MExId]]></fieldDescription>
+		</field>
+		<field name="MExNm" class="java.lang.String">
+			<property name="net.sf.jasperreports.json.field.expression" value="MExNm"/>
+			<fieldDescription><![CDATA[MExNm]]></fieldDescription>
+		</field>
+		<field name="ExCode" class="java.lang.String">
+			<property name="net.sf.jasperreports.json.field.expression" value="ExCode"/>
+			<fieldDescription><![CDATA[ExCode]]></fieldDescription>
+		</field>
+		<field name="ExSubjId" class="java.lang.String">
+			<property name="net.sf.jasperreports.json.field.expression" value="ExSubjId"/>
+			<fieldDescription><![CDATA[ExSubjId]]></fieldDescription>
+		</field>
+		<field name="ExSubjNm" class="java.lang.String">
+			<property name="net.sf.jasperreports.json.field.expression" value="ExSubjNm"/>
+			<fieldDescription><![CDATA[ExSubjNm]]></fieldDescription>
+		</field>
+		<field name="Mark" class="java.lang.String">
+			<property name="net.sf.jasperreports.json.field.expression" value="Mark"/>
+			<fieldDescription><![CDATA[Mark]]></fieldDescription>
+		</field>
+		<field name="MaxMark" class="java.lang.String">
+			<property name="net.sf.jasperreports.json.field.expression" value="MaxMark"/>
+			<fieldDescription><![CDATA[MaxMark]]></fieldDescription>
+		</field>
+		<field name="PassMark" class="java.lang.String">
+			<property name="net.sf.jasperreports.json.field.expression" value="PassMark"/>
+			<fieldDescription><![CDATA[PassMark]]></fieldDescription>
+		</field>
+		<field name="PMax" class="java.lang.String">
+			<property name="net.sf.jasperreports.json.field.expression" value="PMax"/>
+			<fieldDescription><![CDATA[PMax]]></fieldDescription>
+		</field>
+		<field name="IsAbs" class="java.lang.String">
+			<property name="net.sf.jasperreports.json.field.expression" value="IsAbs"/>
+			<fieldDescription><![CDATA[IsAbs]]></fieldDescription>
+		</field>
+		<field name="IsMalprct" class="java.lang.String">
+			<property name="net.sf.jasperreports.json.field.expression" value="IsMalprct"/>
+			<fieldDescription><![CDATA[IsMalprct]]></fieldDescription>
+		</field>
+		<field name="isInelgbl" class="java.lang.String">
+			<property name="net.sf.jasperreports.json.field.expression" value="isInelgbl"/>
+			<fieldDescription><![CDATA[isInelgbl]]></fieldDescription>
+		</field>
+		<field name="Rson" class="java.lang.String">
+			<property name="net.sf.jasperreports.json.field.expression" value="Rson"/>
+			<fieldDescription><![CDATA[Rson]]></fieldDescription>
+		</field>
+		<field name="isTermFail" class="java.lang.String">
+			<property name="net.sf.jasperreports.json.field.expression" value="isTermFail"/>
+			<fieldDescription><![CDATA[isTermFail]]></fieldDescription>
+		</field>
+		<field name="isFinalFail" class="java.lang.String">
+			<property name="net.sf.jasperreports.json.field.expression" value="isFinalFail"/>
+			<fieldDescription><![CDATA[isFinalFail]]></fieldDescription>
+		</field>
+		<field name="AssTyp" class="java.lang.String">
+			<property name="net.sf.jasperreports.json.field.expression" value="AssTyp"/>
+			<fieldDescription><![CDATA[AssTyp]]></fieldDescription>
+		</field>
+		<field name="MGPNm" class="java.lang.String">
+			<property name="net.sf.jasperreports.json.field.expression" value="MGPNm"/>
+			<fieldDescription><![CDATA[MGPNm]]></fieldDescription>
+		</field>
+		<field name="MPap" class="java.lang.String">
+			<property name="net.sf.jasperreports.json.field.expression" value="MPap"/>
+			<fieldDescription><![CDATA[MPap]]></fieldDescription>
+		</field>
+		<field name="MGPCD" class="java.lang.String">
+			<property name="net.sf.jasperreports.json.field.expression" value="MGPCD"/>
+			<fieldDescription><![CDATA[MGPCD]]></fieldDescription>
+		</field>
+		<field name="AssmentWise" class="java.lang.String">
+			<property name="net.sf.jasperreports.json.field.expression" value="AssmentWise"/>
+			<fieldDescription><![CDATA[AssmentWise]]></fieldDescription>
+		</field>
+		<field name="MnExams" class="java.lang.String">
+			<property name="net.sf.jasperreports.json.field.expression" value="MnExams"/>
+			<fieldDescription><![CDATA[MnExams]]></fieldDescription>
+		</field>
+		<field name="isThPrc" class="java.lang.String">
+			<property name="net.sf.jasperreports.json.field.expression" value="isThPrc"/>
+			<fieldDescription><![CDATA[isThPrc]]></fieldDescription>
+		</field>
+		<field name="Grd" class="java.lang.String">
+			<property name="net.sf.jasperreports.json.field.expression" value="Grd"/>
+			<fieldDescription><![CDATA[Grd]]></fieldDescription>
+		</field>
+		<field name="GrdPt" class="java.lang.String">
+			<property name="net.sf.jasperreports.json.field.expression" value="GrdPt"/>
+			<fieldDescription><![CDATA[GrdPt]]></fieldDescription>
+		</field>
+		<field name="Crdt" class="java.lang.String">
+			<property name="net.sf.jasperreports.json.field.expression" value="Crdt"/>
+			<fieldDescription><![CDATA[Crdt]]></fieldDescription>
+		</field>
+		<field name="rgltnId" class="java.lang.String">
+			<property name="net.sf.jasperreports.json.field.expression" value="rgltnId"/>
+			<fieldDescription><![CDATA[rgltnId]]></fieldDescription>
+		</field>
+		<field name="regGrpId" class="java.lang.String">
+			<property name="net.sf.jasperreports.json.field.expression" value="regGrpId"/>
+			<fieldDescription><![CDATA[regGrpId]]></fieldDescription>
+		</field>
+		<field name="fnlMinPer" class="java.lang.String">
+			<property name="net.sf.jasperreports.json.field.expression" value="fnlMinPer"/>
+			<fieldDescription><![CDATA[fnlMinPer]]></fieldDescription>
+		</field>
+		<field name="Moderate" class="java.lang.String">
+			<property name="net.sf.jasperreports.json.field.expression" value="Moderate"/>
+			<fieldDescription><![CDATA[Moderate]]></fieldDescription>
+		</field>
+		<field name="ExSubDecrptn" class="java.lang.String">
+			<property name="net.sf.jasperreports.json.field.expression" value="ExSubDecrptn"/>
+			<fieldDescription><![CDATA[ExSubDecrptn]]></fieldDescription>
+		</field>
+		<field name="ExSubAssmntTypNm" class="java.lang.String">
+			<property name="net.sf.jasperreports.json.field.expression" value="ExSubAssmntTypNm"/>
+			<fieldDescription><![CDATA[ExSubAssmntTypNm]]></fieldDescription>
+		</field>
+		<field name="gpaNtCal" class="java.lang.String">
+			<property name="net.sf.jasperreports.json.field.expression" value="gpaNtCal"/>
+			<fieldDescription><![CDATA[gpaNtCal]]></fieldDescription>
+		</field>
+		<field name="expdSub" class="java.lang.String">
+			<property name="net.sf.jasperreports.json.field.expression" value="expdSub"/>
+			<fieldDescription><![CDATA[expdSub]]></fieldDescription>
+		</field>
+		<field name="acdSub" class="java.lang.String">
+			<property name="net.sf.jasperreports.json.field.expression" value="acdSub"/>
+			<fieldDescription><![CDATA[acdSub]]></fieldDescription>
+		</field>
+		<field name="ntCgpa" class="java.lang.String">
+			<property name="net.sf.jasperreports.json.field.expression" value="ntCgpa"/>
+			<fieldDescription><![CDATA[ntCgpa]]></fieldDescription>
+		</field>
+		<field name="grdCrt" class="java.lang.String">
+			<property name="net.sf.jasperreports.json.field.expression" value="grdCrt"/>
+			<fieldDescription><![CDATA[grdCrt]]></fieldDescription>
+		</field>
+		<field name="isSpltCrDt" class="java.lang.String">
+			<property name="net.sf.jasperreports.json.field.expression" value="isSpltCrDt"/>
+			<fieldDescription><![CDATA[isSpltCrDt]]></fieldDescription>
+		</field>
+		<field name="exmYr" class="java.lang.String">
+			<property name="net.sf.jasperreports.json.field.expression" value="exmYr"/>
+			<fieldDescription><![CDATA[exmYr]]></fieldDescription>
+		</field>
+		<field name="spltCrdDtls" class="java.lang.String">
+			<property name="net.sf.jasperreports.json.field.expression" value="spltCrdDtls"/>
+			<fieldDescription><![CDATA[spltCrdDtls]]></fieldDescription>
+		</field>
+		<field name="CommonSubSts" class="java.lang.String">
+			<property name="net.sf.jasperreports.json.field.expression" value="CommonSubSts"/>
+			<fieldDescription><![CDATA[CommonSubSts]]></fieldDescription>
+		</field>
+		<field name="MulPapSubsts" class="java.lang.String">
+			<property name="net.sf.jasperreports.json.field.expression" value="MulPapSubsts"/>
+			<fieldDescription><![CDATA[MulPapSubsts]]></fieldDescription>
+		</field>
+		<field name="MulPapGrpNm" class="java.lang.String">
+			<property name="net.sf.jasperreports.json.field.expression" value="MulPapGrpNm"/>
+			<fieldDescription><![CDATA[MulPapGrpNm]]></fieldDescription>
+		</field>
+		<field name="MulPapGrpCdNm" class="java.lang.String">
+			<property name="net.sf.jasperreports.json.field.expression" value="MulPapGrpCdNm"/>
+			<fieldDescription><![CDATA[MulPapGrpCdNm]]></fieldDescription>
+		</field>
+		<field name="resultSts" class="java.lang.String">
+			<property name="net.sf.jasperreports.json.field.expression" value="resultSts"/>
+			<fieldDescription><![CDATA[resultSts]]></fieldDescription>
+		</field>
+		<field name="attendPercnt" class="java.lang.String">
+			<property name="net.sf.jasperreports.json.field.expression" value="attendPercnt"/>
+			<fieldDescription><![CDATA[attendPercnt]]></fieldDescription>
+		</field>
+		<field name="SubjCd" class="java.lang.String">
+			<property name="net.sf.jasperreports.json.field.expression" value="SubjCd"/>
+			<fieldDescription><![CDATA[SubjCd]]></fieldDescription>
+		</field>
+		<field name="SubjNm" class="java.lang.String">
+			<property name="net.sf.jasperreports.json.field.expression" value="SubjNm"/>
+			<fieldDescription><![CDATA[SubjNm]]></fieldDescription>
+		</field>
+		<field name="SubjDesc" class="java.lang.String">
+			<property name="net.sf.jasperreports.json.field.expression" value="SubjDesc"/>
+			<fieldDescription><![CDATA[SubjDesc]]></fieldDescription>
+		</field>
+		<field name="Type" class="java.lang.String">
+			<property name="net.sf.jasperreports.json.field.expression" value="Type"/>
+			<fieldDescription><![CDATA[Type]]></fieldDescription>
+		</field>
+		<field name="CatNm" class="java.lang.String">
+			<property name="net.sf.jasperreports.json.field.expression" value="CatNm"/>
+			<fieldDescription><![CDATA[CatNm]]></fieldDescription>
+		</field>
+		<field name="subCatNm" class="java.lang.String">
+			<property name="net.sf.jasperreports.json.field.expression" value="subCatNm"/>
+			<fieldDescription><![CDATA[subCatNm]]></fieldDescription>
+		</field>
+		<field name="DOrder" class="java.lang.String">
+			<property name="net.sf.jasperreports.json.field.expression" value="DOrder"/>
+			<fieldDescription><![CDATA[DOrder]]></fieldDescription>
+		</field>
+		<field name="SemNm" class="java.lang.String">
+			<property name="net.sf.jasperreports.json.field.expression" value="SemNm"/>
+			<fieldDescription><![CDATA[SemNm]]></fieldDescription>
+		</field>
+		<field name="exSemID" class="java.lang.String">
+			<property name="net.sf.jasperreports.json.field.expression" value="exSemID"/>
+			<fieldDescription><![CDATA[exSemID]]></fieldDescription>
+		</field>
+		<field name="result" class="java.lang.String">
+			<property name="net.sf.jasperreports.json.field.expression" value="result"/>
+			<fieldDescription><![CDATA[result]]></fieldDescription>
+		</field>
+		<field name="Desc" class="java.lang.String">
+			<property name="net.sf.jasperreports.json.field.expression" value="Desc"/>
+			<fieldDescription><![CDATA[Desc]]></fieldDescription>
+		</field>
+		<field name="subLevel" class="java.lang.String">
+			<property name="net.sf.jasperreports.json.field.expression" value="subLevel"/>
+			<fieldDescription><![CDATA[subLevel]]></fieldDescription>
+		</field>
+		<field name="mulPapSubDtls" class="java.lang.String">
+			<property name="net.sf.jasperreports.json.field.expression" value="mulPapSubDtls"/>
+			<fieldDescription><![CDATA[mulPapSubDtls]]></fieldDescription>
+		</field>
+		<field name="rsltStsWrd" class="java.lang.String">
+			<property name="net.sf.jasperreports.json.field.expression" value="rsltStsWrd"/>
+			<fieldDescription><![CDATA[rsltStsWrd]]></fieldDescription>
+		</field>
+		<field name="finlResltPblcDate" class="java.lang.String">
+			<property name="net.sf.jasperreports.json.field.expression" value="finlResltPblcDate"/>
+			<fieldDescription><![CDATA[finlResltPblcDate]]></fieldDescription>
+		</field>
+		<field name="examinationName" class="java.lang.String">
+			<property name="net.sf.jasperreports.json.field.expression" value="examinationName"/>
+			<fieldDescription><![CDATA[examinationName]]></fieldDescription>
+		</field>
+		<field name="examinationCode" class="java.lang.String">
+			<property name="net.sf.jasperreports.json.field.expression" value="examinationCode"/>
+			<fieldDescription><![CDATA[examinationCode]]></fieldDescription>
+		</field>
+		<field name="examinationDesc" class="java.lang.String">
+			<property name="net.sf.jasperreports.json.field.expression" value="examinationDesc"/>
+			<fieldDescription><![CDATA[examinationDesc]]></fieldDescription>
+		</field>
+		<field name="IAMaxMarks" class="java.lang.String">
+			<property name="net.sf.jasperreports.json.field.expression" value="IAMaxMarks"/>
+			<fieldDescription><![CDATA[IAMaxMarks]]></fieldDescription>
+		</field>
+		<field name="IAMinMarks" class="java.lang.String">
+			<property name="net.sf.jasperreports.json.field.expression" value="IAMinMarks"/>
+			<fieldDescription><![CDATA[IAMinMarks]]></fieldDescription>
+		</field>
+		<field name="IASecMarks" class="java.lang.String">
+			<property name="net.sf.jasperreports.json.field.expression" value="IASecMarks"/>
+			<fieldDescription><![CDATA[IASecMarks]]></fieldDescription>
+		</field>
+		<field name="EAMaxMarks" class="java.lang.String">
+			<property name="net.sf.jasperreports.json.field.expression" value="EAMaxMarks"/>
+			<fieldDescription><![CDATA[EAMaxMarks]]></fieldDescription>
+		</field>
+		<field name="EAMinMarks" class="java.lang.String">
+			<property name="net.sf.jasperreports.json.field.expression" value="EAMinMarks"/>
+			<fieldDescription><![CDATA[EAMinMarks]]></fieldDescription>
+		</field>
+		<field name="EASecMarks" class="java.lang.String">
+			<property name="net.sf.jasperreports.json.field.expression" value="EASecMarks"/>
+			<fieldDescription><![CDATA[EASecMarks]]></fieldDescription>
+		</field>
+		<field name="AssmntMaxMarks" class="java.lang.String">
+			<property name="net.sf.jasperreports.json.field.expression" value="AssmntMaxMarks"/>
+			<fieldDescription><![CDATA[AssmntMaxMarks]]></fieldDescription>
+		</field>
+		<field name="AssmntMinMarks" class="java.lang.String">
+			<property name="net.sf.jasperreports.json.field.expression" value="AssmntMinMarks"/>
+			<fieldDescription><![CDATA[AssmntMinMarks]]></fieldDescription>
+		</field>
+		<field name="subTypNm" class="java.lang.String">
+			<property name="net.sf.jasperreports.json.field.expression" value="subTypNm"/>
+			<fieldDescription><![CDATA[subTypNm]]></fieldDescription>
+		</field>
+		<field name="isCoschl" class="java.lang.String">
+			<property name="net.sf.jasperreports.json.field.expression" value="isCoschl"/>
+			<fieldDescription><![CDATA[isCoschl]]></fieldDescription>
+		</field>
+		<field name="IANumPnt" class="java.lang.String">
+			<property name="net.sf.jasperreports.json.field.expression" value="IANumPnt"/>
+			<fieldDescription><![CDATA[IANumPnt]]></fieldDescription>
+		</field>
+		<field name="EANumPnt" class="java.lang.String">
+			<property name="net.sf.jasperreports.json.field.expression" value="EANumPnt"/>
+			<fieldDescription><![CDATA[EANumPnt]]></fieldDescription>
+		</field>
+		<field name="FANumPnt" class="java.lang.String">
+			<property name="net.sf.jasperreports.json.field.expression" value="FANumPnt"/>
+			<fieldDescription><![CDATA[FANumPnt]]></fieldDescription>
+		</field>
+		<field name="Wcomb" class="java.lang.String">
+			<property name="net.sf.jasperreports.json.field.expression" value="Wcomb"/>
+			<fieldDescription><![CDATA[Wcomb]]></fieldDescription>
+		</field>
+		<field name="remarks" class="java.lang.String">
+			<property name="net.sf.jasperreports.json.field.expression" value="remarks"/>
+			<fieldDescription><![CDATA[remarks]]></fieldDescription>
+		</field>
+		<field name="IAMrkPercnt" class="java.lang.String">
+			<property name="net.sf.jasperreports.json.field.expression" value="IAMrkPercnt"/>
+			<fieldDescription><![CDATA[IAMrkPercnt]]></fieldDescription>
+		</field>
+		<field name="EAMrkPercnt" class="java.lang.String">
+			<property name="net.sf.jasperreports.json.field.expression" value="EAMrkPercnt"/>
+			<fieldDescription><![CDATA[EAMrkPercnt]]></fieldDescription>
+		</field>
+		<field name="isInternalOnly" class="java.lang.String">
+			<property name="net.sf.jasperreports.json.field.expression" value="isInternalOnly"/>
+			<fieldDescription><![CDATA[isInternalOnly]]></fieldDescription>
+		</field>
+		<field name="Wcombined" class="java.lang.String">
+			<property name="net.sf.jasperreports.json.field.expression" value="Wcombined"/>
+			<fieldDescription><![CDATA[Wcombined]]></fieldDescription>
+		</field>
+		<field name="curSemWcombined" class="java.lang.String">
+			<property name="net.sf.jasperreports.json.field.expression" value="curSemWcombined"/>
+			<fieldDescription><![CDATA[curSemWcombined]]></fieldDescription>
+		</field>
+		<field name="assMnt1MxMrk" class="java.lang.String">
+			<property name="net.sf.jasperreports.json.field.expression" value="assMnt1MxMrk"/>
+			<fieldDescription><![CDATA[assMnt1MxMrk]]></fieldDescription>
+		</field>
+		<field name="assMnt1Prcnt" class="java.lang.String">
+			<property name="net.sf.jasperreports.json.field.expression" value="assMnt1Prcnt"/>
+			<fieldDescription><![CDATA[assMnt1Prcnt]]></fieldDescription>
+		</field>
+		<field name="assMnt2MxMrk" class="java.lang.String">
+			<property name="net.sf.jasperreports.json.field.expression" value="assMnt2MxMrk"/>
+			<fieldDescription><![CDATA[assMnt2MxMrk]]></fieldDescription>
+		</field>
+		<field name="assMnt2Prcnt" class="java.lang.String">
+			<property name="net.sf.jasperreports.json.field.expression" value="assMnt2Prcnt"/>
+			<fieldDescription><![CDATA[assMnt2Prcnt]]></fieldDescription>
+		</field>
+		<sortField name="DOrder"/>
+		<sortField name="CatNm"/>
+	</subDataset>
+	<subDataset name="rathnam1.1" uuid="4028c20c-41e8-4845-ae8f-14bb3e347df9">
+		<property name="com.jaspersoft.studio.data.defaultdataadapter" value="Rathnam_ms_v2"/>
+		<queryString language="JSON">
+			<![CDATA[partWise]]>
+		</queryString>
+		<field name="currCA" class="java.lang.String">
+			<property name="net.sf.jasperreports.json.field.expression" value="currCA"/>
+			<fieldDescription><![CDATA[currCA]]></fieldDescription>
+		</field>
+		<field name="currCP" class="java.lang.String">
+			<property name="net.sf.jasperreports.json.field.expression" value="currCP"/>
+			<fieldDescription><![CDATA[currCP]]></fieldDescription>
+		</field>
+		<field name="currGP" class="java.lang.String">
+			<property name="net.sf.jasperreports.json.field.expression" value="currGP"/>
+			<fieldDescription><![CDATA[currGP]]></fieldDescription>
+		</field>
+		<field name="currGPA" class="java.lang.String">
+			<property name="net.sf.jasperreports.json.field.expression" value="currGPA"/>
+			<fieldDescription><![CDATA[currGPA]]></fieldDescription>
+		</field>
+		<field name="arrCA" class="java.lang.String">
+			<property name="net.sf.jasperreports.json.field.expression" value="arrCA"/>
+			<fieldDescription><![CDATA[arrCA]]></fieldDescription>
+		</field>
+		<field name="arrCP" class="java.lang.String">
+			<property name="net.sf.jasperreports.json.field.expression" value="arrCP"/>
+			<fieldDescription><![CDATA[arrCP]]></fieldDescription>
+		</field>
+		<field name="arrGP" class="java.lang.String">
+			<property name="net.sf.jasperreports.json.field.expression" value="arrGP"/>
+			<fieldDescription><![CDATA[arrGP]]></fieldDescription>
+		</field>
+		<field name="arrGPA" class="java.lang.String">
+			<property name="net.sf.jasperreports.json.field.expression" value="arrGPA"/>
+			<fieldDescription><![CDATA[arrGPA]]></fieldDescription>
+		</field>
+		<field name="part" class="java.lang.String">
+			<property name="net.sf.jasperreports.json.field.expression" value="part"/>
+			<fieldDescription><![CDATA[part]]></fieldDescription>
+		</field>
+		<sortField name="part"/>
+	</subDataset>
+	<queryString language="JSON">
+		<![CDATA[]]>
+	</queryString>
+	<field name="Exams" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="Exams"/>
+		<fieldDescription><![CDATA[Exams]]></fieldDescription>
+	</field>
+	<field name="studFristNm" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="studFristNm"/>
+		<fieldDescription><![CDATA[studFristNm]]></fieldDescription>
+	</field>
+	<field name="studMidNm" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="studMidNm"/>
+		<fieldDescription><![CDATA[studMidNm]]></fieldDescription>
+	</field>
+	<field name="studLastNm" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="studLastNm"/>
+		<fieldDescription><![CDATA[studLastNm]]></fieldDescription>
+	</field>
+	<field name="studRegNum" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="studRegNum"/>
+		<fieldDescription><![CDATA[studRegNum]]></fieldDescription>
+	</field>
+	<field name="studRollNum" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="studRollNum"/>
+		<fieldDescription><![CDATA[studRollNum]]></fieldDescription>
+	</field>
+	<field name="studFathFristNm" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="studFathFristNm"/>
+		<fieldDescription><![CDATA[studFathFristNm]]></fieldDescription>
+	</field>
+	<field name="studFathMidNm" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="studFathMidNm"/>
+		<fieldDescription><![CDATA[studFathMidNm]]></fieldDescription>
+	</field>
+	<field name="studFathLastNm" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="studFathLastNm"/>
+		<fieldDescription><![CDATA[studFathLastNm]]></fieldDescription>
+	</field>
+	<field name="studMothFristNm" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="studMothFristNm"/>
+		<fieldDescription><![CDATA[studMothFristNm]]></fieldDescription>
+	</field>
+	<field name="studMothMidNm" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="studMothMidNm"/>
+		<fieldDescription><![CDATA[studMothMidNm]]></fieldDescription>
+	</field>
+	<field name="studGurdFristNm" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="studGurdFristNm"/>
+		<fieldDescription><![CDATA[studGurdFristNm]]></fieldDescription>
+	</field>
+	<field name="studMediumOfInst" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="studMediumOfInst"/>
+		<fieldDescription><![CDATA[studMediumOfInst]]></fieldDescription>
+	</field>
+	<field name="studPhoto" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="studPhoto"/>
+		<fieldDescription><![CDATA[studPhoto]]></fieldDescription>
+	</field>
+	<field name="studCrsComplDate" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="studCrsComplDate"/>
+		<fieldDescription><![CDATA[studCrsComplDate]]></fieldDescription>
+	</field>
+	<field name="studCrsComplDateYear" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="studCrsComplDateYear"/>
+		<fieldDescription><![CDATA[studCrsComplDateYear]]></fieldDescription>
+	</field>
+	<field name="studCrsComplDateMnYear" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="studCrsComplDateMnYear"/>
+		<fieldDescription><![CDATA[studCrsComplDateMnYear]]></fieldDescription>
+	</field>
+	<field name="studCrsComplDateMnYrUpCe" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="studCrsComplDateMnYrUpCe"/>
+		<fieldDescription><![CDATA[studCrsComplDateMnYrUpCe]]></fieldDescription>
+	</field>
+	<field name="studCrsComplGrcDate" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="studCrsComplGrcDate"/>
+		<fieldDescription><![CDATA[studCrsComplGrcDate]]></fieldDescription>
+	</field>
+	<field name="studCrsComplGrcDateYr" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="studCrsComplGrcDateYr"/>
+		<fieldDescription><![CDATA[studCrsComplGrcDateYr]]></fieldDescription>
+	</field>
+	<field name="studCrsComplGrcDateMnYr" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="studCrsComplGrcDateMnYr"/>
+		<fieldDescription><![CDATA[studCrsComplGrcDateMnYr]]></fieldDescription>
+	</field>
+	<field name="studCrsComplGrcDateMnYrUpCe" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="studCrsComplGrcDateMnYrUpCe"/>
+		<fieldDescription><![CDATA[studCrsComplGrcDateMnYrUpCe]]></fieldDescription>
+	</field>
+	<field name="studAdmsnDate" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="studAdmsnDate"/>
+		<fieldDescription><![CDATA[studAdmsnDate]]></fieldDescription>
+	</field>
+	<field name="studAdmsnDateYr" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="studAdmsnDateYr"/>
+		<fieldDescription><![CDATA[studAdmsnDateYr]]></fieldDescription>
+	</field>
+	<field name="studAdmsnDateMnYr" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="studAdmsnDateMnYr"/>
+		<fieldDescription><![CDATA[studAdmsnDateMnYr]]></fieldDescription>
+	</field>
+	<field name="studAdmsnDateMnYrUpCe" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="studAdmsnDateMnYrUpCe"/>
+		<fieldDescription><![CDATA[studAdmsnDateMnYrUpCe]]></fieldDescription>
+	</field>
+	<field name="studGradDate" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="studGradDate"/>
+		<fieldDescription><![CDATA[studGradDate]]></fieldDescription>
+	</field>
+	<field name="studGradDateYr" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="studGradDateYr"/>
+		<fieldDescription><![CDATA[studGradDateYr]]></fieldDescription>
+	</field>
+	<field name="studGradDateMnYr" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="studGradDateMnYr"/>
+		<fieldDescription><![CDATA[studGradDateMnYr]]></fieldDescription>
+	</field>
+	<field name="studGradDateMnYrUpCe" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="studGradDateMnYrUpCe"/>
+		<fieldDescription><![CDATA[studGradDateMnYrUpCe]]></fieldDescription>
+	</field>
+	<field name="studGradAward" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="studGradAward"/>
+		<fieldDescription><![CDATA[studGradAward]]></fieldDescription>
+	</field>
+	<field name="studDBddmmyyyy" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="studDBddmmyyyy"/>
+		<fieldDescription><![CDATA[studDBddmmyyyy]]></fieldDescription>
+	</field>
+	<field name="studDBddmmyyyySlFrmt" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="studDBddmmyyyySlFrmt"/>
+		<fieldDescription><![CDATA[studDBddmmyyyySlFrmt]]></fieldDescription>
+	</field>
+	<field name="studDBddmmmyyyy" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="studDBddmmmyyyy"/>
+		<fieldDescription><![CDATA[studDBddmmmyyyy]]></fieldDescription>
+	</field>
+	<field name="studDBddmmmyyyyUpCe" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="studDBddmmmyyyyUpCe"/>
+		<fieldDescription><![CDATA[studDBddmmmyyyyUpCe]]></fieldDescription>
+	</field>
+	<field name="studMothTng" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="studMothTng"/>
+		<fieldDescription><![CDATA[studMothTng]]></fieldDescription>
+	</field>
+	<field name="studExtrnver" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="studExtrnver"/>
+		<fieldDescription><![CDATA[studExtrnver]]></fieldDescription>
+	</field>
+	<field name="studWithHold" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="studWithHold"/>
+		<fieldDescription><![CDATA[studWithHold]]></fieldDescription>
+	</field>
+	<field name="studDualCtiz" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="studDualCtiz"/>
+		<fieldDescription><![CDATA[studDualCtiz]]></fieldDescription>
+	</field>
+	<field name="studBrthCity" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="studBrthCity"/>
+		<fieldDescription><![CDATA[studBrthCity]]></fieldDescription>
+	</field>
+	<field name="studBrthState" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="studBrthState"/>
+		<fieldDescription><![CDATA[studBrthState]]></fieldDescription>
+	</field>
+	<field name="studAddrLn1" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="studAddrLn1"/>
+		<fieldDescription><![CDATA[studAddrLn1]]></fieldDescription>
+	</field>
+	<field name="studAddrLn2" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="studAddrLn2"/>
+		<fieldDescription><![CDATA[studAddrLn2]]></fieldDescription>
+	</field>
+	<field name="studAddrLn3" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="studAddrLn3"/>
+		<fieldDescription><![CDATA[studAddrLn3]]></fieldDescription>
+	</field>
+	<field name="studAddrLn4" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="studAddrLn4"/>
+		<fieldDescription><![CDATA[studAddrLn4]]></fieldDescription>
+	</field>
+	<field name="studAddrState" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="studAddrState"/>
+		<fieldDescription><![CDATA[studAddrState]]></fieldDescription>
+	</field>
+	<field name="studAddrTaluk" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="studAddrTaluk"/>
+		<fieldDescription><![CDATA[studAddrTaluk]]></fieldDescription>
+	</field>
+	<field name="studAddrPinCode" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="studAddrPinCode"/>
+		<fieldDescription><![CDATA[studAddrPinCode]]></fieldDescription>
+	</field>
+	<field name="studAddrEmail" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="studAddrEmail"/>
+		<fieldDescription><![CDATA[studAddrEmail]]></fieldDescription>
+	</field>
+	<field name="studAddrMobNo" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="studAddrMobNo"/>
+		<fieldDescription><![CDATA[studAddrMobNo]]></fieldDescription>
+	</field>
+	<field name="studAddrTelPhNo" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="studAddrTelPhNo"/>
+		<fieldDescription><![CDATA[studAddrTelPhNo]]></fieldDescription>
+	</field>
+	<field name="studSameAsCommAddr" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="studSameAsCommAddr"/>
+		<fieldDescription><![CDATA[studSameAsCommAddr]]></fieldDescription>
+	</field>
+	<field name="studPermAddrUnitNo" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="studPermAddrUnitNo"/>
+		<fieldDescription><![CDATA[studPermAddrUnitNo]]></fieldDescription>
+	</field>
+	<field name="studPermAddrStrNm" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="studPermAddrStrNm"/>
+		<fieldDescription><![CDATA[studPermAddrStrNm]]></fieldDescription>
+	</field>
+	<field name="studPermAddrDist" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="studPermAddrDist"/>
+		<fieldDescription><![CDATA[studPermAddrDist]]></fieldDescription>
+	</field>
+	<field name="studPermAddrProvin" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="studPermAddrProvin"/>
+		<fieldDescription><![CDATA[studPermAddrProvin]]></fieldDescription>
+	</field>
+	<field name="studPermAddrPostCode" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="studPermAddrPostCode"/>
+		<fieldDescription><![CDATA[studPermAddrPostCode]]></fieldDescription>
+	</field>
+	<field name="studPermAddrTelPhNo" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="studPermAddrTelPhNo"/>
+		<fieldDescription><![CDATA[studPermAddrTelPhNo]]></fieldDescription>
+	</field>
+	<field name="studPermAddrMobNo" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="studPermAddrMobNo"/>
+		<fieldDescription><![CDATA[studPermAddrMobNo]]></fieldDescription>
+	</field>
+	<field name="studKnownDisblty" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="studKnownDisblty"/>
+		<fieldDescription><![CDATA[studKnownDisblty]]></fieldDescription>
+	</field>
+	<field name="studRemarks" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="studRemarks"/>
+		<fieldDescription><![CDATA[studRemarks]]></fieldDescription>
+	</field>
+	<field name="studComments" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="studComments"/>
+		<fieldDescription><![CDATA[studComments]]></fieldDescription>
+	</field>
+	<field name="studPassPortNo" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="studPassPortNo"/>
+		<fieldDescription><![CDATA[studPassPortNo]]></fieldDescription>
+	</field>
+	<field name="studOthInfo" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="studOthInfo"/>
+		<fieldDescription><![CDATA[studOthInfo]]></fieldDescription>
+	</field>
+	<field name="studSign" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="studSign"/>
+		<fieldDescription><![CDATA[studSign]]></fieldDescription>
+	</field>
+	<field name="studDadSign" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="studDadSign"/>
+		<fieldDescription><![CDATA[studDadSign]]></fieldDescription>
+	</field>
+	<field name="studMotherSign" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="studMotherSign"/>
+		<fieldDescription><![CDATA[studMotherSign]]></fieldDescription>
+	</field>
+	<field name="studGurdnSign" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="studGurdnSign"/>
+		<fieldDescription><![CDATA[studGurdnSign]]></fieldDescription>
+	</field>
+	<field name="studYrOfAdmission" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="studYrOfAdmission"/>
+		<fieldDescription><![CDATA[studYrOfAdmission]]></fieldDescription>
+	</field>
+	<field name="studAcademicYear" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="studAcademicYear"/>
+		<fieldDescription><![CDATA[studAcademicYear]]></fieldDescription>
+	</field>
+	<field name="coeSignature" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="coeSignature"/>
+		<fieldDescription><![CDATA[coeSignature]]></fieldDescription>
+	</field>
+	<field name="AuthriedSign" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="AuthriedSign"/>
+		<fieldDescription><![CDATA[AuthriedSign]]></fieldDescription>
+	</field>
+	<field name="studBatchNm" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="studBatchNm"/>
+		<fieldDescription><![CDATA[studBatchNm]]></fieldDescription>
+	</field>
+	<field name="instCatgryNm" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="instCatgryNm"/>
+		<fieldDescription><![CDATA[instCatgryNm]]></fieldDescription>
+	</field>
+	<field name="instFacOfStudyNm" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="instFacOfStudyNm"/>
+		<fieldDescription><![CDATA[instFacOfStudyNm]]></fieldDescription>
+	</field>
+	<field name="studntType" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="studntType"/>
+		<fieldDescription><![CDATA[studntType]]></fieldDescription>
+	</field>
+	<field name="studGender" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="studGender"/>
+		<fieldDescription><![CDATA[studGender]]></fieldDescription>
+	</field>
+	<field name="studTitle" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="studTitle"/>
+		<fieldDescription><![CDATA[studTitle]]></fieldDescription>
+	</field>
+	<field name="studBlodGrp" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="studBlodGrp"/>
+		<fieldDescription><![CDATA[studBlodGrp]]></fieldDescription>
+	</field>
+	<field name="studAdmCatry" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="studAdmCatry"/>
+		<fieldDescription><![CDATA[studAdmCatry]]></fieldDescription>
+	</field>
+	<field name="studMaritalSt" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="studMaritalSt"/>
+		<fieldDescription><![CDATA[studMaritalSt]]></fieldDescription>
+	</field>
+	<field name="studCitiznOf" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="studCitiznOf"/>
+		<fieldDescription><![CDATA[studCitiznOf]]></fieldDescription>
+	</field>
+	<field name="studAddrContry" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="studAddrContry"/>
+		<fieldDescription><![CDATA[studAddrContry]]></fieldDescription>
+	</field>
+	<field name="studPermAddrContry" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="studPermAddrContry"/>
+		<fieldDescription><![CDATA[studPermAddrContry]]></fieldDescription>
+	</field>
+	<field name="studPrgmName" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="studPrgmName"/>
+		<fieldDescription><![CDATA[studPrgmName]]></fieldDescription>
+	</field>
+	<field name="CurPrIDNm" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="CurPrIDNm"/>
+		<fieldDescription><![CDATA[CurPrIDNm]]></fieldDescription>
+	</field>
+	<field name="studDegreeId" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="studDegreeId"/>
+		<fieldDescription><![CDATA[studDegreeId]]></fieldDescription>
+	</field>
+	<field name="studDegreeDecrptn" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="studDegreeDecrptn"/>
+		<fieldDescription><![CDATA[studDegreeDecrptn]]></fieldDescription>
+	</field>
+	<field name="studCrsName" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="studCrsName"/>
+		<fieldDescription><![CDATA[studCrsName]]></fieldDescription>
+	</field>
+	<field name="CurCrsNm" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="CurCrsNm"/>
+		<fieldDescription><![CDATA[CurCrsNm]]></fieldDescription>
+	</field>
+	<field name="studProgmId" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="studProgmId"/>
+		<fieldDescription><![CDATA[studProgmId]]></fieldDescription>
+	</field>
+	<field name="studProgmDecrptn" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="studProgmDecrptn"/>
+		<fieldDescription><![CDATA[studProgmDecrptn]]></fieldDescription>
+	</field>
+	<field name="studProgmType" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="studProgmType"/>
+		<fieldDescription><![CDATA[studProgmType]]></fieldDescription>
+	</field>
+	<field name="studProgmDetails" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="studProgmDetails"/>
+		<fieldDescription><![CDATA[studProgmDetails]]></fieldDescription>
+	</field>
+	<field name="studProgmPrtTime" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="studProgmPrtTime"/>
+		<fieldDescription><![CDATA[studProgmPrtTime]]></fieldDescription>
+	</field>
+	<field name="CurDeptNm" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="CurDeptNm"/>
+		<fieldDescription><![CDATA[CurDeptNm]]></fieldDescription>
+	</field>
+	<field name="studDeprtmntId" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="studDeprtmntId"/>
+		<fieldDescription><![CDATA[studDeprtmntId]]></fieldDescription>
+	</field>
+	<field name="studDeprtmntDecrptn" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="studDeprtmntDecrptn"/>
+		<fieldDescription><![CDATA[studDeprtmntDecrptn]]></fieldDescription>
+	</field>
+	<field name="studSemName" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="studSemName"/>
+		<fieldDescription><![CDATA[studSemName]]></fieldDescription>
+	</field>
+	<field name="studSemCode" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="studSemCode"/>
+		<fieldDescription><![CDATA[studSemCode]]></fieldDescription>
+	</field>
+	<field name="studSemDecrptn" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="studSemDecrptn"/>
+		<fieldDescription><![CDATA[studSemDecrptn]]></fieldDescription>
+	</field>
+	<field name="studDisplyOrder" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="studDisplyOrder"/>
+		<fieldDescription><![CDATA[studDisplyOrder]]></fieldDescription>
+	</field>
+	<field name="studInitSem" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="studInitSem"/>
+		<fieldDescription><![CDATA[studInitSem]]></fieldDescription>
+	</field>
+	<field name="studTermnlSem" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="studTermnlSem"/>
+		<fieldDescription><![CDATA[studTermnlSem]]></fieldDescription>
+	</field>
+	<field name="studentSemGroupNm" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="studentSemGroupNm"/>
+		<fieldDescription><![CDATA[studentSemGroupNm]]></fieldDescription>
+	</field>
+	<field name="instituteNm" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="instituteNm"/>
+		<fieldDescription><![CDATA[instituteNm]]></fieldDescription>
+	</field>
+	<field name="instLogo" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="instLogo"/>
+		<fieldDescription><![CDATA[instLogo]]></fieldDescription>
+	</field>
+	<field name="insAcrdBy" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="insAcrdBy"/>
+		<fieldDescription><![CDATA[insAcrdBy]]></fieldDescription>
+	</field>
+	<field name="instCatgry" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="instCatgry"/>
+		<fieldDescription><![CDATA[instCatgry]]></fieldDescription>
+	</field>
+	<field name="instCatgryType" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="instCatgryType"/>
+		<fieldDescription><![CDATA[instCatgryType]]></fieldDescription>
+	</field>
+	<field name="instFacOfStudy" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="instFacOfStudy"/>
+		<fieldDescription><![CDATA[instFacOfStudy]]></fieldDescription>
+	</field>
+	<field name="instRpSbHdr" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="instRpSbHdr"/>
+		<fieldDescription><![CDATA[instRpSbHdr]]></fieldDescription>
+	</field>
+	<field name="instCode" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="instCode"/>
+		<fieldDescription><![CDATA[instCode]]></fieldDescription>
+	</field>
+	<field name="instAddrLn1" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="instAddrLn1"/>
+		<fieldDescription><![CDATA[instAddrLn1]]></fieldDescription>
+	</field>
+	<field name="instAddrLn2" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="instAddrLn2"/>
+		<fieldDescription><![CDATA[instAddrLn2]]></fieldDescription>
+	</field>
+	<field name="instAddrLn3" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="instAddrLn3"/>
+		<fieldDescription><![CDATA[instAddrLn3]]></fieldDescription>
+	</field>
+	<field name="instAddrCity" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="instAddrCity"/>
+		<fieldDescription><![CDATA[instAddrCity]]></fieldDescription>
+	</field>
+	<field name="instAddrState" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="instAddrState"/>
+		<fieldDescription><![CDATA[instAddrState]]></fieldDescription>
+	</field>
+	<field name="instAddrCnty" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="instAddrCnty"/>
+		<fieldDescription><![CDATA[instAddrCnty]]></fieldDescription>
+	</field>
+	<field name="instEmAd" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="instEmAd"/>
+		<fieldDescription><![CDATA[instEmAd]]></fieldDescription>
+	</field>
+	<field name="instPhNo" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="instPhNo"/>
+		<fieldDescription><![CDATA[instPhNo]]></fieldDescription>
+	</field>
+	<field name="instpostcode" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="instpostcode"/>
+		<fieldDescription><![CDATA[instpostcode]]></fieldDescription>
+	</field>
+	<field name="instWebsite" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="instWebsite"/>
+		<fieldDescription><![CDATA[instWebsite]]></fieldDescription>
+	</field>
+	<field name="instAuthorSign" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="instAuthorSign"/>
+		<fieldDescription><![CDATA[instAuthorSign]]></fieldDescription>
+	</field>
+	<field name="entparentNm" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="entparentNm"/>
+		<fieldDescription><![CDATA[entparentNm]]></fieldDescription>
+	</field>
+	<field name="instDesc" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="instDesc"/>
+		<fieldDescription><![CDATA[instDesc]]></fieldDescription>
+	</field>
+	<field name="selectedExMnth" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="selectedExMnth"/>
+		<fieldDescription><![CDATA[selectedExMnth]]></fieldDescription>
+	</field>
+	<field name="selectedExMnthmmmspyyyy" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="selectedExMnthmmmspyyyy"/>
+		<fieldDescription><![CDATA[selectedExMnthmmmspyyyy]]></fieldDescription>
+	</field>
+	<field name="selectedExMnthmmmslyyyy" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="selectedExMnthmmmslyyyy"/>
+		<fieldDescription><![CDATA[selectedExMnthmmmslyyyy]]></fieldDescription>
+	</field>
+	<field name="selectedExMnthyyyyymmm" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="selectedExMnthyyyyymmm"/>
+		<fieldDescription><![CDATA[selectedExMnthyyyyymmm]]></fieldDescription>
+	</field>
+	<field name="selectedExMnthmmyyyy" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="selectedExMnthmmyyyy"/>
+		<fieldDescription><![CDATA[selectedExMnthmmyyyy]]></fieldDescription>
+	</field>
+	<field name="selectedExMnthmmmyy" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="selectedExMnthmmmyy"/>
+		<fieldDescription><![CDATA[selectedExMnthmmmyy]]></fieldDescription>
+	</field>
+	<field name="selectedExMnthmmmhypenyyyy" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="selectedExMnthmmmhypenyyyy"/>
+		<fieldDescription><![CDATA[selectedExMnthmmmhypenyyyy]]></fieldDescription>
+	</field>
+	<field name="todayDate" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="todayDate"/>
+		<fieldDescription><![CDATA[todayDate]]></fieldDescription>
+	</field>
+	<field name="studRegltnNm" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="studRegltnNm"/>
+		<fieldDescription><![CDATA[studRegltnNm]]></fieldDescription>
+	</field>
+	<field name="studRgltnDecrptn" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="studRgltnDecrptn"/>
+		<fieldDescription><![CDATA[studRgltnDecrptn]]></fieldDescription>
+	</field>
+	<field name="studRgltnCode" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="studRgltnCode"/>
+		<fieldDescription><![CDATA[studRgltnCode]]></fieldDescription>
+	</field>
+	<field name="studRgltnEffFrm" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="studRgltnEffFrm"/>
+		<fieldDescription><![CDATA[studRgltnEffFrm]]></fieldDescription>
+	</field>
+	<field name="studRgltnEffTo" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="studRgltnEffTo"/>
+		<fieldDescription><![CDATA[studRgltnEffTo]]></fieldDescription>
+	</field>
+	<field name="studRgltnasmntClsctn" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="studRgltnasmntClsctn"/>
+		<fieldDescription><![CDATA[studRgltnasmntClsctn]]></fieldDescription>
+	</field>
+	<field name="studRgltnasmtClsNm" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="studRgltnasmtClsNm"/>
+		<fieldDescription><![CDATA[studRgltnasmtClsNm]]></fieldDescription>
+	</field>
+	<field name="grdTypeNm" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="grdTypeNm"/>
+		<fieldDescription><![CDATA[grdTypeNm]]></fieldDescription>
+	</field>
+	<field name="studRegGradSystm" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="studRegGradSystm"/>
+		<fieldDescription><![CDATA[studRegGradSystm]]></fieldDescription>
+	</field>
+	<field name="studGrdSysId" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="studGrdSysId"/>
+		<fieldDescription><![CDATA[studGrdSysId]]></fieldDescription>
+	</field>
+	<field name="TotPercntMarks" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="TotPercntMarks"/>
+		<fieldDescription><![CDATA[TotPercntMarks]]></fieldDescription>
+	</field>
+	<field name="TotPercntScored" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="TotPercntScored"/>
+		<fieldDescription><![CDATA[TotPercntScored]]></fieldDescription>
+	</field>
+	<field name="studPercnt" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="studPercnt"/>
+		<fieldDescription><![CDATA[studPercnt]]></fieldDescription>
+	</field>
+	<field name="totPercntMarksObt" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="totPercntMarksObt"/>
+		<fieldDescription><![CDATA[totPercntMarksObt]]></fieldDescription>
+	</field>
+	<field name="TotalMinMarks" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="TotalMinMarks"/>
+		<fieldDescription><![CDATA[TotalMinMarks]]></fieldDescription>
+	</field>
+	<field name="TotalIASecMarks" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="TotalIASecMarks"/>
+		<fieldDescription><![CDATA[TotalIASecMarks]]></fieldDescription>
+	</field>
+	<field name="TotalEASecMarks" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="TotalEASecMarks"/>
+		<fieldDescription><![CDATA[TotalEASecMarks]]></fieldDescription>
+	</field>
+	<field name="TotalIAMaxMarks" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="TotalIAMaxMarks"/>
+		<fieldDescription><![CDATA[TotalIAMaxMarks]]></fieldDescription>
+	</field>
+	<field name="TotalIAMinMarks" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="TotalIAMinMarks"/>
+		<fieldDescription><![CDATA[TotalIAMinMarks]]></fieldDescription>
+	</field>
+	<field name="TotalEAMaxMarks" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="TotalEAMaxMarks"/>
+		<fieldDescription><![CDATA[TotalEAMaxMarks]]></fieldDescription>
+	</field>
+	<field name="TotalEAMinMarks" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="TotalEAMinMarks"/>
+		<fieldDescription><![CDATA[TotalEAMinMarks]]></fieldDescription>
+	</field>
+	<field name="totalSubCredit" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="totalSubCredit"/>
+		<fieldDescription><![CDATA[totalSubCredit]]></fieldDescription>
+	</field>
+	<field name="totalSubGrdPoint" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="totalSubGrdPoint"/>
+		<fieldDescription><![CDATA[totalSubGrdPoint]]></fieldDescription>
+	</field>
+	<field name="totalSubCrditandGrdPoint" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="totalSubCrditandGrdPoint"/>
+		<fieldDescription><![CDATA[totalSubCrditandGrdPoint]]></fieldDescription>
+	</field>
+	<field name="RsltPblctnDt" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="RsltPblctnDt"/>
+		<fieldDescription><![CDATA[RsltPblctnDt]]></fieldDescription>
+	</field>
+	<field name="RsltPblctnDtddmmmyyyy" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="RsltPblctnDtddmmmyyyy"/>
+		<fieldDescription><![CDATA[RsltPblctnDtddmmmyyyy]]></fieldDescription>
+	</field>
+	<field name="RsltPblctnDtddmmyyyySls" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="RsltPblctnDtddmmyyyySls"/>
+		<fieldDescription><![CDATA[RsltPblctnDtddmmyyyySls]]></fieldDescription>
+	</field>
+	<field name="RsltPblctnDtmmmyyyy" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="RsltPblctnDtmmmyyyy"/>
+		<fieldDescription><![CDATA[RsltPblctnDtmmmyyyy]]></fieldDescription>
+	</field>
+	<field name="RsltPblctnDtmmyyyy" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="RsltPblctnDtmmyyyy"/>
+		<fieldDescription><![CDATA[RsltPblctnDtmmyyyy]]></fieldDescription>
+	</field>
+	<field name="RsltPblctnDtmmyyyySls" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="RsltPblctnDtmmyyyySls"/>
+		<fieldDescription><![CDATA[RsltPblctnDtmmyyyySls]]></fieldDescription>
+	</field>
+	<field name="RsltPblctnDtmmmyyyySls" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="RsltPblctnDtmmmyyyySls"/>
+		<fieldDescription><![CDATA[RsltPblctnDtmmmyyyySls]]></fieldDescription>
+	</field>
+	<field name="RsltPblctnDtmmmyyyySps" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="RsltPblctnDtmmmyyyySps"/>
+		<fieldDescription><![CDATA[RsltPblctnDtmmmyyyySps]]></fieldDescription>
+	</field>
+	<field name="RsltPblctnDtmmyyyySps" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="RsltPblctnDtmmyyyySps"/>
+		<fieldDescription><![CDATA[RsltPblctnDtmmyyyySps]]></fieldDescription>
+	</field>
+	<field name="RsltDclrdDt" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="RsltDclrdDt"/>
+		<fieldDescription><![CDATA[RsltDclrdDt]]></fieldDescription>
+	</field>
+	<field name="RsltDclrdDtddmmmyyyy" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="RsltDclrdDtddmmmyyyy"/>
+		<fieldDescription><![CDATA[RsltDclrdDtddmmmyyyy]]></fieldDescription>
+	</field>
+	<field name="RsltDclrdDtddmmyyyySls" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="RsltDclrdDtddmmyyyySls"/>
+		<fieldDescription><![CDATA[RsltDclrdDtddmmyyyySls]]></fieldDescription>
+	</field>
+	<field name="RsltDclrdDtmmmyyyy" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="RsltDclrdDtmmmyyyy"/>
+		<fieldDescription><![CDATA[RsltDclrdDtmmmyyyy]]></fieldDescription>
+	</field>
+	<field name="RsltDclrdDtmmyyyy" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="RsltDclrdDtmmyyyy"/>
+		<fieldDescription><![CDATA[RsltDclrdDtmmyyyy]]></fieldDescription>
+	</field>
+	<field name="RsltDclrdDtmmyyyySls" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="RsltDclrdDtmmyyyySls"/>
+		<fieldDescription><![CDATA[RsltDclrdDtmmyyyySls]]></fieldDescription>
+	</field>
+	<field name="RsltDclrdDtmmmyyyySls" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="RsltDclrdDtmmmyyyySls"/>
+		<fieldDescription><![CDATA[RsltDclrdDtmmmyyyySls]]></fieldDescription>
+	</field>
+	<field name="RsltDclrdDtmmmyyyySps" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="RsltDclrdDtmmmyyyySps"/>
+		<fieldDescription><![CDATA[RsltDclrdDtmmmyyyySps]]></fieldDescription>
+	</field>
+	<field name="RsltDclrdDtmmyyyySps" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="RsltDclrdDtmmyyyySps"/>
+		<fieldDescription><![CDATA[RsltDclrdDtmmyyyySps]]></fieldDescription>
+	</field>
+	<field name="aMapRecsn" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="aMapRecsn"/>
+		<fieldDescription><![CDATA[aMapRecsn]]></fieldDescription>
+	</field>
+	<field name="CGPA" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="CGPA"/>
+		<fieldDescription><![CDATA[CGPA]]></fieldDescription>
+	</field>
+	<field name="isAllClear" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="isAllClear"/>
+		<fieldDescription><![CDATA[isAllClear]]></fieldDescription>
+	</field>
+	<field name="cumCrErn" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="cumCrErn"/>
+		<fieldDescription><![CDATA[cumCrErn]]></fieldDescription>
+	</field>
+	<field name="cumCrdt" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="cumCrdt"/>
+		<fieldDescription><![CDATA[cumCrdt]]></fieldDescription>
+	</field>
+	<field name="TotReg" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="TotReg"/>
+		<fieldDescription><![CDATA[TotReg]]></fieldDescription>
+	</field>
+	<field name="Dtls" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="Dtls"/>
+		<fieldDescription><![CDATA[Dtls]]></fieldDescription>
+	</field>
+	<field name="partWise" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="partWise"/>
+		<fieldDescription><![CDATA[partWise]]></fieldDescription>
+	</field>
+	<field name="allPartCGPA" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="allPartCGPA"/>
+		<fieldDescription><![CDATA[allPartCGPA]]></fieldDescription>
+	</field>
+	<field name="totCrDt" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="totCrDt"/>
+		<fieldDescription><![CDATA[totCrDt]]></fieldDescription>
+	</field>
+	<field name="lstSemCr" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="lstSemCr"/>
+		<fieldDescription><![CDATA[lstSemCr]]></fieldDescription>
+	</field>
+	<field name="totGP" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="totGP"/>
+		<fieldDescription><![CDATA[totGP]]></fieldDescription>
+	</field>
+	<field name="cAcadGP" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="cAcadGP"/>
+		<fieldDescription><![CDATA[cAcadGP]]></fieldDescription>
+	</field>
+	<field name="aStuUsdPrts" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="aStuUsdPrts"/>
+		<fieldDescription><![CDATA[aStuUsdPrts]]></fieldDescription>
+	</field>
+	<field name="lstSemGP" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="lstSemGP"/>
+		<fieldDescription><![CDATA[lstSemGP]]></fieldDescription>
+	</field>
+	<field name="exmYr" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="exmYr"/>
+		<fieldDescription><![CDATA[exmYr]]></fieldDescription>
+	</field>
+	<field name="exmDt" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="exmDt"/>
+		<fieldDescription><![CDATA[exmDt]]></fieldDescription>
+	</field>
+	<field name="exmDtmmmyyyy" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="exmDtmmmyyyy"/>
+		<fieldDescription><![CDATA[exmDtmmmyyyy]]></fieldDescription>
+	</field>
+	<field name="crdReg" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="crdReg"/>
+		<fieldDescription><![CDATA[crdReg]]></fieldDescription>
+	</field>
+	<field name="crdCmpltd" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="crdCmpltd"/>
+		<fieldDescription><![CDATA[crdCmpltd]]></fieldDescription>
+	</field>
+	<field name="crdYrnd" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="crdYrnd"/>
+		<fieldDescription><![CDATA[crdYrnd]]></fieldDescription>
+	</field>
+	<field name="totCrdPoint" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="totCrdPoint"/>
+		<fieldDescription><![CDATA[totCrdPoint]]></fieldDescription>
+	</field>
+	<field name="cumCrdtYrnd" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="cumCrdtYrnd"/>
+		<fieldDescription><![CDATA[cumCrdtYrnd]]></fieldDescription>
+	</field>
+	<field name="CGPADtls" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="CGPADtls"/>
+		<fieldDescription><![CDATA[CGPADtls]]></fieldDescription>
+	</field>
+	<field name="TotCrdt" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="TotCrdt"/>
+		<fieldDescription><![CDATA[TotCrdt]]></fieldDescription>
+	</field>
+	<field name="SGPA" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="SGPA"/>
+		<fieldDescription><![CDATA[SGPA]]></fieldDescription>
+	</field>
+	<field name="StudCGPA" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="StudCGPA"/>
+		<fieldDescription><![CDATA[StudCGPA]]></fieldDescription>
+	</field>
+	<field name="partWsCGPA" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="partWsCGPA"/>
+		<fieldDescription><![CDATA[partWsCGPA]]></fieldDescription>
+	</field>
+	<field name="aSubLvlGPA" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="aSubLvlGPA"/>
+		<fieldDescription><![CDATA[aSubLvlGPA]]></fieldDescription>
+	</field>
+	<field name="admFrmDte" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="admFrmDte"/>
+		<fieldDescription><![CDATA[admFrmDte]]></fieldDescription>
+	</field>
+	<field name="admToDte" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="admToDte"/>
+		<fieldDescription><![CDATA[admToDte]]></fieldDescription>
+	</field>
+	<field name="RefTchr" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="RefTchr"/>
+		<fieldDescription><![CDATA[RefTchr]]></fieldDescription>
+	</field>
+	<field name="credReg" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="credReg"/>
+		<fieldDescription><![CDATA[credReg]]></fieldDescription>
+	</field>
+	<field name="credYrnd" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="credYrnd"/>
+		<fieldDescription><![CDATA[credYrnd]]></fieldDescription>
+	</field>
+	<field name="gredPointYrnd" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="gredPointYrnd"/>
+		<fieldDescription><![CDATA[gredPointYrnd]]></fieldDescription>
+	</field>
+	<field name="cumCredtYrnd" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="cumCredtYrnd"/>
+		<fieldDescription><![CDATA[cumCredtYrnd]]></fieldDescription>
+	</field>
+	<field name="stuntCumlThryMaxTt" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="stuntCumlThryMaxTt"/>
+		<fieldDescription><![CDATA[stuntCumlThryMaxTt]]></fieldDescription>
+	</field>
+	<field name="stuntCmulThryMkTt" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="stuntCmulThryMkTt"/>
+		<fieldDescription><![CDATA[stuntCmulThryMkTt]]></fieldDescription>
+	</field>
+	<field name="stuntCmulPracMaxTt" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="stuntCmulPracMaxTt"/>
+		<fieldDescription><![CDATA[stuntCmulPracMaxTt]]></fieldDescription>
+	</field>
+	<field name="stuntCumlPracMkTt" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="stuntCumlPracMkTt"/>
+		<fieldDescription><![CDATA[stuntCumlPracMkTt]]></fieldDescription>
+	</field>
+	<field name="SNo" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="SNo"/>
+		<fieldDescription><![CDATA[SNo]]></fieldDescription>
+	</field>
+	<field name="studSelectedYear" class="java.lang.String">
+		<property name="net.sf.jasperreports.json.field.expression" value="studSelectedYear"/>
+		<fieldDescription><![CDATA[studSelectedYear]]></fieldDescription>
+	</field>
+	<group name="Group1">
+		<groupExpression><![CDATA[$F{studRegNum}]]></groupExpression>
+	</group>
+	<background>
+		<band splitType="Stretch"/>
+	</background>
+	<detail>
+		<band height="801" splitType="Stretch">
+			<rectangle>
+				<reportElement positionType="Float" x="3" y="146" width="548" height="486" uuid="0e93f027-b1ac-49ac-acaf-3176d59fd904"/>
+			</rectangle>
+			<line>
+				<reportElement positionType="Float" x="4" y="244" width="547" height="1" uuid="2bce8525-ddf6-4fce-a754-21f378e5e354"/>
+			</line>
+			<textField isBlankWhenNull="true">
+				<reportElement positionType="Float" x="4" y="174" width="20" height="65" isRemoveLineWhenBlank="true" uuid="ff9a500b-77f9-49e5-aa27-cb2e669cac95"/>
+				<textElement textAlignment="Center" verticalAlignment="Middle" rotation="Left">
+					<font size="8" isBold="true"/>
+				</textElement>
+				<textFieldExpression><![CDATA["PART"]]></textFieldExpression>
+			</textField>
+			<textField isBlankWhenNull="true">
+				<reportElement positionType="Float" x="21" y="174" width="20" height="65" isRemoveLineWhenBlank="true" uuid="3ed6aab4-ea04-457f-91b5-fb6d2270c10a"/>
+				<textElement textAlignment="Center" verticalAlignment="Middle" rotation="Left">
+					<font isBold="true"/>
+				</textElement>
+				<textFieldExpression><![CDATA["SEMESTER"]]></textFieldExpression>
+			</textField>
+			<textField>
+				<reportElement positionType="Float" x="40" y="174" width="49" height="68" uuid="e11e37ec-5aaa-465f-b21d-cfcea4e753b0"/>
+				<textElement textAlignment="Center" verticalAlignment="Middle">
+					<font size="9" isBold="true"/>
+				</textElement>
+				<textFieldExpression><![CDATA["COURSE CODE"]]></textFieldExpression>
+			</textField>
+			<textField>
+				<reportElement positionType="Float" x="90" y="174" width="166" height="66" uuid="276aae1f-4fa5-4e3d-8b4b-365da59fcdf3"/>
+				<textElement textAlignment="Center" verticalAlignment="Middle">
+					<font size="9" isBold="true"/>
+				</textElement>
+				<textFieldExpression><![CDATA["COURSE TITLE"]]></textFieldExpression>
+			</textField>
+			<textField isBlankWhenNull="true">
+				<reportElement positionType="Float" x="369" y="174" width="15" height="69" isRemoveLineWhenBlank="true" uuid="781c4156-7823-4292-bb58-c3848aaf0537"/>
+				<textElement textAlignment="Center" verticalAlignment="Middle" rotation="Left">
+					<font size="9" isBold="true"/>
+				</textElement>
+				<textFieldExpression><![CDATA["CREDITS"]]></textFieldExpression>
+			</textField>
+			<line>
+				<reportElement positionType="Float" x="23" y="146" width="1" height="486" uuid="b54ade7e-0031-4dba-9d61-fa050bc5427a"/>
+			</line>
+			<line>
+				<reportElement positionType="Float" x="39" y="146" width="1" height="486" uuid="8e85e656-9cdb-44ee-85dc-328d8873ad22"/>
+			</line>
+			<line>
+				<reportElement positionType="Float" x="110" y="146" width="1" height="486" uuid="a2d5aa69-0e97-497f-831c-33f39e30691c"/>
+			</line>
+			<line>
+				<reportElement positionType="Float" x="368" y="146" width="1" height="486" uuid="a138751c-49ba-45fa-ab00-3b61c1f042d8"/>
+			</line>
+			<line>
+				<reportElement positionType="Float" x="385" y="146" width="1" height="486" uuid="0941a9c7-3b1a-4327-b768-1e8a5b5f3a4f"/>
+			</line>
+			<line>
+				<reportElement positionType="Float" x="438" y="146" width="1" height="486" uuid="b0cc175f-d9d9-4a41-acce-706b2b5b1888"/>
+			</line>
+			<line>
+				<reportElement positionType="Float" x="491" y="146" width="1" height="486" uuid="4ed1a1d3-03aa-4292-9824-e4f633c8059a"/>
+			</line>
+			<line>
+				<reportElement positionType="Float" x="385" y="195" width="106" height="1" uuid="864a67f5-5c12-4d1c-a0e5-c75873e88243"/>
+			</line>
+			<textField>
+				<reportElement positionType="Float" x="386" y="173" width="52" height="20" uuid="59c0e911-a84b-4aed-adcf-6c56a7b6b672"/>
+				<textElement textAlignment="Center" verticalAlignment="Middle">
+					<font size="9" isBold="true"/>
+				</textElement>
+				<textFieldExpression><![CDATA["MAXIMUM"]]></textFieldExpression>
+			</textField>
+			<textField>
+				<reportElement positionType="Float" x="441" y="173" width="50" height="23" uuid="543d7b58-3832-4a2f-82d8-def1ccc5d8a3"/>
+				<textElement textAlignment="Center" verticalAlignment="Middle">
+					<font size="9" isBold="true"/>
+				</textElement>
+				<textFieldExpression><![CDATA["MARKS SECURED"]]></textFieldExpression>
+			</textField>
+			<line>
+				<reportElement positionType="Float" x="403" y="195" width="1" height="438" uuid="42b86609-fbbe-4708-b83a-dbdb0ea4f7f5"/>
+			</line>
+			<line>
+				<reportElement positionType="Float" x="419" y="195" width="1" height="438" uuid="59bbafa0-7c50-4bbd-b6cd-0faaf39a0538"/>
+			</line>
+			<line>
+				<reportElement positionType="Float" x="454" y="193" width="1" height="441" uuid="20b50911-deae-4c2e-8f13-957623e92c8a"/>
+			</line>
+			<line>
+				<reportElement positionType="Float" x="470" y="193" width="1" height="440" uuid="6f78a2d5-b6e1-434d-bad7-dda1da7ba67e"/>
+			</line>
+			<line>
+				<reportElement positionType="Float" x="506" y="146" width="1" height="486" uuid="d428cde7-285c-4001-8f79-f9aeff280788"/>
+			</line>
+			<line>
+				<reportElement positionType="Float" x="522" y="146" width="1" height="487" uuid="e2e2b4e4-724b-4358-b4d8-a70cd375b711"/>
+			</line>
+			<textField isBlankWhenNull="true">
+				<reportElement positionType="Float" x="386" y="194" width="17" height="50" isRemoveLineWhenBlank="true" uuid="02bf2035-4f9a-4045-ab63-bce600a84bfa"/>
+				<textElement textAlignment="Center" verticalAlignment="Middle" rotation="Left">
+					<font size="9" isBold="true"/>
+				</textElement>
+				<textFieldExpression><![CDATA["ESE"]]></textFieldExpression>
+			</textField>
+			<textField isBlankWhenNull="true">
+				<reportElement positionType="Float" x="403" y="193" width="17" height="51" isRemoveLineWhenBlank="true" uuid="328faa29-9ca3-44cf-b856-5f9d8016365d"/>
+				<textElement textAlignment="Center" verticalAlignment="Middle" rotation="Left">
+					<font size="9" isBold="true"/>
+				</textElement>
+				<textFieldExpression><![CDATA["CIA"]]></textFieldExpression>
+			</textField>
+			<textField isBlankWhenNull="true">
+				<reportElement positionType="Float" x="420" y="194" width="19" height="49" isRemoveLineWhenBlank="true" uuid="64cb8324-cb7d-4be1-94b5-be98badac579"/>
+				<textElement textAlignment="Center" verticalAlignment="Middle" rotation="Left">
+					<font size="9" isBold="true"/>
+				</textElement>
+				<textFieldExpression><![CDATA["TOTAL"]]></textFieldExpression>
+			</textField>
+			<textField isBlankWhenNull="true">
+				<reportElement positionType="Float" x="440" y="194" width="15" height="50" isRemoveLineWhenBlank="true" uuid="26b094a5-a804-4a66-85c1-0350176e56b3"/>
+				<textElement textAlignment="Center" verticalAlignment="Middle" rotation="Left">
+					<font size="9" isBold="true"/>
+				</textElement>
+				<textFieldExpression><![CDATA["ESE"]]></textFieldExpression>
+			</textField>
+			<textField isBlankWhenNull="true">
+				<reportElement positionType="Float" x="455" y="194" width="17" height="50" isRemoveLineWhenBlank="true" uuid="064e99ae-20f7-4c02-bc14-7562ffb56a3a"/>
+				<textElement textAlignment="Center" verticalAlignment="Middle" rotation="Left">
+					<font size="9" isBold="true"/>
+				</textElement>
+				<textFieldExpression><![CDATA["CIA"]]></textFieldExpression>
+			</textField>
+			<textField isBlankWhenNull="true">
+				<reportElement positionType="Float" x="471" y="195" width="20" height="50" isRemoveLineWhenBlank="true" uuid="0ecdfe8f-615a-4fc4-b0e4-1b22d838fcd5"/>
+				<textElement textAlignment="Center" verticalAlignment="Middle" rotation="Left">
+					<font size="9" isBold="true"/>
+				</textElement>
+				<textFieldExpression><![CDATA["TOTAL"]]></textFieldExpression>
+			</textField>
+			<textField isBlankWhenNull="true">
+				<reportElement positionType="Float" x="492" y="166" width="14" height="84" isRemoveLineWhenBlank="true" uuid="98dfbe86-beb2-47ae-80ef-e2832957be9f"/>
+				<textElement textAlignment="Center" verticalAlignment="Middle" rotation="Left">
+					<font size="9" isBold="true"/>
+				</textElement>
+				<textFieldExpression><![CDATA["GRADE POINT"]]></textFieldExpression>
+			</textField>
+			<textField isBlankWhenNull="true">
+				<reportElement positionType="Float" x="508" y="177" width="14" height="67" isRemoveLineWhenBlank="true" uuid="1fcccd40-cd7d-41e1-909c-181e596b8d2e"/>
+				<textElement textAlignment="Center" verticalAlignment="Middle" rotation="Left">
+					<font size="9" isBold="true"/>
+				</textElement>
+				<textFieldExpression><![CDATA["GRADE"]]></textFieldExpression>
+			</textField>
+			<textField isBlankWhenNull="true">
+				<reportElement positionType="Float" x="523" y="178" width="31" height="66" isRemoveLineWhenBlank="true" uuid="ed3a8673-5572-480b-b604-b532e9ea4781"/>
+				<textElement textAlignment="Center" verticalAlignment="Middle" rotation="Left">
+					<font size="9" isBold="true"/>
+				</textElement>
+				<textFieldExpression><![CDATA["RESULT"]]></textFieldExpression>
+			</textField>
+			<componentElement>
+				<reportElement positionType="Float" x="3" y="245" width="550" height="13" uuid="c82f1da3-58dd-49f1-87bb-62e0991f50eb"/>
+				<jr:list xmlns:jr="http://jasperreports.sourceforge.net/jasperreports/components" xsi:schemaLocation="http://jasperreports.sourceforge.net/jasperreports/components http://jasperreports.sourceforge.net/xsd/components.xsd" printOrder="Vertical">
+					<datasetRun subDataset="EXAMS" uuid="e8792074-4b97-47b9-98b3-d736143446b3">
+						<dataSourceExpression><![CDATA[((net.sf.jasperreports.engine.data.JsonDataSource)$P{REPORT_DATA_SOURCE}).subDataSource("Exams")]]></dataSourceExpression>
+					</datasetRun>
+					<jr:listContents height="13" width="550">
+						<textField>
+							<reportElement x="7" y="0" width="20" height="12" uuid="2fc33362-bc6b-477d-9ad5-8018262c1ed0"/>
+							<textElement textAlignment="Left" verticalAlignment="Top">
+								<font size="8"/>
+							</textElement>
+							<textFieldExpression><![CDATA[$F{CatNm}]]></textFieldExpression>
+						</textField>
+						<textField>
+							<reportElement x="25" y="0" width="41" height="11" uuid="368e5d26-5743-43e3-80a9-66e60ed6d8ce"/>
+							<textElement textAlignment="Left" verticalAlignment="Top">
+								<font size="8"/>
+							</textElement>
+							<textFieldExpression><![CDATA[$F{DOrder}]]></textFieldExpression>
+						</textField>
+						<textField>
+							<reportElement x="41" y="0" width="129" height="11" uuid="fb36b0ab-3cbb-410d-8718-b43d5340117b"/>
+							<textElement textAlignment="Left" verticalAlignment="Top">
+								<font size="8"/>
+							</textElement>
+							<textFieldExpression><![CDATA[$F{ExCode}]]></textFieldExpression>
+						</textField>
+						<textField isStretchWithOverflow="true">
+							<reportElement x="113" y="0" width="265" height="12" uuid="2635c238-c181-4966-82e4-15255d649fa1"/>
+							<textElement textAlignment="Left" verticalAlignment="Top">
+								<font size="8"/>
+							</textElement>
+							<textFieldExpression><![CDATA[$F{ExSubjNm}]]></textFieldExpression>
+						</textField>
+						<textField>
+							<reportElement x="359" y="0" width="31" height="11" uuid="2d34981e-7c5a-48cb-8781-17b251aa7515"/>
+							<textElement textAlignment="Center" verticalAlignment="Middle">
+								<font size="8"/>
+							</textElement>
+							<textFieldExpression><![CDATA[$F{Crdt}]]></textFieldExpression>
+						</textField>
+						<textField isBlankWhenNull="true">
+							<reportElement x="382" y="1" width="22" height="12" isRemoveLineWhenBlank="true" uuid="82c7210a-f41b-48e3-ba4e-0a6f4b00c043"/>
+							<textElement textAlignment="Center" verticalAlignment="Top">
+								<font size="8"/>
+							</textElement>
+							<textFieldExpression><![CDATA[$F{EAMaxMarks}]]></textFieldExpression>
+						</textField>
+						<textField>
+							<reportElement x="399" y="1" width="18" height="11" uuid="f76cece1-9651-454c-bc79-143b8deb55df"/>
+							<textElement textAlignment="Center" verticalAlignment="Top">
+								<font size="8"/>
+							</textElement>
+							<textFieldExpression><![CDATA[$F{IAMaxMarks}]]></textFieldExpression>
+						</textField>
+						<textField>
+							<reportElement x="414" y="1" width="25" height="12" uuid="a4d9f114-893e-40c7-ae91-a3e6f6e37ceb"/>
+							<textElement textAlignment="Center" verticalAlignment="Top">
+								<font size="8"/>
+							</textElement>
+							<textFieldExpression><![CDATA[$F{MaxMark}]]></textFieldExpression>
+						</textField>
+						<textField isBlankWhenNull="true">
+							<reportElement x="432" y="1" width="22" height="11" isRemoveLineWhenBlank="true" uuid="a67fa7f5-9393-4f5d-b81b-cff5e8426a08"/>
+							<textElement textAlignment="Center" verticalAlignment="Top">
+								<font size="8"/>
+							</textElement>
+							<textFieldExpression><![CDATA[$F{EASecMarks}]]></textFieldExpression>
+						</textField>
+						<textField>
+							<reportElement x="451" y="0" width="18" height="13" uuid="e38e467c-7351-455a-bf77-93037d9acbb1"/>
+							<textElement textAlignment="Center" verticalAlignment="Top">
+								<font size="8"/>
+							</textElement>
+							<textFieldExpression><![CDATA[$F{IASecMarks}]]></textFieldExpression>
+						</textField>
+						<textField>
+							<reportElement x="467" y="1" width="21" height="11" uuid="25bdce9b-0582-44b1-92df-a8087e80f7a4"/>
+							<textElement textAlignment="Center" verticalAlignment="Top">
+								<font size="8"/>
+							</textElement>
+							<textFieldExpression><![CDATA[$F{Mark}]]></textFieldExpression>
+						</textField>
+						<textField>
+							<reportElement x="481" y="1" width="31" height="11" uuid="b448a092-7752-410c-9b81-aac6e92076eb"/>
+							<textElement textAlignment="Center" verticalAlignment="Top">
+								<font size="8"/>
+							</textElement>
+							<textFieldExpression><![CDATA[$F{GrdPt}]]></textFieldExpression>
+						</textField>
+						<textField>
+							<reportElement x="500" y="0" width="21" height="11" uuid="0f38a8f1-0fd9-412f-85c9-cf25f11c99cb"/>
+							<textElement textAlignment="Center" verticalAlignment="Middle">
+								<font size="8"/>
+							</textElement>
+							<textFieldExpression><![CDATA[$F{Grd}]]></textFieldExpression>
+						</textField>
+						<textField>
+							<reportElement x="501" y="1" width="42" height="12" uuid="f5640ec3-4da1-439d-875f-c7a6525d7fa2"/>
+							<textElement textAlignment="Right" verticalAlignment="Top">
+								<font size="8"/>
+							</textElement>
+							<textFieldExpression><![CDATA[$F{result}.equalsIgnoreCase( "U" )? "RA":$F{result}]]></textFieldExpression>
+						</textField>
+					</jr:listContents>
+				</jr:list>
+			</componentElement>
+			<textField>
+				<reportElement x="3" y="715" width="551" height="32" uuid="13279c1b-ba0a-4124-afd9-41ac1e2ecb72"/>
+				<textElement>
+					<font size="8"/>
+				</textElement>
+				<textFieldExpression><![CDATA["Passing Minimum is 40% of Maximum (in ESE and Total separately) P: Pass, RA: Re-Appear, AAA: Absent, ESE: End Semester Examination,CIA: Continuous Internal Assessment, GPA: Grade Points Average, ***Not Secured Passing Minimum."]]></textFieldExpression>
+			</textField>
+			<textField pattern="MMMMM dd, yyyy">
+				<reportElement x="90" y="758" width="160" height="12" uuid="f357ff9a-f1cd-4878-ad46-1aaf7952e700"/>
+				<textElement>
+					<font size="8"/>
+				</textElement>
+				<textFieldExpression><![CDATA[$F{todayDate}]]></textFieldExpression>
+			</textField>
+			<image scaleImage="FillFrame" onErrorType="Blank">
+				<reportElement x="426" y="742" width="90" height="38" uuid="7fab345f-d509-4f4d-bdfb-457addb9851c"/>
+				<imageExpression><![CDATA[$F{coeSignature}]]></imageExpression>
+			</image>
+			<rectangle>
+				<reportElement x="3" y="633" width="548" height="80" uuid="278bb605-3d9e-4725-86e5-e1ed7b2b9ae2"/>
+			</rectangle>
+			<textField>
+				<reportElement x="-5" y="635" width="200" height="13" uuid="e4a385af-a195-4506-b49e-e68e13e38dba"/>
+				<textElement textAlignment="Center" verticalAlignment="Middle">
+					<font size="9" isBold="true"/>
+				</textElement>
+				<textFieldExpression><![CDATA["(IN THE CURRENT SEMESTER)"]]></textFieldExpression>
+			</textField>
+			<textField>
+				<reportElement x="25" y="646" width="60" height="14" uuid="dda2b57b-59ce-4d0a-8865-807dd3e83d19"/>
+				<textElement textAlignment="Center" verticalAlignment="Middle">
+					<font size="9" isBold="true"/>
+				</textElement>
+				<textFieldExpression><![CDATA["PART"]]></textFieldExpression>
+			</textField>
+			<textField>
+				<reportElement x="85" y="646" width="100" height="14" uuid="b07abb99-8f0e-4840-82c8-1a2c66348ee6"/>
+				<textElement textAlignment="Center" verticalAlignment="Middle">
+					<font size="9" isBold="true"/>
+				</textElement>
+				<textFieldExpression><![CDATA["CREDITS EARNED"]]></textFieldExpression>
+			</textField>
+			<textField>
+				<reportElement x="185" y="646" width="70" height="14" uuid="5e8c8732-d66f-4676-80fd-29d1a7b45aa5"/>
+				<textElement textAlignment="Center" verticalAlignment="Middle">
+					<font size="9" isBold="true"/>
+				</textElement>
+				<textFieldExpression><![CDATA["GPA"]]></textFieldExpression>
+			</textField>
+			<componentElement>
+				<reportElement x="27" y="661" width="227" height="12" uuid="18e34304-1291-4553-9aa9-590099246642"/>
+				<jr:list xmlns:jr="http://jasperreports.sourceforge.net/jasperreports/components" xsi:schemaLocation="http://jasperreports.sourceforge.net/jasperreports/components http://jasperreports.sourceforge.net/xsd/components.xsd" printOrder="Vertical">
+					<datasetRun subDataset="rathnam1.1" uuid="8e50e62e-6634-4b12-bb7f-ef3743e619fb">
+						<datasetParameter name="JSON_INPUT_STREAM">
+							<datasetParameterExpression><![CDATA[$P{JSON_INPUT_STREAM}]]></datasetParameterExpression>
+						</datasetParameter>
+						<datasetParameter name="net.sf.jasperreports.json.source">
+							<datasetParameterExpression><![CDATA[$P{net.sf.jasperreports.json.source}]]></datasetParameterExpression>
+						</datasetParameter>
+						<datasetParameter name="net.sf.jasperreports.json.sources">
+							<datasetParameterExpression><![CDATA[$P{net.sf.jasperreports.json.sources}]]></datasetParameterExpression>
+						</datasetParameter>
+						<datasetParameter name="net.sf.jasperreports.json.date.pattern">
+							<datasetParameterExpression><![CDATA[$P{net.sf.jasperreports.json.date.pattern}]]></datasetParameterExpression>
+						</datasetParameter>
+						<datasetParameter name="net.sf.jasperreports.json.number.pattern">
+							<datasetParameterExpression><![CDATA[$P{net.sf.jasperreports.json.number.pattern}]]></datasetParameterExpression>
+						</datasetParameter>
+						<datasetParameter name="JSON_LOCALE">
+							<datasetParameterExpression><![CDATA[$P{JSON_LOCALE}]]></datasetParameterExpression>
+						</datasetParameter>
+						<datasetParameter name="net.sf.jasperreports.json.locale.code">
+							<datasetParameterExpression><![CDATA[$P{net.sf.jasperreports.json.locale.code}]]></datasetParameterExpression>
+						</datasetParameter>
+						<datasetParameter name="JSON_TIME_ZONE">
+							<datasetParameterExpression><![CDATA[$P{JSON_TIME_ZONE}]]></datasetParameterExpression>
+						</datasetParameter>
+						<datasetParameter name="net.sf.jasperreports.json.timezone.id">
+							<datasetParameterExpression><![CDATA[$P{net.sf.jasperreports.json.timezone.id}]]></datasetParameterExpression>
+						</datasetParameter>
+						<dataSourceExpression><![CDATA[((net.sf.jasperreports.engine.data.JsonDataSource)$P{REPORT_DATA_SOURCE}).subDataSource("partWise")]]></dataSourceExpression>
+					</datasetRun>
+					<jr:listContents height="12" width="227">
+						<textField>
+							<reportElement x="3" y="0" width="37" height="12" uuid="23b31e57-ab47-43ae-a173-0997827cb21c"/>
+							<textElement textAlignment="Center" verticalAlignment="Middle">
+								<font size="8"/>
+							</textElement>
+							<textFieldExpression><![CDATA[$F{part}]]></textFieldExpression>
+						</textField>
+						<textField>
+							<reportElement x="80" y="0" width="70" height="12" uuid="12e3afe2-89d6-4202-b6f9-d6de8529acc6"/>
+							<textElement textAlignment="Center" verticalAlignment="Middle">
+								<font size="8"/>
+							</textElement>
+							<textFieldExpression><![CDATA[$F{currCP}]]></textFieldExpression>
+						</textField>
+						<textField>
+							<reportElement x="166" y="0" width="59" height="12" uuid="dc3b19e4-e123-4dc9-b817-fb6315241549"/>
+							<textElement textAlignment="Center" verticalAlignment="Middle">
+								<font size="8"/>
+							</textElement>
+							<textFieldExpression><![CDATA[$F{currGPA}]]></textFieldExpression>
+						</textField>
+					</jr:listContents>
+				</jr:list>
+			</componentElement>
+			<rectangle>
+				<reportElement positionType="Float" x="3" y="102" width="548" height="71" uuid="7af946e6-c72a-4fe2-a990-127740427564"/>
+			</rectangle>
+			<line>
+				<reportElement positionType="Float" x="134" y="102" width="1" height="71" uuid="f09e7343-e601-466b-b2d0-fba6e8f8f8e7"/>
+			</line>
+			<line>
+				<reportElement positionType="Float" x="368" y="102" width="1" height="71" uuid="27c634c5-014f-4842-b6c3-f8325737ea64"/>
+			</line>
+			<line>
+				<reportElement positionType="Float" x="456" y="102" width="1" height="71" uuid="a275875e-1a6a-4eaa-bb66-641143002418"/>
+			</line>
+			<textField>
+				<reportElement positionType="Float" x="6" y="101" width="129" height="20" uuid="78ad9831-10e9-49b9-b344-b82ce09f2692"/>
+				<textElement verticalAlignment="Middle">
+					<font size="9" isBold="true"/>
+				</textElement>
+				<textFieldExpression><![CDATA["NAME OF THE CANDIDATE"]]></textFieldExpression>
+			</textField>
+			<line>
+				<reportElement positionType="Float" x="3" y="121" width="548" height="1" uuid="769465ee-3d71-4514-bf9c-957968148234"/>
+			</line>
+			<line>
+				<reportElement positionType="Float" x="3" y="139" width="548" height="1" uuid="65e92059-a4da-411c-b725-8b90b2c6a4ea"/>
+			</line>
+			<textField>
+				<reportElement positionType="Float" x="381" y="101" width="78" height="12" uuid="82f64755-dbe2-49a1-adfe-4bfa8a93cae5"/>
+				<textElement textAlignment="Left" verticalAlignment="Middle">
+					<font size="9" isBold="true"/>
+				</textElement>
+				<textFieldExpression><![CDATA["DATE OF BIRTH"]]></textFieldExpression>
+			</textField>
+			<textField>
+				<reportElement positionType="Float" x="380" y="111" width="78" height="12" uuid="06205017-62b0-4fa2-833b-998db4651c78"/>
+				<textElement textAlignment="Left" verticalAlignment="Middle">
+					<font size="9" isBold="true"/>
+				</textElement>
+				<textFieldExpression><![CDATA["(DD-MM-YYYY)"]]></textFieldExpression>
+			</textField>
+			<textField>
+				<reportElement positionType="Float" x="6" y="124" width="129" height="17" uuid="71a63019-7fcb-4044-89cf-f4993f8c2635"/>
+				<textElement verticalAlignment="Middle">
+					<font size="9" isBold="true"/>
+				</textElement>
+				<textFieldExpression><![CDATA["REGISTER NO"]]></textFieldExpression>
+			</textField>
+			<textField>
+				<reportElement positionType="Float" x="379" y="124" width="80" height="17" uuid="400a2cb4-e138-4c1e-8aad-e092c7d5b549"/>
+				<textElement verticalAlignment="Middle">
+					<font size="9" isBold="true"/>
+				</textElement>
+				<textFieldExpression><![CDATA["MONTH & YEAR"]]></textFieldExpression>
+			</textField>
+			<textField>
+				<reportElement positionType="Float" x="6" y="138" width="128" height="35" uuid="4f75355f-0e7e-4b49-b34a-dcfcc906d088"/>
+				<textElement verticalAlignment="Middle">
+					<font size="9" isBold="true"/>
+				</textElement>
+				<textFieldExpression><![CDATA["PROGRAMME"]]></textFieldExpression>
+			</textField>
+			<textField>
+				<reportElement positionType="Float" x="378" y="139" width="80" height="34" uuid="8660bc2d-f20c-4b6c-961c-e896fe15b0db"/>
+				<textElement verticalAlignment="Middle">
+					<font size="9" isBold="true"/>
+				</textElement>
+				<textFieldExpression><![CDATA["FOLIO NUMBER"]]></textFieldExpression>
+			</textField>
+			<textField>
+				<reportElement positionType="Float" x="140" y="101" width="230" height="21" uuid="58cefa1c-463e-4e67-8d4b-ac38b59e2fc9"/>
+				<textElement textAlignment="Left" verticalAlignment="Middle">
+					<font size="9"/>
+				</textElement>
+				<textFieldExpression><![CDATA[$F{studFristNm}+$F{studMidNm}+" "+$F{studLastNm}]]></textFieldExpression>
+			</textField>
+			<textField>
+				<reportElement positionType="Float" x="140" y="124" width="230" height="14" uuid="a6ba4ed0-9fa5-48d7-a4d4-eb18f9cb7406"/>
+				<textElement verticalAlignment="Middle">
+					<font size="9"/>
+				</textElement>
+				<textFieldExpression><![CDATA[$F{studRegNum}]]></textFieldExpression>
+			</textField>
+			<textField>
+				<reportElement positionType="Float" x="140" y="142" width="228" height="31" uuid="18dfab4e-96a3-4e36-a12b-88103cb2cb51"/>
+				<textElement verticalAlignment="Middle">
+					<font size="9"/>
+				</textElement>
+				<textFieldExpression><![CDATA[$F{studCrsName}]]></textFieldExpression>
+			</textField>
+			<textField>
+				<reportElement positionType="Float" x="463" y="102" width="92" height="20" uuid="81154d42-cf35-440f-856d-d96196f3eb31"/>
+				<textElement verticalAlignment="Middle">
+					<font size="9"/>
+				</textElement>
+				<textFieldExpression><![CDATA[$F{studDBddmmyyyy}]]></textFieldExpression>
+			</textField>
+			<textField>
+				<reportElement positionType="Float" x="463" y="123" width="90" height="18" uuid="4b11a50a-3f1d-4156-b799-2c7c1d2c1ed7"/>
+				<textElement verticalAlignment="Middle">
+					<font size="9"/>
+				</textElement>
+				<textFieldExpression><![CDATA[$F{exmDtmmmyyyy}]]></textFieldExpression>
+			</textField>
+			<textField>
+				<reportElement positionType="Float" x="463" y="138" width="207" height="35" uuid="963be74f-adb4-47a3-80fd-7eba90ee8fd2"/>
+				<textElement verticalAlignment="Middle">
+					<font size="9"/>
+				</textElement>
+				<textFieldExpression><![CDATA["UG-"+$F{SNo}]]></textFieldExpression>
+			</textField>
+			<image scaleImage="FillFrame" onErrorType="Blank">
+				<reportElement x="473" y="3" width="77" height="96" uuid="58e9c58d-f6a8-4858-bc1c-8d1a5d1e5ee2"/>
+				<imageExpression><![CDATA[$F{studPhoto}]]></imageExpression>
+			</image>
+		</band>
+	</detail>
+</jasperReport>

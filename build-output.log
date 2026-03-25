@@ -1,0 +1,168 @@
+
+> jkkn-coe@0.1.0 build
+> next build
+
+   ▲ Next.js 15.5.0
+   - Environments: .env.local
+
+   Creating an optimized production build ...
+ ✓ Compiled successfully in 23.3s
+   Skipping validation of types
+   Skipping linting
+   Collecting page data ...
+   Generating static pages (0/123) ...
+   Generating static pages (30/123) 
+   Generating static pages (61/123) 
+   Generating static pages (92/123) 
+ ✓ Generating static pages (123/123)
+   Finalizing page optimization ...
+   Collecting build traces ...
+
+Route (app)                                  Size  First Load JS
+┌ ○ /                                       542 B         148 kB
+├ ○ /_not-found                              1 kB         103 kB
+├ ○ /academic-years                       9.98 kB         367 kB
+├ ƒ /api/academic-years                     318 B         102 kB
+├ ƒ /api/api-management/staff               318 B         102 kB
+├ ƒ /api/api-management/staff/[id]          318 B         102 kB
+├ ƒ /api/api-management/students            318 B         102 kB
+├ ƒ /api/api-management/students/[id]       318 B         102 kB
+├ ƒ /api/attendance-correction              318 B         102 kB
+├ ƒ /api/attendance-correction/courses      318 B         102 kB
+├ ƒ /api/attendance-correction/debug        318 B         102 kB
+├ ƒ /api/auth/google                        318 B         102 kB
+├ ƒ /api/auth/permissions/current           318 B         102 kB
+├ ƒ /api/auth/roles/assign                  318 B         102 kB
+├ ƒ /api/auth/roles/user/[userId]           318 B         102 kB
+├ ƒ /api/auth/send-verification             318 B         102 kB
+├ ƒ /api/auth/token                         318 B         102 kB
+├ ƒ /api/auth/verify                        318 B         102 kB
+├ ƒ /api/auth/verify-email                  318 B         102 kB
+├ ƒ /api/batch                              318 B         102 kB
+├ ƒ /api/batch/[id]                         318 B         102 kB
+├ ƒ /api/boards                             318 B         102 kB
+├ ƒ /api/check-is-active-field              318 B         102 kB
+├ ƒ /api/course-mapping                     318 B         102 kB
+├ ƒ /api/course-mapping/groups              318 B         102 kB
+├ ƒ /api/course-mapping/report              318 B         102 kB
+├ ƒ /api/course-mapping/template-data       318 B         102 kB
+├ ƒ /api/course-offering                    318 B         102 kB
+├ ƒ /api/courses                            318 B         102 kB
+├ ƒ /api/courses/[id]                       318 B         102 kB
+├ ƒ /api/courses/template                   318 B         102 kB
+├ ƒ /api/dashboard/stats                    318 B         102 kB
+├ ƒ /api/debug-oauth                        318 B         102 kB
+├ ƒ /api/degrees                            318 B         102 kB
+├ ƒ /api/departments                        318 B         102 kB
+├ ƒ /api/exam-attendance                    318 B         102 kB
+├ ƒ /api/exam-attendance/bundle-cover       318 B         102 kB
+├ ƒ /api/exam-attendance/dropdowns          318 B         102 kB
+├ ƒ /api/exam-attendance/report             318 B         102 kB
+├ ƒ /api/exam-attendance/student-sheet      318 B         102 kB
+├ ƒ /api/exam-attendance/students           318 B         102 kB
+├ ƒ /api/exam-registrations                 318 B         102 kB
+├ ƒ /api/exam-report                        318 B         102 kB
+├ ƒ /api/exam-rooms                         318 B         102 kB
+├ ƒ /api/exam-timetables                    318 B         102 kB
+├ ƒ /api/exam-timetables/courses-by-date    318 B         102 kB
+├ ƒ /api/exam-types                         318 B         102 kB
+├ ƒ /api/examination-sessions               318 B         102 kB
+├ ƒ /api/filters/departments                318 B         102 kB
+├ ƒ /api/filters/institutions               318 B         102 kB
+├ ƒ /api/filters/programs                   318 B         102 kB
+├ ƒ /api/grade-system                       318 B         102 kB
+├ ƒ /api/grades                             318 B         102 kB
+├ ƒ /api/health/supabase                    318 B         102 kB
+├ ƒ /api/institutions                       318 B         102 kB
+├ ƒ /api/myjkkn/students                    318 B         102 kB
+├ ƒ /api/myjkkn/students/[id]               318 B         102 kB
+├ ƒ /api/permissions                        318 B         102 kB
+├ ƒ /api/permissions/[id]                   318 B         102 kB
+├ ƒ /api/program                            318 B         102 kB
+├ ƒ /api/program/[id]                       318 B         102 kB
+├ ƒ /api/regulations                        318 B         102 kB
+├ ƒ /api/regulations/[id]                   318 B         102 kB
+├ ƒ /api/role-permissions                   318 B         102 kB
+├ ƒ /api/roles                              318 B         102 kB
+├ ƒ /api/roles/[id]                         318 B         102 kB
+├ ƒ /api/room-allocations                   318 B         102 kB
+├ ƒ /api/seat-allocations                   318 B         102 kB
+├ ƒ /api/section                            318 B         102 kB
+├ ƒ /api/semesters                          318 B         102 kB
+├ ƒ /api/semesters/[id]                     318 B         102 kB
+├ ƒ /api/setup-semesters                    318 B         102 kB
+├ ƒ /api/students                           318 B         102 kB
+├ ƒ /api/test-semesters                     318 B         102 kB
+├ ƒ /api/test-supabase-auth                 318 B         102 kB
+├ ƒ /api/user-roles                         318 B         102 kB
+├ ƒ /api/users                              318 B         102 kB
+├ ƒ /api/users/[id]                         318 B         102 kB
+├ ƒ /api/users/[id]/roles                   318 B         102 kB
+├ ○ /attendance-correction                6.79 kB         231 kB
+├ ƒ /auth/callback                          318 B         102 kB
+├ ○ /batch                                8.16 kB         368 kB
+├ ○ /board                                10.5 kB         367 kB
+├ ○ /check-email                          4.22 kB         154 kB
+├ ○ /contact-admin                        3.16 kB         118 kB
+├ ○ /course-mapping                       11.1 kB         232 kB
+├ ○ /course-mapping-index                 3.02 kB         352 kB
+├ ○ /course-mapping/add                   13.9 kB         377 kB
+├ ○ /course-mapping/edit                  8.84 kB         370 kB
+├ ○ /course-offering                      11.2 kB         368 kB
+├ ○ /courses                              12.8 kB         372 kB
+├ ○ /dashboard                             3.7 kB         212 kB
+├ ○ /debug-is-active                      4.43 kB         115 kB
+├ ○ /debug-oauth                          3.63 kB         114 kB
+├ ○ /debug-permissions                    4.31 kB         165 kB
+├ ○ /degree                               10.9 kB         368 kB
+├ ○ /department                           10.3 kB         370 kB
+├ ○ /dev-login                            3.62 kB         114 kB
+├ ○ /exam_timetable                       12.6 kB         503 kB
+├ ○ /exam-attendance                      9.65 kB         374 kB
+├ ○ /exam-registrations                   11.3 kB         371 kB
+├ ○ /exam-rooms                           12.2 kB         369 kB
+├ ○ /exam-timetables                      10.9 kB         368 kB
+├ ○ /exam-types                           10.8 kB         368 kB
+├ ○ /examination-sessions                 11.4 kB         229 kB
+├ ○ /grade-system                           11 kB         368 kB
+├ ○ /grades                               9.01 kB         369 kB
+├ ○ /institutions                         11.7 kB         371 kB
+├ ○ /login                                 7.6 kB         164 kB
+├ ○ /permissions                          9.85 kB         367 kB
+├ ○ /permissions/add                         4 kB         219 kB
+├ ƒ /permissions/edit/[id]                4.14 kB         219 kB
+├ ○ /program                              11.5 kB         368 kB
+├ ○ /rbac-example                         4.19 kB         161 kB
+├ ○ /regulations                            11 kB         368 kB
+├ ○ /regulations/add                      3.43 kB         222 kB
+├ ƒ /regulations/edit/[id]                4.55 kB         223 kB
+├ ○ /reports/attendance                   9.81 kB         371 kB
+├ ○ /role-permissions                     8.46 kB         223 kB
+├ ○ /roles                                6.04 kB         363 kB
+├ ○ /roles/add                            3.96 kB         219 kB
+├ ƒ /roles/edit/[id]                      4.07 kB         219 kB
+├ ○ /section                              10.3 kB         367 kB
+├ ○ /semester                              9.3 kB         372 kB
+├ ○ /student                              10.7 kB         232 kB
+├ ○ /students                             17.4 kB         374 kB
+├ ○ /test-auth                            3.79 kB         160 kB
+├ ○ /test-google-auth                     8.96 kB         159 kB
+├ ○ /test-oauth-inactive                  4.22 kB         161 kB
+├ ○ /test-session-timeout                 4.96 kB         161 kB
+├ ○ /test-supabase-google                 5.36 kB         162 kB
+├ ○ /test-user-status                     4.91 kB         161 kB
+├ ○ /unauthorized                         3.16 kB         114 kB
+├ ○ /user                                 9.68 kB         372 kB
+├ ○ /user-roles                           7.69 kB         223 kB
+└ ○ /verify-email                         4.63 kB         163 kB
++ First Load JS shared by all              102 kB
+  ├ chunks/1255-15f04a30ae2c7791.js       45.5 kB
+  ├ chunks/4bd1b696-100b9d70ed4e49c1.js   54.2 kB
+  └ other shared chunks (total)           2.13 kB
+
+
+ƒ Middleware                              70.4 kB
+
+○  (Static)   prerendered as static content
+ƒ  (Dynamic)  server-rendered on demand
+

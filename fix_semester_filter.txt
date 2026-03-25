@@ -1,0 +1,12 @@
+Line 181-183 needs to be commented out:
+
+Current:
+		if (semester) {
+			query = query.eq('course_offerings.semester', parseInt(semester))
+		}
+
+Should be:
+		// REMOVED: Do not filter by semester - we need ALL courses (current + arrears)
+		// if (semester) {
+		// 	query = query.eq('course_offerings.semester', parseInt(semester))
+		// }

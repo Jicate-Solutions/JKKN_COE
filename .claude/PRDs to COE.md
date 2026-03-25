@@ -1,0 +1,1447 @@
+# Product Requirements Document
+
+## Centre of Examinations (CoE) Module - MyJKKN Platform
+
+**Version:** 2.0
+**Created:** December 2025
+**Author:** JKKN CoE Technical Team
+**Status:** Ready for Build
+
+---
+
+## Section 1: The Problem
+
+### 1.1 Problem Statement
+
+Currently, JKKN Arts Colleges (5,200+ learners across 7 colleges) manage examinations through fragmented manual processes involving paper-based question papers, physical mark sheets, handwritten registers, and disconnected Excel files. This matters because:
+
+- Examination processing takes 45-60 days instead of 15 days
+- Question paper security relies on physical locks rather than encryption
+- Result errors affect 2-3% of learners each semester requiring manual correction
+- Staff spend 60% of their time on data entry rather than academic quality
+
+### 1.2 Problem Breakdown
+
+**WHO is struggling?** All examination stakeholders—the Controller of Examinations coordinating 200+ exams per semester, learning facilitators setting 500+ question papers annually, evaluators processing 25,000+ answer scripts, and learners waiting weeks for results and certificates.
+
+**WHAT are they struggling with?**
+
+- Question paper creation happens in isolation without version control or duplicate detection
+- Evaluation marks recorded on paper, manually transferred to Excel, then re-entered into systems
+- Result compilation requires cross-referencing 5+ sources (CIA, ESE, practicals, attendance)
+- Certificate generation takes 30+ days after result declaration
+- No real-time visibility into examination progress for any stakeholder
+- Arts-specific assessments (performances, portfolios, practicals) lack standardized digital workflows
+
+**WHY is it hard right now?**
+
+- No unified platform connecting pre-examination, conduct, evaluation, and results
+- Paper-based processes create bottlenecks at every handoff point
+- Question paper security depends on physical access control only
+- No audit trail for marks entry, modification, or approval
+- Each department maintains separate systems and formats
+- Arts college-specific requirements (performance recordings, portfolio submissions) not addressed
+
+**WHAT happens if we don't fix this?**
+
+- Result declaration continues to miss regulatory timelines (15 days per UGC guidelines)
+- Question paper leaks remain a persistent risk (3 incidents in last 2 years)
+- Staff burnout from repetitive manual work during peak examination periods
+- Learner complaints about delays and errors continue to increase (156 grievances last semester)
+- NAAC/NBA accreditation scores affected by documentation gaps
+- Competitive disadvantage as peer institutions adopt digital examination systems
+
+---
+
+## Section 2: Why This Matters
+
+### 2.1 Value to Users
+
+**What can users do AFTER this module that they CAN'T do now?**
+
+#### Controller of Examinations:
+
+- View real-time dashboard of all examination activities across 7 colleges
+- Approve results with complete audit trail and one-click publishing
+- Generate compliance reports automatically for UGC, NAAC, NBA
+- Track question paper status from creation through printing without physical visits
+
+#### Learning Facilitators:
+
+- Create question papers using template-based interface with Bloom's taxonomy compliance
+- Access question bank with AI-powered duplicate detection
+- Enter marks digitally with automatic validation and moderation
+- Receive automated notifications for pending evaluations
+
+#### Learners:
+
+- Download hall tickets instantly with QR verification
+- View results same-day after declaration with subject-wise breakdown
+- Request revaluation online with fee payment and status tracking
+- Access digital certificates with blockchain verification within 24 hours
+
+**How much time/money will this save?**
+
+| Process | Current Time | After CoE | Savings |
+|---------|--------------|-----------|---------|
+| Result processing | 45-60 days | 15 days | 75% faster |
+| Question paper creation | 2 weeks per paper | 2 days per paper | 85% faster |
+| Certificate generation | 30+ days | Same-day digital | 95% faster |
+| Internal test processing | 7 days | 3 days | 57% faster |
+| Mark entry (per subject) | 4 hours manual | 30 minutes digital | 87% faster |
+
+**Real-world example:** Currently, Prof. Lakshmi (HOD, Tamil Department) spends 3 full days each semester compiling internal marks from 8 faculty members who submit on paper. She manually enters 450 learner records into Excel, cross-checks twice, prints for department verification, then re-enters into university portal. With CoE, faculty enter marks directly with validation, department review happens online, and university submission is one click. Total time: 4 hours instead of 3 days.
+
+### 2.2 Value to Business
+
+**Regulatory compliance:** UGC mandates result declaration within 15 days of examination. Current 45-60 day timeline risks compliance issues. CoE ensures 15-day target is achievable.
+
+**NAAC/NBA accreditation:** Digital examination management with complete audit trails directly improves scores in Criterion II (Teaching-Learning) and Criterion VI (Governance). Estimated improvement: 0.3 CGPA points.
+
+**Cost reduction:**
+
+- Paper consumption: 80% reduction (50,000 sheets/semester to 10,000)
+- Storage costs: 50% reduction (digital archives replace physical)
+- Staff overtime: 40% reduction during peak examination periods
+
+**Risk mitigation:** Encrypted question papers, role-based access, and audit logs reduce security incidents. Digital marks entry eliminates transcription errors.
+
+**Competitive positioning:** First autonomous arts college in region with fully digital examination management. Differentiator for learner recruitment and institutional partnerships.
+
+---
+
+## Section 3: Evidence
+
+### 3.1 Customer Evidence
+
+| Type | Evidence | Source |
+|------|----------|--------|
+| Quote | "I spend more time on paperwork than on improving education quality" | Dr. Rajesh, Controller of Examinations, Interview Oct 2025 |
+| Quote | "Question paper setting should be collaborative, not isolated" | Prof. Meena, Senior Faculty, Department Feedback |
+| Quote | "Why does it take 2 months to get my certificate when results are already out?" | Arun, Final Year Learner, Grievance #3421 |
+| Quote | "Every semester we find 20-30 mark entry errors after results are published" | CoE Office Staff, Process Review Meeting |
+| Request count | 156 result-related grievances in last semester | Grievance Portal Analysis |
+| Request count | 89 certificate delay complaints in last academic year | Support Ticket Tracking |
+
+### 3.2 Usage Data (Current State Analysis)
+
+| Metric | Finding |
+|--------|---------|
+| Result processing time | Average 52 days from last exam to declaration |
+| Mark entry errors | 2.8% of results require correction after publication |
+| Question paper incidents | 3 security concerns reported in last 2 years |
+| Certificate pending | Average 847 certificates pending at any time |
+| Manual re-entry | Same data entered 4x (register → Excel → portal → archive) |
+| Staff overtime | 120+ hours per department during examination periods |
+
+### 3.3 Competitive Analysis
+
+| Institution | Digital Exam System | Key Features |
+|-------------|---------------------|--------------|
+| VIT University | Yes | Online evaluation, QR hall tickets |
+| SRM University | Yes | Question bank, digital certificates |
+| Christ University | Yes | Full lifecycle management |
+| JKKN (Current) | Partial | Only hall ticket printing, no integration |
+
+### 3.4 Support Burden
+
+| Metric | Data |
+|--------|------|
+| "Result delay" complaints (last 6 months) | 234 |
+| "Certificate request" manual processing | 89 per month |
+| "Mark correction" requests | 47 per semester |
+| Staff hours on manual reconciliation | 200+ hours per semester |
+| IT tickets for data extraction | 15 per week during results |
+
+---
+
+## Section 4: User Stories
+
+### 4.1 Story 1: Controller of Examinations (Primary)
+
+As the Controller of Examinations, I want to view real-time status of all examination activities across departments, so that I can identify bottlenecks early and ensure result declaration within regulatory timelines.
+
+**Context:** The CoE manages 200+ examinations per semester across 7 colleges. Currently relies on phone calls and physical visits to track progress. Needs single dashboard showing registration status, paper setting progress, evaluation completion, and result readiness.
+
+### 4.2 Story 2: Learning Facilitator - Question Paper Setting
+
+As a learning facilitator, I want to create question papers using a structured template with automatic Bloom's taxonomy validation and duplicate detection, so that I can ensure quality papers are ready on time without manual checking.
+
+**Context:** Faculty currently create papers in Word, email to CoE, no standardization or quality checks. Papers often fail blueprint compliance, discovered only during moderation.
+
+### 4.3 Story 3: Learning Facilitator - Evaluation
+
+As an evaluator, I want to enter marks directly into the system with automatic totaling and validation, so that I can complete evaluation faster without manual calculations or later data entry.
+
+**Context:** Evaluators currently write marks on physical sheets, calculate totals manually (error-prone), submit to office for data entry. Double-handling causes delays and errors.
+
+### 4.4 Story 4: HOD - Department Monitoring
+
+As a Head of Department, I want to monitor my department's examination progress (paper setting, evaluation, results) in one view, so that I can ensure my faculty meet deadlines and identify intervention needs.
+
+**Context:** HODs currently have no visibility into faculty progress. Discover delays only when deadlines pass. Need proactive monitoring.
+
+### 4.5 Story 5: Learner - Result Access
+
+As a learner, I want to view my detailed results immediately after declaration with subject-wise marks and grade breakdown, so that I can understand my performance without waiting for physical mark sheets.
+
+**Context:** Learners currently wait 2-4 weeks after declaration for physical mark sheets. No online detailed view. Creates anxiety and support burden.
+
+### 4.6 Story 6: Learner - Certificate Request
+
+As a final year learner, I want to request and receive digital certificates with verification QR codes within 24 hours of eligibility, so that I can apply for jobs and higher studies without delays.
+
+**Context:** Current certificate processing takes 30+ days. Learners miss application deadlines. Physical certificates are forgeable.
+
+### 4.7 Story 7: Admin Staff - Data Management
+
+As examination office staff, I want bulk upload capabilities for learner registration and marks entry, so that I can process large volumes efficiently without manual row-by-row entry.
+
+**Context:** Staff currently enter 5,000+ registrations manually each semester. Excel templates with validation and bulk upload would reduce this from days to hours.
+
+### 4.8 Story 8: Arts Faculty - Performance Assessment
+
+As a performing arts faculty member, I want to schedule and record practical examinations (music, dance, drama) with digital evaluation rubrics and external examiner integration, so that arts assessments have the same rigor and documentation as written exams.
+
+**Context:** Arts practicals currently use informal assessment. No recordings, no standardized rubrics, no external validation. Creates accreditation documentation gaps.
+
+---
+
+## Section 5: Features
+
+### 5.1 Must-Have Features (P0)
+
+| ID | Feature Name | Description | Serves Stories |
+|----|--------------|-------------|----------------|
+| F01 | Examination Dashboard | Real-time overview of all examination activities with drill-down capability | 1, 4 |
+| F02 | Learner Registration Portal | Online registration with eligibility auto-check (attendance ≥75%, fees paid) | 5, 7 |
+| F03 | Hall Ticket Generation | Bulk generation with QR codes, digital download, and verification | 5 |
+| F04 | Question Bank System | Hierarchical storage (Dept→Program→Course→Unit) with search and reuse | 2 |
+| F05 | Question Paper Template | Blueprint-based creation with Bloom's taxonomy tagging and marks validation | 2 |
+| F06 | Digital Mark Entry | Web interface for evaluators with validation, auto-totaling, moderation workflow | 3, 7 |
+| F07 | Result Compilation Engine | Automated aggregation of CIA, ESE, practicals with grace marks and validation | 1, 5 |
+| F08 | Result Declaration Workflow | Multi-level approval (Dept → CoE → Principal → Board) with audit trail | 1 |
+| F09 | Learner Result Portal | Individual result view with subject breakdown, SGPA/CGPA, historical comparison | 5 |
+| F10 | Internal Test Management | Mid-semester and unit test scheduling, paper creation, mark entry | 2, 3 |
+| F11 | Grade Card Generation | Automated semester mark sheets with digital signatures | 5, 6 |
+| F12 | Role-Based Access Control | Granular permissions for CoE, faculty, HOD, learner, admin roles | All |
+
+### 5.2 Nice-to-Have Features (P1)
+
+| ID | Feature Name | Description | Why Not P0 |
+|----|--------------|-------------|------------|
+| F13 | Practical Exam Portal | Performance arts scheduling, recording, rubric evaluation | Complex media handling |
+| F14 | Portfolio Submission | Visual arts digital portfolio with version tracking | Specialized file handling |
+| F15 | Revaluation System | Online application, fee payment, script retrieval, result revision | Can use manual process initially |
+| F16 | Certificate Generator | Semester, consolidated, provisional, degree certificates with blockchain | QR verification sufficient for launch |
+| F17 | Analytics Dashboard | Pass rates, subject analysis, faculty performance, trend visualization | Manual reports acceptable initially |
+| F18 | Duplicate Detection AI | AI-powered similar question identification in bank | Enhancement to question bank |
+| F19 | Invigilation Management | Duty roster, squad allocation, incident reporting | Can use existing manual process |
+| F20 | External Examiner Portal | Secure access for paper setters and evaluators from outside institution | Limited external involvement initially |
+
+### 5.3 Future Features (P2)
+
+| ID | Feature Name | Description | Why Later |
+|----|--------------|-------------|-----------|
+| F21 | Blockchain Certificates | Immutable verification for all certificates | Infrastructure complexity |
+| F22 | Online Proctoring | Remote examination with AI monitoring | Specialized infrastructure |
+| F23 | Predictive Analytics | At-risk learner identification, result predictions | Requires historical data |
+| F24 | Voice-Based Mark Entry | Mobile app with voice input for on-spot evaluation | Accessibility enhancement |
+| F25 | Parent Portal | Parent access to ward's examination data | Separate user base |
+| F26 | Government Portal Integration | Direct submission to university/regulatory portals | API dependency on external systems |
+| F27 | Multi-Language Support | Full interface in Tamil and regional languages | Significant translation effort |
+
+### 5.4 Internal Examinations Module (Arts College Specific)
+
+#### 5.4.1 Internal Test Management
+
+| Component | Features |
+|-----------|----------|
+| Test Scheduling | Mid-semester tests (2 per semester), unit tests, surprise tests, make-up tests |
+| Test Creation | Department-level papers, common papers for allied subjects, multiple sets, time-bound activation |
+| Test Conduct | Learning studio allocation, batch-wise scheduling, online/offline modes, duration management (1-3 hours) |
+
+#### 5.4.2 Practical Examinations (Arts Specific)
+
+| Arts Type | Features |
+|-----------|----------|
+| Performance Arts | Music practical scheduling (vocal/instrumental), dance evaluation, theatre/drama assessments, recording capability, external examiner integration |
+| Visual Arts | Portfolio submission portal, artwork documentation (high-res), progressive work tracking, studio practical management, exhibition assessment |
+| Language Arts | Oral examination scheduling, pronunciation assessment, reading/recitation evaluations, conversation skill testing |
+
+#### 5.4.3 Creative Assessment Management
+
+| Assessment Type | Features |
+|-----------------|----------|
+| Project Work | Individual/group tracking, milestone-based evaluation, peer assessment, presentation scheduling, documentation repository |
+| Field Work/Study Tours | Field report submission, attendance tracking, photo/video evidence, learning journal integration, supervisor feedback |
+| Workshop/Seminar | Attendance tracking, participation grading, certificate verification, skill demonstration assessment |
+
+#### 5.4.4 Continuous Evaluation Features
+
+| Category | Details |
+|----------|---------|
+| Assessment Types | Weekly assessments, monthly reviews, skill-based evaluations, competency mapping, learning outcome tracking |
+| Flexible Marking | Rubric-based evaluation, criterion-referenced assessment, norm-referenced grading, portfolio rubrics, performance indicators |
+| Remedial Support | Weak learner identification, remedial test scheduling, improvement tracking, additional assessment opportunities |
+
+#### 5.4.5 Internal Marks Processing
+
+| Process | Features |
+|---------|----------|
+| Mark Entry | Bulk upload via Excel, individual entry forms, mobile app entry, voice-based entry |
+| Validation | Department-level moderation, statistical moderation, outlier detection, cross-verification workflows |
+| Integration | Automatic weightage calculation, internal-external ratio management, final grade computation, eligibility determination |
+
+---
+
+## Section 6: User Flow
+
+### 6.1 Happy Path: Learner Views Results
+
+**Starting Point:** Learner receives SMS notification that results are declared.
+
+| Step | User Action | System Response | What User Sees |
+|------|-------------|-----------------|----------------|
+| 1 | Opens MyJKKN and logs in | Authenticates via Google OAuth | Dashboard with "Results Declared" banner |
+| 2 | Clicks "View Results" | Fetches learner's result data | Loading indicator |
+| 3 | Views result summary | Displays SGPA, pass/fail status | "SGPA: 7.8 \| Status: PASSED" with subject list |
+| 4 | Clicks subject for details | Expands to show CIA, ESE, total, grade | Detailed breakdown: "CIA: 18/25, ESE: 52/75, Total: 70, Grade: A" |
+| 5 | Clicks "Download Grade Card" | Generates PDF with digital signature | Browser download prompt |
+| 6 | Optionally clicks "View History" | Shows all semester results | Semester-wise SGPA chart with CGPA trend |
+
+**Detailed Flow Description:**
+
+1. **Learner on Dashboard**
+   - Prominent banner: "Your Semester 5 Results are now available"
+   - Quick stats widget shows SGPA immediately
+   - "View Full Results" primary button
+
+2. **Results Page**
+   - Header: Learner name, roll number, program, semester
+   - Summary card: SGPA (large), CGPA (cumulative), Pass/Fail status
+   - Subject table: Course code, title, credits, CIA, ESE, total, grade
+   - Color coding: Green for A/B grades, Yellow for C, Red for failures
+
+3. **Grade Card Download**
+   - PDF generated with institution letterhead
+   - QR code for verification
+   - Digital signature of CoE
+   - Immediate download, no waiting
+
+### 6.2 Happy Path: Faculty Enters Marks
+
+**Starting Point:** Faculty member logs in during evaluation period.
+
+| Step | User Action | System Response | What User Sees |
+|------|-------------|-----------------|----------------|
+| 1 | Navigates to "My Evaluations" | Shows assigned courses pending evaluation | List of courses with learner counts and deadlines |
+| 2 | Selects a course | Loads learner list for that course | Table: Roll No, Name, marks entry fields |
+| 3 | Enters marks for each learner | Validates range (0 to max marks) | Real-time validation, total auto-calculates |
+| 4 | Clicks "Save Draft" | Saves without submission | Success toast, "Draft Saved" status |
+| 5 | Reviews all entries | Highlights any validation issues | Errors shown in red, summary statistics shown |
+| 6 | Clicks "Submit for Moderation" | Locks marks, notifies HOD | Confirmation: "Submitted to HOD for approval" |
+
+### 6.3 Happy Path: Question Paper Creation
+
+**Starting Point:** Faculty assigned as paper setter receives notification.
+
+| Step | User Action | System Response | What User Sees |
+|------|-------------|-----------------|----------------|
+| 1 | Opens Paper Setting portal | Shows assigned courses with deadlines | Course list with "Create Paper" buttons |
+| 2 | Clicks "Create Paper" for course | Loads course blueprint template | Sections with marks distribution, Bloom's levels |
+| 3 | Browses question bank | Searches by unit, topic, difficulty | Filtered question list with preview |
+| 4 | Selects questions or creates new | Adds to paper sections | Paper preview with marks total updating |
+| 5 | Completes all sections | Validates against blueprint | Validation summary: "Blueprint Compliance: 100%" |
+| 6 | Clicks "Submit for Review" | Sends to internal moderator | Status: "Pending Internal Review" |
+| 7 | Moderator approves | Paper encrypted and stored | Status: "Approved - Secured" |
+
+### 6.4 Alternative Flows
+
+#### Alternative Flow A: Eligibility Not Met
+
+If learner's attendance is below 75% during registration:
+
+1. System shows: "Registration not allowed. Attendance: 68% (Minimum: 75%)"
+2. Shows path to remedy: "Contact your department for attendance condonation request"
+3. If condonation granted, CoE office updates status, learner can retry
+
+#### Alternative Flow B: Mark Entry Validation Error
+
+If faculty enters marks exceeding maximum:
+
+1. Field highlights red immediately
+2. Error message: "Maximum marks for this component is 75. You entered 82."
+3. Cannot save until corrected
+4. Auto-totaling pauses until valid
+
+#### Alternative Flow C: Result Approval Rejection
+
+If HOD rejects marks submission:
+
+1. Faculty receives notification: "Marks returned for revision"
+2. Rejection reason displayed: "Please verify roll numbers 22PH045, 22PH047 - marks seem swapped"
+3. Faculty edits and resubmits
+4. Audit trail preserves all versions
+
+---
+
+## Section 7: Edge Cases
+
+### 7.1 Edge Case Table
+
+| ID | What If... | What Should Happen | Priority | Message to User |
+|----|------------|-------------------|----------|-----------------|
+| E01 | Learner has exactly 75% attendance | Allow registration (≥75% is the rule) | High | "Eligible for registration" |
+| E02 | Power outage during mark entry | Auto-save every 30 seconds, recovery on login | High | "Your work has been auto-saved. Last save: 2:34 PM" |
+| E03 | Same marks for all learners (copy-paste error) | Warn but allow (valid scenario exists) | Medium | "Warning: Identical marks for all learners. Please verify." |
+| E04 | Question paper submitted after deadline | Allow with late flag, escalate to CoE | Medium | "Deadline passed. Paper submitted as LATE. CoE notified." |
+| E05 | Evaluator unavailable (medical emergency) | Allow HOD to reassign papers | High | Admin interface to reassign with reason |
+| E06 | Result shows negative SGPA (calculation error) | Prevent, log for investigation | High | "Calculation error detected. Technical team notified." |
+| E07 | Learner registered for exam but not in course roster | Block registration, show error | High | "You are not enrolled in this course. Contact department." |
+| E08 | Faculty tries to modify marks after submission | Block, show audit trail | High | "Marks already submitted. Contact CoE for corrections." |
+| E09 | Hall ticket downloaded but exam cancelled | Push notification, show on portal | High | "Exam rescheduled. New hall ticket available." |
+| E10 | Two faculty submit marks for same course | Prevent duplicate, first submission locks | High | "Marks already submitted by [name]. Contact HOD." |
+| E11 | Learner requests revaluation for passed subject | Allow (improvement is valid) | Medium | "Revaluation fee: Rs.500. Proceed?" |
+| E12 | External examiner link expires | Allow CoE to regenerate with new validity | Medium | "Access expired. Contact CoE for new link." |
+| E13 | Bulk upload has duplicate roll numbers | Reject file, show specific errors | High | "Duplicate entries found: Rows 45, 67. Please correct." |
+| E14 | Certificate requested before result ratification | Block with status | High | "Results pending board ratification. Check back after [date]." |
+| E15 | Practical exam recording upload exceeds size limit | Show limit, suggest compression | Medium | "File size 250MB exceeds 100MB limit. Please compress." |
+
+### 7.2 Edge Case Details
+
+#### E02: Power Outage During Mark Entry (Critical)
+
+- **Trigger:** User loses connection or closes browser unexpectedly
+- **Behavior:** Auto-save runs every 30 seconds, stores to local storage as backup
+- **Recovery:** On next login, prompt "Unsaved marks found. Restore?"
+- **Prevention:** Prominent "Save Draft" reminder after 5 minutes of editing
+
+#### E08: Modify After Submission (Security)
+
+- **Trigger:** Any attempt to edit submitted marks
+- **Behavior:** Complete block at UI and API level
+- **Audit:** Log attempt with user ID, timestamp, IP address
+- **Resolution:** Only CoE admin can unlock with documented reason
+- **Message:** Clear explanation and proper escalation path
+
+#### E13: Bulk Upload Validation
+
+- **Trigger:** Excel upload with errors
+- **Behavior:** Validate entire file before processing any rows
+- **Response:** Downloadable error report with row numbers and specific issues
+- **Prevention:** Provide validated template with dropdown lists where possible
+
+---
+
+## Section 8: Business Rules
+
+### 8.1 Access & Permissions (Role-Based)
+
+| Rule | IF | THEN |
+|------|-----|------|
+| Learner data access | User role = learner | Can view own results, attendance, fees, hall tickets only |
+| Faculty data access | User role = faculty | Can view/edit marks for assigned courses only |
+| HOD data access | User role = HOD | Can view all department data, approve marks submissions |
+| CoE data access | User role = coe_staff | Can view all examination data, manage schedules, approve results |
+| Admin data access | User role = admin | Full access across all modules and institutions |
+| Cross-department block | Faculty tries to access other department | Deny access, log attempt |
+| Result viewing | Before declaration date | Only CoE and above can view compiled results |
+| Question paper access | After exam starts | Paper setters lose access to prevent post-exam modifications |
+
+### 8.2 Examination Registration Rules
+
+| Rule | IF | THEN |
+|------|-----|------|
+| Attendance eligibility | Attendance < 75% | Block registration, show attendance shortage |
+| Attendance condonation | Has approved condonation | Allow registration regardless of percentage |
+| Fee eligibility | Fees not paid | Block registration, show payment link |
+| Course enrollment | Not enrolled in course | Cannot register for that course exam |
+| Registration window | Outside registration period | Block with "Registration closed on [date]" |
+| Improvement exam | Already passed | Allow with improvement flag |
+| Supplementary exam | Has arrear in course | Auto-include in supplementary list |
+
+### 8.3 Mark Entry & Validation Rules
+
+| Rule | IF | THEN |
+|------|-----|------|
+| Mark range | Entered marks > maximum | Reject with error message |
+| Negative marks | Entered marks < 0 | Reject with error message |
+| Absent handling | Learner absent | Mark as "AB" (Absent), treat as 0 for calculations |
+| Moderation cap | Moderated marks > +10% of original | Require HOD approval with justification |
+| Double entry | Two faculty assigned same course | First submission locks, second blocked |
+| Submission lock | After submission deadline | Extend only by CoE approval |
+| Decimal marks | Non-integer entered | Round to nearest 0.5 |
+
+### 8.4 Result Processing Rules
+
+| Rule | IF | THEN |
+|------|-----|------|
+| Grace marks | Fail by ≤5 marks in max 2 subjects | Apply grace automatically |
+| Grace limit | Already used grace 2 times in program | No more grace applicable |
+| Pass criteria | Total ≥40% AND ESE ≥40% | Mark as PASSED |
+| SGPA calculation | All subjects passed | Calculate SGPA normally |
+| SGPA with arrears | One or more failures | SGPA calculated excluding failed subjects, with arrear count |
+| Improvement result | New marks < old marks | Retain old marks |
+| Supplementary result | Passed in supplementary | Update result, mark as "Supplementary" |
+
+### 8.5 Certificate Rules
+
+| Rule | IF | THEN |
+|------|-----|------|
+| Semester certificate | Result declared and ratified | Available immediately |
+| Consolidated certificate | All semesters completed | Available after final ratification |
+| Provisional certificate | Passed all, pending convocation | Available on request |
+| Degree certificate | Convocation completed | Available after convocation date |
+| Duplicate certificate | Certificate already issued | Charge fee, issue with "DUPLICATE" stamp |
+| Verification request | Third party requests verification | Verify via QR code API, respond in real-time |
+
+---
+
+## Section 9: Visual Reference
+
+### 9.1 Primary Visual: Examination Dashboard (CoE View)
+
+```
++------------------------------------------------------------------------+
+|  MyJKKN CoE                              [Search] [Bell] [User: CoE]   |
++------------------------------------------------------------------------+
+|                                                                        |
+|  Examination Dashboard                              [Dec 2025 Exams]   |
+|                                                                        |
+|  +------------------+  +------------------+  +------------------+      |
+|  | Registrations    |  | Papers Ready     |  | Evaluation       |      |
+|  | 4,521 / 5,200    |  | 145 / 180        |  | 67% Complete     |      |
+|  | [87% Complete]   |  | [81% Complete]   |  | 12,450 scripts   |      |
+|  +------------------+  +------------------+  +------------------+      |
+|                                                                        |
+|  +------------------+  +------------------+  +------------------+      |
+|  | Results Ready    |  | Pending Approval |  | Grievances       |      |
+|  | 23 / 48 courses  |  | 5 submissions    |  | 12 open          |      |
+|  | [48% Complete]   |  | [Action Needed]  |  | [3 urgent]       |      |
+|  +------------------+  +------------------+  +------------------+      |
+|                                                                        |
+|  Timeline View                                                         |
+|  +------------------------------------------------------------------+  |
+|  | Dec 1    Dec 5    Dec 10    Dec 15    Dec 20    Dec 25    Dec 30 |  |
+|  |   |        |         |         |         |         |         |   |  |
+|  |   [====Registration====]                                         |  |
+|  |            [=======Exams=======]                                 |  |
+|  |                      [========Evaluation========]                |  |
+|  |                                  [===Results===]                 |  |
+|  +------------------------------------------------------------------+  |
+|                                                                        |
+|  Recent Activity                                                       |
+|  - Dr. Priya submitted Mech 3rd Year marks (2 min ago)                |
+|  - Hall tickets generated for Pharmacy Sem 5 (15 min ago)             |
+|  - Question paper approved: 22PHY301 (1 hour ago)                     |
+|                                                                        |
++------------------------------------------------------------------------+
+```
+
+### 9.2 Mark Entry Interface (Faculty View)
+
+```
++------------------------------------------------------------------------+
+|  Mark Entry: 22ME301 - Engineering Mechanics | Mech 3rd Year Sec A     |
++------------------------------------------------------------------------+
+|  Maximum Marks: 75    |  Deadline: Dec 15, 2025    |  Status: Draft    |
++------------------------------------------------------------------------+
+|                                                                        |
+|  +----+------------+------------------+-------+-------+-------+        |
+|  | #  | Roll No    | Name             | Marks | Valid | Total |        |
+|  +----+------------+------------------+-------+-------+-------+        |
+|  | 1  | 22ME001    | Arun Kumar       | [68]  |   OK  |  68   |        |
+|  | 2  | 22ME002    | Bharathi S       | [72]  |   OK  |  72   |        |
+|  | 3  | 22ME003    | Chandran M       | [AB]  |   AB  |   0   |        |
+|  | 4  | 22ME004    | Divya R          | [45]  |   OK  |  45   |        |
+|  | 5  | 22ME005    | Ezhil V          | [82]  |  ERR  |  --   |        |
+|  |    |            |                  | "Max is 75"         |        |
+|  +----+------------+------------------+-------+-------+-------+        |
+|                                                                        |
+|  Summary: 48/50 entered | 1 absent | 1 error | Avg: 58.2               |
+|                                                                        |
+|  [Save Draft]                    [Submit for Moderation]               |
+|                                                                        |
++------------------------------------------------------------------------+
+```
+
+### 9.3 Learner Result View
+
+```
++------------------------------------------------------------------------+
+|  My Results                                               [Download]   |
++------------------------------------------------------------------------+
+|                                                                        |
+|  Ramesh Kumar (22PH045) | B.Pharm 3rd Year | Semester 5                |
+|                                                                        |
+|  +--------------------------------------------------------------+      |
+|  |                      RESULT SUMMARY                           |      |
+|  |                                                                |      |
+|  |    SGPA: 7.8          CGPA: 7.5          Status: PASSED       |      |
+|  |                                                                |      |
+|  +--------------------------------------------------------------+      |
+|                                                                        |
+|  Subject-wise Breakdown                                                |
+|  +--------+------------------------+----+-----+-----+-----+------+     |
+|  | Code   | Subject                | Cr | CIA | ESE | Tot | Grade|     |
+|  +--------+------------------------+----+-----+-----+-----+------+     |
+|  | 22PH501| Pharmacology III       | 4  | 22  | 58  | 80  |  A   |     |
+|  | 22PH502| Pharmaceutical Chem    | 4  | 18  | 52  | 70  |  A   |     |
+|  | 22PH503| Pharmacognosy II       | 3  | 20  | 45  | 65  |  B   |     |
+|  | 22PH504| Hospital Pharmacy      | 3  | 16  | 48  | 64  |  B   |     |
+|  | 22PH505| Practical Lab          | 4  | 24  | 68  | 92  |  O   |     |
+|  +--------+------------------------+----+-----+-----+-----+------+     |
+|                                                                        |
+|  [View Previous Semesters]    [Request Revaluation]    [Get Grade Card]|
+|                                                                        |
++------------------------------------------------------------------------+
+```
+
+### 9.4 Reference Design Patterns
+
+- **Dashboard cards:** Use existing MyJKKN stat card pattern with gradient headers
+- **Tables:** Use existing Shadcn data table with sorting, filtering
+- **Forms:** Sheet-based forms with section headers, validation per CLAUDE.md standards
+- **Status indicators:** Green (complete), Yellow (in-progress), Red (attention needed)
+- **Timeline:** Horizontal progress bar with milestone markers
+- **Mobile:** Responsive stacking, collapsible sections
+
+---
+
+## Section 10: UI Text & Copy
+
+### 10.1 Primary UI Elements
+
+| Element | Location | Exact Text | Style Notes |
+|---------|----------|------------|-------------|
+| Dashboard title | Main header | "Examination Dashboard" | Montserrat, semibold, 24px |
+| Stat card title | Card header | "Registrations", "Papers Ready", etc. | Montserrat, medium, 14px |
+| Stat value | Card body | "4,521 / 5,200" | Montserrat, bold, 28px |
+| Progress label | Card footer | "[87% Complete]" | Inter, normal, 12px, muted |
+| Action button | Primary | "Submit for Moderation" | Inter, medium, 14px, orange bg |
+| Status badge | Inline | "Draft", "Submitted", "Approved" | Pill shape, color-coded |
+| Deadline text | Form header | "Deadline: Dec 15, 2025" | Inter, normal, 14px, muted |
+| Error message | Below field | "Maximum marks is 75. You entered 82." | Inter, normal, 12px, red |
+| Success toast | Top right | "Marks saved successfully" | Green background, check icon |
+
+### 10.2 Message Templates
+
+| Message Type | Template |
+|--------------|----------|
+| Registration success | "You are registered for {exam_name}. Hall ticket available from {date}." |
+| Registration blocked | "Registration not allowed. {reason}. Contact department for assistance." |
+| Marks submitted | "Marks submitted for {course_name}. Pending HOD approval." |
+| Marks approved | "Marks approved for {course_name}. Forwarded to result processing." |
+| Marks rejected | "Marks returned for {course_name}. Reason: {reason}. Please revise." |
+| Result declared | "Your Semester {sem} results are now available. SGPA: {sgpa}" |
+| Hall ticket ready | "Hall ticket for {exam_name} is ready. Download from portal." |
+| Deadline reminder | "Reminder: {task} deadline is {date}. {count} items pending." |
+
+### 10.3 Action Button Text
+
+| Action | Button Text | Confirmation Text |
+|--------|-------------|-------------------|
+| Save draft | "Save Draft" | None (auto-save feedback) |
+| Submit marks | "Submit for Moderation" | "Submit marks for {course}? This cannot be undone." |
+| Approve marks | "Approve" | "Approve marks for {course}? {count} learners affected." |
+| Reject marks | "Return for Revision" | "Return marks to {faculty}? Please provide reason." |
+| Generate hall tickets | "Generate All" | "Generate hall tickets for {count} learners?" |
+| Publish results | "Declare Results" | "Declare results for {exam}? {count} learners will be notified." |
+| Download | "Download PDF" | None (immediate action) |
+| Request revaluation | "Apply for Revaluation" | "Apply for revaluation? Fee: Rs.{amount}" |
+
+### 10.4 Error Messages
+
+| Scenario | Message Text | Display Style |
+|----------|--------------|---------------|
+| Attendance shortage | "Attendance: 68% (Minimum: 75%). Apply for condonation to proceed." | Yellow warning box |
+| Fees pending | "Fee balance: Rs.12,500. Clear dues to register for exams." | Yellow warning with Pay Now link |
+| Marks exceed maximum | "Invalid marks. Maximum allowed: 75. You entered: 82." | Red inline error |
+| Submission deadline passed | "Deadline passed on Dec 10. Contact CoE for extension." | Red warning box |
+| Not authorized | "You don't have permission to view this data." | Gray info box |
+| System error | "Something went wrong. Please try again. [Retry]" | Red error box with action |
+| Session expired | "Your session expired. Please log in again." | Modal overlay |
+| Duplicate entry | "Record already exists. Roll No: 22ME045 found in row 23." | Red inline with row reference |
+
+### 10.5 Tone & Voice
+
+**Overall tone:** Professional, clear, action-oriented
+
+**Do:**
+
+- Use direct language ("Submit marks" not "Click here to submit your marks")
+- Include specific numbers and dates ("Deadline: Dec 15" not "Deadline is approaching")
+- Provide next steps in error messages
+- Use status icons (checkmark, warning, error)
+
+**Don't:**
+
+- Use jargon ("ESE 40% threshold not met" instead say "Minimum exam marks not achieved")
+- Be vague ("Error occurred" - always specify what went wrong)
+- Use passive voice ("Marks were submitted" - say "Marks submitted")
+- Add unnecessary pleasantries ("Thank you for submitting!")
+
+**Example of desired tone:**
+
+> "Marks submitted for 22ME301. Pending HOD approval."
+
+**Not:**
+
+> "Thank you! Your marks have been successfully submitted for the course 22ME301 - Engineering Mechanics. The system has forwarded your submission to your Head of Department for approval. You will be notified once the approval process is complete."
+
+---
+
+## Section 11: Success Metrics
+
+### 11.1 Quantitative Goals
+
+| Metric | Target | Measurement Method |
+|--------|--------|-------------------|
+| Result processing time | ≤15 days from last exam to declaration | Track exam_end_date to result_declared_date |
+| Mark entry error rate | <0.5% corrections after publication | Track result_corrections / total_results |
+| Registration completion | 95% eligible learners registered | Track registered / eligible_count |
+| Hall ticket download | 100% digital (zero physical distribution) | Track download events, no print requests |
+| Question paper on-time | 100% papers ready 48 hours before exam | Track paper_approved_date vs exam_date |
+| System uptime | 99.9% during examination periods | Monitor uptime, exclude maintenance windows |
+| User adoption | 90% transactions through portal (vs manual) | Track digital vs manual transaction counts |
+
+### 11.2 Efficiency Goals
+
+| Metric | Current | Target | Improvement |
+|--------|---------|--------|-------------|
+| Result processing days | 52 days avg | 15 days | 71% faster |
+| Mark entry time per subject | 4 hours | 30 minutes | 87% faster |
+| Certificate generation | 30+ days | 24 hours | 97% faster |
+| Internal test processing | 7 days | 3 days | 57% faster |
+| Paper consumption | 50,000 sheets/semester | 10,000 sheets | 80% reduction |
+| Staff overtime during exams | 120 hours/dept | 48 hours/dept | 60% reduction |
+
+### 11.3 Quality Goals
+
+| Goal | How We'll Know |
+|------|----------------|
+| Mark entry accuracy | <0.5% post-publication corrections |
+| Question paper security | Zero leaks (measured by incident reports) |
+| Audit completeness | 100% of mark changes have audit trail |
+| Learner satisfaction | >85% satisfaction in post-exam survey |
+| Faculty adoption | <10% "prefer old system" in feedback |
+
+### 11.4 Tracking Implementation
+
+| Event Name | Trigger | Properties |
+|------------|---------|------------|
+| exam_registration | Learner completes registration | user_id, exam_id, timestamp |
+| hall_ticket_downloaded | Learner downloads hall ticket | user_id, exam_id, timestamp |
+| marks_entry_started | Faculty opens mark entry form | user_id, course_id, timestamp |
+| marks_draft_saved | Faculty saves draft | user_id, course_id, learner_count, timestamp |
+| marks_submitted | Faculty submits for approval | user_id, course_id, learner_count, timestamp |
+| marks_approved | HOD approves submission | approver_id, course_id, timestamp |
+| marks_rejected | HOD returns for revision | approver_id, course_id, reason, timestamp |
+| result_compiled | System completes result processing | exam_id, learner_count, duration_seconds |
+| result_declared | CoE publishes results | exam_id, declared_by, timestamp |
+| result_viewed | Learner views results | user_id, exam_id, timestamp |
+| certificate_generated | Certificate PDF created | user_id, certificate_type, timestamp |
+| certificate_downloaded | User downloads certificate | user_id, certificate_id, timestamp |
+| revaluation_requested | Learner applies for revaluation | user_id, subject_id, timestamp |
+
+---
+
+## Section 12: Non-Goals & Scope Boundaries
+
+### 12.1 Not Building in This Version
+
+| Feature | Why Not | Future Plans |
+|---------|---------|--------------|
+| Online examination (proctored) | Requires specialized infrastructure, camera monitoring | v2 after pilot |
+| AI-powered answer evaluation | Technology not mature for subjective arts content | Research for v3 |
+| Parent login portal | Separate user base, different requirements | v2 |
+| Alumni certificate portal | Lower priority, manual process acceptable | v2 |
+| Real-time exam monitoring | Hardware requirements (CCTV integration) | Phase 2 |
+| Mobile app (native) | Web responsive sufficient for launch | v2 |
+| Multi-language interface | English first, Tamil/regional later | v1.1 |
+| Integration with external universities | API dependencies, complex negotiations | v2 |
+
+### 12.2 Explicit Constraints
+
+- **DO NOT** build features for conducting online examinations (focus on management, not delivery)
+- **DO NOT** automate subjective answer evaluation (maintain human evaluation integrity)
+- **DO NOT** allow direct mark modification without audit trail (all changes logged)
+- **DO NOT** expose question papers before scheduled release (encryption until 30 min before exam)
+- **DO NOT** process financial transactions within CoE (redirect to MyJKKN payment module)
+- **DO NOT** store biometric data (use existing HRMS biometric for attendance verification)
+
+### 12.3 Out of Scope Clarifications
+
+- "Can it conduct online viva voce?" — No, this is for management. Viva scheduling yes, video conferencing no.
+- "Can parents see learner marks?" — Not in v1. Learner shares via download, no direct parent access yet.
+- "Can it automatically fail learners for malpractice?" — No, malpractice recorded and flagged, committee decides.
+- "Can it integrate with placement portal?" — Read-only eligibility check yes, full integration later.
+- "Can external evaluators access answer scripts?" — Not in v1. Physical scripts or scanned PDFs shared manually.
+
+---
+
+## Section 13: Technical Context
+
+### 13.1 Existing Technology
+
+**MyJKKN Current Stack:**
+
+- Frontend: React (Next.js 15) with TypeScript
+- Backend: Node.js API routes within Next.js
+- Database: PostgreSQL via Supabase
+- Authentication: Google OAuth via Supabase Auth
+- UI: Shadcn/UI components with Tailwind CSS
+- Hosting: Vercel (planned)
+
+**Existing Modules (to integrate with):**
+
+- User Management: roles, permissions, institutions, departments
+- Learner Management: learners, enrollments, sections
+- Course Management: courses, programs, regulations, semesters
+- Attendance: attendance records with percentage calculations
+
+### 13.2 Architecture Overview
+
+```
++------------------------------------------------------------------------+
+|                         USER INTERFACE                                  |
+|  Dashboard → Registration → Mark Entry → Results → Certificates         |
++------------------------------------------------------------------------+
+                                |
+                                v
++------------------------------------------------------------------------+
+|                      NEXT.JS API ROUTES                                 |
+|  /api/exam/* - Registration, Hall Tickets, Results                      |
+|  /api/grading/* - Mark Entry, Moderation, Compilation                   |
+|  /api/certificates/* - Generation, Verification                         |
++------------------------------------------------------------------------+
+                                |
+                                v
++------------------------------------------------------------------------+
+|                         SERVICE LAYER                                   |
+|  ExamService, GradingService, ResultService, CertificateService        |
+|  (Business logic, validation, calculations)                             |
++------------------------------------------------------------------------+
+                                |
+                                v
++------------------------------------------------------------------------+
+|                          SUPABASE                                       |
+|  PostgreSQL Database | Row Level Security | Real-time Subscriptions    |
++------------------------------------------------------------------------+
+```
+
+### 13.2.1 Multi-Tenant Institution Context Architecture (IMPLEMENTED)
+
+The application implements multi-tenant data isolation where each institution's data is segregated. This is a **COMPLETED** feature ready for use across all COE modules.
+
+**Implementation Status:** ✅ Complete
+
+**Core Components:**
+
+| Component | File | Purpose |
+|-----------|------|---------|
+| InstitutionProvider | `context/institution-context.tsx` | Context provider with filtering hooks |
+| InstitutionSelector | `components/layout/institution-selector.tsx` | UI for switching institutions (super_admin) |
+| Layout Integration | `app/(coe)/layout.tsx` | Provider wrapper for all COE pages |
+
+**Available Hooks:**
+
+```typescript
+// Basic filtering - use in pages that fetch data
+import { useInstitutionFilter } from '@/context/institution-context'
+const { filter, shouldFilter, institutionCode, isLoading } = useInstitutionFilter()
+
+// Full context - for advanced scenarios
+import { useInstitution } from '@/context/institution-context'
+const { currentInstitution, canSwitchInstitution, selectInstitution } = useInstitution()
+```
+
+**Role-Based Behavior:**
+
+| Role | Behavior | Filter Applied |
+|------|----------|----------------|
+| super_admin | Can switch institutions or view all | Optional |
+| coe/deputy_coe | See assigned institution only | Automatic |
+| coe_office | See assigned institution only | Automatic |
+| Other users | See assigned institution only | Automatic |
+
+**Integration Pattern for New Modules:**
+
+1. Service layer accepts optional `institutionFilter` parameter
+2. Page component uses `useInstitutionFilter()` hook
+3. Pass filter to service when `shouldFilter` is true
+4. Add institution filter to useEffect dependency array
+
+**Reference Implementation:** See `app/(coe)/master/courses/page.tsx` for complete example.
+
+### 13.3 Database Schema (Key Tables)
+
+**Examination Core:**
+
+- `examinations`: exam schedules, types, dates
+- `exam_registrations`: learner registrations with eligibility status
+- `hall_tickets`: generated tickets with QR codes
+- `exam_timetables`: subject-wise schedules per exam
+
+**Question Management:**
+
+- `question_bank`: hierarchical question storage
+- `question_papers`: compiled papers with encryption
+- `paper_setters`: faculty assignments
+- `paper_blueprints`: marks distribution templates
+
+**Grading:**
+
+- `grading_entries`: individual marks per learner-course
+- `grading_moderation`: approval workflow records
+- `cia_components`: internal assessment breakdowns
+- `results`: compiled final results with grades
+
+**Certificates:**
+
+- `certificates`: generated certificate records
+- `certificate_templates`: template definitions
+- `verification_logs`: third-party verification requests
+
+### 13.4 API Endpoints Required
+
+**Core Examination:**
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| /api/exam/schedule | GET, POST | Exam calendar management |
+| /api/exam/register | POST | Learner registration |
+| /api/exam/eligibility | GET | Check registration eligibility |
+| /api/exam/hall-ticket | GET, POST | Hall ticket generation/download |
+
+**Grading:**
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| /api/grading/courses | GET | Faculty's assigned courses |
+| /api/grading/marks | GET, POST, PUT | Mark entry CRUD |
+| /api/grading/submit | POST | Submit for moderation |
+| /api/grading/approve | POST | HOD approval action |
+| /api/grading/final-marks | GET | Compiled results |
+
+**Results:**
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| /api/results/compile | POST | Trigger result compilation |
+| /api/results/declare | POST | Publish results |
+| /api/results/learner | GET | Individual result fetch |
+| /api/results/department | GET | Department-wise results |
+
+**Certificates:**
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| /api/certificates/generate | POST | Generate certificate |
+| /api/certificates/download | GET | Download PDF |
+| /api/certificates/verify | GET | QR verification |
+
+### 13.5 Security Requirements
+
+| Requirement | Implementation |
+|-------------|----------------|
+| Authentication | Google OAuth via Supabase, JWT sessions |
+| Authorization | Role-based access via permissions table |
+| Data encryption | AES-256 for question papers at rest |
+| Audit logging | All mark changes logged with user, timestamp, old/new values |
+| Session management | 30-minute idle timeout, refresh tokens |
+| Rate limiting | 100 requests/minute per user |
+| Input validation | Zod schemas for all API inputs |
+| XSS prevention | DOMPurify for any user-generated content |
+
+### 13.6 Performance Requirements
+
+| Metric | Requirement |
+|--------|-------------|
+| Page load time | <2 seconds for data pages |
+| API response | <500ms for standard queries |
+| Bulk operations | 1000 records/minute for imports |
+| Concurrent users | Support 500 simultaneous users |
+| Result compilation | 5000 learners in <30 minutes |
+| Uptime | 99.9% during examination periods |
+
+---
+
+## Section 14: Timeline & Dependencies
+
+### 14.1 Development Phases
+
+**Phase 1: Foundation (Completed)**
+
+- User management with RBAC
+- Institution, department, program hierarchy
+- Course and regulation management
+- Basic learner management
+
+**Phase 2: Grading Core (Current - 80% Complete)**
+
+- Internal assessment entry
+- ESE mark entry with validation
+- Grade calculation (GPA/CGPA)
+- Course mapping for result processing
+
+**Phase 3: Examination Management (Next)**
+
+- Exam schedule creation
+- Learner registration with eligibility
+- Hall ticket generation
+- Question bank system
+
+**Phase 4: Result Processing (Following)**
+
+- Multi-source mark compilation
+- Grace mark application
+- Multi-level approval workflow
+- Result declaration and publishing
+
+**Phase 5: Certification (Final)**
+
+- Certificate templates
+- Digital generation with QR
+- Verification portal
+
+### 14.2 Dependencies
+
+**This module depends on:**
+
+| Dependency | Status | Blocker? |
+|------------|--------|----------|
+| User authentication (Supabase Auth) | Complete | No |
+| Role-based permissions | Complete | No |
+| Learner master data | Complete | No |
+| Course-program mapping | Complete | No |
+| Attendance percentage calculation | Complete | No |
+| Fee payment status API | Pending | Yes - need integration |
+| SMS gateway for notifications | Pending | Yes - need configuration |
+| PDF generation library | Complete | No |
+
+**Other features depend on this:**
+
+- Analytics Dashboard (needs result data)
+- Placement Portal (needs eligibility status)
+- Parent Portal (needs result access)
+
+### 14.3 Current Sprint Focus
+
+**Active Development (Dec 2025):**
+
+- Final marks API completion
+- Course mapping for Galley Report
+- Marksheet PDF generation
+- Column grouping for course types
+
+**Pending Items:**
+
+- Exam registration flow
+- Hall ticket generation
+- Question bank UI
+- Result declaration workflow
+
+---
+
+## Section 15: Open Questions
+
+| Question | Asked By | Answer | Answered By | Date |
+|----------|----------|--------|-------------|------|
+| Should grace marks be automatic or require approval? | Dev Team | Automatic for standard cases, approval for exceptions | CoE | Nov 2025 |
+| How to handle learners with condonation but below 75%? | Dev Team | Separate condonation flag, override attendance check | CoE | Nov 2025 |
+| Maximum revaluation requests per learner per exam? | Dev Team | No limit, charge fee for each | CoE | Nov 2025 |
+| Should supplementary results merge with regular or stay separate? | Dev Team | Separate declaration, merged in consolidated | CoE | Nov 2025 |
+| Hall ticket validity - per exam or per semester? | Dev Team | Per exam (separate hall tickets for regular vs supplementary) | CoE | Nov 2025 |
+| Question paper retention period in system? | Dev Team | TBD - check regulatory requirements | | |
+| Should certificates have expiry dates? | Dev Team | TBD - verify with legal/compliance | | |
+| Integration with government DigiLocker for certificates? | Dev Team | TBD - future scope, not v1 | | |
+| How to handle arts practicals without video recording? | Dev Team | TBD - explore audio-only or photo documentation | | |
+| External examiner identity verification method? | Dev Team | TBD - OTP to registered mobile or Aadhaar? | | |
+
+---
+
+## Section 16: Development Guidelines (AI-Assisted)
+
+### 16.1 AI-Assisted Development Strategy
+
+#### 16.1.1 Cursor IDE Integration
+
+| Capability | Usage |
+|------------|-------|
+| Code Generation | Use clear function signatures for Cursor autocomplete with TypeScript interfaces |
+| Component Templates | Pre-defined templates for rapid UI development |
+| AI Context Files | Maintain .cursorrules for project-specific patterns |
+| Code Review | Standardized prompts for code optimization |
+
+#### 16.1.2 Claude Code CLI Development
+
+| Feature | Implementation |
+|---------|----------------|
+| Module Scaffolding | `claude-code generate-module --name="[module]" --features="[list]"` |
+| Testing Automation | Automated test case generation from specifications |
+| Database Migrations | AI-generated migration files with validation |
+| API Documentation | Auto-generated OpenAPI specs from code |
+
+#### 16.1.3 Development Best Practices
+
+- **Module Isolation:** Each examination type as independent module
+- **Clear Interfaces:** Well-defined APIs between modules
+- **Type Safety:** TypeScript interfaces for all data structures
+- **Documentation First:** JSDoc comments for AI understanding
+- **Test-Driven:** Write test descriptions for AI to implement
+
+### 16.2 AI-Friendly Code Organization
+
+```
+coe-module/
+├── modules/
+│   ├── internal-examinations/
+│   │   ├── tests/           # Unit/integration tests
+│   │   ├── components/      # React components
+│   │   ├── services/        # Business logic
+│   │   ├── api/             # API endpoints
+│   │   └── README.md        # Module documentation
+│   ├── practicals/
+│   │   ├── performance-arts/
+│   │   ├── visual-arts/
+│   │   └── language-arts/
+│   └── creative-assessments/
+├── shared/
+│   ├── ai-templates/        # Cursor/Claude templates
+│   ├── prompts/             # Reusable AI prompts
+│   └── types/               # TypeScript definitions
+└── .ai/
+    ├── cursorrules          # Cursor configuration
+    └── claude-patterns/     # Claude Code patterns
+```
+
+### 16.3 AI Development Velocity Metrics
+
+| Method | Speed Improvement |
+|--------|-------------------|
+| Cursor Auto-complete | 70% faster UI development |
+| Claude Code CLI | 80% faster API generation |
+| GitHub Copilot | 60% faster business logic |
+| Component Reuse | 50% reduction in development time |
+
+---
+
+## Section 17: Team Structure & Resources
+
+### 17.1 Development Team (90-Day Timeline)
+
+| Role | Count | Specialization |
+|------|-------|----------------|
+| Full-Stack Developers | 2 | Cursor IDE experts |
+| Backend Developer | 1 | Claude Code specialist |
+| UI/UX Designer | 1 | Figma + AI tools |
+| DevOps Engineer | 1 | CI/CD automation |
+| QA Engineer | 1 | Automated testing |
+| Project Manager | 1 | Agile/Scrum |
+| **Total Team** | **7** | |
+
+### 17.2 Resource Requirements
+
+| Category | Tools/Infrastructure |
+|----------|----------------------|
+| Development Tools | Cursor IDE licenses, Claude Code API, GitHub/GitLab, Figma |
+| Infrastructure | Development servers, testing environment, staging, production |
+| Collaboration | Jira/Linear (PM), Slack/Teams (comms), Confluence/Notion (docs) |
+
+### 17.3 Daily Development Rhythm
+
+| Time | Activity |
+|------|----------|
+| Morning | AI-generated code review |
+| Afternoon | Feature completion |
+| Evening | Automated testing & deployment |
+
+### 17.4 Sprint Success Metrics
+
+| Metric | Target |
+|--------|--------|
+| Daily Velocity | 3-5 completed features |
+| Code Coverage | Minimum 80% |
+| AI Code Usage | 60% of code AI-generated |
+| Bug Rate | < 2 bugs per feature |
+| Sprint Completion | 95% of planned stories |
+
+---
+
+## Appendix A: Glossary
+
+| Term | Definition |
+|------|------------|
+| CIA | Continuous Internal Assessment - ongoing evaluation during semester |
+| ESE | End Semester Examination - final exam at semester end |
+| SGPA | Semester Grade Point Average - weighted average for one semester |
+| CGPA | Cumulative Grade Point Average - overall average across all semesters |
+| CoE | Controller of Examinations - office managing all exam operations |
+| Moderation | Review process to ensure fair and consistent marking |
+| Grace Marks | Additional marks granted to help borderline pass cases |
+| Arrear | Failed subject that must be cleared in supplementary exam |
+| Supplementary | Additional exam opportunity for failed subjects |
+| Revaluation | Re-checking of answer script on learner request |
+| Blueprint | Template defining marks distribution across question types |
+
+---
+
+## Appendix B: Regulatory Compliance
+
+| Regulation | Requirement | How CoE Addresses |
+|------------|-------------|-------------------|
+| UGC Guidelines 2023 | Result declaration within 15 days | Automated compilation and approval workflow |
+| NAAC Criterion II | Documented examination processes | Complete audit trail, digital records |
+| NAAC Criterion VI | Governance and transparency | Role-based access, approval workflows |
+| NBA Self-Assessment | Outcome-based assessment evidence | Bloom's taxonomy tagging, CO-PO mapping |
+| Data Protection | Secure handling of learner data | Encryption, access control, audit logs |
+
+---
+
+## Appendix C: Integration Points
+
+| System | Integration Type | Data Flow |
+|--------|------------------|-----------|
+| MyJKKN Core | SSO, User Context | Bidirectional - auth, user roles |
+| Attendance Module | Read | CoE reads attendance % for eligibility |
+| Fee Management | Read | CoE reads fee status for registration |
+| SMS Gateway | Write | CoE sends notifications |
+| Email Service | Write | CoE sends result alerts, certificates |
+| PDF Generator | Internal | Generate hall tickets, certificates |
+
+---
+
+## Document Control
+
+- **Author:** CoE Technical Team
+- **Version:** 2.0
+- **Last Updated:** December 2025
+- **Review:** Academic Council, IT Committee
+- **Approval:** Principal (Chief Controller of Examinations)
+- **Next Review:** After Phase 3 completion
+
+---
+
+## Handoff to Development Team
+
+This PRD provides complete specifications for building the Centre of Examinations module. Development should proceed in the following order:
+
+### 1. Complete Grading Module (Current)
+
+- Finish final marks API
+- Complete PDF generation for reports
+- Test grade calculation accuracy
+
+### 2. Build Examination Management
+
+- Exam schedule CRUD
+- Registration with eligibility checking
+- Hall ticket generation
+
+### 3. Implement Result Processing
+
+- Multi-source compilation
+- Grace mark logic
+- Approval workflow
+
+### 4. Add Certification
+
+- Template management
+- PDF generation with QR
+- Verification endpoint
+
+Test each phase thoroughly before proceeding to the next. Use the edge cases and business rules in this document as test case sources.
+
+---
+
+## Section 18: Technical Decisions from Interview (December 2025)
+
+This section documents all technical decisions made during the detailed requirements interview. These decisions OVERRIDE any conflicting information in earlier sections.
+
+### 18.1 Question Paper Security
+
+| Decision | Choice | Rationale |
+|----------|--------|-----------|
+| **Decryption Mechanism** | Hybrid (time-based + manual) | Auto-unlock at T-30 minutes before exam, with CoE manual override capability for emergencies |
+| **Override Authority** | CoE alone | Controller of Examinations can trigger manual unlock without requiring dual authorization |
+| **Key Storage** | Same database (encrypted column) | Encryption key stored in environment variable, paper content encrypted in papers table |
+
+### 18.2 Mark Entry & Offline Support
+
+| Decision | Choice | Rationale |
+|----------|--------|-----------|
+| **Offline Mode** | Offline-first with IndexedDB sync | Faculty can enter marks offline, syncs when online - robust for unreliable connectivity |
+| **Auto-save Strategy** | Background save loop every 60 seconds | Continuous saving regardless of session timeout, data persists across sessions |
+| **Conflict Resolution** | Block scenario (assignment prevents) | System prevents two faculty being assigned same course, eliminating sync conflicts |
+| **Session Timeout** | 30-minute timeout with background save | Session expires after 30 min idle, but data is continuously saved |
+
+### 18.3 Moderation & Statistical Analysis
+
+| Decision | Choice | Rationale |
+|----------|--------|-----------|
+| **Statistical Moderation** | SD-based (±2σ) | Flag marks outside 2 standard deviations from class mean - adapts to class performance |
+| **Bloom's Taxonomy** | Scoring only (informational) | Auto-calculate Bloom's compliance score, no blocking - used as quality metric |
+| **HOD Edit Rights** | Approve/reject only - no editing | Only CoE can edit marks with Principal's approval; HOD must return to faculty |
+| **CIA Lock Timing** | Lock at deadline | CIA entry deadline enforced, changes after require CoE approval |
+
+### 18.4 Result Processing
+
+| Decision | Choice | Rationale |
+|----------|--------|-----------|
+| **Rounding Strategy** | Round each component separately | Round CIA and ESE marks individually before summing - matches physical mark sheets |
+| **CGPA with Arrears** | Exclude failed courses | CGPA includes only passed courses - inflated until arrear cleared, standard practice |
+| **Grace Marks Workflow** | Individual approval via deviation register | Each grace application reviewed individually, all recorded in deviation register for audit |
+| **Result Preview** | Full dry run before declaration | Generate complete preview with pass/fail counts, SGPA distribution - CoE only access |
+| **Supplementary Display** | Same view with flag | Unified result history, supplementary marked with badge - single source of truth |
+| **Improvement Attempts** | Same marks don't count | Only different (higher/lower) results count as attempts |
+| **Batch Processing** | Synchronous with progress bar | User waits with progress indicator - simpler for 5000 learner target |
+| **Error Recovery** | Resumable checkpoint | Save progress during compilation, resume from last successful batch on failure |
+
+### 18.5 Approval Workflow
+
+| Decision | Choice | Rationale |
+|----------|--------|-----------|
+| **Rejection Cascade** | Previous level only | Rejection goes one step back - CoE can fix minor issues without involving faculty |
+| **Result Approval Chain** | Faculty → HOD → CoE → Principal → University Board | Only CoE can edit marks; University Result Board provides final oversight |
+| **Internal Test QP Workflow** | Same full workflow as ESE | Consistent quality gate: Moderation → CoE approval for all papers |
+
+### 18.6 External Examiner Handling
+
+| Decision | Choice | Rationale |
+|----------|--------|-----------|
+| **Examiner Source** | Existing registration + university data | External examiner registration form already built; university-sent data imported to examiner page |
+| **Mark Entry Flow** | Paper to CoE entry | External examiners submit physical/scanned sheets, CoE staff digitizes |
+| **Practical Evaluation** | Fully blind | External sees nothing until they submit - prevents anchoring bias |
+| **Internal Exam Evaluation** | Subject faculty handles | Teaching faculty evaluates internal exams; CoE assigns external for ESE |
+
+### 18.7 Hall Ticket & Registration
+
+| Decision | Choice | Rationale |
+|----------|--------|-----------|
+| **QR Content** | Embedded details | Name, roll no, subjects, photo hash embedded - enables offline verification |
+| **Withheld Handling** | No hall ticket generated | Strict enforcement - block generation entirely until withheld status cleared |
+| **Withheld Types** | Institution-defined categories | Each institution configures their withheld categories (fees, disciplinary, library) via admin UI |
+| **Eligibility Check** | Best of both (snapshot + re-check) | Snapshot attendance at registration open, allow re-check if learner claims improvement |
+| **Photo Source** | MyJKKN profile | Use existing learner photo from main platform - single source of truth |
+| **Conflict Detection** | At schedule creation time | Proactively prevent scheduling conflicts when creating exam timetable |
+
+### 18.8 Question Bank
+
+| Decision | Choice | Rationale |
+|----------|--------|-----------|
+| **Cross-Program Sharing** | Shareable with copy (independent) | Copy questions across programs, creates independent duplicate with no link to original |
+| **Blueprint Scope** | Layered approach | Regulation defines base, course-type refines, course can customize further |
+
+### 18.9 Arts Practicals
+
+| Decision | Choice | Rationale |
+|----------|--------|-----------|
+| **Recording Requirement** | Mandatory for all practicals | No recording = no grade submission allowed - ensures documentation |
+| **Recording Limits** | Configurable per exam type | Different limits for different arts (dance shorter than drama) |
+
+### 18.10 Certificates & Verification
+
+| Decision | Choice | Rationale |
+|----------|--------|-----------|
+| **Verification API Response** | Full details returned | Return complete certificate data (marks, grades, CGPA) - convenient for employers |
+| **PDF Verification Method** | Digital signature only (PKI) | No QR code, use PKI digital signature on PDF itself - standard approach |
+| **PDF Generation** | Generate on-demand | Fresh PDF each download - always current, no caching issues |
+
+### 18.11 Revaluation
+
+| Decision | Choice | Rationale |
+|----------|--------|-----------|
+| **Revaluator Visibility** | Completely blind | Revaluator sees only answer script, no original marks - unbiased assessment |
+| **Result Application** | CoE approval required | Revaluation marks pending until CoE explicitly approves application to result |
+
+### 18.12 Dashboard & Notifications
+
+| Decision | Choice | Rationale |
+|----------|--------|-----------|
+| **Activity Scope** | Role-based with college selector | Super_admin sees college selector dropdown; regular users see institution-based view from session |
+| **Real-time Updates** | All status changes via WebSocket | Supabase Realtime for any status change (submitted, approved, declared) |
+| **Notification Preferences** | Critical-only option | Mandatory for results/hall tickets, optional for reminders - learner can control |
+| **Notification Architecture** | Centralized queue | All modules push to notification service, single gateway handles delivery |
+
+### 18.13 Bulk Upload
+
+| Decision | Choice | Rationale |
+|----------|--------|-----------|
+| **Validation Mode** | Preview mode with all rows | Show validation results first (all rows with status), let user confirm before commit |
+
+### 18.14 Condonation Rules
+
+| Decision | Choice | Rationale |
+|----------|--------|-----------|
+| **Configuration** | Admin UI settings per institution | Each institution configures condonation rules (threshold %, scope, approval levels) via admin interface |
+
+### 18.15 Security & Access
+
+| Decision | Choice | Rationale |
+|----------|--------|-----------|
+| **Peak Period Auth** | Mandatory 2FA | Additional OTP required during examination periods - extra security for sensitive operations |
+| **Rate Limiting** | Per-role limits | Learners = 100/min, Faculty = 200/min, CoE = unlimited |
+| **Audit Logging** | Full snapshots | Store complete before/after state for all changes - comprehensive audit trail |
+
+### 18.16 Data Management
+
+| Decision | Choice | Rationale |
+|----------|--------|-----------|
+| **Data Retention** | Permanent active | Never delete, keep all examination data active - simplest, no risk of data loss |
+| **Result Table Structure** | Single table with session_type flag | One results table, session_type column distinguishes regular/supplementary/improvement |
+
+### 18.17 Grading
+
+| Decision | Choice | Rationale |
+|----------|--------|-----------|
+| **Cross-Program Grading** | Unified | Same curve/standards for all programs taking the course - fair comparison |
+| **Malpractice Effect** | Immediate auto-fail | Subject marked as 'Malpractice - Fail' instantly - strict enforcement |
+
+### 18.18 Accessibility & Deployment
+
+| Decision | Choice | Rationale |
+|----------|--------|-----------|
+| **A11y Testing** | Both automated (axe-core in CI) + manual review | Comprehensive accessibility compliance |
+| **Deployment Policy** | Full code freeze during exam periods | No deployments during active examinations - maximum stability |
+
+### 18.19 Template Management
+
+| Decision | Choice | Rationale |
+|----------|--------|-----------|
+| **Galley Report** | Existing implementation at `app/(coe)/grading/galley-report/page.tsx` | Already built with PDF generation via `generate-galley-report-pdf.ts` |
+| **Template Format** | Template-based with multiple output formats | Multiple output templates (university format, internal format, audit format) |
+
+---
+
+## Section 19: Existing Implementation Reference
+
+This section documents existing implementations that should be referenced when building new features.
+
+### 19.1 Grading Module (80% Complete)
+
+| Component | Location | Status |
+|-----------|----------|--------|
+| Generate Final Marks | `app/(coe)/grading/generate-final-marks/page.tsx` | Complete |
+| Galley Report | `app/(coe)/grading/galley-report/page.tsx` | Complete |
+| Grade Systems | `grade_systems` table in database | Complete |
+| Pass Status Logic | Already handles 'Pass', 'Absent', 'Fail' statuses | Complete |
+
+### 19.2 External Examiner
+
+| Component | Status |
+|-----------|--------|
+| Registration Form | Already developed |
+| Examiner Data Page | Already exists |
+| University Data Import | Supported |
+
+### 19.3 Key Patterns to Follow
+
+1. **Pass Status Handling**: Reference `generate-final-marks/page.tsx` for 'Pass', 'Absent', 'Fail' status display patterns
+2. **Summary Statistics**: Reference the summary cards pattern showing passed/failed/absent counts
+3. **Step-by-Step Wizard**: Reference the 4-step flow in generate-final-marks for multi-stage processes
+4. **Data Tables**: Reference existing Shadcn data table implementations with sorting/filtering
+5. **Form Validation**: Follow CLAUDE.md comprehensive form validation pattern
+
+---

@@ -1,0 +1,443 @@
+name: generate-component
+description: Generate reusable React components for JKKN COE application
+version: 1.0.0
+
+parameters:
+  - name: component_name
+    type: string
+    description: Component name in PascalCase (e.g., "DataTable", "FormInput")
+    required: true
+
+  - name: component_type
+    type: string
+    description: Type of component to generate
+    required: true
+    enum:
+      - "form-input"
+      - "data-table"
+      - "modal-dialog"
+      - "card"
+      - "layout"
+      - "custom"
+
+  - name: props
+    type: array
+    description: Component props
+    required: true
+    items:
+      - name: prop_name
+        type: string
+        description: Prop name
+      - name: prop_type
+        type: string
+        description: TypeScript type
+      - name: required
+        type: boolean
+        description: Is prop required
+      - name: default_value
+        type: string
+        description: Default value if optional
+
+  - name: has_children
+    type: boolean
+    description: Does component accept children
+    default: false
+
+  - name: use_client
+    type: boolean
+    description: Use 'use client' directive
+    default: false
+
+  - name: styling
+    type: string
+    description: Styling approach
+    default: "tailwind"
+    enum: ["tailwind", "css-modules", "styled"]
+
+prompt: |
+  Generate a reusable React component for the JKKN COE application.
+
+  ## Component Details
+
+  **Component Name:** {{component_name}}
+  **Component Type:** {{component_type}}
+  **Client Component:** {{use_client}}
+  **Accepts Children:** {{has_children}}
+  **Styling:** {{styling}}
+
+  ## Props Interface
+
+  ```typescript
+  interface {{component_name}}Props {
+    {{#each props}}
+    {{prop_name}}{{#unless required}}?{{/unless}}: {{prop_type}}
+    {{/each}}
+    {{#if has_children}}
+    children?: React.ReactNode
+    {{/if}}
+    className?: string
+  }
+  ```
+
+  ## Component Requirements
+
+  {{#if (eq component_type "form-input")}}
+  ### Form Input Component
+
+  Generate a form input component with:
+
+  - Label with required indicator
+  - Input field with validation state
+  - Error message display
+  - Helper text support
+  - Support for different input types
+  - Accessibility attributes (aria-label, aria-invalid)
+  - Proper TypeScript types
+
+  **Structure:**
+  ```tsx
+  {{#if use_client}}'use client'{{/if}}
+
+  import { Input } from '@/components/ui/input'
+  import { Label } from '@/components/ui/label'
+
+  interface {{component_name}}Props {
+    id: string
+    label: string
+    value: string
+    onChange: (value: string) => void
+    type?: 'text' | 'email' | 'password' | 'number'
+    required?: boolean
+    error?: string
+    helperText?: string
+    placeholder?: string
+    disabled?: boolean
+    className?: string
+  }
+
+  export function {{component_name}}({
+    id,
+    label,
+    value,
+    onChange,
+    type = 'text',
+    required = false,
+    error,
+    helperText,
+    placeholder,
+    disabled = false,
+    className = ''
+  }: {{component_name}}Props) {
+    return (
+      <div className="space-y-2">
+        <Label htmlFor={id} className={required ? 'text-sm font-semibold' : 'text-sm font-medium'}>
+          {label}
+          {required && <span className="text-red-500 ml-1">*</span>}
+        </Label>
+        <Input
+          id={id}
+          type={type}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder={placeholder}
+          disabled={disabled}
+          className={`h-10 ${error ? 'border-red-500' : ''} ${className}`}
+          aria-invalid={!!error}
+          aria-describedby={error ? `${id}-error` : helperText ? `${id}-helper` : undefined}
+        />
+        {error && (
+          <p id={`${id}-error`} className="text-xs text-red-500">
+            {error}
+          </p>
+        )}
+        {helperText && !error && (
+          <p id={`${id}-helper`} className="text-xs text-muted-foreground">
+            {helperText}
+          </p>
+        )}
+      </div>
+    )
+  }
+  ```
+  {{/if}}
+
+  {{#if (eq component_type "data-table")}}
+  ### Data Table Component
+
+  Generate a data table component with:
+
+  - Column definitions with sorting
+  - Row selection support
+  - Pagination controls
+  - Loading state
+  - Empty state
+  - Action buttons per row
+  - Responsive design
+  - TypeScript generics for type safety
+
+  **Structure:**
+  ```tsx
+  {{#if use_client}}'use client'{{/if}}
+
+  import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+  import { Button } from '@/components/ui/button'
+  import { ChevronUp, ChevronDown } from 'lucide-react'
+
+  interface Column<T> {
+    key: keyof T
+    label: string
+    sortable?: boolean
+    render?: (value: T[keyof T], row: T) => React.ReactNode
+  }
+
+  interface {{component_name}}Props<T> {
+    data: T[]
+    columns: Column<T>[]
+    loading?: boolean
+    onRowClick?: (row: T) => void
+    onSort?: (key: keyof T, direction: 'asc' | 'desc') => void
+    sortKey?: keyof T
+    sortDirection?: 'asc' | 'desc'
+    emptyMessage?: string
+  }
+
+  export function {{component_name}}<T extends Record<string, any>>({
+    data,
+    columns,
+    loading = false,
+    onRowClick,
+    onSort,
+    sortKey,
+    sortDirection,
+    emptyMessage = 'No data available'
+  }: {{component_name}}Props<T>) {
+    const handleSort = (key: keyof T) => {
+      if (!onSort) return
+      const direction = sortKey === key && sortDirection === 'asc' ? 'desc' : 'asc'
+      onSort(key, direction)
+    }
+
+    if (loading) {
+      return (
+        <div className="flex items-center justify-center h-64">
+          <p className="text-muted-foreground">Loading...</p>
+        </div>
+      )
+    }
+
+    if (data.length === 0) {
+      return (
+        <div className="flex items-center justify-center h-64">
+          <p className="text-muted-foreground">{emptyMessage}</p>
+        </div>
+      )
+    }
+
+    return (
+      <div className="rounded-md border">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              {columns.map((column) => (
+                <TableHead key={String(column.key)} className="text-[11px]">
+                  {column.sortable ? (
+                    <button
+                      onClick={() => handleSort(column.key)}
+                      className="flex items-center gap-1 hover:text-foreground"
+                    >
+                      {column.label}
+                      {sortKey === column.key && (
+                        sortDirection === 'asc' ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />
+                      )}
+                    </button>
+                  ) : (
+                    column.label
+                  )}
+                </TableHead>
+              ))}
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {data.map((row, index) => (
+              <TableRow
+                key={index}
+                onClick={() => onRowClick?.(row)}
+                className={onRowClick ? 'cursor-pointer hover:bg-muted/50' : ''}
+              >
+                {columns.map((column) => (
+                  <TableCell key={String(column.key)} className="text-[11px]">
+                    {column.render
+                      ? column.render(row[column.key], row)
+                      : String(row[column.key] ?? '')}
+                  </TableCell>
+                ))}
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </div>
+    )
+  }
+  ```
+  {{/if}}
+
+  {{#if (eq component_type "modal-dialog")}}
+  ### Modal Dialog Component
+
+  Generate a modal dialog component with:
+
+  - Backdrop overlay
+  - Close button
+  - Header, body, footer sections
+  - Keyboard accessibility (ESC to close)
+  - Focus trap
+  - Animation on open/close
+
+  Use shadcn/ui Dialog component as base.
+  {{/if}}
+
+  {{#if (eq component_type "card")}}
+  ### Card Component
+
+  Generate a card component with:
+
+  - Header with icon and title
+  - Optional description
+  - Body content area
+  - Footer for actions
+  - Hover effects
+  - Gradient support
+
+  **Structure:**
+  ```tsx
+  import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
+  import { LucideIcon } from 'lucide-react'
+
+  interface {{component_name}}Props {
+    title: string
+    description?: string
+    icon?: LucideIcon
+    iconColor?: string
+    children: React.ReactNode
+    footer?: React.ReactNode
+    className?: string
+  }
+
+  export function {{component_name}}({
+    title,
+    description,
+    icon: Icon,
+    iconColor = 'text-blue-600',
+    children,
+    footer,
+    className = ''
+  }: {{component_name}}Props) {
+    return (
+      <Card className={`hover:shadow-lg transition-shadow ${className}`}>
+        <CardHeader>
+          <div className="flex items-center gap-3">
+            {Icon && (
+              <div className={`h-10 w-10 rounded-full bg-gradient-to-br from-blue-50 to-indigo-50 dark:from-blue-950 dark:to-indigo-950 flex items-center justify-center`}>
+                <Icon className={`h-5 w-5 ${iconColor}`} />
+              </div>
+            )}
+            <div>
+              <CardTitle className="text-lg">{title}</CardTitle>
+              {description && <CardDescription>{description}</CardDescription>}
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent>{children}</CardContent>
+        {footer && <CardFooter>{footer}</CardFooter>}
+      </Card>
+    )
+  }
+  ```
+  {{/if}}
+
+  {{#if (eq component_type "layout")}}
+  ### Layout Component
+
+  Generate a layout component with:
+
+  - Page header
+  - Breadcrumb navigation
+  - Main content area
+  - Sidebar support (optional)
+  - Footer
+  - Responsive design
+
+  {{/if}}
+
+  ## Implementation Guidelines
+
+  1. **File Location:** `components/{{component_name}}.tsx`
+  2. **TypeScript:** Full type safety with interfaces
+  3. **Accessibility:** Proper ARIA attributes
+  4. **Styling:** Follow Tailwind CSS patterns from project
+  5. **Composition:** Allow customization via props and children
+  6. **Documentation:** Add JSDoc comments for props
+  7. **Exports:** Named export for component
+  8. **Testing:** Consider unit test requirements
+
+  ## Code Style Requirements
+
+  - Use functional components
+  - Follow naming conventions from DEVELOPMENT_STANDARDS.md
+  - Use const for component definition
+  - Props destructuring in parameter
+  - TypeScript interface before component
+  - Default props via parameter defaults
+  - Proper spacing and indentation (tabs)
+  - Single quotes for strings
+
+  ## Example Usage Documentation
+
+  Include usage example:
+
+  ```tsx
+  import { {{component_name}} } from '@/components/{{component_name}}'
+
+  export function ExamplePage() {
+    return (
+      <{{component_name}}
+        {{#each props}}
+        {{prop_name}}={...}
+        {{/each}}
+      {{#if has_children}}
+      >
+        {/* Content */}
+      </{{component_name}}>
+      {{else}}
+      />
+      {{/if}}
+    )
+  }
+  ```
+
+  ## Storybook Story (Optional)
+
+  If using Storybook, generate story file: `components/{{component_name}}.stories.tsx`
+
+  Generate the complete component following these specifications.
+
+execution:
+  working_directory: "."
+  files_to_create:
+    - "components/{{component_name}}.tsx"
+
+  validation:
+    - Verify TypeScript types are correct
+    - Ensure component compiles without errors
+    - Check accessibility attributes present
+    - Validate prop types are comprehensive
+    - Confirm styling is consistent
+
+output_format: code
+
+tags:
+  - component
+  - react
+  - typescript
+  - ui
+  - reusable

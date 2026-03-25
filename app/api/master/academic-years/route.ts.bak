@@ -1,0 +1,327 @@
+import { NextResponse } from 'next/server'
+import { getSupabaseServer } from '@/lib/supabase-server'
+
+// GET: list academic years
+export async function GET(request: Request) {
+	try {
+		const supabase = getSupabaseServer()
+		const { searchParams } = new URL(request.url)
+		const is_current = searchParams.get('is_current')
+		const institution_code = searchParams.get('institution_code')
+
+		let query = supabase
+			.from('academic_years')
+			.select('*')
+			.order('start_date', { ascending: false })
+
+		}
+
+		if (institution_code) {
+			query = query.eq('institution_code', institution_code)
+		}
+
+		console.log('🔍 Academic Years API - Query params:', { is_current, institution_code })
+
+		const { data, error } = await query
+
+		if (error) {
+			console.error('❌ Academic years table error:', error)
+			console.error('Error details:', {
+				message: error.message,
+				details: error.details,
+				hint: error.hint,
+				code: error.code
+			})
+			return NextResponse.json({
+				error: 'Failed to fetch academic years',
+				details: error.message,
+				hint: error.hint
+			}, { status: 500 })
+		}
+
+		console.log('✅ Academic years fetched successfully:', data?.length, 'items')
+
+		// Normalize the data to match frontend expectations
+		const normalized = (data || []).map((row: any) => ({
+			...row,
+			is_active: row.is_current_academic_year ?? true,
+		}))
+		return NextResponse.json(normalized)
+	} catch (e) {
+		console.error('Academic years API error:', e)
+		return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
+	}
+}
+
+// POST: create academic year
+export async function POST(request: Request) {
+	try {
+		const body = await request.json()
+		const supabase = getSupabaseServer()
+
+		// Auto-map institution_code to institutions_id
+		let institution_code: string | undefined = body.institution_code
+		let institutions_id: string | undefined = body.institutions_id
+
+		// If institution_code is provided, fetch institutions_id
+		if (institution_code) {
+			const { data: inst, error: instError } = await supabase
+				.from('institutions')
+				.select('id, institution_code')
+				.eq('institution_code', institution_code)
+				.maybeSingle()
+
+			if (instError || !inst) {
+				return NextResponse.json({
+					error: `Invalid institution_code: ${institution_code}. Institution not found.`
+				}, { status: 400 })
+			}
+
+			// Auto-map the institutions_id from the fetched institution
+			institutions_id = inst.id
+			console.log(`✅ Auto-mapped institution_code "${institution_code}" to institutions_id "${institutions_id}"`)
+		}
+		// If institutions_id is provided but no institution_code, fetch the code
+		else if (institutions_id && !institution_code) {
+			const { data: inst } = await supabase
+				.from('institutions')
+				.select('institution_code')
+				.eq('id', institutions_id)
+				.maybeSingle()
+			if (inst?.institution_code) {
+				institution_code = inst.institution_code
+			}
+		}
+
+		// Validate required fields
+		if (!body.academic_year || !body.start_date || !body.end_date || !institution_code || !institutions_id) {
+			return NextResponse.json({
+				error: 'Academic year, start date, end date, and institution are required'
+			}, { status: 400 })
+		}
+
+		// Validate date range
+		const startDate = new Date(body.start_date)
+		const endDate = new Date(body.end_date)
+		if (endDate <= startDate) {
+			return NextResponse.json({
+				error: 'End date must be after start date'
+			}, { status: 400 })
+		}
+
+		// If this is marked as current, unset other current academic years for this institution
+		if (body.is_current_academic_year === true) {
+		const insertPayload: any = {
+			academic_year: body.academic_year,
+			start_date: body.start_date,
+			end_date: body.end_date,
+			is_current_academic_year: body.is_current_academic_year ?? false,
+			remarks: body.remarks ?? null,
+			institutions_id: institutions_id,
+			institution_code: institution_code,
+		}
+
+		const { data, error } = await supabase
+			.from('academic_years')
+			.insert([insertPayload])
+			.select()
+			.single()
+
+		if (error) {
+			console.error('Error creating academic year:', error)
+			console.error('Error details:', {
+				message: error.message,
+				details: error.details,
+				hint: error.hint,
+				code: error.code
+			})
+
+			// Handle duplicate key constraint violation
+			if (error.code === '23505') {
+				return NextResponse.json({
+					error: 'Academic year already exists for this institution'
+				}, { status: 400 })
+			}
+
+			// Handle foreign key constraint violation
+			if (error.code === '23503') {
+				return NextResponse.json({
+					error: 'Invalid institution reference. Please select a valid institution.'
+				}, { status: 400 })
+			}
+
+			// Handle check constraint violation
+			if (error.code === '23514') {
+				return NextResponse.json({
+					error: 'Invalid data. Please check date range.'
+				}, { status: 400 })
+			}
+
+			return NextResponse.json({
+				error: error.message || 'Failed to create academic year',
+				details: error.details
+			}, { status: 500 })
+		}
+
+		const normalized = data ? { ...data, is_active: (data as any).is_current_academic_year ?? true } : data
+		return NextResponse.json(normalized, { status: 201 })
+	} catch (e) {
+		console.error('Academic year creation error:', e)
+		return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
+	}
+}
+
+// PUT: update academic year
+export async function PUT(request: Request) {
+	try {
+		const body = await request.json()
+		const supabase = getSupabaseServer()
+
+		// Auto-map institution_code to institutions_id (same logic as POST)
+		let institution_code: string | undefined = body.institution_code
+		let institutions_id: string | undefined = body.institutions_id
+
+		// If institution_code is provided, fetch institutions_id
+		if (institution_code) {
+			const { data: inst, error: instError } = await supabase
+				.from('institutions')
+				.select('id, institution_code')
+				.eq('institution_code', institution_code)
+				.maybeSingle()
+
+			if (instError || !inst) {
+				return NextResponse.json({
+					error: `Invalid institution_code: ${institution_code}. Institution not found.`
+				}, { status: 400 })
+			}
+
+			// Auto-map the institutions_id from the fetched institution
+			institutions_id = inst.id
+			console.log(`✅ Auto-mapped institution_code "${institution_code}" to institutions_id "${institutions_id}" (UPDATE)`)
+		}
+		// If institutions_id is provided but no institution_code, fetch the code
+		else if (institutions_id && !institution_code) {
+			const { data: inst } = await supabase
+				.from('institutions')
+				.select('institution_code')
+				.eq('id', institutions_id)
+				.maybeSingle()
+			if (inst?.institution_code) {
+				institution_code = inst.institution_code
+			}
+		}
+
+		// Validate date range if dates are provided
+		if (body.start_date && body.end_date) {
+			const startDate = new Date(body.start_date)
+			const endDate = new Date(body.end_date)
+			if (endDate <= startDate) {
+				return NextResponse.json({
+					error: 'End date must be after start date'
+				}, { status: 400 })
+			}
+		}
+
+		// If this is marked as current, unset other current academic years for this institution
+		const updatePayload: any = {
+			academic_year: body.academic_year,
+			start_date: body.start_date,
+			end_date: body.end_date,
+			is_current_academic_year: body.is_current_academic_year ?? false,
+			remarks: body.remarks ?? null,
+		}
+
+		if (institution_code) updatePayload.institution_code = institution_code
+		if (institutions_id) updatePayload.institutions_id = institutions_id
+
+		const { data, error } = await supabase
+			.from('academic_years')
+			.update(updatePayload)
+			.eq('id', body.id)
+			.select()
+			.single()
+
+		if (error) {
+			console.error('Error updating academic year:', error)
+			console.error('Error details:', {
+				message: error.message,
+				details: error.details,
+				hint: error.hint,
+				code: error.code
+			})
+
+			// Handle duplicate key constraint violation
+			if (error.code === '23505') {
+				return NextResponse.json({
+					error: 'Academic year already exists for this institution'
+				}, { status: 400 })
+			}
+
+			// Handle foreign key constraint violation
+			if (error.code === '23503') {
+				return NextResponse.json({
+					error: 'Invalid institution reference. Please select a valid institution.'
+				}, { status: 400 })
+			}
+
+			// Handle check constraint violation
+			if (error.code === '23514') {
+				return NextResponse.json({
+					error: 'Invalid data. Please check date range.'
+				}, { status: 400 })
+			}
+
+			return NextResponse.json({
+				error: error.message || 'Failed to update academic year',
+				details: error.details
+			}, { status: 500 })
+		}
+
+		const normalized = data ? { ...data, is_active: (data as any).is_current_academic_year ?? true } : data
+		return NextResponse.json(normalized)
+	} catch (e) {
+		console.error('Academic year update error:', e)
+		return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
+	}
+}
+
+// DELETE: delete academic year by id
+export async function DELETE(request: Request) {
+	try {
+		const { searchParams } = new URL(request.url)
+		const id = searchParams.get('id')
+
+		if (!id) {
+			return NextResponse.json({ error: 'Academic year ID is required' }, { status: 400 })
+		}
+
+		const supabase = getSupabaseServer()
+
+		// Check if this academic year is referenced by students
+		const { count } = await supabase
+			.from('students')
+			.select('*', { count: 'exact', head: true })
+			.eq('academic_year_id', id)
+
+		if (count && count > 0) {
+			return NextResponse.json({
+				error: `Cannot delete academic year. It is referenced by ${count} student(s).`
+			}, { status: 400 })
+		}
+
+		const { error } = await supabase
+			.from('academic_years')
+			.delete()
+			.eq('id', id)
+
+		if (error) {
+			console.error('Error deleting academic year:', error)
+			return NextResponse.json({ error: 'Failed to delete academic year' }, { status: 500 })
+		}
+
+		return NextResponse.json({ success: true })
+	} catch (e) {
+		console.error('Academic year deletion error:', e)
+		return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
+	}
+}

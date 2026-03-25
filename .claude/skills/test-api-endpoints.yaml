@@ -1,0 +1,214 @@
+name: test-api-endpoints
+description: Generate comprehensive API endpoint tests for JKKN COE application
+version: 1.0.0
+
+parameters:
+  - name: entity_name
+    type: string
+    description: Entity name (e.g., "Course", "Degree", "Student")
+    required: true
+
+  - name: api_route
+    type: string
+    description: API route path (e.g., "courses", "degrees")
+    required: true
+
+  - name: test_scenarios
+    type: array
+    description: Test scenarios to generate
+    required: false
+    default: ["GET", "POST", "PUT", "DELETE"]
+    items:
+      - name: method
+        type: string
+        description: HTTP method
+      - name: scenario
+        type: string
+        description: Test scenario name
+      - name: expected_status
+        type: integer
+        description: Expected HTTP status code
+
+  - name: sample_data
+    type: object
+    description: Sample data for testing
+    required: true
+
+  - name: foreign_keys
+    type: array
+    description: Foreign key fields for validation testing
+    required: false
+
+prompt: |
+  Generate comprehensive API endpoint tests for {{entity_name}} management.
+
+  ## API Details
+
+  **Entity:** {{entity_name}}
+  **API Route:** /api/{{api_route}}
+  **Methods:** GET, POST, PUT, DELETE
+
+  ## Test Coverage
+
+  ### GET Tests
+  - Fetch all records
+  - Fetch with filters
+  - Fetch non-existent record
+  - Verify response structure
+  - Check pagination
+
+  ### POST Tests
+  - Create valid record
+  - Create with missing required fields
+  - Create duplicate record (should fail)
+  - Create with invalid foreign keys (should fail)
+  - Verify response includes all fields
+  - Check auto-generated fields (id, timestamps)
+
+  ### PUT Tests
+  - Update existing record
+  - Update with invalid data
+  - Update non-existent record
+  - Verify foreign key validation
+  - Check updated_at timestamp changes
+
+  ### DELETE Tests
+  - Delete existing record
+  - Delete non-existent record
+  - Verify cascade deletion (if applicable)
+
+  ## Sample Test Data
+
+  {{sample_data}}
+
+  {{#if foreign_keys}}
+  ## Foreign Key Validation
+
+  Test invalid foreign keys:
+  {{#each foreign_keys}}
+  - {{this}}: Test with non-existent value
+  {{/each}}
+  {{/if}}
+
+  ## Implementation Requirements
+
+  1. Create test file: `__tests__/api/{{api_route}}.test.ts`
+  2. Use Jest or Vitest framework
+  3. Include setup and teardown functions
+  4. Create test database with sample data
+  5. Test all CRUD operations
+  6. Validate error responses
+  7. Check HTTP status codes
+  8. Verify response data structure
+  9. Test edge cases
+  10. Clean up test data after completion
+
+  ## Test Structure
+
+  ```typescript
+  import { NextRequest } from 'next/server'
+  import { GET, POST, PUT, DELETE } from '@/app/api/{{api_route}}/route'
+
+  describe('{{entity_name}} API', () => {
+    describe('GET /api/{{api_route}}', () => {
+      it('should fetch all records', async () => {
+        const request = new NextRequest('http://localhost:3000/api/{{api_route}}')
+        const response = await GET(request)
+        const data = await response.json()
+
+        expect(response.status).toBe(200)
+        expect(Array.isArray(data)).toBe(true)
+      })
+
+      it('should return empty array when no records exist', async () => {
+        // Test implementation
+      })
+    })
+
+    describe('POST /api/{{api_route}}', () => {
+      it('should create new record with valid data', async () => {
+        const payload = { /* sample data */ }
+        const request = new NextRequest('http://localhost:3000/api/{{api_route}}', {
+          method: 'POST',
+          body: JSON.stringify(payload)
+        })
+        const response = await POST(request)
+        const data = await response.json()
+
+        expect(response.status).toBe(201)
+        expect(data).toHaveProperty('id')
+        expect(data).toMatchObject(payload)
+      })
+
+      it('should fail with missing required fields', async () => {
+        // Test implementation
+      })
+
+      it('should fail with duplicate key', async () => {
+        // Test implementation
+      })
+    })
+
+    describe('PUT /api/{{api_route}}', () => {
+      it('should update existing record', async () => {
+        // Test implementation
+      })
+
+      it('should fail when updating non-existent record', async () => {
+        // Test implementation
+      })
+    })
+
+    describe('DELETE /api/{{api_route}}', () => {
+      it('should delete existing record', async () => {
+        // Test implementation
+      })
+
+      it('should fail when deleting non-existent record', async () => {
+        // Test implementation
+      })
+    })
+  })
+  ```
+
+  ## Error Scenarios to Test
+
+  - **400 Bad Request**: Invalid data, validation errors
+  - **404 Not Found**: Record doesn't exist
+  - **409 Conflict**: Duplicate key violation
+  - **422 Unprocessable Entity**: Foreign key violation
+  - **500 Internal Server Error**: Unexpected errors
+
+  ## Assertions to Include
+
+  - Response status codes
+  - Response data structure
+  - Required fields presence
+  - Data type validation
+  - Foreign key relationships
+  - Timestamp generation
+  - Error messages clarity
+  - Edge case handling
+
+  Generate complete test file with all scenarios and proper assertions.
+
+execution:
+  working_directory: "."
+  files_to_create:
+    - "__tests__/api/{{api_route}}.test.ts"
+
+  validation:
+    - Verify all test cases are included
+    - Ensure proper test isolation
+    - Check cleanup functions exist
+    - Validate mock data is realistic
+    - Confirm error cases are covered
+
+output_format: code
+
+tags:
+  - testing
+  - api
+  - jest
+  - typescript
+  - quality-assurance
