@@ -137,10 +137,12 @@ export default function CoursesPage() {
   const [importErrors, setImportErrors] = useState<CourseImportError[]>([])
   const [uploadSummary, setUploadSummary] = useState<UploadSummary>({ total: 0, success: 0, failed: 0 })
 
+  // Helper to sanitize null/undefined/"null" string values to empty string
+  const s = (val: any): string => (!val || val === 'null') ? '' : String(val)
+
   const [formData, setFormData] = useState({
     institution_code: '',
     regulation_code: '',
-    offering_department_code: '',
     board_code: '',
     course_code: '',
     course_title: '',
@@ -428,7 +430,6 @@ export default function CoursesPage() {
     setFormData({
       institution_code: institutionCode || '',
       regulation_code: '',
-      offering_department_code: '',
       board_code: '',
       course_code: '',
       course_title: '',
@@ -483,25 +484,24 @@ export default function CoursesPage() {
   const openEdit = (row: Course) => {
     setEditing(row)
     setFormData({
-      institution_code: row.institution_code || institutionCode || "",
-      regulation_code: row.regulation_code || "",
-      offering_department_code: row.offering_department_code || "",
-      board_code: row.board_code || "",
-      course_code: row.course_code || "",
-      course_title: row.course_title || "",
-      display_code: row.display_code || (row.course_code || ''),
-      course_category: row.course_category || "",
-      course_type: row.course_type || "",
-      course_part_master: row.course_part_master || "",
+      institution_code: s(row.institution_code) || institutionCode || "",
+      regulation_code: s(row.regulation_code),
+      board_code: s(row.board_code),
+      course_code: s(row.course_code),
+      course_title: s(row.course_title),
+      display_code: s(row.display_code) || s(row.course_code),
+      course_category: s(row.course_category),
+      course_type: s(row.course_type),
+      course_part_master: s(row.course_part_master),
       credits: String(row.credits ?? '0'),
       split_credit: Boolean(row.split_credit) || false,
       theory_credit: String(row.theory_credit ?? '0'),
       practical_credit: String(row.practical_credit ?? '0'),
-      qp_code: row.qp_code || "",
-      e_code_name: row.e_code_name || "",
+      qp_code: s(row.qp_code),
+      e_code_name: s(row.e_code_name),
       exam_duration: String(row.exam_duration ?? ''),
-      evaluation_type: row.evaluation_type || "",
-      result_type: row.result_type || "Mark",
+      evaluation_type: s(row.evaluation_type),
+      result_type: s(row.result_type) || "Mark",
       credit_included: row.credit_included ?? true,
       self_study_course: Boolean(row.self_study_course) || false,
       outside_class_course: Boolean(row.outside_class_course) || false,
@@ -514,8 +514,8 @@ export default function CoursesPage() {
       no_of_scrutinizer: String(row.no_of_scrutinizer ?? ''),
       fee_exception: Boolean(row.fee_exception) || false,
       has_hall_ticket: row.has_hall_ticket ?? true,
-      syllabus_pdf_url: row.syllabus_pdf_url || "",
-      description: row.description || "",
+      syllabus_pdf_url: s(row.syllabus_pdf_url),
+      description: s(row.description),
       is_active: row.is_active ?? true,
       // Required fields for marks and hours
       class_hours: String(row.class_hours ?? 0),
@@ -743,7 +743,6 @@ export default function CoursesPage() {
     const data = courses.map(c => ({
       'Institution Code': c.institution_code || '',
       'Regulation Code': c.regulation_code || '',
-      'Offering Department Code': c.offering_department_code || '',
       'Board Code': c.board_code || '',
       'Course Code': c.course_code,
       'Course Name': c.course_title,
@@ -805,7 +804,6 @@ export default function CoursesPage() {
     const data = courses.map(c => ({
       institution_code: c.institution_code || '',
       regulation_code: c.regulation_code || '',
-      offering_department_code: c.offering_department_code || '',
       board_code: c.board_code || '',
       course_code: c.course_code,
       course_title: c.course_title,
@@ -931,7 +929,6 @@ export default function CoursesPage() {
           const payload = {
             institution_code: row['Institution Code*'] || row['Institution Code'] || row.institution_code,
             regulation_code: row['Regulation Code*'] || row['Regulation Code'] || row.regulation_code,
-            offering_department_code: row['Offering Department Code*'] || row['Offering Department Code'] || row.offering_department_code || null,
             board_code: row['Board Code'] || row.board_code || null,
             course_code: row['Course Code*'] || row['Course Code'] || row.course_code,
             course_title: row['Course Name*'] || row['Course Name'] || row.course_title,
@@ -1201,9 +1198,6 @@ export default function CoursesPage() {
           }
           if (row['Regulation Code*'] || row['Regulation Code'] || row.regulation_code) {
             payload.regulation_code = row['Regulation Code*'] || row['Regulation Code'] || row.regulation_code
-          }
-          if (row['Offering Department Code*'] || row['Offering Department Code'] || row.offering_department_code) {
-            payload.offering_department_code = row['Offering Department Code*'] || row['Offering Department Code'] || row.offering_department_code
           }
           if (row['Board Code'] || row.board_code) {
             payload.board_code = row['Board Code'] || row.board_code
@@ -1944,7 +1938,7 @@ export default function CoursesPage() {
                       <Label className="text-sm font-semibold">Institution Code <span className="text-red-500">*</span></Label>
                       <SearchableSelect
                         value={formData.institution_code}
-                        onValueChange={(v) => setFormData({ ...formData, institution_code: v, regulation_code: "", offering_department_code: "", board_code: "" })}
+                        onValueChange={(v) => setFormData({ ...formData, institution_code: v, regulation_code: "", board_code: "" })}
                         options={institutions.map(i => ({ value: i.institution_code, label: `${i.institution_code}${i.name ? ` - ${i.name}` : ''}` }))}
                         placeholder="Select institution"
                         searchPlaceholder="Search institutions..."
@@ -1979,26 +1973,6 @@ export default function CoursesPage() {
                   />
                   {errors.regulation_code && <p className="text-xs text-destructive">{errors.regulation_code}</p>}
                   {!formData.institution_code && <p className="text-xs text-muted-foreground">Select an institution to load regulations</p>}
-                </div>
-                <div className="space-y-2">
-                  <Label className="text-sm font-semibold">Offering Department Code</Label>
-                  <SearchableSelect
-                    value={formData.offering_department_code}
-                    onValueChange={(v) => setFormData({ ...formData, offering_department_code: v })}
-                    options={departmentsSrc.map(d => ({
-                      value: d.department_code,
-                      label: d.department_name ? `${d.department_code} - ${d.department_name}` : d.department_code,
-                      description: d.department_name
-                    }))}
-                    placeholder="Select department"
-                    searchPlaceholder="Search departments..."
-                    loading={departmentsLoading}
-                    loadingText="Loading departments..."
-                    clearable
-                    wrapText
-                    disabled={!formData.institution_code}
-                  />
-                  {!formData.institution_code && <p className="text-xs text-muted-foreground">Select an institution to load departments</p>}
                 </div>
                 <div className="space-y-2">
                   <Label className="text-sm font-semibold">Board Code</Label>

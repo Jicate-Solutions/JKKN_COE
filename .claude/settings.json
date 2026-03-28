@@ -30,7 +30,8 @@
       "mcp__plugin_playwright_playwright__browser_wait_for",
       "Bash(head -200 \"/d/JKKN/Development/Application/COE/jkkncoe/app/\\(coe\\)/pre-exam/examiner-allotment/page.tsx\")",
       "Skill(commit-commands:commit)",
-      "Skill(commit-commands:commit:*)"
+      "Skill(commit-commands:commit:*)",
+      "Bash(npx patch-package:*)"
     ],
     "deny": [
       "Bash(rm -rf:*)",

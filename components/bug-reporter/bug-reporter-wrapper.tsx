@@ -34,17 +34,8 @@ export function BugReporterWrapper({
 			return true
 		}
 
-		// In production, only enable for authenticated users
-		if (!isAuthenticated || !user) {
-			return false
-		}
-
-		// Enable for specific roles
-		const allowedRoles = ['admin', 'super_admin', 'beta-tester', 'developer']
-		const hasAllowedRole = allowedRoles.includes(user.role)
-
-		// Enable if user has an allowed role OR if explicitly enabled via env variable
-		return hasAllowedRole || process.env.NEXT_PUBLIC_BUG_REPORTER_FORCE_ENABLE === 'true'
+		// In production, enable for all authenticated users
+		return isAuthenticated && !!user
 	}, [isAuthenticated, user, isPublicRoute])
 
 	useEffect(() => {

@@ -51,7 +51,6 @@ export async function createCourse(data: Partial<CourseFormData>): Promise<Cours
 	const payload = {
 		institution_code: data.institution_code,
 		regulation_code: data.regulation_code,
-		offering_department_code: data.offering_department_code || null,
 		board_code: data.board_code || null,
 		course_code: data.course_code,
 		course_title: data.course_title,
@@ -79,8 +78,8 @@ export async function createCourse(data: Partial<CourseFormData>): Promise<Cours
 		no_of_scrutinizer: data.no_of_scrutinizer ? Number(data.no_of_scrutinizer) : null,
 		fee_exception: Boolean(data.fee_exception),
 		has_hall_ticket: data.has_hall_ticket !== undefined ? Boolean(data.has_hall_ticket) : true,
-		syllabus_pdf_url: data.syllabus_pdf_url || null,
-		description: data.description || null,
+		syllabus_pdf_url: (data.syllabus_pdf_url && data.syllabus_pdf_url !== 'null') ? data.syllabus_pdf_url : null,
+		description: (data.description && data.description !== 'null') ? data.description : null,
 		is_active: data.is_active !== undefined ? Boolean(data.is_active) : true,
 		course_level: data.course_level,
 		// Required fields - always send as numbers (0 if empty)
@@ -118,7 +117,6 @@ export async function updateCourse(id: string, data: Partial<CourseFormData>): P
 	const payload = {
 		institution_code: data.institution_code,
 		regulation_code: data.regulation_code,
-		offering_department_code: data.offering_department_code || null,
 		board_code: data.board_code || null,
 		course_code: data.course_code,
 		course_title: data.course_title,
@@ -146,8 +144,8 @@ export async function updateCourse(id: string, data: Partial<CourseFormData>): P
 		no_of_scrutinizer: data.no_of_scrutinizer ? Number(data.no_of_scrutinizer) : null,
 		fee_exception: Boolean(data.fee_exception),
 		has_hall_ticket: data.has_hall_ticket !== undefined ? Boolean(data.has_hall_ticket) : true,
-		syllabus_pdf_url: data.syllabus_pdf_url || null,
-		description: data.description || null,
+		syllabus_pdf_url: (data.syllabus_pdf_url && data.syllabus_pdf_url !== 'null') ? data.syllabus_pdf_url : null,
+		description: (data.description && data.description !== 'null') ? data.description : null,
 		is_active: data.is_active !== undefined ? Boolean(data.is_active) : true,
 		course_level: data.course_level,
 		// Required fields

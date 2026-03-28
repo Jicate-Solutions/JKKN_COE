@@ -562,76 +562,164 @@ export default function ExaminersPage() {
 		await XLSX.writeFile(wb, `examiners_export_${new Date().toISOString().split('T')[0]}.xlsx`)
 	}
 
-	const handleTemplateExport = async () => {
+	const handleTemplateExport = async (templateFormType: 'arts' | 'engineering' = 'arts') => {
 		const wb = XLSX.utils.book_new()
+		const isEngg = templateFormType === 'engineering'
 
-		// Sheet 1: Template
-		const sample = [{
-			'Institution Name': '',
+		// Sheet 1: Template — columns differ by form type
+		const baseSample: Record<string, string | number> = {
+			'COE Institution Code': institutionCode || '',
+			'Form Type': templateFormType,
 			'Full Name *': '',
 			'Email *': '',
 			'Mobile': '',
 			'Designation': '',
 			'Department': '',
-			'Examiner Type *': 'UG',
+			'Institution Name': '',
 			'Status': 'PENDING',
-			'UG Board Code': '',
-			'PG Board Code': '',
-			'UG Experience (Yrs)': '',
-			'PG Experience (Yrs)': '',
-			'COE Institution Code': institutionCode || '',
-		}]
+		}
+
+		let sample: Record<string, string | number>[]
+		let colWidths: { wch: number }[]
+
+		if (isEngg) {
+			sample = [{
+				...baseSample,
+				'Salutation': '',
+				'Gender': '',
+				'Highest Qualification': '',
+				'AICTE Faculty Code': '',
+				'Personal Email': '',
+				'Official Email': '',
+				'Institution Address/Pincode': '',
+				'Institution COE Contact': '',
+				'Institution COE Email': '',
+				'Teaching Exp (Yrs)': '',
+				'Industry Exp (Yrs)': '',
+				'Total Exp (Yrs)': '',
+				'Area of Expertise': '',
+				'Willingness Roles': '',
+				'UG Specialization': '',
+				'PG Specialization': '',
+				'PhD Specialization': '',
+				'Theory Courses': '',
+				'Practical Courses': '',
+			}]
+			colWidths = [
+				{ wch: 22 }, { wch: 14 }, { wch: 30 }, { wch: 30 }, { wch: 15 },
+				{ wch: 25 }, { wch: 25 }, { wch: 35 }, { wch: 12 },
+				{ wch: 10 }, { wch: 10 }, { wch: 25 }, { wch: 22 },
+				{ wch: 28 }, { wch: 28 }, { wch: 35 },
+				{ wch: 22 }, { wch: 28 }, { wch: 18 }, { wch: 18 }, { wch: 18 },
+				{ wch: 30 }, { wch: 35 },
+				{ wch: 25 }, { wch: 25 }, { wch: 25 },
+				{ wch: 40 }, { wch: 40 },
+			]
+		} else {
+			sample = [{
+				...baseSample,
+				'Examiner Type *': 'UG',
+				'UG Board Code': '',
+				'PG Board Code': '',
+				'UG Experience (Yrs)': '',
+				'PG Experience (Yrs)': '',
+			}]
+			colWidths = [
+				{ wch: 22 }, { wch: 14 }, { wch: 30 }, { wch: 30 }, { wch: 15 },
+				{ wch: 25 }, { wch: 25 }, { wch: 35 }, { wch: 12 },
+				{ wch: 18 }, { wch: 25 }, { wch: 25 }, { wch: 22 }, { wch: 22 },
+			]
+		}
+
 		const ws = XLSX.utils.json_to_sheet(sample)
-		ws['!cols'] = [
-			{ wch: 35 }, { wch: 30 }, { wch: 30 }, { wch: 15 }, { wch: 25 },
-			{ wch: 25 }, { wch: 18 }, { wch: 12 }, { wch: 25 }, { wch: 25 },
-			{ wch: 22 }, { wch: 22 }, { wch: 22 },
-		]
+		ws['!cols'] = colWidths
 
 		// Dropdowns
-		const examinerTypes = ['UG', 'PG', 'UG_PG', 'PRACTICAL', 'SCRUTINY', 'ALL']
 		const statusValues = ['PENDING', 'ACTIVE', 'INACTIVE', 'REJECTED']
-		const ugBoardCodes = boards.filter(b => b.board_type === 'UG').map(b => b.board_code)
-		const pgBoardCodes = boards.filter(b => b.board_type === 'PG').map(b => b.board_code)
 		const instCodes = institutions.map(i => i.institution_code).filter(Boolean)
-
 		const validations: any[] = [
-			{ type: 'list', sqref: 'G2:G1000', formula1: `"${examinerTypes.join(',')}"`, showDropDown: true, showErrorMessage: true, errorTitle: 'Invalid Type', error: 'Select a valid examiner type' },
-			{ type: 'list', sqref: 'H2:H1000', formula1: `"${statusValues.join(',')}"`, showDropDown: true, showErrorMessage: true, errorTitle: 'Invalid Status', error: 'Select: PENDING, ACTIVE, INACTIVE, REJECTED' },
+			{ type: 'list', sqref: 'A2:A1000', formula1: `"${instCodes.join(',')}"`, showDropDown: true, showErrorMessage: true, errorTitle: 'Invalid Institution', error: 'Select a valid institution code' },
+			{ type: 'list', sqref: 'B2:B1000', formula1: '"arts,engineering"', showDropDown: true, showErrorMessage: true, errorTitle: 'Invalid Form Type', error: 'Select: arts or engineering' },
 		]
-		if (ugBoardCodes.length > 0) {
-			validations.push({ type: 'list', sqref: 'I2:I1000', formula1: `"${ugBoardCodes.join(',')}"`, showDropDown: true, showErrorMessage: true, errorTitle: 'Invalid UG Board', error: 'Select a valid UG board code' })
+
+		if (isEngg) {
+			// Status at col I, Salutation at J, Gender at K
+			validations.push({ type: 'list', sqref: 'I2:I1000', formula1: `"${statusValues.join(',')}"`, showDropDown: true, showErrorMessage: true, errorTitle: 'Invalid Status', error: 'Select: PENDING, ACTIVE, INACTIVE, REJECTED' })
+			// Fetch form config for engineering departments/designations/willingness_roles
+			const matchedConfig = formConfigs.find(c => c.form_type === 'engineering') || null
+			if (matchedConfig) {
+				const salutations = matchedConfig.salutations || ['Dr', 'Mr', 'Mrs', 'Ms']
+				validations.push({ type: 'list', sqref: 'J2:J1000', formula1: `"${salutations.join(',')}"`, showDropDown: true })
+				const genders = ['Male', 'Female', 'Other']
+				validations.push({ type: 'list', sqref: 'K2:K1000', formula1: `"${genders.join(',')}"`, showDropDown: true })
+				if (matchedConfig.departments?.length) {
+					validations.push({ type: 'list', sqref: 'G2:G1000', formula1: `"${matchedConfig.departments.join(',')}"`, showDropDown: true })
+				}
+				if (matchedConfig.designations?.length) {
+					validations.push({ type: 'list', sqref: 'F2:F1000', formula1: `"${matchedConfig.designations.join(',')}"`, showDropDown: true })
+				}
+				if (matchedConfig.willingness_roles?.length) {
+					// Willingness roles column — users can enter comma-separated values
+				}
+			}
+		} else {
+			// Arts: Status at col I, Examiner Type at col J
+			validations.push({ type: 'list', sqref: 'I2:I1000', formula1: `"${statusValues.join(',')}"`, showDropDown: true, showErrorMessage: true, errorTitle: 'Invalid Status', error: 'Select: PENDING, ACTIVE, INACTIVE, REJECTED' })
+			const examinerTypes = ['UG', 'PG', 'UG_PG', 'PRACTICAL', 'SCRUTINY', 'ALL']
+			validations.push({ type: 'list', sqref: 'J2:J1000', formula1: `"${examinerTypes.join(',')}"`, showDropDown: true, showErrorMessage: true, errorTitle: 'Invalid Type', error: 'Select a valid examiner type' })
+			const ugBoardCodes = boards.filter(b => b.board_type === 'UG').map(b => b.board_code)
+			const pgBoardCodes = boards.filter(b => b.board_type === 'PG').map(b => b.board_code)
+			if (ugBoardCodes.length > 0) {
+				validations.push({ type: 'list', sqref: 'K2:K1000', formula1: `"${ugBoardCodes.join(',')}"`, showDropDown: true })
+			}
+			if (pgBoardCodes.length > 0) {
+				validations.push({ type: 'list', sqref: 'L2:L1000', formula1: `"${pgBoardCodes.join(',')}"`, showDropDown: true })
+			}
 		}
-		if (pgBoardCodes.length > 0) {
-			validations.push({ type: 'list', sqref: 'J2:J1000', formula1: `"${pgBoardCodes.join(',')}"`, showDropDown: true, showErrorMessage: true, errorTitle: 'Invalid PG Board', error: 'Select a valid PG board code' })
-		}
-		if (instCodes.length > 0) {
-			validations.push({ type: 'list', sqref: 'M2:M1000', formula1: `"${instCodes.join(',')}"`, showDropDown: true, showErrorMessage: true, errorTitle: 'Invalid Institution', error: 'Select a valid institution code' })
-		}
+
 		ws['!dataValidation'] = validations
 		XLSX.utils.book_append_sheet(wb, ws, 'Template')
 
 		// Sheet 2: Reference Codes
 		const refData: any[] = []
-		refData.push({ 'Type': '═══ EXAMINER TYPES ═══', 'Code': '', 'Description': '' })
-		examinerTypes.forEach(t => refData.push({ 'Type': 'Examiner Type', 'Code': t, 'Description': t.replace('_', ' & ') }))
+		if (!isEngg) {
+			const examinerTypes = ['UG', 'PG', 'UG_PG', 'PRACTICAL', 'SCRUTINY', 'ALL']
+			refData.push({ 'Type': '═══ EXAMINER TYPES ═══', 'Code': '', 'Description': '' })
+			examinerTypes.forEach(t => refData.push({ 'Type': 'Examiner Type', 'Code': t, 'Description': t.replace('_', ' & ') }))
+		}
 		refData.push({ 'Type': '═══ STATUS VALUES ═══', 'Code': '', 'Description': '' })
 		statusValues.forEach(s => refData.push({ 'Type': 'Status', 'Code': s, 'Description': s }))
-		if (boards.length > 0) {
+		if (!isEngg && boards.length > 0) {
 			refData.push({ 'Type': '═══ UG BOARDS ═══', 'Code': '', 'Description': '' })
 			boards.filter(b => b.board_type === 'UG').forEach(b => refData.push({ 'Type': 'UG Board', 'Code': b.board_code, 'Description': b.board_name }))
 			refData.push({ 'Type': '═══ PG BOARDS ═══', 'Code': '', 'Description': '' })
 			boards.filter(b => b.board_type === 'PG').forEach(b => refData.push({ 'Type': 'PG Board', 'Code': b.board_code, 'Description': b.board_name }))
 		}
+		if (isEngg) {
+			const matchedConfig = formConfigs.find(c => c.form_type === 'engineering') || null
+			if (matchedConfig?.departments?.length) {
+				refData.push({ 'Type': '═══ DEPARTMENTS ═══', 'Code': '', 'Description': '' })
+				matchedConfig.departments.forEach(d => refData.push({ 'Type': 'Department', 'Code': d, 'Description': d }))
+			}
+			if (matchedConfig?.designations?.length) {
+				refData.push({ 'Type': '═══ DESIGNATIONS ═══', 'Code': '', 'Description': '' })
+				matchedConfig.designations.forEach(d => refData.push({ 'Type': 'Designation', 'Code': d, 'Description': d }))
+			}
+			if (matchedConfig?.willingness_roles?.length) {
+				refData.push({ 'Type': '═══ WILLINGNESS ROLES ═══', 'Code': '', 'Description': 'Enter comma-separated' })
+				matchedConfig.willingness_roles.forEach(r => refData.push({ 'Type': 'Willingness Role', 'Code': r, 'Description': r }))
+			}
+		}
 		if (instCodes.length > 0) {
 			refData.push({ 'Type': '═══ INSTITUTION CODES ═══', 'Code': '', 'Description': '' })
-			institutions.forEach(i => refData.push({ 'Type': 'Institution', 'Code': i.institution_code, 'Description': i.name || '' }))
+			institutions.forEach(i => refData.push({ 'Type': 'Institution', 'Code': i.institution_code, 'Description': i.institution_name }))
 		}
 		const wsRef = XLSX.utils.json_to_sheet(refData)
 		wsRef['!cols'] = [{ wch: 25 }, { wch: 20 }, { wch: 40 }]
 		XLSX.utils.book_append_sheet(wb, wsRef, 'Reference Codes')
 
-		await XLSX.writeFile(wb, `examiners_template_${new Date().toISOString().split('T')[0]}.xlsx`)
+		const suffix = isEngg ? 'engineering' : 'arts'
+		await XLSX.writeFile(wb, `examiners_template_${suffix}_${new Date().toISOString().split('T')[0]}.xlsx`)
 	}
 
 	// ── Import handler ────────────────────────────────────────────────────────
@@ -676,25 +764,84 @@ export default function ExaminersPage() {
 
 	const mapRowToExaminer = (row: Record<string, any>) => {
 		const instCode = String(row['COE Institution Code'] || row['institution_code'] || institutionCode || '').trim()
-		// Resolve institution_id from code, or fall back to context
 		const inst = institutions.find(i => i.institution_code === instCode)
 		const instId = inst?.id || getInstitutionIdForCreate() || ''
 
-		return {
+		// Detect form type from row data — presence of engineering-specific columns or explicit column
+		const rowFormType = String(row['Form Type'] || row['form_type'] || '').trim().toLowerCase()
+		const isEngg = rowFormType === 'engineering'
+			|| !!row['AICTE Faculty Code'] || !!row['aicte_faculty_code']
+			|| !!row['Willingness Roles'] || !!row['willingness_roles']
+			|| !!row['Teaching Exp (Yrs)'] || !!row['teaching_exp_years']
+
+		// Common fields
+		const base = {
 			full_name: String(row['Full Name *'] || row['Full Name'] || row['full_name'] || '').trim(),
 			email: String(row['Email *'] || row['Email'] || row['email'] || '').trim().toLowerCase(),
 			mobile: String(row['Mobile'] || row['mobile'] || '').trim(),
 			designation: String(row['Designation'] || row['designation'] || '').trim(),
 			department: String(row['Department'] || row['department'] || '').trim(),
 			institution_name: String(row['Institution Name'] || row['institution_name'] || '').trim(),
-			examiner_type: String(row['Examiner Type *'] || row['Examiner Type'] || row['examiner_type'] || 'UG').trim().toUpperCase(),
 			status: String(row['Status'] || row['status'] || 'PENDING').trim().toUpperCase(),
+			institution_code: instCode,
+			institution_id: instId,
+			form_type: isEngg ? 'engineering' : (rowFormType || 'arts'),
+		}
+
+		if (isEngg) {
+			// Engineering-specific fields
+			const willingnessStr = String(row['Willingness Roles'] || row['willingness_roles'] || '').trim()
+			const willingness_roles = willingnessStr ? willingnessStr.split(',').map((s: string) => s.trim()).filter(Boolean) : []
+
+			// Parse theory/practical courses: "Course1 - 2 Times; Course2 - 1 Times"
+			const parseCoursesStr = (str: string) => {
+				if (!str) return []
+				return str.split(';').map(s => s.trim()).filter(Boolean).map(entry => {
+					const parts = entry.split(' - ')
+					return { course: parts[0]?.trim() || '', times: parts[1]?.replace(/\s*Times?\s*/i, '').trim() || '' }
+				})
+			}
+
+			return {
+				...base,
+				examiner_type: 'ALL' as const,
+				salutation: String(row['Salutation'] || row['salutation'] || '').trim(),
+				gender: String(row['Gender'] || row['gender'] || '').trim(),
+				highest_qualification: String(row['Highest Qualification'] || row['highest_qualification'] || '').trim(),
+				aicte_faculty_code: String(row['AICTE Faculty Code'] || row['aicte_faculty_code'] || '').trim(),
+				personal_email: String(row['Personal Email'] || row['personal_email'] || '').trim(),
+				official_email: String(row['Official Email'] || row['official_email'] || '').trim(),
+				institution_address: String(row['Institution Address/Pincode'] || row['institution_address'] || '').trim(),
+				institution_coe_contact: String(row['Institution COE Contact'] || row['institution_coe_contact'] || '').trim(),
+				institution_coe_email: String(row['Institution COE Email'] || row['institution_coe_email'] || '').trim(),
+				teaching_exp_years: parseInt(String(row['Teaching Exp (Yrs)'] || row['teaching_exp_years'] || '0')) || 0,
+				industry_exp_years: parseInt(String(row['Industry Exp (Yrs)'] || row['industry_exp_years'] || '0')) || 0,
+				total_exp_years: parseInt(String(row['Total Exp (Yrs)'] || row['total_exp_years'] || '0')) || 0,
+				area_of_expertise: String(row['Area of Expertise'] || row['area_of_expertise'] || '').trim(),
+				willingness_roles,
+				additional_data: {
+					ug_specialization: String(row['UG Specialization'] || '').trim(),
+					pg_specialization: String(row['PG Specialization'] || '').trim(),
+					phd_specialization: String(row['PhD Specialization'] || '').trim(),
+					theory_courses: parseCoursesStr(String(row['Theory Courses'] || '')),
+					practical_courses: parseCoursesStr(String(row['Practical Courses'] || '')),
+				},
+				// Not used for engineering but keep defaults
+				ug_board_code: '',
+				pg_board_code: '',
+				ug_experience_years: 0,
+				pg_experience_years: 0,
+			}
+		}
+
+		// Arts fields
+		return {
+			...base,
+			examiner_type: String(row['Examiner Type *'] || row['Examiner Type'] || row['examiner_type'] || 'UG').trim().toUpperCase(),
 			ug_experience_years: parseInt(String(row['UG Experience (Yrs)'] || row['ug_experience_years'] || '0')) || 0,
 			pg_experience_years: parseInt(String(row['PG Experience (Yrs)'] || row['pg_experience_years'] || '0')) || 0,
 			ug_board_code: String(row['UG Board Code'] || row['ug_board_code'] || '').trim(),
 			pg_board_code: String(row['PG Board Code'] || row['pg_board_code'] || '').trim(),
-			institution_code: instCode,
-			institution_id: instId,
 		}
 	}
 
@@ -709,7 +856,10 @@ export default function ExaminersPage() {
 			if (!item.full_name) errs.push('Full name is required')
 			if (!item.email) errs.push('Email is required')
 			else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(item.email)) errs.push('Invalid email format')
-			if (!['UG', 'PG', 'UG_PG', 'PRACTICAL', 'SCRUTINY', 'ALL'].includes(item.examiner_type)) errs.push(`Invalid examiner type: ${item.examiner_type}`)
+			// Only validate examiner_type for arts rows
+			if (item.form_type !== 'engineering') {
+				if (!['UG', 'PG', 'UG_PG', 'PRACTICAL', 'SCRUTINY', 'ALL'].includes(item.examiner_type)) errs.push(`Invalid examiner type: ${item.examiner_type}`)
+			}
 			if (errs.length > 0) validationErrors.push({ row: i + 2, email: item.email || 'N/A', full_name: item.full_name || 'N/A', errors: errs })
 			return item
 		}).filter(r => r.full_name && r.email)
@@ -729,17 +879,27 @@ export default function ExaminersPage() {
 		for (let i = 0; i < mapped.length; i++) {
 			setImportProgress({ current: i + 1, total: mapped.length })
 			const item = mapped[i]
-			const ugBoard = boards.find(b => b.board_code === item.ug_board_code && b.board_type === 'UG')
-			const pgBoard = boards.find(b => b.board_code === item.pg_board_code && b.board_type === 'PG')
-			const payload = {
-				...item,
-				ug_board_id: ugBoard?.id || null,
-				pg_board_id: pgBoard?.id || null,
-				board_associations: [
+
+			let payload: Record<string, any> = { ...item }
+
+			// For arts rows, resolve board associations
+			if (item.form_type !== 'engineering' && ('ug_board_code' in item || 'pg_board_code' in item)) {
+				const ugBoardCode = (item as any).ug_board_code || ''
+				const pgBoardCode = (item as any).pg_board_code || ''
+				const ugBoard = boards.find(b => b.board_code === ugBoardCode && b.board_type === 'UG')
+				const pgBoard = boards.find(b => b.board_code === pgBoardCode && b.board_type === 'PG')
+				payload.ug_board_id = ugBoard?.id || null
+				payload.pg_board_id = pgBoard?.id || null
+				payload.board_associations = [
 					...(ugBoard ? [{ board_id: ugBoard.id, board_code: ugBoard.board_code, willing_for_valuation: true, willing_for_practical: false, willing_for_scrutiny: false }] : []),
 					...(pgBoard ? [{ board_id: pgBoard.id, board_code: pgBoard.board_code, willing_for_valuation: true, willing_for_practical: false, willing_for_scrutiny: false }] : []),
-				],
+				]
 			}
+
+			// Clean up temporary mapping keys not expected by API
+			delete payload.ug_board_code
+			delete payload.pg_board_code
+
 			try {
 				const res = await fetch('/api/examiners', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
 				if (res.ok) {
@@ -789,10 +949,10 @@ export default function ExaminersPage() {
 	}
 
 	useEffect(() => {
-		if (activeTab === 'form-settings' && isReady) {
+		if (isReady) {
 			fetchFormConfigs()
 		}
-	}, [activeTab, isReady])
+	}, [isReady])
 
 	const handleSaveConfig = async () => {
 		try {
@@ -1028,11 +1188,16 @@ export default function ExaminersPage() {
 														<Download className="h-3.5 w-3.5 mr-1.5" />Export<ChevronDown className="h-3 w-3 ml-1" />
 													</Button>
 												</DropdownMenuTrigger>
-												<DropdownMenuContent align="end" className="w-44">
-													<DropdownMenuItem onClick={handleTemplateExport}>
+												<DropdownMenuContent align="end" className="w-52">
+													<DropdownMenuItem onClick={() => handleTemplateExport('arts')}>
 														<FileSpreadsheet className="h-3.5 w-3.5 mr-2" />
-														Download Template
+														Arts Template
 													</DropdownMenuItem>
+													<DropdownMenuItem onClick={() => handleTemplateExport('engineering')}>
+														<FileSpreadsheet className="h-3.5 w-3.5 mr-2" />
+														Engineering Template
+													</DropdownMenuItem>
+													<DropdownMenuSeparator />
 													<DropdownMenuItem onClick={handleExportExcel}>
 														<FileSpreadsheet className="h-4 w-4 mr-2" />
 														Export Excel

@@ -119,7 +119,7 @@ export default function DummyNumbersPage() {
 	const [selectedBoard, setSelectedBoard] = useState('')
 	const [selectedCourses, setSelectedCourses] = useState<string[]>([])
 	const [selectedProgram, setSelectedProgram] = useState('')
-	const [selectedCourseCategories, setSelectedCourseCategories] = useState<string[]>(['Theory'])
+	const [selectedCourseCategories, setSelectedCourseCategories] = useState<string[]>([])
 	const [registrationCount, setRegistrationCount] = useState<number | null>(null)
 
 	// Cascading: programs filtered by board (keep API sort order)

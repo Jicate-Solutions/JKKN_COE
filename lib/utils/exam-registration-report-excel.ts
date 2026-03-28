@@ -17,10 +17,32 @@ interface ExcelReportResult {
 	merges: MergeRange[]
 }
 
+const ROMAN = ['', 'I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X']
+function toRoman(n: number): string { return ROMAN[n] || String(n) }
+
 function semesterToYear(semester: number): string {
-	const roman = ['I', 'II', 'III', 'IV', 'V']
 	const yearNum = Math.ceil(semester / 2)
-	return `${roman[yearNum - 1] || yearNum} Year`
+	return `${toRoman(yearNum)} Year`
+}
+
+/** Build a map of student register number → current year (based on max regular semester) */
+function buildStudentYearMap(data: any[]): Map<string, string> {
+	const maxRegSem = new Map<string, number>()
+	const maxAnySem = new Map<string, number>()
+	for (const row of data) {
+		const regNo = row.stu_register_no
+		if (!regNo) continue
+		const sem = row.course_offering?.semester || 0
+		if (sem <= 0) continue
+		if (row.is_regular) maxRegSem.set(regNo, Math.max(maxRegSem.get(regNo) || 0, sem))
+		maxAnySem.set(regNo, Math.max(maxAnySem.get(regNo) || 0, sem))
+	}
+	const result = new Map<string, string>()
+	for (const regNo of new Set([...maxRegSem.keys(), ...maxAnySem.keys()])) {
+		const maxSem = maxRegSem.get(regNo) || maxAnySem.get(regNo) || 1
+		result.set(regNo, semesterToYear(maxSem))
+	}
+	return result
 }
 
 // ── Report 1: Student Fee Details ──
@@ -34,11 +56,16 @@ function exportStudentFeeDetailsExcel(opts: ExcelExportOptions): ExcelReportResu
 		}
 		const co = row.course_offering
 		if (co) {
-			studentMap.get(regNo)!.courses.push({
-				semester: co.semester || 0,
-				course_code: co.course_code || '',
-				course_name: co.course_name || '',
-			})
+			const student = studentMap.get(regNo)!
+			// Deduplicate by course_code (same course can exist under multiple offerings)
+			if (!student.courses.some((c: any) => c.course_code === co.course_code)) {
+				student.courses.push({
+					semester: co.semester || 0,
+					course_order: co.course_order ?? 999,
+					course_code: co.course_code || '',
+					course_name: co.course_name || '',
+				})
+			}
 		}
 	}
 
@@ -72,7 +99,7 @@ function exportStudentFeeDetailsExcel(opts: ExcelExportOptions): ExcelReportResu
 				'Register No': ci === 0 ? regNo : '',
 				'Name of the Candidate': ci === 0 ? info.name : '',
 				'Date of Birth': ci === 0 ? info.dob : '',
-				'Semester/Year': `Semester ${course.semester}`,
+				'SEM/Year': toRoman(course.semester),
 				'Subject Code': course.course_code,
 				'Course Name': course.course_name,
 				'Theory': '',
@@ -90,7 +117,7 @@ function exportStudentFeeDetailsExcel(opts: ExcelExportOptions): ExcelReportResu
 				'Register No': regNo,
 				'Name of the Candidate': info.name,
 				'Date of Birth': info.dob,
-				'Semester/Year': '',
+				'SEM/Year': '',
 				'Subject Code': '',
 				'Course Name': '',
 				'Theory': '',
@@ -124,7 +151,7 @@ function exportCourseCountRegularArrearExcel(opts: ExcelExportOptions): ExcelRep
 	}
 
 	const sorted = Array.from(countMap.values())
-		.sort((a, b) => (a.board_order - b.board_order) || (a.program_order - b.program_order) || (a.semester - b.semester) || (a.course_order - b.course_order) || a.course_code.localeCompare(b.course_code))
+		.sort((a, b) => (a.board_order - b.board_order) || (a.program_order - b.program_order) || (a.course_order - b.course_order) || a.course_code.localeCompare(b.course_code))
 
 	// Build board groups for merge
 	const merges: MergeRange[] = []
@@ -148,6 +175,7 @@ function exportCourseCountRegularArrearExcel(opts: ExcelExportOptions): ExcelRep
 	const rows = sorted.map((row, idx) => ({
 		'S.No': idx + 1,
 		'Board': row.board_code ? `${row.board_code}${row.board_name ? ` (${row.board_name})` : ''}` : '',
+		'Sem': row.semester ? toRoman(row.semester) : '',
 		'Course Code': row.course_code,
 		'Course Name': row.course_name,
 		'Regular Students': row.regular,
@@ -161,6 +189,7 @@ function exportCourseCountRegularArrearExcel(opts: ExcelExportOptions): ExcelRep
 // ── Report 2B: Course Count Year-wise ──
 
 function exportCourseCountYearWiseExcel(opts: ExcelExportOptions): ExcelReportResult {
+	const studentYearMap = buildStudentYearMap(opts.data)
 	const countMap = new Map<string, any>()
 	const allYears = new Set<string>()
 
@@ -168,7 +197,7 @@ function exportCourseCountYearWiseExcel(opts: ExcelExportOptions): ExcelReportRe
 		const co = row.course_offering
 		if (!co) continue
 		const key = `${co.board_code || ''}|${co.course_code}`
-		const year = semesterToYear(co.semester || 1)
+		const year = studentYearMap.get(row.stu_register_no) || semesterToYear(co.semester || 1)
 		allYears.add(year)
 
 		if (!countMap.has(key)) {
@@ -184,7 +213,7 @@ function exportCourseCountYearWiseExcel(opts: ExcelExportOptions): ExcelReportRe
 	})
 
 	const sorted = Array.from(countMap.values())
-		.sort((a, b) => (a.board_order - b.board_order) || (a.program_order - b.program_order) || (a.semester - b.semester) || (a.course_order - b.course_order) || a.course_code.localeCompare(b.course_code))
+		.sort((a, b) => (a.board_order - b.board_order) || (a.semester - b.semester) || (a.course_order - b.course_order) || a.course_code.localeCompare(b.course_code))
 
 	// Board merges
 	const merges: MergeRange[] = []
@@ -215,6 +244,7 @@ function exportCourseCountYearWiseExcel(opts: ExcelExportOptions): ExcelReportRe
 		return {
 			'S.No': idx + 1,
 			'Board': row.board_code ? `${row.board_code}${row.board_name ? ` (${row.board_name})` : ''}` : '',
+			'Sem': row.semester ? toRoman(row.semester) : '',
 			'Course Code': row.course_code,
 			'Course Name': row.course_name,
 			...yearCols,
@@ -228,6 +258,7 @@ function exportCourseCountYearWiseExcel(opts: ExcelExportOptions): ExcelReportRe
 // ── Report 2C: Course Count with Program Code Year-wise ──
 
 function exportCourseCountProgramYearWiseExcel(opts: ExcelExportOptions): ExcelReportResult {
+	const studentYearMap = buildStudentYearMap(opts.data)
 	const countMap = new Map<string, any>()
 	const allYears = new Set<string>()
 
@@ -236,7 +267,7 @@ function exportCourseCountProgramYearWiseExcel(opts: ExcelExportOptions): ExcelR
 		if (!co) continue
 		const programCode = co.program_code || row.program_code || ''
 		const key = `${co.board_code || ''}|${programCode}|${co.course_code}`
-		const year = semesterToYear(co.semester || 1)
+		const year = studentYearMap.get(row.stu_register_no) || semesterToYear(co.semester || 1)
 		allYears.add(year)
 
 		if (!countMap.has(key)) {
@@ -301,6 +332,7 @@ function exportCourseCountProgramYearWiseExcel(opts: ExcelExportOptions): ExcelR
 			'S.No': idx + 1,
 			'Board': row.board_code ? `${row.board_code}${row.board_name ? ` (${row.board_name})` : ''}` : '',
 			'Program Code': row.program_code,
+			'Sem': row.semester ? toRoman(row.semester) : '',
 			'Course Code': row.course_code,
 			'Course Name': row.course_name,
 			...yearCols,
@@ -314,74 +346,75 @@ function exportCourseCountProgramYearWiseExcel(opts: ExcelExportOptions): ExcelR
 // ── Report 3: Course Count by Program & Year Section ──
 
 function exportCourseCountProgramYearSectionExcel(opts: ExcelExportOptions): { sections: { sheetName: string; result: ExcelReportResult }[] } {
-	// Group by program_code + year
-	const sectionMap = new Map<string, {
+	const studentYearMap = buildStudentYearMap(opts.data)
+	const allYears = new Set<string>()
+
+	// Group by program_code → courses with year-wise counts
+	const programMap = new Map<string, {
 		program_code: string
 		program_name: string | null
-		program_board_order: number
 		program_order: number
-		year: string
-		yearIdx: number
-		courses: Map<string, { semester: number; course_order: number; course_code: string; course_name: string; count: number }>
+		courses: Map<string, { semester: number; course_order: number; course_code: string; course_name: string; years: Record<string, number> }>
 	}>()
-
-	const yearOrder = ['I Year', 'II Year', 'III Year', 'IV Year', 'V Year']
 
 	for (const row of opts.data) {
 		const co = row.course_offering
 		if (!co) continue
 		const programCode = co.program_code || row.program_code || ''
-		const yearNum = Math.ceil((co.semester || 1) / 2)
-		const year = semesterToYear(co.semester || 1)
-		const sectionKey = `${programCode}|${year}`
+		const studentYear = studentYearMap.get(row.stu_register_no) || semesterToYear(co.semester || 1)
+		allYears.add(studentYear)
 
-		if (!sectionMap.has(sectionKey)) {
-			sectionMap.set(sectionKey, {
+		if (!programMap.has(programCode)) {
+			programMap.set(programCode, {
 				program_code: programCode,
 				program_name: co.program_name || null,
-				program_board_order: co.program_board_order ?? 999,
 				program_order: co.program_order ?? 999,
-				year,
-				yearIdx: yearOrder.indexOf(year),
 				courses: new Map(),
 			})
 		}
-		const section = sectionMap.get(sectionKey)!
+		const program = programMap.get(programCode)!
 		const courseKey = co.course_code
-		if (!section.courses.has(courseKey)) {
-			section.courses.set(courseKey, {
+		if (!program.courses.has(courseKey)) {
+			program.courses.set(courseKey, {
 				semester: co.semester || 0,
 				course_order: co.course_order ?? 999,
 				course_code: co.course_code,
 				course_name: co.course_name || '',
-				count: 0,
+				years: {},
 			})
 		}
-		section.courses.get(courseKey)!.count++
+		program.courses.get(courseKey)!.years[studentYear] = (program.courses.get(courseKey)!.years[studentYear] || 0) + 1
 	}
 
-	const sections = Array.from(sectionMap.values())
-		.sort((a, b) =>
-			(a.program_board_order - b.program_board_order) ||
-			(a.program_order - b.program_order) ||
-			a.program_code.localeCompare(b.program_code) ||
-			(a.yearIdx - b.yearIdx)
-		)
+	const sortedYears = ['I Year', 'II Year', 'III Year', 'IV Year', 'V Year'].filter(y => allYears.has(y))
+
+	const sections = Array.from(programMap.values())
+		.sort((a, b) => (a.program_order - b.program_order) || a.program_code.localeCompare(b.program_code))
 
 	return {
 		sections: sections.map(section => {
 			const courses = Array.from(section.courses.values())
 				.sort((a, b) => (a.semester - b.semester) || (a.course_order - b.course_order) || a.course_code.localeCompare(b.course_code))
 
-			const rows = courses.map((course, idx) => ({
-				'S.No': idx + 1,
-				'Sem': course.semester,
-				'Course Code': course.course_code,
-				'Course Name': course.course_name,
-				'No. of Students': course.count,
-			}))
+			const rows = courses.map((course, idx) => {
+				const yearCols: Record<string, number> = {}
+				let total = 0
+				sortedYears.forEach(y => {
+					const count = course.years[y] || 0
+					yearCols[y] = count
+					total += count
+				})
+				return {
+					'S.No': idx + 1,
+					'Sem': toRoman(course.semester),
+					'Course Code': course.course_code,
+					'Course Name': course.course_name,
+					...yearCols,
+					'Total': total,
+				}
+			})
 
-			const sheetName = `${section.program_code}-${section.year}`.replace(/[\\/*?[\]:]/g, '').slice(0, 31) || 'Unknown'
+			const sheetName = section.program_code.replace(/[\\/*?[\]:]/g, '').slice(0, 31) || 'Unknown'
 			return { sheetName, result: { rows, merges: [] } }
 		}),
 	}

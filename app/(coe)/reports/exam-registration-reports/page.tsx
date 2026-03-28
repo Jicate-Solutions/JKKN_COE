@@ -29,7 +29,7 @@ import {
 	ChevronLeft,
 	ChevronRight,
 	Users,
-	BarChart3,
+	Download,
 } from "lucide-react"
 import type { ReportType } from "@/types/exam-registration-reports"
 import { generateExamRegistrationReportPdf } from "@/lib/utils/generate-exam-registration-report-pdf"
@@ -49,14 +49,24 @@ interface SessionOption {
 
 const COURSE_CATEGORY_OPTIONS = ['Theory', 'Practical', 'Project', 'Field Work']
 
-const REPORT_OPTIONS: { value: ReportType; label: string; description: string }[] = [
-	{ value: 'student-fee-details', label: 'Student Fee Details', description: 'Learner-wise fee details with courses & amounts' },
-	{ value: 'course-count-regular-arrear', label: 'Course Count (Regular/Arrear)', description: 'Course-wise student count split by Regular & Arrear' },
-	{ value: 'course-count-year-wise', label: 'Course Count (Year-wise)', description: 'Course-wise student count split by Year' },
-	{ value: 'course-count-program-year-wise', label: 'Course Count with Program (Year-wise)', description: 'Course-wise count with Program Code, split by Year' },
-	{ value: 'course-count-program-year-section', label: 'Course Count (Program & Year Section)', description: 'Course-wise student count grouped by Program & Year — each program+year gets its own section' },
-	{ value: 'exam-date-wise-registration', label: 'Exam Date-wise Registration', description: 'Course-wise registration count grouped by Exam Date & Session (FN/AN)' },
-	{ value: 'exam-date-wise-attendance', label: 'Exam Date-wise Attendance', description: 'Course-wise registration & attendance count grouped by Exam Date & Session (FN/AN)' },
+const ROMAN = ['', 'I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X']
+function toRoman(n: number): string { return ROMAN[n] || String(n) }
+
+type ReportCategory = 'registration' | 'exam-date'
+
+const REPORT_CATEGORIES: { value: ReportCategory; label: string }[] = [
+	{ value: 'registration', label: 'Board Wise Report' },
+	{ value: 'exam-date', label: 'Exam Date Wise Report' },
+]
+
+const REPORT_OPTIONS: { value: ReportType; label: string; description: string; group: ReportCategory }[] = [
+	{ value: 'student-fee-details', label: 'Student Exam Registration', description: 'Learner-wise exam registration with courses', group: 'registration' },
+	{ value: 'course-count-regular-arrear', label: 'Regular / Arrear Count', description: 'Course-wise student count split by Regular and Arrear', group: 'registration' },
+	{ value: 'course-count-year-wise', label: 'Board & Year Wise Course List', description: 'Course-wise student count split by Year', group: 'registration' },
+	{ value: 'course-count-program-year-wise', label: 'Board & Program Wise Registration List', description: 'Course-wise count with Program Code, split by Year', group: 'registration' },
+	{ value: 'course-count-program-year-section', label: 'Program Wise Registration List', description: 'Course-wise student count grouped by Program', group: 'registration' },
+	{ value: 'exam-date-wise-registration', label: 'Exam Date Wise Registration/QP Count', description: 'Course-wise registration count grouped by Exam Date and Session (FN/AN)', group: 'exam-date' },
+	{ value: 'exam-date-wise-attendance', label: 'Exam Date Wise Attendance/Answer Sheet Count', description: 'Course-wise registration and attendance count grouped by Exam Date and Session (FN/AN)', group: 'exam-date' },
 ]
 
 export default function ExamRegistrationReportsPage() {
@@ -76,8 +86,9 @@ export default function ExamRegistrationReportsPage() {
 	const [sessions, setSessions] = useState<SessionOption[]>([])
 	const [selectedInstitutionId, setSelectedInstitutionId] = useState<string>('')
 	const [selectedSessionId, setSelectedSessionId] = useState<string>('')
-	const [selectedCourseCategories, setSelectedCourseCategories] = useState<string[]>([...COURSE_CATEGORY_OPTIONS])
-	const [selectedReportType, setSelectedReportType] = useState<ReportType>('course-count-regular-arrear')
+	const [selectedCourseCategories, setSelectedCourseCategories] = useState<string[]>([])
+	const [selectedReportCategory, setSelectedReportCategory] = useState<ReportCategory | ''>('')
+	const [selectedReportType, setSelectedReportType] = useState<ReportType | ''>('')
 
 	// Report data from API
 	const [reportData, setReportData] = useState<any[]>([])
@@ -161,7 +172,9 @@ export default function ExamRegistrationReportsPage() {
 		if (selectedInstitutionId) {
 			fetchSessions(selectedInstitutionId)
 			setSelectedSessionId('')
-			setSelectedCourseCategories([...COURSE_CATEGORY_OPTIONS])
+			setSelectedCourseCategories([])
+			setSelectedReportCategory('')
+			setSelectedReportType('')
 			setReportData([])
 			setReportMeta(null)
 		}
@@ -174,13 +187,9 @@ export default function ExamRegistrationReportsPage() {
 
 	// ── Generate Report ──
 
-	const fetchReport = useCallback(async () => {
-		if (!selectedInstitutionId || !selectedSessionId) {
-			toast({
-				title: 'Missing Filters',
-				description: 'Please select Institution and Session.',
-				variant: 'destructive',
-			})
+	const fetchReport = useCallback(async (reportType?: ReportType) => {
+		const typeToFetch = reportType || selectedReportType
+		if (!selectedInstitutionId || !selectedSessionId || !typeToFetch) {
 			return
 		}
 
@@ -189,7 +198,7 @@ export default function ExamRegistrationReportsPage() {
 			setReportData([])
 			setReportMeta(null)
 
-			const url = `/api/reports/exam-registration-reports?institutions_id=${selectedInstitutionId}&examination_session_id=${selectedSessionId}&report_type=${selectedReportType}`
+			const url = `/api/reports/exam-registration-reports?institutions_id=${selectedInstitutionId}&examination_session_id=${selectedSessionId}&report_type=${typeToFetch}`
 			const res = await fetch(url)
 			if (!res.ok) {
 				const err = await res.json()
@@ -222,14 +231,23 @@ export default function ExamRegistrationReportsPage() {
 		}
 	}, [selectedInstitutionId, selectedSessionId, selectedReportType, toast])
 
+	// Auto-generate: when report type is selected and filters are set
+	const handleReportTypeSelect = useCallback((type: ReportType) => {
+		setSelectedReportType(type)
+		if (selectedInstitutionId && selectedSessionId) {
+			// Small delay to let state update visually before loading
+			setTimeout(() => fetchReport(type), 50)
+		}
+	}, [selectedInstitutionId, selectedSessionId, fetchReport])
+
 	// ── Filtered report data (by course category) ──
 
 	const filteredReportData = useMemo(() => {
-		if (selectedCourseCategories.length === COURSE_CATEGORY_OPTIONS.length) return reportData
-		if (selectedCourseCategories.length === 0) return []
+		if (selectedCourseCategories.length === 0 || selectedCourseCategories.length === COURSE_CATEGORY_OPTIONS.length) return reportData
 		return reportData.filter(r => {
 			const cat = r.course_offering?.course_category
-			return cat ? selectedCourseCategories.includes(cat) : false
+			// Include rows with unknown category (fallback offerings) — don't silently drop them
+			return !cat || selectedCourseCategories.includes(cat)
 		})
 	}, [reportData, selectedCourseCategories])
 
@@ -275,7 +293,7 @@ export default function ExamRegistrationReportsPage() {
 
 			// Generate separate UG and PG PDFs
 			const baseOpts = {
-				report_type: selectedReportType,
+				report_type: selectedReportType as ReportType,
 				institution_name: reportMeta.institution_name,
 				institution_code: reportMeta.institution_code,
 				session_name: reportMeta.session_name,
@@ -332,7 +350,7 @@ export default function ExamRegistrationReportsPage() {
 			setExportingExcel(true)
 
 			await exportExamRegistrationReportExcel({
-				report_type: selectedReportType,
+				report_type: selectedReportType as ReportType,
 				institution_name: reportMeta.institution_name,
 				institution_code: reportMeta.institution_code,
 				session_name: reportMeta.session_name,
@@ -361,10 +379,31 @@ export default function ExamRegistrationReportsPage() {
 
 		const reportData2 = filteredReportData
 
+		// Build student year map: each student's current year based on their max regular semester
+		const studentYearMap = new Map<string, string>()
+		const studentMaxRegSem = new Map<string, number>()
+		const studentMaxAnySem = new Map<string, number>()
+		const roman = ['I', 'II', 'III', 'IV', 'V']
+		for (const row of reportData2) {
+			const regNo = row.stu_register_no
+			if (!regNo) continue
+			const sem = row.course_offering?.semester || 0
+			if (sem <= 0) continue
+			if (row.is_regular) {
+				studentMaxRegSem.set(regNo, Math.max(studentMaxRegSem.get(regNo) || 0, sem))
+			}
+			studentMaxAnySem.set(regNo, Math.max(studentMaxAnySem.get(regNo) || 0, sem))
+		}
+		for (const regNo of new Set([...studentMaxRegSem.keys(), ...studentMaxAnySem.keys()])) {
+			const maxSem = studentMaxRegSem.get(regNo) || studentMaxAnySem.get(regNo) || 1
+			const yearNum = Math.ceil(maxSem / 2)
+			studentYearMap.set(regNo, `${roman[yearNum - 1] || yearNum} Year`)
+		}
+
 		switch (selectedReportType) {
 			case 'student-fee-details': {
 				// Flatten to per-student rows with course list
-				const studentMap = new Map<string, { name: string; dob: string; program_code: string; courses: { semester: number; course_code: string; course_name: string }[] }>()
+				const studentMap = new Map<string, { name: string; dob: string; program_code: string; courses: { semester: number; course_order: number; course_code: string; course_name: string }[] }>()
 				for (const row of reportData2) {
 					const regNo = row.stu_register_no || 'Unknown'
 					if (!studentMap.has(regNo)) {
@@ -372,13 +411,17 @@ export default function ExamRegistrationReportsPage() {
 					}
 					const co = row.course_offering
 					if (co) {
-						studentMap.get(regNo)!.courses.push({ semester: co.semester || 0, course_code: co.course_code || '', course_name: co.course_name || '' })
+						const student = studentMap.get(regNo)!
+						// Deduplicate by course_code (same course can exist under multiple offerings)
+						if (!student.courses.some(c => c.course_code === co.course_code)) {
+							student.courses.push({ semester: co.semester || 0, course_order: co.course_order ?? 999, course_code: co.course_code || '', course_name: co.course_name || '' })
+						}
 					}
 				}
 				return Array.from(studentMap.entries())
 					.sort((a, b) => a[0].localeCompare(b[0]))
 					.map(([regNo, info]) => {
-						info.courses.sort((a, b) => a.semester - b.semester || a.course_code.localeCompare(b.course_code))
+						info.courses.sort((a, b) => (a.semester - b.semester) || (a.course_order - b.course_order) || a.course_code.localeCompare(b.course_code))
 						return { regNo, ...info }
 					})
 			}
@@ -397,7 +440,7 @@ export default function ExamRegistrationReportsPage() {
 					else entry.arrear++
 				}
 				return Array.from(countMap.values()).sort((a: any, b: any) =>
-				(a.board_order - b.board_order) || (a.program_order - b.program_order) || a.program_code.localeCompare(b.program_code) || (a.semester - b.semester) || (a.course_order - b.course_order) || a.course_code.localeCompare(b.course_code)
+				(a.board_order - b.board_order) || (a.semester - b.semester) || (a.course_order - b.course_order) || a.course_code.localeCompare(b.course_code)
 				)
 			}
 
@@ -407,9 +450,8 @@ export default function ExamRegistrationReportsPage() {
 					const co = row.course_offering
 					if (!co) continue
 					const key = `${co.board_code || ''}|${co.course_code}`
-					const yearNum = Math.ceil((co.semester || 1) / 2)
-					const roman = ['I', 'II', 'III', 'IV', 'V']
-					const year = `${roman[yearNum - 1] || yearNum} Year`
+					// Use student's current year, not course semester
+					const year = studentYearMap.get(row.stu_register_no) || 'I Year'
 					if (!countMap.has(key)) {
 						countMap.set(key, { board_code: co.board_code || '', board_name: co.board_name || '', board_order: co.board_order ?? 999, program_code: co.program_code || '', program_order: co.program_order ?? 999, semester: co.semester || 0, course_order: co.course_order ?? 999, course_code: co.course_code, course_name: co.course_name || '', years: {} })
 					}
@@ -417,7 +459,7 @@ export default function ExamRegistrationReportsPage() {
 					entry.years[year] = (entry.years[year] || 0) + 1
 				}
 				return Array.from(countMap.values()).sort((a: any, b: any) =>
-				(a.board_order - b.board_order) || (a.program_order - b.program_order) || a.program_code.localeCompare(b.program_code) || (a.semester - b.semester) || (a.course_order - b.course_order) || a.course_code.localeCompare(b.course_code)
+				(a.board_order - b.board_order) || (a.semester - b.semester) || (a.course_order - b.course_order) || a.course_code.localeCompare(b.course_code)
 				)
 			}
 
@@ -428,9 +470,8 @@ export default function ExamRegistrationReportsPage() {
 					if (!co) continue
 					const programCode = co.program_code || row.program_code || ''
 					const key = `${co.board_code || ''}|${programCode}|${co.course_code}`
-					const yearNum = Math.ceil((co.semester || 1) / 2)
-					const roman = ['I', 'II', 'III', 'IV', 'V']
-					const year = `${roman[yearNum - 1] || yearNum} Year`
+					// Use student's current year, not course semester
+					const year = studentYearMap.get(row.stu_register_no) || 'I Year'
 					if (!countMap.has(key)) {
 						countMap.set(key, { board_code: co.board_code || '', board_name: co.board_name || '', board_order: co.board_order ?? 999, program_code: programCode, program_board_order: co.program_board_order ?? 999, program_order: co.program_order ?? 999, semester: co.semester || 0, course_order: co.course_order ?? 999, course_code: co.course_code, course_name: co.course_name || '', years: {} })
 					}
@@ -438,60 +479,51 @@ export default function ExamRegistrationReportsPage() {
 					entry.years[year] = (entry.years[year] || 0) + 1
 				}
 				return Array.from(countMap.values()).sort((a: any, b: any) =>
-				(a.board_order - b.board_order) || (a.program_board_order - b.program_board_order) || (a.program_order - b.program_order) || a.program_code.localeCompare(b.program_code) || (a.semester - b.semester) || (a.course_order - b.course_order) || a.course_code.localeCompare(b.course_code)
+				(a.board_order - b.board_order) || (a.program_order - b.program_order) || a.program_code.localeCompare(b.program_code) || (a.semester - b.semester) || (a.course_order - b.course_order) || a.course_code.localeCompare(b.course_code)
 			)
 			}
 
 			case 'course-count-program-year-section': {
-				// Group by program_code + year → list of courses with student count
-				const sectionMap = new Map<string, { program_code: string; program_name: string | null; program_board_order: number; program_order: number; year: string; yearIdx: number; courses: Map<string, { semester: number; course_order: number; course_code: string; course_name: string; count: number }> }>()
-				const roman = ['I', 'II', 'III', 'IV', 'V']
-				const yearOrder = ['I Year', 'II Year', 'III Year', 'IV Year', 'V Year']
+				// Group by program_code → list of courses with year-wise student counts
+				const programMap = new Map<string, { program_code: string; program_name: string | null; program_order: number; courses: Map<string, { semester: number; course_order: number; course_code: string; course_name: string; years: Record<string, number> }> }>()
 
 				for (const row of reportData2) {
 					const co = row.course_offering
 					if (!co) continue
 					const programCode = co.program_code || row.program_code || ''
-					const yearNum = Math.ceil((co.semester || 1) / 2)
-					const year = `${roman[yearNum - 1] || yearNum} Year`
-					const sectionKey = `${programCode}|${year}`
+					const studentYear = studentYearMap.get(row.stu_register_no) || 'I Year'
 
-					if (!sectionMap.has(sectionKey)) {
-						sectionMap.set(sectionKey, {
+					if (!programMap.has(programCode)) {
+						programMap.set(programCode, {
 							program_code: programCode,
 							program_name: co.program_name || null,
-							program_board_order: co.program_board_order ?? 999,
 							program_order: co.program_order ?? 999,
-							year,
-							yearIdx: yearOrder.indexOf(year),
 							courses: new Map(),
 						})
 					}
-					const section = sectionMap.get(sectionKey)!
+					const program = programMap.get(programCode)!
 					const courseKey = co.course_code
-					if (!section.courses.has(courseKey)) {
-						section.courses.set(courseKey, {
+					if (!program.courses.has(courseKey)) {
+						program.courses.set(courseKey, {
 							semester: co.semester || 0,
 							course_order: co.course_order ?? 999,
 							course_code: co.course_code,
 							course_name: co.course_name || '',
-							count: 0,
+							years: {},
 						})
 					}
-					section.courses.get(courseKey)!.count++
+					const course = program.courses.get(courseKey)!
+					course.years[studentYear] = (course.years[studentYear] || 0) + 1
 				}
 
-				return Array.from(sectionMap.values())
+				return Array.from(programMap.values())
 					.sort((a, b) =>
-						(a.program_board_order - b.program_board_order) ||
 						(a.program_order - b.program_order) ||
-						a.program_code.localeCompare(b.program_code) ||
-						(a.yearIdx - b.yearIdx)
+						a.program_code.localeCompare(b.program_code)
 					)
 					.map(section => ({
 						program_code: section.program_code,
 						program_name: section.program_name,
-						year: section.year,
 						courses: Array.from(section.courses.values())
 							.sort((a, b) => (a.semester - b.semester) || (a.course_order - b.course_order) || a.course_code.localeCompare(b.course_code)),
 					}))
@@ -504,10 +536,12 @@ export default function ExamRegistrationReportsPage() {
 
 	// Unique year columns for year-wise reports
 	const yearColumns = useMemo(() => {
-		if (selectedReportType !== 'course-count-year-wise' && selectedReportType !== 'course-count-program-year-wise') return []
+		if (selectedReportType !== 'course-count-year-wise' && selectedReportType !== 'course-count-program-year-wise' && selectedReportType !== 'course-count-program-year-section') return []
 		const allYears = new Set<string>()
 		previewData.forEach((row: any) => {
 			if (row.years) Object.keys(row.years).forEach(y => allYears.add(y))
+			// For program-year-section, courses have years
+			if (row.courses) row.courses.forEach((c: any) => { if (c.years) Object.keys(c.years).forEach(y => allYears.add(y)) })
 		})
 		const order = ['I Year', 'II Year', 'III Year', 'IV Year', 'V Year']
 		return Array.from(allYears).sort((a, b) => order.indexOf(a) - order.indexOf(b))
@@ -549,7 +583,7 @@ export default function ExamRegistrationReportsPage() {
 							</BreadcrumbItem>
 							<BreadcrumbSeparator />
 							<BreadcrumbItem>
-								<BreadcrumbPage>Exam Registration Reports</BreadcrumbPage>
+								<BreadcrumbPage>Exam Reports Summary</BreadcrumbPage>
 							</BreadcrumbItem>
 						</BreadcrumbList>
 					</Breadcrumb>
@@ -561,28 +595,23 @@ export default function ExamRegistrationReportsPage() {
 								<ClipboardCheck className="h-5 w-5 text-white" />
 							</div>
 							<div>
-								<h1 className="text-2xl font-bold">Exam Registration Reports</h1>
-								<p className="text-sm text-muted-foreground">Generate fee details and course-wise student count reports</p>
+								<h1 className="text-2xl font-bold">Exam Reports Summary</h1>
+								<p className="text-sm text-muted-foreground">Select filters and a report type to generate exam reports</p>
 							</div>
 						</div>
 					</div>
 
-					{/* Filters Card */}
+					{/* Filters + Report Selection — Single Card */}
 					<Card>
-						<CardHeader className="pb-3">
-							<div className="flex items-center gap-2">
-								<Filter className="h-4 w-4" />
-								<CardTitle className="text-sm">Filters</CardTitle>
-							</div>
-						</CardHeader>
-						<CardContent>
+						<CardContent className="pt-5 space-y-4">
+							{/* All dropdowns in one row */}
 							<div className={cn(
-								"grid gap-4",
-								mustSelectInstitution ? "grid-cols-1 md:grid-cols-2 lg:grid-cols-5" : "grid-cols-1 md:grid-cols-2 lg:grid-cols-4"
+								"grid gap-3",
+								mustSelectInstitution ? "grid-cols-1 md:grid-cols-2 lg:grid-cols-4" : "grid-cols-1 md:grid-cols-3"
 							)}>
 								{/* Institution (only for super_admin with "All Institutions") */}
 								{mustSelectInstitution && (
-									<div className="space-y-2">
+									<div className="space-y-1.5">
 										<Label className="text-xs">Institution *</Label>
 										<Popover open={institutionOpen} onOpenChange={setInstitutionOpen}>
 											<PopoverTrigger asChild>
@@ -622,7 +651,7 @@ export default function ExamRegistrationReportsPage() {
 								)}
 
 								{/* Exam Session */}
-								<div className="space-y-2">
+								<div className="space-y-1.5">
 									<Label className="text-xs">Examination Session *</Label>
 									<Popover open={sessionOpen} onOpenChange={setSessionOpen}>
 										<PopoverTrigger asChild>
@@ -661,19 +690,17 @@ export default function ExamRegistrationReportsPage() {
 								</div>
 
 								{/* Course Category (multi-select) */}
-								<div className="space-y-2">
+								<div className="space-y-1.5">
 									<Label className="text-xs">Course Category</Label>
 									<Popover open={categoryOpen} onOpenChange={setCategoryOpen}>
 										<PopoverTrigger asChild>
 											<Button variant="outline" role="combobox" className="w-full justify-between text-xs h-9" disabled={!selectedSessionId}>
 												<span className="truncate">
-													{selectedCourseCategories.length === COURSE_CATEGORY_OPTIONS.length
-														? 'All Categories'
-														: selectedCourseCategories.length === 0
-															? 'None selected'
-															: selectedCourseCategories.length === 1
-																? selectedCourseCategories[0]
-																: `${selectedCourseCategories.length} selected`}
+													{selectedCourseCategories.length === 0
+														? 'Select categories'
+														: selectedCourseCategories.length === COURSE_CATEGORY_OPTIONS.length
+															? 'All Categories'
+															: selectedCourseCategories.join(', ')}
 												</span>
 												<ChevronsUpDown className="h-3 w-3 ml-2 opacity-50" />
 											</Button>
@@ -681,6 +708,21 @@ export default function ExamRegistrationReportsPage() {
 										<PopoverContent className="w-[220px] p-0">
 											<Command>
 												<CommandList>
+													<CommandGroup>
+														<CommandItem
+															onSelect={() => {
+																if (selectedCourseCategories.length === COURSE_CATEGORY_OPTIONS.length) {
+																	setSelectedCourseCategories([])
+																} else {
+																	setSelectedCourseCategories([...COURSE_CATEGORY_OPTIONS])
+																}
+															}}
+															className="text-xs font-medium"
+														>
+															<Check className={cn("mr-2 h-3 w-3", selectedCourseCategories.length === COURSE_CATEGORY_OPTIONS.length ? "opacity-100" : "opacity-0")} />
+															Select All
+														</CommandItem>
+													</CommandGroup>
 													<CommandGroup>
 														{COURSE_CATEGORY_OPTIONS.map((cat) => (
 															<CommandItem
@@ -700,69 +742,89 @@ export default function ExamRegistrationReportsPage() {
 															</CommandItem>
 														))}
 													</CommandGroup>
-													{selectedCourseCategories.length < COURSE_CATEGORY_OPTIONS.length && (
-														<CommandGroup>
-															<CommandItem
-																onSelect={() => setSelectedCourseCategories([...COURSE_CATEGORY_OPTIONS])}
-																className="text-xs text-muted-foreground justify-center"
-															>
-																Select All
-															</CommandItem>
-														</CommandGroup>
-													)}
 												</CommandList>
 											</Command>
 										</PopoverContent>
 									</Popover>
 								</div>
 
-								{/* Report Type */}
-								<div className="space-y-2">
-									<Label className="text-xs">Report Type *</Label>
-									<Select value={selectedReportType} onValueChange={(v) => setSelectedReportType(v as ReportType)}>
+								{/* Reports Category Dropdown */}
+								<div className="space-y-1.5">
+									<Label className="text-xs">Reports *</Label>
+									<Select
+										value={selectedReportCategory}
+										onValueChange={(v) => {
+											setSelectedReportCategory(v as ReportCategory)
+											setSelectedReportType('')
+											setReportData([])
+											setReportMeta(null)
+										}}
+									>
 										<SelectTrigger className="text-xs h-9">
-											<SelectValue placeholder="Select report type" />
+											<SelectValue placeholder="Select report category" />
 										</SelectTrigger>
 										<SelectContent>
-											{REPORT_OPTIONS.map((opt) => (
-												<SelectItem key={opt.value} value={opt.value} className="text-xs">
-													{opt.label}
+											{REPORT_CATEGORIES.map((cat) => (
+												<SelectItem key={cat.value} value={cat.value} className="text-xs">
+													{cat.label}
 												</SelectItem>
 											))}
 										</SelectContent>
 									</Select>
 								</div>
-
-								{/* Generate Button */}
-								<div className="space-y-2">
-									<Label className="text-xs invisible">Action</Label>
-									<Button
-										onClick={fetchReport}
-										disabled={!selectedInstitutionId || !selectedSessionId || loadingReport}
-										className="w-full h-9 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700"
-									>
-										{loadingReport ? (
-											<><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Generating...</>
-										) : (
-											<><BarChart3 className="h-4 w-4 mr-2" /> Generate Report</>
-										)}
-									</Button>
-								</div>
 							</div>
 
-							{/* Report description */}
-							{currentReportOption && (
-								<p className="text-xs text-muted-foreground mt-3">{currentReportOption.description}</p>
+							{/* Radio Buttons — shown only when category is selected */}
+							{selectedReportCategory && (
+								<div className="space-y-2">
+									<Label className="text-xs text-muted-foreground">Choose a report type</Label>
+									<div className="flex flex-wrap gap-2">
+										{REPORT_OPTIONS.filter(o => o.group === selectedReportCategory).map((opt) => {
+											const isSelected = selectedReportType === opt.value
+											return (
+												<button
+													key={opt.value}
+													type="button"
+													title={opt.description}
+													onClick={() => handleReportTypeSelect(opt.value)}
+													disabled={loadingReport}
+													className={cn(
+														'flex items-center gap-2 rounded-lg border px-3 py-2 text-left transition-all whitespace-nowrap',
+														isSelected
+															? 'border-emerald-500 bg-emerald-50 dark:bg-emerald-950/30'
+															: 'border-muted hover:border-muted-foreground/30 hover:bg-muted/50',
+														loadingReport && !isSelected && 'opacity-50 cursor-not-allowed'
+													)}
+												>
+													{/* Radio circle */}
+													<div className={cn(
+														'flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-full border-2 transition-colors',
+														isSelected
+															? 'border-emerald-500 bg-emerald-500'
+															: 'border-muted-foreground/40'
+													)}>
+														{isSelected && <div className="h-1.5 w-1.5 rounded-full bg-white" />}
+													</div>
+													<span className={cn(
+														'text-xs font-medium',
+														isSelected && 'text-emerald-700 dark:text-emerald-300'
+													)}>
+														{opt.label}
+													</span>
+													{isSelected && loadingReport && (
+														<Loader2 className="h-3 w-3 shrink-0 animate-spin text-emerald-500" />
+													)}
+												</button>
+											)
+										})}
+									</div>
+								</div>
 							)}
-						</CardContent>
-					</Card>
 
-					{/* Summary & Export */}
-					{reportData.length > 0 && reportMeta && (
-						<Card>
-							<CardContent className="pt-4">
-								<div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-									<div className="flex items-center gap-4 flex-wrap">
+							{/* Download Buttons — shown when report is generated */}
+							{selectedReportType && reportData.length > 0 && reportMeta && (
+								<div className="border-t pt-4">
+									<div className="flex items-center gap-3 flex-wrap">
 										<Badge variant="outline" className="text-xs">
 											{reportMeta.institution_code} - {reportMeta.institution_name}
 										</Badge>
@@ -771,44 +833,52 @@ export default function ExamRegistrationReportsPage() {
 										</Badge>
 										<Badge className="bg-emerald-100 text-emerald-800 border-emerald-200 text-xs">
 											<Users className="h-3 w-3 mr-1" />
-											{reportData.length} registrations
+											{filteredReportData.length !== reportData.length
+												? `${filteredReportData.length} / ${reportData.length} records`
+												: `${reportData.length} records`
+											}
 										</Badge>
-										<Badge variant="secondary" className="text-xs">
-											{previewData.length} rows in preview
-										</Badge>
-									</div>
-									<div className="flex gap-2">
-										<Button
-											variant="outline"
-											size="sm"
-											onClick={handleExportPdf}
-											disabled={exportingPdf}
-										>
-											{exportingPdf ? (
-												<Loader2 className="h-4 w-4 mr-2 animate-spin" />
-											) : (
-												<FileText className="h-4 w-4 mr-2" />
-											)}
-											PDF
-										</Button>
-										<Button
-											variant="outline"
-											size="sm"
-											onClick={handleExportExcel}
-											disabled={exportingExcel}
-										>
-											{exportingExcel ? (
-												<Loader2 className="h-4 w-4 mr-2 animate-spin" />
-											) : (
-												<FileSpreadsheet className="h-4 w-4 mr-2" />
-											)}
-											Excel
-										</Button>
+										<div className="ml-auto flex items-center gap-2">
+											<Button
+												size="sm"
+												onClick={handleExportPdf}
+												disabled={exportingPdf}
+												className="gap-2 bg-red-600 hover:bg-red-700 text-white"
+											>
+												{exportingPdf ? (
+													<Loader2 className="h-4 w-4 animate-spin" />
+												) : (
+													<FileText className="h-4 w-4" />
+												)}
+												PDF
+											</Button>
+											<Button
+												size="sm"
+												onClick={handleExportExcel}
+												disabled={exportingExcel}
+												className="gap-2 bg-green-600 hover:bg-green-700 text-white"
+											>
+												{exportingExcel ? (
+													<Loader2 className="h-4 w-4 animate-spin" />
+												) : (
+													<FileSpreadsheet className="h-4 w-4" />
+												)}
+												Excel
+											</Button>
+										</div>
 									</div>
 								</div>
-							</CardContent>
-						</Card>
-					)}
+							)}
+
+							{/* Hint: filters not set */}
+							{selectedReportType && (!selectedInstitutionId || !selectedSessionId) && (
+								<p className="text-xs text-amber-600 dark:text-amber-400 flex items-center gap-1.5">
+									<Filter className="h-3 w-3" />
+									Select Institution and Examination Session above to generate this report.
+								</p>
+							)}
+						</CardContent>
+					</Card>
 
 					{/* Preview Table */}
 					{previewData.length > 0 && (
@@ -855,6 +925,7 @@ export default function ExamRegistrationReportsPage() {
 												<TableRow>
 													<TableHead className="text-center w-12">S.No</TableHead>
 													<TableHead className="text-center">Board</TableHead>
+													<TableHead className="text-center w-14">Sem</TableHead>
 													<TableHead className="text-center">Course Code</TableHead>
 													<TableHead>Course Name</TableHead>
 													<TableHead className="text-center">Regular</TableHead>
@@ -865,13 +936,14 @@ export default function ExamRegistrationReportsPage() {
 											<TableBody>
 												{paginatedData.length === 0 ? (
 													<TableRow>
-														<TableCell colSpan={7} className="text-center py-8 text-muted-foreground">No data</TableCell>
+														<TableCell colSpan={8} className="text-center py-8 text-muted-foreground">No data</TableCell>
 													</TableRow>
 												) : (
 													paginatedData.map((row: any, idx: number) => (
 														<TableRow key={idx}>
 															<TableCell className="text-center text-xs">{(currentPage - 1) * pageSize + idx + 1}</TableCell>
 															<TableCell className="text-center text-xs whitespace-nowrap">{row.board_code ? `${row.board_code}${row.board_name ? ` (${row.board_name})` : ''}` : '-'}</TableCell>
+															<TableCell className="text-center text-xs">{row.semester ? toRoman(row.semester) : '-'}</TableCell>
 															<TableCell className="text-center text-xs font-medium">{row.course_code}</TableCell>
 															<TableCell className="text-xs max-w-[200px] break-words">{row.course_name || '-'}</TableCell>
 															<TableCell className="text-center text-xs">{row.regular}</TableCell>
@@ -890,6 +962,7 @@ export default function ExamRegistrationReportsPage() {
 												<TableRow>
 													<TableHead className="text-center w-12">S.No</TableHead>
 													<TableHead className="text-center">Board</TableHead>
+													<TableHead className="text-center w-14">Sem</TableHead>
 													<TableHead className="text-center">Course Code</TableHead>
 													<TableHead className="text-center">Course Name</TableHead>
 													{yearColumns.map(y => (
@@ -901,7 +974,7 @@ export default function ExamRegistrationReportsPage() {
 											<TableBody>
 												{paginatedData.length === 0 ? (
 													<TableRow>
-														<TableCell colSpan={5 + yearColumns.length} className="text-center py-8 text-muted-foreground">No data</TableCell>
+														<TableCell colSpan={6 + yearColumns.length} className="text-center py-8 text-muted-foreground">No data</TableCell>
 													</TableRow>
 												) : (
 													paginatedData.map((row: any, idx: number) => {
@@ -910,6 +983,7 @@ export default function ExamRegistrationReportsPage() {
 															<TableRow key={idx}>
 																<TableCell className="text-center text-xs">{(currentPage - 1) * pageSize + idx + 1}</TableCell>
 																<TableCell className="text-center text-xs whitespace-nowrap">{row.board_code ? `${row.board_code}${row.board_name ? ` (${row.board_name})` : ''}` : '-'}</TableCell>
+																<TableCell className="text-center text-xs">{row.semester ? toRoman(row.semester) : '-'}</TableCell>
 																<TableCell className="text-center text-xs font-medium">{row.course_code}</TableCell>
 																<TableCell className="text-xs max-w-[200px] break-words">{row.course_name || '-'}</TableCell>
 																{yearColumns.map(y => (
@@ -931,6 +1005,7 @@ export default function ExamRegistrationReportsPage() {
 													<TableHead className="text-center w-12">S.No</TableHead>
 													<TableHead className="text-center">Board</TableHead>
 													<TableHead className="text-center">Program</TableHead>
+													<TableHead className="text-center w-14">Sem</TableHead>
 													<TableHead className="text-center">Course Code</TableHead>
 													<TableHead className="text-center">Course Name</TableHead>
 													{yearColumns.map(y => (
@@ -942,7 +1017,7 @@ export default function ExamRegistrationReportsPage() {
 											<TableBody>
 												{paginatedData.length === 0 ? (
 													<TableRow>
-														<TableCell colSpan={6 + yearColumns.length} className="text-center py-8 text-muted-foreground">No data</TableCell>
+														<TableCell colSpan={7 + yearColumns.length} className="text-center py-8 text-muted-foreground">No data</TableCell>
 													</TableRow>
 												) : (
 													paginatedData.map((row: any, idx: number) => {
@@ -952,6 +1027,7 @@ export default function ExamRegistrationReportsPage() {
 																<TableCell className="text-center text-xs">{(currentPage - 1) * pageSize + idx + 1}</TableCell>
 																<TableCell className="text-center text-xs whitespace-nowrap">{row.board_code ? `${row.board_code}${row.board_name ? ` (${row.board_name})` : ''}` : '-'}</TableCell>
 																<TableCell className="text-center text-xs">{row.program_code || '-'}</TableCell>
+																<TableCell className="text-center text-xs">{row.semester ? toRoman(row.semester) : '-'}</TableCell>
 																<TableCell className="text-center text-xs font-medium">{row.course_code}</TableCell>
 																<TableCell className="text-xs max-w-[200px] break-words">{row.course_name || '-'}</TableCell>
 																{yearColumns.map(y => (
@@ -972,33 +1048,41 @@ export default function ExamRegistrationReportsPage() {
 												<div className="text-center py-8 text-muted-foreground">No data</div>
 											) : (
 												previewData.map((section: any, sIdx: number) => (
-													<div key={`${section.program_code}-${section.year}`} className="border rounded-lg overflow-hidden">
-														<div className="bg-slate-100 dark:bg-slate-800 px-4 py-2 flex items-center justify-between">
+													<div key={section.program_code} className="border rounded-lg overflow-hidden">
+														<div className="bg-slate-100 dark:bg-slate-800 px-4 py-2">
 															<span className="font-semibold text-sm">
 																Program : {section.program_code}{section.program_name ? ` - ${section.program_name}` : ''}
 															</span>
-															<span className="font-semibold text-sm">Year : {section.year}</span>
 														</div>
 														<Table>
 															<TableHeader>
 																<TableRow>
 																	<TableHead className="text-center w-12">S.No</TableHead>
-																	<TableHead className="text-center w-16">Sem</TableHead>
+																	<TableHead className="text-center w-14">Sem</TableHead>
 																	<TableHead className="text-center">Course Code</TableHead>
 																	<TableHead>Course Name</TableHead>
-																	<TableHead className="text-center w-28">No. of Students</TableHead>
+																	{yearColumns.map(y => (
+																		<TableHead key={y} className="text-center w-20">{y}</TableHead>
+																	))}
+																	<TableHead className="text-center w-16">Total</TableHead>
 																</TableRow>
 															</TableHeader>
 															<TableBody>
-																{section.courses.map((course: any, cIdx: number) => (
-																	<TableRow key={course.course_code}>
-																		<TableCell className="text-center text-xs">{cIdx + 1}</TableCell>
-																		<TableCell className="text-center text-xs">{course.semester}</TableCell>
-																		<TableCell className="text-center text-xs font-medium">{course.course_code}</TableCell>
-																		<TableCell className="text-xs">{course.course_name}</TableCell>
-																		<TableCell className="text-center text-xs font-semibold">{course.count}</TableCell>
-																	</TableRow>
-																))}
+																{section.courses.map((course: any, cIdx: number) => {
+																	const total = yearColumns.reduce((sum: number, y: string) => sum + (course.years[y] || 0), 0)
+																	return (
+																		<TableRow key={course.course_code}>
+																			<TableCell className="text-center text-xs">{cIdx + 1}</TableCell>
+																			<TableCell className="text-center text-xs">{toRoman(course.semester)}</TableCell>
+																			<TableCell className="text-center text-xs font-medium">{course.course_code}</TableCell>
+																			<TableCell className="text-xs">{course.course_name}</TableCell>
+																			{yearColumns.map(y => (
+																				<TableCell key={y} className="text-center text-xs">{course.years[y] || 0}</TableCell>
+																			))}
+																			<TableCell className="text-center text-xs font-semibold">{total}</TableCell>
+																		</TableRow>
+																	)
+																})}
 															</TableBody>
 														</Table>
 													</div>
@@ -1053,7 +1137,7 @@ export default function ExamRegistrationReportsPage() {
 									</div>
 									<h3 className="text-lg font-semibold mb-1">No Report Generated</h3>
 									<p className="text-sm text-muted-foreground max-w-md">
-										Select an Institution, Examination Session, and Report Type, then click "Generate Report" to view and download the data.
+										Select an Institution and Examination Session, choose a report category, then pick a report type to generate automatically.
 									</p>
 								</div>
 							</CardContent>

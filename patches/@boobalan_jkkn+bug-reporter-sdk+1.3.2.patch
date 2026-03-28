@@ -1,0 +1,140 @@
+diff --git a/node_modules/@boobalan_jkkn/bug-reporter-sdk/dist/index.js b/node_modules/@boobalan_jkkn/bug-reporter-sdk/dist/index.js
+index 1c7e71f..ee6378c 100644
+--- a/node_modules/@boobalan_jkkn/bug-reporter-sdk/dist/index.js
++++ b/node_modules/@boobalan_jkkn/bug-reporter-sdk/dist/index.js
+@@ -996,7 +996,9 @@ var styles = {
+   input: {
+     width: "100%",
+     padding: "0.75rem",
+-    border: "1px solid #d1d5db",
++    borderWidth: "1px",
++    borderStyle: "solid",
++    borderColor: "#d1d5db",
+     borderRadius: "0.5rem",
+     fontSize: "0.875rem",
+     fontFamily: "inherit",
+@@ -1011,7 +1013,9 @@ var styles = {
+   },
+   categoryCard: {
+     padding: "1rem",
+-    border: "1.5px solid #e5e7eb",
++    borderWidth: "1.5px",
++    borderStyle: "solid",
++    borderColor: "#e5e7eb",
+     borderRadius: "0.5rem",
+     cursor: "pointer",
+     transition: "all 0.2s",
+@@ -1042,7 +1046,9 @@ var styles = {
+   textarea: {
+     width: "100%",
+     padding: "0.75rem",
+-    border: "1px solid #d1d5db",
++    borderWidth: "1px",
++    borderStyle: "solid",
++    borderColor: "#d1d5db",
+     borderRadius: "0.5rem",
+     fontSize: "0.875rem",
+     resize: "vertical",
+@@ -1672,7 +1678,9 @@ var styles2 = {
+   },
+   filterButton: {
+     padding: "0.5rem 1rem",
+-    border: "1px solid #e5e7eb",
++    borderWidth: "1px",
++    borderStyle: "solid",
++    borderColor: "#e5e7eb",
+     borderRadius: "0.375rem",
+     backgroundColor: "white",
+     cursor: "pointer",
+@@ -1730,7 +1738,9 @@ var styles2 = {
+     color: "#6b7280"
+   },
+   bugCard: {
+-    border: "1px solid #e5e7eb",
++    borderWidth: "1px",
++    borderStyle: "solid",
++    borderColor: "#e5e7eb",
+     borderRadius: "0.75rem",
+     padding: "1.25rem",
+     marginBottom: "1rem",
+@@ -1831,7 +1841,9 @@ var styles2 = {
+     marginTop: "0.75rem"
+   },
+   attachmentCard: {
+-    border: "1px solid #e5e7eb",
++    borderWidth: "1px",
++    borderStyle: "solid",
++    borderColor: "#e5e7eb",
+     borderRadius: "0.5rem",
+     padding: "0.75rem",
+     textAlign: "center",
+diff --git a/node_modules/@boobalan_jkkn/bug-reporter-sdk/dist/index.mjs b/node_modules/@boobalan_jkkn/bug-reporter-sdk/dist/index.mjs
+index 6617172..333abb1 100644
+--- a/node_modules/@boobalan_jkkn/bug-reporter-sdk/dist/index.mjs
++++ b/node_modules/@boobalan_jkkn/bug-reporter-sdk/dist/index.mjs
+@@ -966,7 +966,9 @@ var styles = {
+   input: {
+     width: "100%",
+     padding: "0.75rem",
+-    border: "1px solid #d1d5db",
++    borderWidth: "1px",
++    borderStyle: "solid",
++    borderColor: "#d1d5db",
+     borderRadius: "0.5rem",
+     fontSize: "0.875rem",
+     fontFamily: "inherit",
+@@ -981,7 +983,9 @@ var styles = {
+   },
+   categoryCard: {
+     padding: "1rem",
+-    border: "1.5px solid #e5e7eb",
++    borderWidth: "1.5px",
++    borderStyle: "solid",
++    borderColor: "#e5e7eb",
+     borderRadius: "0.5rem",
+     cursor: "pointer",
+     transition: "all 0.2s",
+@@ -1012,7 +1016,9 @@ var styles = {
+   textarea: {
+     width: "100%",
+     padding: "0.75rem",
+-    border: "1px solid #d1d5db",
++    borderWidth: "1px",
++    borderStyle: "solid",
++    borderColor: "#d1d5db",
+     borderRadius: "0.5rem",
+     fontSize: "0.875rem",
+     resize: "vertical",
+@@ -1650,7 +1656,9 @@ var styles2 = {
+   },
+   filterButton: {
+     padding: "0.5rem 1rem",
+-    border: "1px solid #e5e7eb",
++    borderWidth: "1px",
++    borderStyle: "solid",
++    borderColor: "#e5e7eb",
+     borderRadius: "0.375rem",
+     backgroundColor: "white",
+     cursor: "pointer",
+@@ -1708,7 +1716,9 @@ var styles2 = {
+     color: "#6b7280"
+   },
+   bugCard: {
+-    border: "1px solid #e5e7eb",
++    borderWidth: "1px",
++    borderStyle: "solid",
++    borderColor: "#e5e7eb",
+     borderRadius: "0.75rem",
+     padding: "1.25rem",
+     marginBottom: "1rem",
+@@ -1809,7 +1819,9 @@ var styles2 = {
+     marginTop: "0.75rem"
+   },
+   attachmentCard: {
+-    border: "1px solid #e5e7eb",
++    borderWidth: "1px",
++    borderStyle: "solid",
++    borderColor: "#e5e7eb",
+     borderRadius: "0.5rem",
+     padding: "0.75rem",
+     textAlign: "center",

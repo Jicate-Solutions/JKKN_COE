@@ -1,6 +1,112 @@
 import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
 
+// Helper: fetch all pages from Supabase in parallel batches
+async function fetchAllPaginated(
+	queryFn: (from: number, to: number) => Promise<{ data: any[] | null; error: any }>,
+	pageSize = 1000
+): Promise<any[]> {
+	// Fetch first page to get initial data + check if more needed
+	const { data: firstPage, error } = await queryFn(0, pageSize - 1)
+	if (error || !firstPage || firstPage.length === 0) return firstPage || []
+	if (firstPage.length < pageSize) return firstPage
+
+	// Fetch remaining pages in parallel (estimate up to 20 pages = 20k rows)
+	const allData = [...firstPage]
+	let page = 1
+	let hasMore = true
+
+	while (hasMore) {
+		// Fetch next 4 pages in parallel
+		const pagePromises = []
+		for (let i = 0; i < 4 && hasMore; i++) {
+			const p = page + i
+			pagePromises.push(queryFn(p * pageSize, (p + 1) * pageSize - 1))
+		}
+		const results = await Promise.all(pagePromises)
+		for (const r of results) {
+			if (r.data && r.data.length > 0) {
+				allData.push(...r.data)
+				if (r.data.length < pageSize) { hasMore = false; break }
+			} else {
+				hasMore = false
+				break
+			}
+		}
+		page += pagePromises.length
+	}
+	return allData
+}
+
+// Helper: run batched .in() queries in parallel
+async function fetchBatchedIn<T>(
+	ids: string[],
+	batchFn: (batch: string[]) => Promise<{ data: T[] | null; error: any }>,
+	batchSize = 200
+): Promise<T[]> {
+	if (ids.length === 0) return []
+	const batches: string[][] = []
+	for (let i = 0; i < ids.length; i += batchSize) {
+		batches.push(ids.slice(i, i + batchSize))
+	}
+	const results = await Promise.all(batches.map(batch => batchFn(batch)))
+	const all: T[] = []
+	for (const r of results) {
+		if (r.data) all.push(...r.data)
+	}
+	return all
+}
+
+// Helper: fetch paginated MyJKKN API for a single institution
+async function fetchMyJKKNPaginated(
+	apiUrl: string,
+	endpoint: string,
+	myjkknInstId: string,
+	apiKey: string,
+	pgSize = 200,
+	earlyStopFn?: (profiles: any[]) => boolean
+): Promise<any[]> {
+	const all: any[] = []
+	let pg = 1
+	let hasMore = true
+
+	while (hasMore) {
+		const params = new URLSearchParams({
+			institution_id: myjkknInstId,
+			limit: String(pgSize),
+			page: String(pg),
+		})
+		try {
+			const response = await fetch(
+				`${apiUrl}/api-management/${endpoint}?${params.toString()}`,
+				{
+					method: 'GET',
+					headers: {
+						'Authorization': `Bearer ${apiKey}`,
+						'Accept': 'application/json',
+						'Content-Type': 'application/json',
+					},
+					cache: 'no-store',
+				}
+			)
+			if (response.ok) {
+				const data = await response.json()
+				const items = data.data || data || []
+				all.push(...items)
+				if (items.length < pgSize) { hasMore = false; break }
+				// Early termination if caller says we have enough
+				if (earlyStopFn && earlyStopFn(all)) { hasMore = false; break }
+				pg++
+			} else {
+				hasMore = false
+			}
+		} catch {
+			hasMore = false
+		}
+	}
+	return all
+}
+
 export async function GET(request: Request) {
 	try {
 		const supabase = getSupabaseServer()
@@ -16,54 +122,24 @@ export async function GET(request: Request) {
 			)
 		}
 
-		// Fetch institution and session details for report header
-		const [{ data: institution }, { data: session }] = await Promise.all([
+		// ── Phase 1: Fetch institution, session, and registrations in parallel ──
+		const [{ data: institution }, { data: session }, allRegistrations] = await Promise.all([
 			supabase.from('institutions').select('id, institution_code, name, myjkkn_institution_ids').eq('id', institutions_id).single(),
 			supabase.from('examination_sessions').select('id, session_code, session_name').eq('id', examination_session_id).single(),
+			fetchAllPaginated((from, to) =>
+				supabase
+					.from('exam_registrations')
+					.select('id, stu_register_no, student_name, is_regular, attempt_number, fee_paid, fee_amount, program_code, course_offering_id, course_code')
+					.eq('institutions_id', institutions_id)
+					.eq('examination_session_id', examination_session_id)
+					.order('stu_register_no', { ascending: true })
+					.order('id', { ascending: true })
+					.range(from, to)
+			),
 		])
 
 		if (!institution || !session) {
 			return NextResponse.json({ error: 'Institution or Session not found' }, { status: 404 })
-		}
-
-		// Fetch all registrations for this institution + session with course details
-		// Paginate to bypass Supabase 1000-row limit
-		let allRegistrations: any[] = []
-		let page = 0
-		let hasMore = true
-		const pageSize = 1000
-
-		while (hasMore) {
-			const { data, error } = await supabase
-				.from('exam_registrations')
-				.select(`
-					id,
-					stu_register_no,
-					student_name,
-					is_regular,
-					attempt_number,
-					fee_paid,
-					fee_amount,
-					program_code,
-					course_offering_id
-				`)
-				.eq('institutions_id', institutions_id)
-				.eq('examination_session_id', examination_session_id)
-				.order('stu_register_no', { ascending: true })
-				.range(page * pageSize, (page + 1) * pageSize - 1)
-
-			if (error) {
-				console.error('Error fetching registrations:', error)
-				return NextResponse.json({ error: 'Failed to fetch registrations' }, { status: 500 })
-			}
-
-			if (data && data.length > 0) {
-				allRegistrations = allRegistrations.concat(data)
-				page++
-				hasMore = data.length === pageSize
-			} else {
-				hasMore = false
-			}
 		}
 
 		if (allRegistrations.length === 0) {
@@ -78,166 +154,158 @@ export async function GET(request: Request) {
 			})
 		}
 
-		// Get unique course_offering_ids (filter nulls) and fetch course offering details
+		// ── Phase 2: All independent lookups in parallel ──
 		const courseOfferingIds = [...new Set(allRegistrations.map(r => r.course_offering_id).filter(Boolean))]
-
-		// Fetch course offerings with course details in batches (Supabase .in() limit)
-		let allOfferings: any[] = []
-		const batchSize = 100
-		for (let i = 0; i < courseOfferingIds.length; i += batchSize) {
-			const batch = courseOfferingIds.slice(i, i + batchSize)
-			const { data: offerings, error: offeringsError } = await supabase
-				.from('course_offerings')
-				.select(`
-					id,
-					course_code,
-					program_code,
-					semester,
-					course_id,
-					courses:course_id(course_name, board_id, board_code, course_category)
-				`)
-				.in('id', batch)
-
-			if (offeringsError) {
-				console.error('Error fetching course offerings:', offeringsError)
-			} else if (offerings) {
-				allOfferings = allOfferings.concat(offerings)
-			}
-		}
-
-		// Fetch ALL boards for both ID-based and code-based lookup
-		const boardMap = new Map<string, { board_code: string, board_order: number, board_type: string | null }>()
-		const boardCodeMap = new Map<string, { board_code: string, board_order: number, board_type: string | null }>()
-		const boardNameMap = new Map<string, string>()
-		{
-			const { data: allBoards } = await supabase
-				.from('board')
-				.select('id, board_code, board_name, board_order, board_type')
-			if (allBoards) {
-				allBoards.forEach(b => {
-					const info = { board_code: b.board_code, board_order: b.board_order ?? 999, board_type: b.board_type || null }
-					boardMap.set(b.id, info)
-					boardCodeMap.set(b.board_code, info)
-					if (b.board_name) boardNameMap.set(b.board_code, b.board_name)
-				})
-			}
-		}
-
-		// Fetch course_order from course_mapping for proper course sorting
-		const uniqueCourseIds = [...new Set(allOfferings.map(o => o.course_id).filter(Boolean))]
-		const courseMappingOrderMap = new Map<string, number>() // course_id -> course_order
-		if (uniqueCourseIds.length > 0) {
-			for (let i = 0; i < uniqueCourseIds.length; i += batchSize) {
-				const batch = uniqueCourseIds.slice(i, i + batchSize)
-				const { data: mappings } = await supabase
-					.from('course_mapping')
-					.select('course_id, course_order')
-					.in('course_id', batch)
-				if (mappings) {
-					for (const m of mappings) {
-						if (m.course_id && !courseMappingOrderMap.has(m.course_id)) {
-							courseMappingOrderMap.set(m.course_id, m.course_order ?? 999)
-						}
-					}
-				}
-			}
-		}
-
-		// Fetch program_name from local programs table
-		const programNameMap = new Map<string, string>()
-		{
-			const { data: localPrograms } = await supabase
-				.from('programs')
-				.select('program_code, program_name')
-				.eq('institutions_id', institutions_id)
-				.eq('is_active', true)
-			if (localPrograms) {
-				for (const lp of localPrograms) {
-					if (lp.program_code && lp.program_name) {
-						programNameMap.set(lp.program_code, lp.program_name)
-					}
-				}
-			}
-		}
-
-		// Fetch program_order and program_name from MyJKKN API (paginated)
-		const programOrderMap = new Map<string, number>()
 		const myjkknIds: string[] = institution.myjkkn_institution_ids || []
-		if (myjkknIds.length > 0) {
-			const myjkknApiUrl = process.env.MYJKKN_API_URL || 'https://www.jkkn.ai/api'
-			const myjkknApiKey = process.env.MYJKKN_API_KEY || ''
-			if (myjkknApiKey) {
-				try {
-					for (const myjkknInstId of myjkknIds) {
-						let pg = 1
-						let hasMorePages = true
+		const myjkknApiUrl = process.env.MYJKKN_API_URL || 'https://www.jkkn.ai/api'
+		const myjkknApiKey = process.env.MYJKKN_API_KEY || ''
 
-						while (hasMorePages) {
-							const programParams = new URLSearchParams({
-								institution_id: myjkknInstId,
-								limit: '200',
-								page: String(pg),
-							})
-							const programResponse = await fetch(
-								`${myjkknApiUrl}/api-management/programs?${programParams.toString()}`,
-								{
-									method: 'GET',
-									headers: {
-										'Authorization': `Bearer ${myjkknApiKey}`,
-										'Accept': 'application/json',
-										'Content-Type': 'application/json',
-									},
-									cache: 'no-store',
+		const [
+			allOfferings,
+			allBoards,
+			localPrograms,
+			myjkknProgramsRaw,
+		] = await Promise.all([
+			// Course offerings (parallel batches)
+			fetchBatchedIn(courseOfferingIds, (batch) =>
+				supabase
+					.from('course_offerings')
+					.select('id, course_code, program_code, semester, course_id, courses:course_id(course_name, board_id, board_code, course_category)')
+					.in('id', batch)
+			),
+			// All boards
+			supabase.from('board').select('id, board_code, board_name, board_order, board_type').then(r => r.data || []),
+			// Local programs
+			supabase.from('programs').select('program_code, program_name, program_order').eq('institutions_id', institutions_id).eq('is_active', true).then(r => r.data || []),
+			// MyJKKN programs (all institutions in parallel)
+			(myjkknIds.length > 0 && myjkknApiKey)
+				? Promise.all(myjkknIds.map(id => fetchMyJKKNPaginated(myjkknApiUrl, 'programs', id, myjkknApiKey)))
+					.then(results => results.flat())
+					.catch(() => [] as any[])
+				: Promise.resolve([] as any[]),
+		])
+
+		// ── Phase 2b: Course mapping (needs course_ids from offerings) — parallel with MyJKKN profiles ──
+		const uniqueCourseIds = [...new Set(allOfferings.map(o => o.course_id).filter(Boolean))]
+		const registerNumbers = [...new Set(allRegistrations.map(r => r.stu_register_no).filter(Boolean))]
+		const registerNumberSet = new Set(registerNumbers)
+
+		const [courseMappings, myjkknProfilesRaw] = await Promise.all([
+			// Course mapping (parallel batches)
+			fetchBatchedIn(uniqueCourseIds, (batch) =>
+				supabase.from('course_mapping').select('course_id, course_order').in('course_id', batch)
+			),
+			// MyJKKN learner profiles (all institutions in parallel, with early termination)
+			(registerNumbers.length > 0 && myjkknIds.length > 0 && myjkknApiKey)
+				? (() => {
+					const foundSet = new Set<string>()
+					return Promise.all(myjkknIds.map(instId =>
+						fetchMyJKKNPaginated(myjkknApiUrl, 'learners/profiles', instId, myjkknApiKey, 200, (profiles) => {
+							for (const p of profiles) {
+								if (p.register_number && registerNumberSet.has(p.register_number)) {
+									foundSet.add(p.register_number.toUpperCase())
 								}
-							)
-							if (programResponse.ok) {
-								const programData = await programResponse.json()
-								const programs = programData.data || programData || []
-								for (const p of programs) {
-									const code = p.program_id || p.program_code || ''
-									if (code && !programOrderMap.has(code)) {
-										programOrderMap.set(code, p.program_order ?? p.sort_order ?? 999)
-									}
-									if (code && !programNameMap.has(code)) {
-										const pName = p.program_name || p.name || ''
-										if (pName) programNameMap.set(code, pName)
-									}
-								}
-								hasMorePages = programs.length === 200
-								pg++
-							} else {
-								hasMorePages = false
 							}
-						}
-					}
-				} catch (progError) {
-					console.warn('[ExamReports] MyJKKN programs API error (non-critical):', progError)
-				}
+							return foundSet.size >= registerNumbers.length
+						})
+					)).then(results => results.flat()).catch(() => [] as any[])
+				})()
+				: Promise.resolve([] as any[]),
+		])
+
+		// ── Phase 3: Build lookup maps (pure computation, fast) ──
+
+		// Board maps
+		const boardMap = new Map<string, { board_code: string; board_order: number; board_type: string | null }>()
+		const boardCodeMap = new Map<string, { board_code: string; board_order: number; board_type: string | null }>()
+		const boardNameMap = new Map<string, string>()
+		for (const b of allBoards) {
+			const info = { board_code: b.board_code, board_order: b.board_order ?? 999, board_type: b.board_type || null }
+			boardMap.set(b.id, info)
+			boardCodeMap.set(b.board_code, info)
+			if (b.board_name) boardNameMap.set(b.board_code, b.board_name)
+		}
+
+		// Course mapping order
+		const courseMappingOrderMap = new Map<string, number>()
+		for (const m of courseMappings) {
+			if (m.course_id && !courseMappingOrderMap.has(m.course_id)) {
+				courseMappingOrderMap.set(m.course_id, m.course_order ?? 999)
 			}
 		}
 
-		// Create lookup map for course offerings
+		// Program names and order
+		const programNameMap = new Map<string, string>()
+		const programOrderMap = new Map<string, number>()
+		// MyJKKN programs first (primary source for program_order)
+		for (const p of myjkknProgramsRaw) {
+			const code = p.program_id || p.program_code || ''
+			if (code && !programOrderMap.has(code)) {
+				const order = p.program_order ?? p.sort_order
+				if (order != null) programOrderMap.set(code, order)
+			}
+			if (code && !programNameMap.has(code)) {
+				const pName = p.program_name || p.name || ''
+				if (pName) programNameMap.set(code, pName)
+			}
+		}
+		// Local programs as fallback for names and order
+		for (const lp of localPrograms) {
+			if (lp.program_code && lp.program_name && !programNameMap.has(lp.program_code)) {
+				programNameMap.set(lp.program_code, lp.program_name)
+			}
+			if (lp.program_code && lp.program_order != null && !programOrderMap.has(lp.program_code)) {
+				programOrderMap.set(lp.program_code, lp.program_order)
+			}
+		}
+		// Fallback: use board_order as program_order (board_code = program_code in this system)
+		for (const [boardCode, boardInfo] of boardCodeMap) {
+			if (!programOrderMap.has(boardCode)) {
+				programOrderMap.set(boardCode, boardInfo.board_order)
+			}
+		}
+		// Program orders resolved: MyJKKN API → local programs → board_order fallback
+
+		// MyJKKN learner name + DOB maps
+		const nameMap = new Map<string, string>()
+		const dobMap = new Map<string, string>()
+		for (const lp of myjkknProfilesRaw) {
+			const regNo = lp.register_number
+			if (!regNo || !registerNumberSet.has(regNo)) continue
+			const key = regNo.toUpperCase()
+			if (!nameMap.has(key)) {
+				const fullName = lp.student_name || lp.full_name || [lp.first_name, lp.last_name].filter(Boolean).join(' ')
+				if (fullName) nameMap.set(key, fullName)
+			}
+			if (report_type === 'student-fee-details' && !dobMap.has(key) && lp.date_of_birth) {
+				try {
+					const dob = new Date(lp.date_of_birth)
+					if (!isNaN(dob.getTime())) {
+						dobMap.set(key, `${String(dob.getDate()).padStart(2, '0')}-${String(dob.getMonth() + 1).padStart(2, '0')}-${dob.getFullYear()}`)
+					} else {
+						dobMap.set(key, lp.date_of_birth)
+					}
+				} catch {
+					dobMap.set(key, lp.date_of_birth)
+				}
+			}
+		}
+		console.log(`[ExamReports] Names: ${nameMap.size}/${registerNumbers.length}, DOBs: ${dobMap.size}/${registerNumbers.length} from MyJKKN`)
+
+		// Offering map
 		const offeringMap = new Map(
 			allOfferings.map(o => {
 				const courseData = o.courses as any
-
-				// Prefer board_code (text) over board_id (FK) — board_id can point to wrong board
 				let boardInfo = courseData?.board_code
 					? boardCodeMap.get(courseData.board_code)
 					: boardMap.get(courseData?.board_id)
 
-				// Derive board from course_code prefix when board lookup fails
-				// Pattern: course_code like "24PCACP01" → prefix at chars 2-4 = "PCA" → matches board_code
 				if (!boardInfo && o.course_code && o.course_code.length >= 5) {
 					const prefix = o.course_code.substring(2, 5)
 					boardInfo = boardCodeMap.get(prefix)
-					// Fallback: try program_code as board_code (for shared courses)
-					if (!boardInfo && o.program_code) {
-						boardInfo = boardCodeMap.get(o.program_code)
-					}
+					if (!boardInfo && o.program_code) boardInfo = boardCodeMap.get(o.program_code)
 				}
 
-				// program_board_order: board_order for the program itself (program_code = board_code)
 				const programBoardInfo = boardCodeMap.get(o.program_code)
 
 				return [o.id, {
@@ -259,189 +327,140 @@ export async function GET(request: Request) {
 			})
 		)
 
-		// Enrich registrations with course offering details
-		const enriched = allRegistrations.map(r => ({
-			...r,
-			course_offering: offeringMap.get(r.course_offering_id) || null,
-			// student_board_type: UG/PG based on student's own program (used for UG/PG PDF splitting)
-			student_board_type: boardCodeMap.get(r.program_code)?.board_type || null,
-		}))
-
-		// Fetch name (all report types) and DOB (student-fee-details only) from MyJKKN learner profiles
-		const registerNumbers = [...new Set(allRegistrations.map(r => r.stu_register_no).filter(Boolean))]
-
-		if (registerNumbers.length > 0 && myjkknIds.length > 0) {
-			const myjkknApiUrl = process.env.MYJKKN_API_URL || 'https://www.jkkn.ai/api'
-			const myjkknApiKey = process.env.MYJKKN_API_KEY || ''
-
-			if (myjkknApiKey) {
-				const dobMap = new Map<string, string>()
-				const nameMap = new Map<string, string>()
-				const registerNumberSet = new Set(registerNumbers)
-
-				try {
-					for (const myjkknInstId of myjkknIds) {
-						let pg = 1
-						const pgSize = 200
-						let hasMorePages = true
-
-						while (hasMorePages) {
-							const profileParams = new URLSearchParams({
-								institution_id: myjkknInstId,
-								limit: String(pgSize),
-								page: String(pg),
-							})
-
-							const profileResponse = await fetch(
-								`${myjkknApiUrl}/api-management/learners/profiles?${profileParams.toString()}`,
-								{
-									method: 'GET',
-									headers: {
-										'Authorization': `Bearer ${myjkknApiKey}`,
-										'Accept': 'application/json',
-										'Content-Type': 'application/json',
-									},
-									cache: 'no-store',
-								}
-							)
-
-							if (profileResponse.ok) {
-								const profileData = await profileResponse.json()
-								const profiles = profileData.data || []
-
-								for (const lp of profiles) {
-									const regNo = lp.register_number
-									if (regNo && registerNumberSet.has(regNo)) {
-										const key = regNo.toUpperCase()
-										// Extract name (all report types)
-										if (!nameMap.has(key)) {
-											const myjkknFullName = lp.student_name || lp.full_name || ''
-											const constructedName = myjkknFullName ||
-												[lp.first_name, lp.last_name].filter(Boolean).join(' ')
-											if (constructedName) nameMap.set(key, constructedName)
-										}
-										// Extract DOB (student-fee-details only)
-										if (report_type === 'student-fee-details' && !dobMap.has(key) && lp.date_of_birth) {
-											try {
-												const dob = new Date(lp.date_of_birth)
-												if (!isNaN(dob.getTime())) {
-													dobMap.set(key, `${String(dob.getDate()).padStart(2, '0')}-${String(dob.getMonth() + 1).padStart(2, '0')}-${dob.getFullYear()}`)
-												} else {
-													dobMap.set(key, lp.date_of_birth)
-												}
-											} catch {
-												dobMap.set(key, lp.date_of_birth)
-											}
-										}
-									}
-								}
-
-								hasMorePages = profiles.length === pgSize
-								pg++
-							} else {
-								hasMorePages = false
-							}
-						}
-					}
-				} catch (myjkknError) {
-					console.warn('[ExamReports] MyJKKN API error (non-critical):', myjkknError)
-				}
-
-				// Enrich with name (always) and DOB (student-fee-details only)
-				for (const r of enriched) {
-					const regNo = r.stu_register_no?.toUpperCase()
-					if (regNo) {
-						if (nameMap.has(regNo)) r.student_name = nameMap.get(regNo)
-						if (dobMap.has(regNo)) r.date_of_birth = dobMap.get(regNo)
-					}
-				}
-
-				console.log(`[ExamReports] Names: ${nameMap.size}/${registerNumbers.length}, DOBs: ${dobMap.size}/${registerNumbers.length} from MyJKKN`)
+		// Secondary lookup: course_code → offering data (for fallback when offering ID doesn't match)
+		const courseCodeToOffering = new Map<string, any>()
+		for (const [, offering] of offeringMap) {
+			if (offering.course_code && !courseCodeToOffering.has(offering.course_code)) {
+				courseCodeToOffering.set(offering.course_code, offering)
 			}
 		}
 
-		// ── Exam Date-wise reports: enrich with timetable + attendance data ──
-		const isDateWiseReport = report_type === 'exam-date-wise-registration' || report_type === 'exam-date-wise-attendance'
+		// Find course_codes that are in registrations but not in any offering — fetch from courses table
+		const unmatchedCodes = [...new Set(
+			allRegistrations
+				.filter(r => r.course_code && !offeringMap.has(r.course_offering_id) && !courseCodeToOffering.has(r.course_code))
+				.map(r => r.course_code)
+		)]
+		const directCourses = unmatchedCodes.length > 0
+			? await fetchBatchedIn(unmatchedCodes, (batch) =>
+				supabase.from('courses').select('course_code, course_name, board_id, board_code, course_category').in('course_code', batch)
+			)
+			: []
+		const directCourseMap = new Map(directCourses.map((c: any) => [c.course_code, c]))
 
-		if (isDateWiseReport) {
-			// Fetch exam_timetables — maps course_offering → exam_date + session
-			// Two lookup strategies:
-			//   1. By course_offering_id (regular courses — 1:1 mapping)
-			//   2. By course_id fallback (shared courses like Tamil — one timetable entry for many offerings)
-			const timetableByOfferingMap = new Map<string, { exam_date: string, session: string }>()
-			const timetableByCourseIdMap = new Map<string, { exam_date: string, session: string }>()
-
-			// Strategy 1: Lookup by course_offering_id
-			for (let i = 0; i < courseOfferingIds.length; i += batchSize) {
-				const batch = courseOfferingIds.slice(i, i + batchSize)
-				const { data: timetables, error: ttError } = await supabase
-					.from('exam_timetables')
-					.select('course_offering_id, exam_date, session')
-					.eq('institutions_id', institutions_id)
-					.eq('examination_session_id', examination_session_id)
-					.eq('is_published', true)
-					.in('course_offering_id', batch)
-
-				if (!ttError && timetables) {
-					for (const tt of timetables) {
-						if (tt.course_offering_id && !timetableByOfferingMap.has(tt.course_offering_id)) {
-							timetableByOfferingMap.set(tt.course_offering_id, {
-								exam_date: tt.exam_date,
-								session: tt.session
-							})
-						}
+		// ── Phase 4: Enrich registrations ──
+		const enriched = allRegistrations.map(r => {
+			const regNo = r.stu_register_no?.toUpperCase()
+			// Use offering map → same course_code from another offering → direct courses lookup → minimal fallback
+			const existingOffering = offeringMap.get(r.course_offering_id)
+			let offering = existingOffering
+			if (!offering && r.course_code) {
+				// Try another offering with the same course_code (gets course_name, semester, etc.)
+				const byCode = courseCodeToOffering.get(r.course_code)
+				if (byCode) {
+					// Use the other offering's data but override program_code from registration
+					offering = { ...byCode, program_code: r.program_code || byCode.program_code }
+				} else {
+					// Build from direct courses lookup + registration data
+					const directCourse = directCourseMap.get(r.course_code)
+					const boardInfo = directCourse?.board_code
+						? boardCodeMap.get(directCourse.board_code)
+						: boardCodeMap.get(r.program_code)
+					offering = {
+						course_code: r.course_code,
+						course_id: null,
+						course_order: 999,
+						board_type: boardInfo?.board_type || null,
+						program_code: r.program_code || '',
+						program_name: programNameMap.get(r.program_code) || boardNameMap.get(r.program_code) || null,
+						semester: null,
+						course_name: directCourse?.course_name || null,
+						course_category: directCourse?.course_category || null,
+						board_code: boardInfo?.board_code || null,
+						board_name: boardNameMap.get(boardInfo?.board_code || '') || null,
+						board_order: boardInfo?.board_order ?? 999,
+						program_order: programOrderMap.get(r.program_code) ?? 999,
+						program_board_order: boardCodeMap.get(r.program_code)?.board_order ?? 999,
 					}
 				}
 			}
-
-			// Strategy 2: Lookup by course_id for shared/common courses (Tamil, English, etc.)
-			// Get course_ids that DON'T have a timetable match by course_offering_id
-			const unmatchedCourseIds = new Set<string>()
-			for (const offering of allOfferings) {
-				if (!timetableByOfferingMap.has(offering.id) && offering.course_id) {
-					unmatchedCourseIds.add(offering.course_id)
-				}
+			return {
+				...r,
+				course_offering: offering,
+				student_board_type: boardCodeMap.get(r.program_code)?.board_type || null,
+				student_name: (regNo && nameMap.get(regNo)) || r.student_name,
+				...(regNo && dobMap.has(regNo) ? { date_of_birth: dobMap.get(regNo) } : {}),
 			}
+		})
 
-			if (unmatchedCourseIds.size > 0) {
-				const unmatchedBatch = Array.from(unmatchedCourseIds)
-				for (let i = 0; i < unmatchedBatch.length; i += batchSize) {
-					const batch = unmatchedBatch.slice(i, i + batchSize)
-					const { data: timetables, error: ttError } = await supabase
+		// ── Phase 5: Date-wise report enrichment (timetable + attendance) ──
+		const isDateWiseReport = report_type === 'exam-date-wise-registration' || report_type === 'exam-date-wise-attendance'
+
+		if (isDateWiseReport) {
+			// Fetch timetables by offering + attendance in parallel
+			const [timetablesByOffering, timetablesByCourseId, attendanceData] = await Promise.all([
+				// Strategy 1: by course_offering_id
+				fetchBatchedIn(courseOfferingIds, (batch) =>
+					supabase
+						.from('exam_timetables')
+						.select('course_offering_id, exam_date, session')
+						.eq('institutions_id', institutions_id)
+						.eq('examination_session_id', examination_session_id)
+						.eq('is_published', true)
+						.in('course_offering_id', batch)
+				),
+				// Strategy 2: by course_id (for shared courses)
+				fetchBatchedIn(uniqueCourseIds, (batch) =>
+					supabase
 						.from('exam_timetables')
 						.select('course_id, exam_date, session')
 						.eq('institutions_id', institutions_id)
 						.eq('examination_session_id', examination_session_id)
 						.eq('is_published', true)
 						.in('course_id', batch)
+				),
+				// Attendance (only for attendance report)
+				report_type === 'exam-date-wise-attendance'
+					? fetchBatchedIn(
+						enriched.map(r => r.id),
+						(batch) => supabase.from('exam_attendance').select('exam_registration_id, attendance_status').in('exam_registration_id', batch)
+					)
+					: Promise.resolve([]),
+			])
 
-					if (!ttError && timetables) {
-						for (const tt of timetables) {
-							if (tt.course_id && !timetableByCourseIdMap.has(tt.course_id)) {
-								timetableByCourseIdMap.set(tt.course_id, {
-									exam_date: tt.exam_date,
-									session: tt.session
-								})
-							}
-						}
-					}
+			// Build timetable maps
+			const timetableByOfferingMap = new Map<string, { exam_date: string; session: string }>()
+			for (const tt of timetablesByOffering) {
+				if (tt.course_offering_id && !timetableByOfferingMap.has(tt.course_offering_id)) {
+					timetableByOfferingMap.set(tt.course_offering_id, { exam_date: tt.exam_date, session: tt.session })
+				}
+			}
+			const timetableByCourseIdMap = new Map<string, { exam_date: string; session: string }>()
+			for (const tt of timetablesByCourseId) {
+				if (tt.course_id && !timetableByCourseIdMap.has(tt.course_id)) {
+					timetableByCourseIdMap.set(tt.course_id, { exam_date: tt.exam_date, session: tt.session })
 				}
 			}
 
-			// Build offering_id → course_id lookup from allOfferings
+			// Offering → course_id lookup
 			const offeringToCourseId = new Map<string, string>()
 			for (const o of allOfferings) {
 				if (o.id && o.course_id) offeringToCourseId.set(o.id, o.course_id)
 			}
 
-			// Attach timetable data to each enriched row (try offering_id first, then course_id fallback)
+			// Attendance set
+			const attendancePresentSet = new Set<string>()
+			for (const att of attendanceData) {
+				if (att.attendance_status === 'Present') attendancePresentSet.add(att.exam_registration_id)
+			}
+
+			// Attach to enriched rows
 			for (const row of enriched) {
 				const tt = timetableByOfferingMap.get(row.course_offering_id)
 				if (tt) {
 					row.exam_date = tt.exam_date
 					row.exam_session = tt.session
 				} else {
-					// Fallback: lookup by course_id for shared courses
 					const courseId = offeringToCourseId.get(row.course_offering_id)
 					if (courseId) {
 						const ttFallback = timetableByCourseIdMap.get(courseId)
@@ -451,33 +470,7 @@ export async function GET(request: Request) {
 						}
 					}
 				}
-			}
-
-			// For attendance report: fetch present counts from exam_attendance
-			if (report_type === 'exam-date-wise-attendance') {
-				// Build a count of 'Present' per course_offering_id from exam_attendance
-				// exam_attendance links via exam_registration_id → exam_registrations.id
-				const regIds = enriched.map((r: any) => r.id)
-				const attendancePresentSet = new Set<string>() // registration IDs that are Present
-
-				for (let i = 0; i < regIds.length; i += batchSize) {
-					const batch = regIds.slice(i, i + batchSize)
-					const { data: attendanceData, error: attError } = await supabase
-						.from('exam_attendance')
-						.select('exam_registration_id, attendance_status')
-						.in('exam_registration_id', batch)
-
-					if (!attError && attendanceData) {
-						for (const att of attendanceData) {
-							if (att.attendance_status === 'Present') {
-								attendancePresentSet.add(att.exam_registration_id)
-							}
-						}
-					}
-				}
-
-				// Attach is_present flag to each registration row
-				for (const row of enriched) {
+				if (report_type === 'exam-date-wise-attendance') {
 					row.is_present = attendancePresentSet.has(row.id)
 				}
 			}

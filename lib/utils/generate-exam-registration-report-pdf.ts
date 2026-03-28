@@ -16,10 +16,32 @@ interface ReportPdfOptions {
 
 // ── Helpers ──
 
+const ROMAN = ['', 'I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X']
+function toRoman(n: number): string { return ROMAN[n] || String(n) }
+
 function semesterToYear(semester: number): string {
 	const yearNum = Math.ceil(semester / 2)
-	const roman = ['I', 'II', 'III', 'IV', 'V']
-	return `${roman[yearNum - 1] || yearNum} Year`
+	return `${toRoman(yearNum)} Year`
+}
+
+/** Build a map of student register number → current year (based on max regular semester) */
+function buildStudentYearMap(data: any[]): Map<string, string> {
+	const maxRegSem = new Map<string, number>()
+	const maxAnySem = new Map<string, number>()
+	for (const row of data) {
+		const regNo = row.stu_register_no
+		if (!regNo) continue
+		const sem = row.course_offering?.semester || 0
+		if (sem <= 0) continue
+		if (row.is_regular) maxRegSem.set(regNo, Math.max(maxRegSem.get(regNo) || 0, sem))
+		maxAnySem.set(regNo, Math.max(maxAnySem.get(regNo) || 0, sem))
+	}
+	const result = new Map<string, string>()
+	for (const regNo of new Set([...maxRegSem.keys(), ...maxAnySem.keys()])) {
+		const maxSem = maxRegSem.get(regNo) || maxAnySem.get(regNo) || 1
+		result.set(regNo, semesterToYear(maxSem))
+	}
+	return result
 }
 
 /** Line height factor: fontSize (pt) × factor = line height (mm) */
@@ -100,7 +122,7 @@ function drawHeader(
 	doc.setFont('times', 'bold')
 	doc.setFontSize(11)
 	doc.text(reportTitle, pageWidth / 2, currentY, { align: 'center' })
-	currentY += 5
+	currentY += 4
 
 	// Course category filter label (only when partial selection)
 	if (opts.course_category_filter && opts.course_category_filter.length > 0) {
@@ -111,7 +133,7 @@ function drawHeader(
 		const boldWidth = doc.getTextWidth(boldPart)
 		doc.setFont('times', 'normal')
 		doc.text(` ${opts.course_category_filter.join(', ')}`, margin + boldWidth, currentY)
-		currentY += 6
+		currentY += 4
 	}
 
 	return currentY
@@ -136,7 +158,7 @@ function drawProgramYearSubtitle(
 	doc.text(programLabel, margin, y)
 	doc.text(`Year : ${year}`, pageWidth - margin, y, { align: 'right' })
 
-	return y + 5
+	return y + 4
 }
 
 function drawFooter(doc: jsPDF, pageWidth: number, margin: number, pageNum: number, totalPages: number) {
@@ -224,7 +246,7 @@ function generateStudentFeeDetailsPdf(opts: ReportPdfOptions): string {
 
 	// Column widths (landscape A4 = ~287mm usable width minus margins)
 	const colWidths = [10, 28, 35, 20, 18, 22, 60, 18, 18, 18, 15, 25]
-	const headers = ['S.No', 'Register No', 'Name of the\nCandidate', 'Date of\nBirth', 'Semester/\nYear', 'Subject\nCode', 'Course Name', 'Theory', 'Application\nFee', 'Mark\nStatement\nFee', 'Total\nAmount', 'Student\nSign']
+	const headers = ['S.No', 'Register No', 'Name of the\nCandidate', 'Date of\nBirth', 'SEM/\nYear', 'Subject\nCode', 'Course Name', 'Theory', 'Application\nFee', 'Mark\nStatement\nFee', 'Total\nAmount', 'Student\nSign']
 	const headerHeight = 10
 	const rowHeight = 6
 	const footerSpace = 10
@@ -264,18 +286,23 @@ function generateStudentFeeDetailsPdf(opts: ReportPdfOptions): string {
 			}
 			const co = row.course_offering
 			if (co) {
-				studentMap.get(regNo)!.courses.push({
-					semester: co.semester || 0,
-					course_code: co.course_code || '',
-					course_name: co.course_name || '',
-				})
+				const student = studentMap.get(regNo)!
+				// Deduplicate by course_code (same course can exist under multiple offerings)
+				if (!student.courses.some((c: any) => c.course_code === co.course_code)) {
+					student.courses.push({
+						semester: co.semester || 0,
+						course_order: co.course_order ?? 999,
+						course_code: co.course_code || '',
+						course_name: co.course_name || '',
+					})
+				}
 			}
 		}
 
 		const students = Array.from(studentMap.entries())
 			.sort((a, b) => a[0].localeCompare(b[0]))
 			.map(([regNo, info], idx) => {
-				info.courses.sort((a: any, b: any) => a.semester - b.semester || a.course_code.localeCompare(b.course_code))
+				info.courses.sort((a: any, b: any) => (a.semester - b.semester) || (a.course_order - b.course_order) || a.course_code.localeCompare(b.course_code))
 				return { sno: idx + 1, regNo, ...info }
 			})
 
@@ -288,7 +315,7 @@ function generateStudentFeeDetailsPdf(opts: ReportPdfOptions): string {
 		}
 
 		// Draw header + program/year subtitle
-		let startY = drawHeader(doc, pageWidth, margin, opts, 'EXAM REGISTRATION - FEE DETAILS')
+		let startY = drawHeader(doc, pageWidth, margin, opts, 'STUDENT EXAM REGISTRATION')
 		startY = drawProgramYearSubtitle(doc, pageWidth, margin, startY, programCode, programName, year)
 		let tableY = drawTableHeader(startY)
 		rowsOnPage = 0
@@ -370,7 +397,7 @@ function generateStudentFeeDetailsPdf(opts: ReportPdfOptions): string {
 				// Semester column
 				doc.rect(cx, courseY, colWidths[4], crh)
 				if (course) {
-					doc.text(`Semester ${course.semester}`, cx + colWidths[4] / 2, courseY + crh / 2 + 1.5, { align: 'center' })
+					doc.text(toRoman(course.semester), cx + colWidths[4] / 2, courseY + crh / 2 + 1.5, { align: 'center' })
 				}
 				cx += colWidths[4]
 
@@ -432,7 +459,7 @@ function generateCourseCountRegularArrearPdf(opts: ReportPdfOptions): string {
 	}
 
 	const rows = Array.from(countMap.values())
-		.sort((a, b) => (a.board_order - b.board_order) || (a.program_order - b.program_order) || (a.semester - b.semester) || (a.course_order - b.course_order) || a.course_code.localeCompare(b.course_code))
+		.sort((a, b) => (a.board_order - b.board_order) || (a.semester - b.semester) || (a.course_order - b.course_order) || a.course_code.localeCompare(b.course_code))
 
 	// Build board groups
 	const boardGroups: { board_code: string, startIdx: number, count: number }[] = []
@@ -447,8 +474,8 @@ function generateCourseCountRegularArrearPdf(opts: ReportPdfOptions): string {
 	}
 
 	// A4 portrait usable = 210 - 2*6.35 = 197.3mm
-	const colWidths = [8, 25, 22, 72, 24, 24, 20]  // Total = 195mm
-	const headers = ['S.No', 'Board', 'Course\nCode', 'Course Name', 'Regular\nStudents', 'Arrear\nStudents', 'Total']
+	const colWidths = [8, 25, 10, 22, 62, 24, 24, 20]  // Total = 195mm
+	const headers = ['S.No', 'Board', 'Sem', 'Course\nCode', 'Course Name', 'Regular\nStudents', 'Arrear\nStudents', 'Total']
 	const headerHeight = 14
 	const rowHeight = 7
 	const footerSpace = 10
@@ -466,14 +493,14 @@ function generateCourseCountRegularArrearPdf(opts: ReportPdfOptions): string {
 		const subH = headerHeight - spanH
 
 		// "No. Of Students Register" spanning header over Regular + Arrear + Total
-		const dataColsStart = colWidths[0] + colWidths[1] + colWidths[2] + colWidths[3] + margin
-		const dataColsWidth = colWidths[4] + colWidths[5] + colWidths[6]
+		const dataColsStart = colWidths[0] + colWidths[1] + colWidths[2] + colWidths[3] + colWidths[4] + margin
+		const dataColsWidth = colWidths[5] + colWidths[6] + colWidths[7]
 		doc.rect(dataColsStart, y, dataColsWidth, spanH)
 		doc.text('No. Of Students Register', dataColsStart + dataColsWidth / 2, y + spanH - 1.5, { align: 'center' })
 
-		// Top headers for S.No, Board, Course Code, Course Name
+		// Top headers for S.No, Board, Sem, Course Code, Course Name
 		let x = margin
-		for (let i = 0; i < 4; i++) {
+		for (let i = 0; i < 5; i++) {
 			doc.rect(x, y, colWidths[i], headerHeight)
 			const lines = headers[i].split('\n')
 			const lineH = headerHeight / (lines.length + 1)
@@ -486,7 +513,7 @@ function generateCourseCountRegularArrearPdf(opts: ReportPdfOptions): string {
 		// Sub-headers for Regular/Arrear/Total (with line break support)
 		let sx = dataColsStart
 		doc.setFontSize(8)
-		for (let i = 4; i < 7; i++) {
+		for (let i = 5; i < 8; i++) {
 			doc.rect(sx, y + spanH, colWidths[i], subH)
 			const lines = headers[i].split('\n')
 			const lineH = subH / (lines.length + 1)
@@ -505,7 +532,7 @@ function generateCourseCountRegularArrearPdf(opts: ReportPdfOptions): string {
 	// Pre-compute row heights based on course name wrapping
 	doc.setFont('times', 'normal')
 	doc.setFontSize(9)
-	const rowHeights = rows.map(row => calcWrappedRowHeight(doc, row.course_name, colWidths[3] - 2, rowHeight))
+	const rowHeights = rows.map(row => calcWrappedRowHeight(doc, row.course_name, colWidths[4] - 2, rowHeight))
 
 	// Track which board group the current row belongs to
 	let boardGroupIdx = 0
@@ -550,37 +577,41 @@ function generateCourseCountRegularArrearPdf(opts: ReportPdfOptions): string {
 			}
 			if (mergeHeight === 0) mergeHeight = rh
 			doc.rect(x, tableY, colWidths[1], mergeHeight)
-			// Board name from first row in group
 			const boardRow = rows[bg.startIdx]
 			const boardLabel = formatBoardDisplay(bg.board_code, boardRow?.board_name)
 			drawWrappedCell(doc, boardLabel, x, tableY, colWidths[1], mergeHeight, 'center')
 		}
 		x += colWidths[1]
 
-		// Column 2: Course Code
+		// Column 2: Sem
 		doc.rect(x, tableY, colWidths[2], rh)
-		doc.text(row.course_code, x + colWidths[2] / 2, tableY + rh / 2 + 1.5, { align: 'center' })
+		doc.text(row.semester ? toRoman(row.semester) : '', x + colWidths[2] / 2, tableY + rh / 2 + 1.5, { align: 'center' })
 		x += colWidths[2]
 
-		// Column 3: Course Name - wrapped
+		// Column 3: Course Code
 		doc.rect(x, tableY, colWidths[3], rh)
-		drawWrappedCell(doc, row.course_name, x, tableY, colWidths[3], rh)
+		doc.text(row.course_code, x + colWidths[3] / 2, tableY + rh / 2 + 1.5, { align: 'center' })
 		x += colWidths[3]
 
-		// Column 4: Regular
+		// Column 4: Course Name - wrapped
 		doc.rect(x, tableY, colWidths[4], rh)
-		doc.text(String(row.regular), x + colWidths[4] / 2, tableY + rh / 2 + 1.5, { align: 'center' })
+		drawWrappedCell(doc, row.course_name, x, tableY, colWidths[4], rh)
 		x += colWidths[4]
 
-		// Column 5: Arrear
+		// Column 5: Regular
 		doc.rect(x, tableY, colWidths[5], rh)
-		doc.text(String(row.arrear), x + colWidths[5] / 2, tableY + rh / 2 + 1.5, { align: 'center' })
+		doc.text(String(row.regular), x + colWidths[5] / 2, tableY + rh / 2 + 1.5, { align: 'center' })
 		x += colWidths[5]
 
-		// Column 6: Total
-		doc.setFont('times', 'bold')
+		// Column 6: Arrear
 		doc.rect(x, tableY, colWidths[6], rh)
-		doc.text(String(row.regular + row.arrear), x + colWidths[6] / 2, tableY + rh / 2 + 1.5, { align: 'center' })
+		doc.text(String(row.arrear), x + colWidths[6] / 2, tableY + rh / 2 + 1.5, { align: 'center' })
+		x += colWidths[6]
+
+		// Column 7: Total
+		doc.setFont('times', 'bold')
+		doc.rect(x, tableY, colWidths[7], rh)
+		doc.text(String(row.regular + row.arrear), x + colWidths[7] / 2, tableY + rh / 2 + 1.5, { align: 'center' })
 		doc.setFont('times', 'normal')
 
 		tableY += rh
@@ -605,15 +636,18 @@ function generateCourseCountRegularArrearPdf(opts: ReportPdfOptions): string {
 	return filename
 }
 
-// ── Report 2B: Course Count Year-wise (A4 Landscape) ──
+// ── Report 2B: Board & Year Wise Course List (A4 Portrait) ──
 
 function generateCourseCountYearWisePdf(opts: ReportPdfOptions): string {
-	const doc = new jsPDF('landscape', 'mm', 'a4')
+	const doc = new jsPDF('portrait', 'mm', 'a4')
 	const pageWidth = doc.internal.pageSize.getWidth()
 	const pageHeight = doc.internal.pageSize.getHeight()
 	const margin = 6.35
 
-	// Aggregate counts by board_code + course_code + year
+	// Build student year map for student-based year counting
+	const studentYearMap = buildStudentYearMap(opts.data)
+
+	// Aggregate counts by board_code + course_code + year (using student's current year)
 	const countMap = new Map<string, any>()
 	const allYears = new Set<string>()
 
@@ -621,7 +655,7 @@ function generateCourseCountYearWisePdf(opts: ReportPdfOptions): string {
 		const co = row.course_offering
 		if (!co) continue
 		const key = `${co.board_code || ''}|${co.course_code}`
-		const year = semesterToYear(co.semester || 1)
+		const year = studentYearMap.get(row.stu_register_no) || semesterToYear(co.semester || 1)
 		allYears.add(year)
 
 		if (!countMap.has(key)) {
@@ -637,7 +671,7 @@ function generateCourseCountYearWisePdf(opts: ReportPdfOptions): string {
 	})
 
 	const rows = Array.from(countMap.values())
-		.sort((a, b) => (a.board_order - b.board_order) || (a.program_order - b.program_order) || (a.semester - b.semester) || (a.course_order - b.course_order) || a.course_code.localeCompare(b.course_code))
+		.sort((a, b) => (a.board_order - b.board_order) || (a.semester - b.semester) || (a.course_order - b.course_order) || a.course_code.localeCompare(b.course_code))
 
 	// Board groups
 	const boardGroups: { board_code: string, startIdx: number, count: number }[] = []
@@ -651,11 +685,11 @@ function generateCourseCountYearWisePdf(opts: ReportPdfOptions): string {
 		}
 	}
 
-	// Dynamic columns: fixed cols + year cols + total col
-	const fixedColWidths = [8, 25, 22, 70]
+	// Dynamic columns: fixed cols + year cols + total col (portrait A4 = ~197mm usable)
+	const fixedColWidths = [8, 25, 10, 22, 62]
 	const fixedTotal = fixedColWidths.reduce((a, b) => a + b, 0)
-	const totalColWidth = 20
-	const yearColWidth = Math.min(40, (pageWidth - margin * 2 - fixedTotal - totalColWidth) / Math.max(sortedYears.length, 1))
+	const totalColWidth = 18
+	const yearColWidth = Math.min(25, (pageWidth - margin * 2 - fixedTotal - totalColWidth) / Math.max(sortedYears.length, 1))
 	const headerHeight = 12
 	const rowHeight = 7
 	const footerSpace = 10
@@ -679,8 +713,8 @@ function generateCourseCountYearWisePdf(opts: ReportPdfOptions): string {
 
 		// Fixed column headers
 		let x = margin
-		const fixedHeaders = ['S.No', 'Board', 'Course\nCode', 'Course Name']
-		for (let i = 0; i < 4; i++) {
+		const fixedHeaders = ['S.No', 'Board', 'Sem', 'Course\nCode', 'Course Name']
+		for (let i = 0; i < 5; i++) {
 			doc.rect(x, y, fixedColWidths[i], headerHeight)
 			const lines = fixedHeaders[i].split('\n')
 			const lineH = headerHeight / (lines.length + 1)
@@ -707,13 +741,13 @@ function generateCourseCountYearWisePdf(opts: ReportPdfOptions): string {
 		return y + headerHeight
 	}
 
-	let startY = drawHeader(doc, pageWidth, margin, opts, 'COURSE WISE REGISTRATION COUNT (YEAR WISE)')
+	let startY = drawHeader(doc, pageWidth, margin, opts, 'BOARD & YEAR WISE COURSE LIST')
 	let tableY = drawYearHeader(startY)
 
 	// Pre-compute row heights based on course name wrapping
 	doc.setFont('times', 'normal')
 	doc.setFontSize(9)
-	const rowHeights = rows.map(row => calcWrappedRowHeight(doc, row.course_name, fixedColWidths[3] - 2, rowHeight))
+	const rowHeights = rows.map(row => calcWrappedRowHeight(doc, row.course_name, fixedColWidths[4] - 2, rowHeight))
 
 	let boardGroupIdx = 0
 	let boardGroupRowOffset = 0
@@ -762,15 +796,20 @@ function generateCourseCountYearWisePdf(opts: ReportPdfOptions): string {
 		}
 		x += fixedColWidths[1]
 
-		// Course Code
+		// Sem
 		doc.rect(x, tableY, fixedColWidths[2], rh)
-		doc.text(row.course_code, x + fixedColWidths[2] / 2, tableY + rh / 2 + 1.5, { align: 'center' })
+		doc.text(row.semester ? toRoman(row.semester) : '', x + fixedColWidths[2] / 2, tableY + rh / 2 + 1.5, { align: 'center' })
 		x += fixedColWidths[2]
 
-		// Course Name - wrapped
+		// Course Code
 		doc.rect(x, tableY, fixedColWidths[3], rh)
-		drawWrappedCell(doc, row.course_name, x, tableY, fixedColWidths[3], rh)
+		doc.text(row.course_code, x + fixedColWidths[3] / 2, tableY + rh / 2 + 1.5, { align: 'center' })
 		x += fixedColWidths[3]
+
+		// Course Name - wrapped
+		doc.rect(x, tableY, fixedColWidths[4], rh)
+		drawWrappedCell(doc, row.course_name, x, tableY, fixedColWidths[4], rh)
+		x += fixedColWidths[4]
 
 		// Year columns
 		let rowTotal = 0
@@ -810,15 +849,18 @@ function generateCourseCountYearWisePdf(opts: ReportPdfOptions): string {
 	return filename
 }
 
-// ── Report 2C: Course Count with Program Code Year-wise (A4 Landscape) ──
+// ── Report 2C: Board & Program Wise Course List (A4 Portrait) ──
 
 function generateCourseCountProgramYearWisePdf(opts: ReportPdfOptions): string {
-	const doc = new jsPDF('landscape', 'mm', 'a4')
+	const doc = new jsPDF('portrait', 'mm', 'a4')
 	const pageWidth = doc.internal.pageSize.getWidth()
 	const pageHeight = doc.internal.pageSize.getHeight()
 	const margin = 6.35
 
-	// Aggregate counts by board_code + program_code + course_code + year
+	// Build student year map
+	const studentYearMap = buildStudentYearMap(opts.data)
+
+	// Aggregate counts by board_code + program_code + course_code + year (using student's current year)
 	const countMap = new Map<string, any>()
 	const allYears = new Set<string>()
 
@@ -827,7 +869,7 @@ function generateCourseCountProgramYearWisePdf(opts: ReportPdfOptions): string {
 		if (!co) continue
 		const programCode = co.program_code || row.program_code || ''
 		const key = `${co.board_code || ''}|${programCode}|${co.course_code}`
-		const year = semesterToYear(co.semester || 1)
+		const year = studentYearMap.get(row.stu_register_no) || semesterToYear(co.semester || 1)
 		allYears.add(year)
 
 		if (!countMap.has(key)) {
@@ -880,11 +922,11 @@ function generateCourseCountProgramYearWisePdf(opts: ReportPdfOptions): string {
 		for (let i = pg.startIdx; i < pg.startIdx + pg.count; i++) rowToProgramGroup.set(i, gi)
 	})
 
-	// Dynamic columns with total
-	const fixedColWidths = [8, 25, 20, 22, 65]
+	// Dynamic columns with total (portrait A4 = ~197mm usable)
+	const fixedColWidths = [8, 22, 18, 10, 20, 52]
 	const fixedTotal2c = fixedColWidths.reduce((a, b) => a + b, 0)
-	const totalColWidth = 20
-	const yearColWidth = Math.min(35, (pageWidth - margin * 2 - fixedTotal2c - totalColWidth) / Math.max(sortedYears.length, 1))
+	const totalColWidth = 18
+	const yearColWidth = Math.min(25, (pageWidth - margin * 2 - fixedTotal2c - totalColWidth) / Math.max(sortedYears.length, 1))
 	const headerHeight = 12
 	const rowHeight = 7
 	const footerSpace = 10
@@ -907,7 +949,7 @@ function generateCourseCountProgramYearWisePdf(opts: ReportPdfOptions): string {
 		}
 
 		// Fixed column headers
-		const fixedHeaders = ['S.No', 'Board', 'Program\nCode', 'Course\nCode', 'Course Name']
+		const fixedHeaders = ['S.No', 'Board', 'Program\nCode', 'Sem', 'Course\nCode', 'Course Name']
 		let hx = margin
 		for (let i = 0; i < fixedColWidths.length; i++) {
 			doc.rect(hx, y, fixedColWidths[i], headerHeight)
@@ -936,13 +978,13 @@ function generateCourseCountProgramYearWisePdf(opts: ReportPdfOptions): string {
 		return y + headerHeight
 	}
 
-	let startY = drawHeader(doc, pageWidth, margin, opts, 'COURSE WISE REGISTRATION COUNT (PROGRAM & YEAR WISE)')
+	let startY = drawHeader(doc, pageWidth, margin, opts, 'BOARD & PROGRAM WISE REGISTRATION LIST')
 	let tableY = drawProgramHeader(startY)
 
 	// Pre-compute row heights based on course name wrapping
 	doc.setFont('times', 'normal')
 	doc.setFontSize(9)
-	const rowHeights = rows.map(row => calcWrappedRowHeight(doc, row.course_name, fixedColWidths[4] - 2, rowHeight))
+	const rowHeights = rows.map(row => calcWrappedRowHeight(doc, row.course_name, fixedColWidths[5] - 2, rowHeight))
 
 	for (let idx = 0; idx < rows.length; idx++) {
 		const row = rows[idx]
@@ -1009,15 +1051,20 @@ function generateCourseCountProgramYearWisePdf(opts: ReportPdfOptions): string {
 		}
 		x += fixedColWidths[2]
 
-		// Course Code
+		// Sem
 		doc.rect(x, tableY, fixedColWidths[3], rh)
-		doc.text(row.course_code, x + fixedColWidths[3] / 2, tableY + rh / 2 + 1.5, { align: 'center' })
+		doc.text(row.semester ? toRoman(row.semester) : '', x + fixedColWidths[3] / 2, tableY + rh / 2 + 1.5, { align: 'center' })
 		x += fixedColWidths[3]
 
-		// Course Name - wrapped
+		// Course Code
 		doc.rect(x, tableY, fixedColWidths[4], rh)
-		drawWrappedCell(doc, row.course_name, x, tableY, fixedColWidths[4], rh)
+		doc.text(row.course_code, x + fixedColWidths[4] / 2, tableY + rh / 2 + 1.5, { align: 'center' })
 		x += fixedColWidths[4]
+
+		// Course Name - wrapped
+		doc.rect(x, tableY, fixedColWidths[5], rh)
+		drawWrappedCell(doc, row.course_name, x, tableY, fixedColWidths[5], rh)
+		x += fixedColWidths[5]
 
 		// Year columns
 		let rowTotal = 0
@@ -1051,91 +1098,115 @@ function generateCourseCountProgramYearWisePdf(opts: ReportPdfOptions): string {
 	return filename
 }
 
-// ── Report 3: Course Count by Program & Year Section (A4 Portrait, 1 page per section) ──
+// ── Report 3: Program Wise Course List (A4 Portrait, 1 page per section) ──
 
 function generateCourseCountProgramYearSectionPdf(opts: ReportPdfOptions): string {
-	const doc = new jsPDF('landscape', 'mm', 'a4')
+	const doc = new jsPDF('portrait', 'mm', 'a4')
 	const pageWidth = doc.internal.pageSize.getWidth()
 	const pageHeight = doc.internal.pageSize.getHeight()
 	const margin = 6.35
 
-	// Group registrations by program_code + year
-	const sectionMap = new Map<string, {
+	// Build student year map
+	const studentYearMap = buildStudentYearMap(opts.data)
+
+	// Group registrations by program_code → courses with year-wise counts
+	const programMap = new Map<string, {
 		program_code: string
 		program_name: string | null
-		program_board_order: number
 		program_order: number
-		year: string
-		yearIdx: number
-		courses: Map<string, { semester: number; course_order: number; course_code: string; course_name: string; count: number }>
+		courses: Map<string, { semester: number; course_order: number; course_code: string; course_name: string; years: Record<string, number> }>
 	}>()
-
-	const yearOrder = ['I Year', 'II Year', 'III Year', 'IV Year', 'V Year']
+	const allYears = new Set<string>()
 
 	for (const row of opts.data) {
 		const co = row.course_offering
 		if (!co) continue
 		const programCode = co.program_code || row.program_code || ''
-		const yearNum = Math.ceil((co.semester || 1) / 2)
-		const roman = ['I', 'II', 'III', 'IV', 'V']
-		const year = `${roman[yearNum - 1] || yearNum} Year`
-		const sectionKey = `${programCode}|${year}`
+		const studentYear = studentYearMap.get(row.stu_register_no) || semesterToYear(co.semester || 1)
+		allYears.add(studentYear)
 
-		if (!sectionMap.has(sectionKey)) {
-			sectionMap.set(sectionKey, {
+		if (!programMap.has(programCode)) {
+			programMap.set(programCode, {
 				program_code: programCode,
 				program_name: co.program_name || null,
-				program_board_order: co.program_board_order ?? 999,
 				program_order: co.program_order ?? 999,
-				year,
-				yearIdx: yearOrder.indexOf(year),
 				courses: new Map(),
 			})
 		}
-		const section = sectionMap.get(sectionKey)!
+		const program = programMap.get(programCode)!
 		const courseKey = co.course_code
-		if (!section.courses.has(courseKey)) {
-			section.courses.set(courseKey, {
+		if (!program.courses.has(courseKey)) {
+			program.courses.set(courseKey, {
 				semester: co.semester || 0,
 				course_order: co.course_order ?? 999,
 				course_code: co.course_code,
 				course_name: co.course_name || '',
-				count: 0,
+				years: {},
 			})
 		}
-		section.courses.get(courseKey)!.count++
+		const course = program.courses.get(courseKey)!
+		course.years[studentYear] = (course.years[studentYear] || 0) + 1
 	}
 
-	// Sort sections by program_board_order, then program_order, then year
-	const sections = Array.from(sectionMap.values())
-		.sort((a, b) =>
-			(a.program_board_order - b.program_board_order) ||
-			(a.program_order - b.program_order) ||
-			a.program_code.localeCompare(b.program_code) ||
-			(a.yearIdx - b.yearIdx)
-		)
+	const sortedYears = ['I Year', 'II Year', 'III Year', 'IV Year', 'V Year'].filter(y => allYears.has(y))
+
+	const sections = Array.from(programMap.values())
+		.sort((a, b) => (a.program_order - b.program_order) || a.program_code.localeCompare(b.program_code))
 
 	if (sections.length === 0) return ''
 
-	// Table config (landscape A4 = ~284mm usable)
-	const colWidths = [12, 16, 35, 180, 35]
-	const headers = ['S.No', 'Sem', 'Course Code', 'Course Name', 'No. of Students']
-	const headerHeight = 8
+	// Table config (portrait A4 = ~197mm usable)
+	const fixedColWidths = [10, 12, 28, 75]
+	const fixedTotal = fixedColWidths.reduce((a, b) => a + b, 0)
+	const totalColWidth = 18
+	const yearColWidth = Math.min(25, (pageWidth - margin * 2 - fixedTotal - totalColWidth) / Math.max(sortedYears.length, 1))
+	const headerHeight = 14
 	const rowHeight = 7
 	const signatureSpaceHeight = 25
 
-	function drawTableHeader(y: number): number {
+	function drawSectionHeader(y: number): number {
 		doc.setFont('times', 'bold')
 		doc.setFontSize(9)
 		doc.setDrawColor(0, 0, 0)
 		doc.setLineWidth(0.3)
 
-		let x = margin
-		for (let i = 0; i < headers.length; i++) {
-			doc.rect(x, y, colWidths[i], headerHeight)
-			doc.text(headers[i], x + colWidths[i] / 2, y + headerHeight / 2 + 1.5, { align: 'center' })
-			x += colWidths[i]
+		const spanH = 6
+		const subH = headerHeight - spanH
+
+		// Spanning header for year columns + total
+		const dataColsStart = margin + fixedTotal
+		const dataColsWidth = sortedYears.length * yearColWidth + totalColWidth
+		if (sortedYears.length > 0) {
+			doc.rect(dataColsStart, y, dataColsWidth, spanH)
+			doc.text('No. Of Students Register', dataColsStart + dataColsWidth / 2, y + spanH - 1.5, { align: 'center' })
 		}
+
+		// Fixed column headers
+		const fixedHeaders = ['S.No', 'Sem', 'Course\nCode', 'Course Name']
+		let hx = margin
+		for (let i = 0; i < fixedColWidths.length; i++) {
+			doc.rect(hx, y, fixedColWidths[i], headerHeight)
+			const lines = fixedHeaders[i].split('\n')
+			const lineH = headerHeight / (lines.length + 1)
+			lines.forEach((line, li) => {
+				doc.text(line, hx + fixedColWidths[i] / 2, y + lineH * (li + 1), { align: 'center' })
+			})
+			hx += fixedColWidths[i]
+		}
+
+		// Year sub-headers
+		let sx = dataColsStart
+		doc.setFontSize(8)
+		for (const yr of sortedYears) {
+			doc.rect(sx, y + spanH, yearColWidth, subH)
+			doc.text(yr, sx + yearColWidth / 2, y + headerHeight - 1, { align: 'center' })
+			sx += yearColWidth
+		}
+
+		// Total sub-header
+		doc.rect(sx, y + spanH, totalColWidth, subH)
+		doc.text('Total', sx + totalColWidth / 2, y + headerHeight - 1, { align: 'center' })
+
 		return y + headerHeight
 	}
 
@@ -1153,48 +1224,42 @@ function generateCourseCountProgramYearSectionPdf(opts: ReportPdfOptions): strin
 		doc.text('Signature of Principal', col3X, sigY, { align: 'left' })
 	}
 
-	// Render each section on its own page
+	// Render each program on its own page
 	sections.forEach((section, sectionIdx) => {
 		if (sectionIdx > 0) {
 			doc.addPage()
 		}
 
-		// Draw main header
-		let currentY = drawHeader(doc, pageWidth, margin, opts, 'COURSE WISE REGISTRATION COUNT')
+		let currentY = drawHeader(doc, pageWidth, margin, opts, 'PROGRAM WISE REGISTRATION LIST')
 
-		// Draw Program & Year subtitle
-		currentY = drawProgramYearSubtitle(
-			doc, pageWidth, margin, currentY,
-			section.program_code,
-			section.program_name,
-			section.year
-		)
+		// Program subtitle (no year)
+		doc.setFont('times', 'bold')
+		doc.setFontSize(10)
+		doc.text(`Program : ${section.program_code}${section.program_name ? ` - ${section.program_name}` : ''}`, margin, currentY + 3)
+		currentY += 5
 
-		// Draw table header
-		let tableY = drawTableHeader(currentY)
+		let tableY = drawSectionHeader(currentY)
 
-		// Sort courses by semester, then course_code
 		const courses = Array.from(section.courses.values())
 			.sort((a, b) => (a.semester - b.semester) || (a.course_order - b.course_order) || a.course_code.localeCompare(b.course_code))
 
-		// Pre-compute row heights
 		doc.setFont('times', 'normal')
 		doc.setFontSize(9)
-		const rowHeights = courses.map(c => calcWrappedRowHeight(doc, c.course_name, colWidths[3] - 2, rowHeight))
+		const rowHeights = courses.map(c => calcWrappedRowHeight(doc, c.course_name, fixedColWidths[3] - 2, rowHeight))
 
-		// Draw data rows
 		for (let idx = 0; idx < courses.length; idx++) {
 			const course = courses[idx]
 			const rh = rowHeights[idx]
 
-			// Page break check (leave room for signature footer)
 			if (tableY + rh > pageHeight - margin - signatureSpaceHeight - 5) {
-				// Draw signature footer on current page before break
 				drawSignatureFooter(tableY)
 				doc.addPage()
-				let newY = drawHeader(doc, pageWidth, margin, opts, 'COURSE WISE REGISTRATION COUNT')
-				newY = drawProgramYearSubtitle(doc, pageWidth, margin, newY, section.program_code, section.program_name, section.year)
-				tableY = drawTableHeader(newY)
+				let newY = drawHeader(doc, pageWidth, margin, opts, 'PROGRAM WISE REGISTRATION LIST')
+				doc.setFont('times', 'bold')
+				doc.setFontSize(10)
+				doc.text(`Program : ${section.program_code}${section.program_name ? ` - ${section.program_name}` : ''}`, margin, newY + 3)
+				newY += 5
+				tableY = drawSectionHeader(newY)
 			}
 
 			doc.setFont('times', 'normal')
@@ -1205,35 +1270,44 @@ function generateCourseCountProgramYearSectionPdf(opts: ReportPdfOptions): strin
 			let x = margin
 
 			// S.No
-			doc.rect(x, tableY, colWidths[0], rh)
-			doc.text(String(idx + 1), x + colWidths[0] / 2, tableY + rh / 2 + 1.5, { align: 'center' })
-			x += colWidths[0]
+			doc.rect(x, tableY, fixedColWidths[0], rh)
+			doc.text(String(idx + 1), x + fixedColWidths[0] / 2, tableY + rh / 2 + 1.5, { align: 'center' })
+			x += fixedColWidths[0]
 
 			// Semester
-			doc.rect(x, tableY, colWidths[1], rh)
-			doc.text(String(course.semester), x + colWidths[1] / 2, tableY + rh / 2 + 1.5, { align: 'center' })
-			x += colWidths[1]
+			doc.rect(x, tableY, fixedColWidths[1], rh)
+			doc.text(toRoman(course.semester), x + fixedColWidths[1] / 2, tableY + rh / 2 + 1.5, { align: 'center' })
+			x += fixedColWidths[1]
 
 			// Course Code
-			doc.rect(x, tableY, colWidths[2], rh)
-			doc.text(course.course_code, x + colWidths[2] / 2, tableY + rh / 2 + 1.5, { align: 'center' })
-			x += colWidths[2]
+			doc.rect(x, tableY, fixedColWidths[2], rh)
+			doc.text(course.course_code, x + fixedColWidths[2] / 2, tableY + rh / 2 + 1.5, { align: 'center' })
+			x += fixedColWidths[2]
 
 			// Course Name (wrapped)
-			doc.rect(x, tableY, colWidths[3], rh)
-			drawWrappedCell(doc, course.course_name, x, tableY, colWidths[3], rh)
-			x += colWidths[3]
+			doc.rect(x, tableY, fixedColWidths[3], rh)
+			drawWrappedCell(doc, course.course_name, x, tableY, fixedColWidths[3], rh)
+			x += fixedColWidths[3]
 
-			// No. of Students
+			// Year columns
+			let rowTotal = 0
+			for (const yr of sortedYears) {
+				doc.rect(x, tableY, yearColWidth, rh)
+				const count = course.years[yr] || 0
+				rowTotal += count
+				doc.text(String(count), x + yearColWidth / 2, tableY + rh / 2 + 1.5, { align: 'center' })
+				x += yearColWidth
+			}
+
+			// Total
 			doc.setFont('times', 'bold')
-			doc.rect(x, tableY, colWidths[4], rh)
-			doc.text(String(course.count), x + colWidths[4] / 2, tableY + rh / 2 + 1.5, { align: 'center' })
+			doc.rect(x, tableY, totalColWidth, rh)
+			doc.text(String(rowTotal), x + totalColWidth / 2, tableY + rh / 2 + 1.5, { align: 'center' })
 			doc.setFont('times', 'normal')
 
 			tableY += rh
 		}
 
-		// Draw signature footer at bottom of this section's page
 		drawSignatureFooter(tableY)
 	})
 
@@ -1333,11 +1407,11 @@ function generateExamDateWisePdf(opts: ReportPdfOptions, includePresent: boolean
 		return sessOrder(sessA) - sessOrder(sessB)
 	})
 
-	// Sort courses within each group by board_order → semester → course_order
+	// Sort courses within each group by semester → board_order → course_order
 	for (const courses of groupMap.values()) {
 		courses.sort((a, b) =>
-			(a.board_order - b.board_order) ||
 			(a.semester - b.semester) ||
+			(a.board_order - b.board_order) ||
 			(a.course_order - b.course_order) ||
 			a.course_code.localeCompare(b.course_code)
 		)
@@ -1360,8 +1434,8 @@ function generateExamDateWisePdf(opts: ReportPdfOptions, includePresent: boolean
 	const courseNameColIdx = 4
 
 	const reportTitle = includePresent
-		? 'EXAM DATE WISE ATTENDANCE REPORT'
-		: 'EXAM DATE WISE REGISTRATION REPORT'
+		? 'EXAM DATE WISE ATTENDANCE / ANSWER SHEET COUNT'
+		: 'EXAM DATE WISE REGISTRATION / QP COUNT'
 
 	function formatExamDate(dateStr: string): string {
 		try {
@@ -1457,8 +1531,7 @@ function generateExamDateWisePdf(opts: ReportPdfOptions, includePresent: boolean
 
 			// Semester (Roman numeral)
 			doc.rect(x, tableY, colWidths[1], rh)
-			const semRoman = ['', 'I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X']
-			doc.text(semRoman[course.semester] || String(course.semester), x + colWidths[1] / 2, tableY + rh / 2 + 1.5, { align: 'center' })
+			doc.text(toRoman(course.semester), x + colWidths[1] / 2, tableY + rh / 2 + 1.5, { align: 'center' })
 			x += colWidths[1]
 
 			// Board

@@ -46,8 +46,17 @@ export interface ValidationSummary {
 	warnings_count: number
 }
 
+export interface RuleStatus {
+	rule: number
+	name: string
+	type: 'error' | 'warning'
+	count: number
+	status: 'passed' | 'failed'
+}
+
 export interface ValidationResult {
 	summary: ValidationSummary
+	rules: RuleStatus[]
 	errors: {
 		student_conflicts: StudentConflict[]
 		qp_code_mismatches: QPCodeMismatch[]

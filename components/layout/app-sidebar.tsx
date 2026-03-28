@@ -296,7 +296,7 @@ const data = {
 			coe_roles: ["super_admin", "coe"],
 			items: [
 				{ title: "Comprehensive Reports", url: "/reports/comprehensive", icon: BarChart3 },
-				{ title: "Exam Registration Reports", url: "/reports/exam-registration-reports", icon: ClipboardCheck },
+				{ title: "Exam Reports Summary", url: "/reports/exam-registration-reports", icon: ClipboardCheck },
 				{ title: "Attendance Report", url: "/exam-management/reports/attendance", icon: PieChart },
 				{ title: "Course Count Report", url: "/exam-management/reports/course-count", icon: Calculator },
 				{ title: "Marksheet Distribution", url: "/reports/marksheet-distribution", icon: FileText },

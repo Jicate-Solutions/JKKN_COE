@@ -6,17 +6,21 @@ export async function GET(request: Request) {
 		const supabase = getSupabaseServer()
 		const { searchParams } = new URL(request.url)
 		const institution_code = searchParams.get('institution_code')
+		const institutions_id = searchParams.get('institutions_id')
 
 		let query = supabase
 			.from('board')
 			.select('*')
 			.order('board_name', { ascending: true })
 
+		// Institution filtering - supports both institution_code and institutions_id
 		if (institution_code) {
 			query = query.eq('institution_code', institution_code)
+		} else if (institutions_id) {
+			query = query.eq('institutions_id', institutions_id)
 		}
 
-		const { data, error } = await query
+		const { data, error } = await query.range(0, 9999)
 
 		if (error) {
 			console.error('Board table error:', error)
@@ -147,40 +151,11 @@ export async function PUT(request: Request) {
 		const body = await request.json()
 		const supabase = getSupabaseServer()
 
-		// Auto-map institution_code to institutions_id (same logic as POST)
-		let institution_code: string | undefined = body.institution_code
-		let institutions_id: string | undefined = body.institutions_id
-
-		// If institution_code is provided, fetch institutions_id
-		if (institution_code) {
-			const { data: institutionData, error: institutionError } = await supabase
-				.from('institutions')
-				.select('id, institution_code')
-				.eq('institution_code', institution_code)
-				.maybeSingle()
-
-			if (institutionError || !institutionData) {
-				return NextResponse.json({
-					error: `Invalid institution_code: ${institution_code}. Institution not found.`
-				}, { status: 400 })
-			}
-
-			// Auto-map the institutions_id from the fetched institution
-			institutions_id = institutionData.id
-			console.log(`✅ Auto-mapped institution_code "${institution_code}" to institutions_id "${institutions_id}" (UPDATE)`)
-		}
-		// If institutions_id is provided but no institution_code, fetch the code
-		else if (institutions_id && !institution_code) {
-			const { data: institutionData } = await supabase
-				.from('institutions')
-				.select('institution_code')
-				.eq('id', institutions_id)
-				.maybeSingle()
-			if (institutionData?.institution_code) {
-				institution_code = institutionData.institution_code
-			}
+		if (!body.id) {
+			return NextResponse.json({ error: 'Board ID is required' }, { status: 400 })
 		}
 
+		// Don't allow changing institution after creation
 		const updatePayload: any = {
 			board_code: body.board_code,
 			board_name: body.board_name,
@@ -189,9 +164,6 @@ export async function PUT(request: Request) {
 			board_order: body.board_order || null,
 			status: body.is_active,
 		}
-
-		if (institution_code) updatePayload.institution_code = institution_code
-		if (institutions_id) updatePayload.institutions_id = institutions_id
 
 		const { data, error } = await supabase
 			.from('board')

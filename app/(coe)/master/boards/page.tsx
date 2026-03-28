@@ -20,6 +20,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSepara
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { useToast } from "@/hooks/common/use-toast"
 import { useInstitutionFilter } from "@/hooks/use-institution-filter"
+import { useInstitutionField } from "@/hooks/use-institution-field"
 import Link from "next/link"
 import { Search, ChevronLeft, ChevronRight, ArrowUpDown, ArrowUp, ArrowDown, Clipboard, TrendingUp, FileSpreadsheet, RefreshCw, CheckCircle, XCircle, AlertTriangle, PlusCircle, MoreHorizontal, ChevronDown, Download, Upload } from "lucide-react"
 
@@ -49,6 +50,7 @@ export default function BoardPage() {
 		getInstitutionIdForCreate,
 		mustSelectInstitution
 	} = useInstitutionFilter()
+	const { defaultInstitutionCode, availableInstitutions } = useInstitutionField()
 
 	const [boards, setBoards] = useState<Board[]>([])
 	const [loading, setLoading] = useState(true)
@@ -89,9 +91,6 @@ export default function BoardPage() {
 	})
 	const [errors, setErrors] = useState<Record<string, string>>({})
 
-	// Institution Dropdown Data
-	const [institutions, setInstitutions] = useState<Array<{ id: string; institution_code: string; institution_name?: string }>>([])
-
 	// Fetch boards with institution filter
 	const fetchBoards = async () => {
 		try {
@@ -111,32 +110,10 @@ export default function BoardPage() {
 		}
 	}
 
-	// Fetch institutions dropdown data
-	const fetchInstitutions = async () => {
-		try {
-			const url = appendToUrl('/api/master/institutions')
-			const res = await fetch(url)
-			if (res.ok) {
-				const data = await res.json()
-				const mapped = Array.isArray(data)
-					? data.filter((i: any) => i?.institution_code).map((i: any) => ({
-						id: i.id,
-						institution_code: i.institution_code,
-						institution_name: i.institution_name || i.name
-					}))
-					: []
-				setInstitutions(mapped)
-			}
-		} catch (e) {
-			console.error('Failed to load institutions:', e)
-		}
-	}
-
 	// Load data when institution filter is ready
 	useEffect(() => {
 		if (!isReady) return
 		fetchBoards()
-		fetchInstitutions()
 	}, [isReady, filter])
 
 	// Validation
@@ -176,7 +153,7 @@ export default function BoardPage() {
 		try {
 			setLoading(true)
 
-			const selectedInstitution = institutions.find(item => item.institution_code === formData.institution_code)
+			const selectedInstitution = availableInstitutions.find(item => item.institution_code === formData.institution_code)
 
 			if (!selectedInstitution) {
 				toast({
@@ -395,7 +372,7 @@ export default function BoardPage() {
 
 		const validations: any[] = []
 
-		const instCodes = institutions.map(i => i.institution_code)
+		const instCodes = availableInstitutions.map(i => i.institution_code)
 		if (instCodes.length > 0 && instCodes.join(',').length < 255) {
 			validations.push({
 				type: 'list',
@@ -436,7 +413,7 @@ export default function BoardPage() {
 		const referenceData: any[] = []
 
 		referenceData.push({ 'Type': '=== INSTITUTION CODES ===', 'Code': '', 'Name/Description': '' })
-		institutions.forEach(inst => {
+		availableInstitutions.forEach(inst => {
 			referenceData.push({
 				'Type': 'Institution',
 				'Code': inst.institution_code,
@@ -535,10 +512,13 @@ export default function BoardPage() {
 					errors: string[]
 				}> = []
 
+				// Auto-fill institution from context for normal users
+				const autoInstCode = getInstitutionCodeForCreate()
+
 				const mapped = rows.map((r, index) => {
 					const itemData = {
 						id: String(Date.now() + Math.random()),
-						institution_code: (r as any).institution_code || '',
+						institution_code: (r as any).institution_code || autoInstCode || '',
 						board_code: r.board_code!,
 						board_name: r.board_name!,
 						display_name: r.display_name || null,
@@ -678,9 +658,8 @@ export default function BoardPage() {
 	}
 
 	const resetForm = () => {
-		const autoInstitutionCode = getInstitutionCodeForCreate() || ""
 		setFormData({
-			institution_code: autoInstitutionCode,
+			institution_code: defaultInstitutionCode || "",
 			board_code: "",
 			board_name: "",
 			display_name: "",
@@ -1116,7 +1095,7 @@ export default function BoardPage() {
 												<SelectValue placeholder="Select institution" />
 											</SelectTrigger>
 											<SelectContent>
-												{institutions.map((inst) => (
+												{availableInstitutions.map((inst) => (
 													<SelectItem key={inst.id} value={inst.institution_code}>
 														{inst.institution_code} - {inst.institution_name}
 													</SelectItem>

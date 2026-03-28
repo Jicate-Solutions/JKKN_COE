@@ -269,9 +269,12 @@ export async function writeFile(wb: WorkbookCompat, filename: string): Promise<v
     // Add header row
     worksheet.addRow(headers)
 
+    // Default font for all cells
+    const defaultFont: Partial<ExcelJS.Font> = { name: 'Times New Roman', size: 12 }
+
     // Style header row
     const headerRow = worksheet.getRow(1)
-    headerRow.font = { bold: true }
+    headerRow.font = { ...defaultFont, bold: true }
     headerRow.fill = {
       type: 'pattern',
       pattern: 'solid',
@@ -289,13 +292,14 @@ export async function writeFile(wb: WorkbookCompat, filename: string): Promise<v
       worksheet.addRow(rowData)
     }
 
-    // Apply borders to all cells (header + data)
+    // Apply font and borders to all cells (header + data)
     const thinBorder: Partial<ExcelJS.Border> = { style: 'thin', color: { argb: 'FF000000' } }
     const totalRows = range.e.r - range.s.r + 1
     const totalCols = range.e.c - range.s.c + 1
     for (let r = 1; r <= totalRows; r++) {
       for (let c = 1; c <= totalCols; c++) {
         const cell = worksheet.getCell(r, c)
+        cell.font = r === 1 ? { ...defaultFont, bold: true } : { ...defaultFont }
         cell.border = {
           top: thinBorder,
           left: thinBorder,

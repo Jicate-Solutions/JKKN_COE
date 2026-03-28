@@ -221,6 +221,8 @@ export async function GET(request: NextRequest) {
 		// Fetch exam timetables by course_code (via courses join) for this exam session
 		// exam_timetables has course_id -> courses.id, so we join to get course_code
 		let timetablesByCourseCode = new Map<string, any>()
+		// Also collect all timetable IDs → timetable data for batch override lookups
+		const timetableByIdMap = new Map<string, { exam_date: string; session: string; exam_time: string }>()
 		if (courseCodes.size > 0) {
 			const { data: timetables, error: ttError } = await supabase
 				.from('exam_timetables')
@@ -235,6 +237,7 @@ export async function GET(request: NextRequest) {
 					courses(id, course_code)
 				`)
 				.eq('examination_session_id', examination_session_id)
+				.range(0, 9999)
 
 			if (ttError) {
 				console.error('Error fetching exam timetables:', ttError)
@@ -246,6 +249,12 @@ export async function GET(request: NextRequest) {
 					if (courseCode && courseCodes.has(courseCode)) {
 						timetablesByCourseCode.set(courseCode, tt)
 					}
+					// Store every timetable by ID for batch override resolution
+					timetableByIdMap.set(tt.id, {
+						exam_date: tt.exam_date || 'To Be Announced',
+						session: tt.session || '',
+						exam_time: tt.exam_time || ''
+					})
 				}
 			}
 		}
@@ -254,38 +263,39 @@ export async function GET(request: NextRequest) {
 		// Fetch practical_batch_students to override dates for practical/project exams
 		// When students are assigned to batches, they may have different dates/sessions
 		// than the default timetable row for that course.
-		// Query by institution + session (via timetable join) instead of .in() with
-		// hundreds of registration IDs to avoid URL length limits.
+		// Strategy: use timetable IDs we already fetched (small set, ~100 IDs)
+		// to query practical_batch_students. Then resolve each student's
+		// batch timetable from the timetableByIdMap we built above.
 		// ====================================================================
 		const practicalBatchMap = new Map<string, { exam_date: string; session: string; exam_time: string }>()
 
-		{
-			const { data: batchStudents, error: batchError } = await supabase
-				.from('practical_batch_students')
-				.select(`
-					exam_registration_id,
-					exam_timetable_id,
-					exam_timetables!inner(id, exam_date, session, exam_time, examination_session_id)
-				`)
-				.eq('institutions_id', institution.id)
-				.eq('exam_timetables.examination_session_id', examination_session_id)
-				.range(0, 9999)
+		if (timetableByIdMap.size > 0) {
+			const allTimetableIds = Array.from(timetableByIdMap.keys())
 
-			if (batchError) {
-				console.warn('[HallTickets] Error fetching practical_batch_students:', batchError.message)
-			} else if (batchStudents) {
-				for (const bs of batchStudents) {
-					const tt = (bs as any).exam_timetables
-					if (tt && bs.exam_registration_id) {
-						practicalBatchMap.set(bs.exam_registration_id, {
-							exam_date: tt.exam_date || 'To Be Announced',
-							session: tt.session || '',
-							exam_time: tt.exam_time || ''
-						})
+			// Fetch in chunks of 200 timetable IDs (much fewer than registration IDs)
+			const TT_CHUNK = 200
+			for (let i = 0; i < allTimetableIds.length; i += TT_CHUNK) {
+				const ttChunk = allTimetableIds.slice(i, i + TT_CHUNK)
+				const { data: batchStudents, error: batchError } = await supabase
+					.from('practical_batch_students')
+					.select('exam_registration_id, exam_timetable_id')
+					.in('exam_timetable_id', ttChunk)
+					.range(0, 9999)
+
+				if (batchError) {
+					console.warn('[HallTickets] Error fetching practical_batch_students chunk:', batchError.message)
+				} else if (batchStudents) {
+					for (const bs of batchStudents) {
+						if (bs.exam_registration_id && bs.exam_timetable_id) {
+							const tt = timetableByIdMap.get(bs.exam_timetable_id)
+							if (tt) {
+								practicalBatchMap.set(bs.exam_registration_id, tt)
+							}
+						}
 					}
 				}
 			}
-			console.log(`[HallTickets] Found ${practicalBatchMap.size} practical batch overrides for institution ${institution.id}`)
+			console.log(`[HallTickets] Found ${practicalBatchMap.size} practical batch overrides`)
 		}
 
 		// Parse semester numbers if provided (expecting numbers like 1, 2, 3)
