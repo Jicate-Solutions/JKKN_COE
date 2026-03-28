@@ -25,10 +25,10 @@ export async function POST(request: Request) {
 
 		// ─── Step 1: Fetch all data needed for validation ───
 
-		// 1a. Fetch exam registrations for this session
+		// 1a. Fetch exam registrations for this session (course_code is directly on the table)
 		const { data: registrations, error: regError } = await supabase
 			.from('exam_registrations')
-			.select('id, student_id, stu_register_no, student_name, course_offering_id, exam_type, fee_paid')
+			.select('id, student_id, stu_register_no, student_name, course_offering_id, course_code, fee_paid')
 			.eq('examination_session_id', examination_session_id)
 			.range(0, 49999)
 
@@ -37,7 +37,7 @@ export async function POST(request: Request) {
 			return NextResponse.json({ error: 'Failed to fetch registrations' }, { status: 500 })
 		}
 
-		// 1b. Fetch all timetable entries for this session + institution
+		// 1b. Fetch all timetable entries for this session + institution (course_id links directly to courses)
 		const { data: timetables, error: ttError } = await supabase
 			.from('exam_timetables')
 			.select('id, course_offering_id, course_id, exam_date, session, exam_time, duration_minutes, exam_type, is_published')
@@ -50,48 +50,55 @@ export async function POST(request: Request) {
 			return NextResponse.json({ error: 'Failed to fetch timetables' }, { status: 500 })
 		}
 
-		// 1c. Fetch course_offerings to get course_code mapping
-		const offeringIds = [
-			...new Set([
-				...(registrations || []).map(r => r.course_offering_id),
-				...(timetables || []).map(t => t.course_offering_id),
-			].filter(Boolean))
-		]
+		// 1c. Build courses map using direct columns (skip fragile course_offerings hop)
+		// Collect course_codes from registrations + course_ids from timetables
+		const regCourseCodes = [...new Set((registrations || []).map(r => r.course_code).filter(Boolean))]
+		const ttCourseIds = [...new Set((timetables || []).map(t => t.course_id).filter(Boolean))]
 
-		const offeringsMap = new Map<string, { course_code: string }>()
-		if (offeringIds.length > 0) {
+		const coursesMap = new Map<string, { course_code: string; course_title: string; qp_code: string }>()
+		// By course_code (from registrations)
+		if (regCourseCodes.length > 0) {
 			const batchSize = 500
-			for (let i = 0; i < offeringIds.length; i += batchSize) {
-				const batch = offeringIds.slice(i, i + batchSize)
-				const { data: offerings } = await supabase
-					.from('course_offerings')
-					.select('id, course_code')
-					.in('id', batch)
-				;(offerings || []).forEach((o: any) => {
-					offeringsMap.set(o.id, { course_code: o.course_code })
+			for (let i = 0; i < regCourseCodes.length; i += batchSize) {
+				const batch = regCourseCodes.slice(i, i + batchSize)
+				const { data: courses } = await supabase
+					.from('courses')
+					.select('id, course_code, course_name, qp_code')
+					.in('course_code', batch)
+				;(courses || []).forEach((c: any) => {
+					coursesMap.set(c.course_code, {
+						course_code: c.course_code,
+						course_title: c.course_name || '',
+						qp_code: c.qp_code || '',
+					})
 				})
 			}
 		}
 
-		// 1d. Fetch courses table for qp_code and course_title
-		const courseCodes = [...new Set(
-			Array.from(offeringsMap.values()).map(o => o.course_code).filter(Boolean)
-		)]
-
-		const coursesMap = new Map<string, { course_title: string; qp_code: string }>()
-		if (courseCodes.length > 0) {
+		// By course_id (from timetables) — maps course UUID → course info
+		const coursesByIdMap = new Map<string, { course_code: string; course_title: string; qp_code: string }>()
+		if (ttCourseIds.length > 0) {
 			const batchSize = 500
-			for (let i = 0; i < courseCodes.length; i += batchSize) {
-				const batch = courseCodes.slice(i, i + batchSize)
+			for (let i = 0; i < ttCourseIds.length; i += batchSize) {
+				const batch = ttCourseIds.slice(i, i + batchSize)
 				const { data: courses } = await supabase
 					.from('courses')
-					.select('course_code, course_name, qp_code')
-					.in('course_code', batch)
+					.select('id, course_code, course_name, qp_code')
+					.in('id', batch)
 				;(courses || []).forEach((c: any) => {
-					coursesMap.set(c.course_code, {
+					coursesByIdMap.set(c.id, {
+						course_code: c.course_code || '',
 						course_title: c.course_name || '',
 						qp_code: c.qp_code || '',
 					})
+					// Also add to coursesMap by code for cross-referencing
+					if (c.course_code && !coursesMap.has(c.course_code)) {
+						coursesMap.set(c.course_code, {
+							course_code: c.course_code,
+							course_title: c.course_name || '',
+							qp_code: c.qp_code || '',
+						})
+					}
 				})
 			}
 		}
@@ -106,10 +113,14 @@ export async function POST(request: Request) {
 			timetableByOffering.get(key)!.push(tt)
 		}
 
+		// Helper: get course info for a timetable entry (via course_id directly)
+		const getCourseForTT = (tt: typeof timetables[0]) => coursesByIdMap.get(tt.course_id)
+		// Helper: get course info for a registration (via course_code directly)
+		const getCourseForReg = (reg: typeof registrations[0]) => reg.course_code ? coursesMap.get(reg.course_code) : null
+
 		// ─── Rule 1: Student Exam Conflicts ───
 		// Same register_no + exam_date + session = conflict
 
-		// Build: for each registration, find the timetable date+session
 		const studentExams: {
 			stu_register_no: string
 			student_name: string
@@ -121,14 +132,10 @@ export async function POST(request: Request) {
 		}[] = []
 
 		for (const reg of (registrations || [])) {
-			const offering = offeringsMap.get(reg.course_offering_id)
-			if (!offering) continue
-			const course = coursesMap.get(offering.course_code)
+			const course = getCourseForReg(reg)
 			const ttEntries = timetableByOffering.get(reg.course_offering_id)
 
 			if (ttEntries && ttEntries.length > 0) {
-				// For theory: usually 1 entry. For practical: multiple slots.
-				// Use first entry with a valid date for conflict check
 				const mainTT = ttEntries.find(t => t.exam_date) || ttEntries[0]
 				if (mainTT?.exam_date && mainTT?.session) {
 					studentExams.push({
@@ -136,7 +143,7 @@ export async function POST(request: Request) {
 						student_name: reg.student_name || '',
 						exam_date: mainTT.exam_date,
 						session: mainTT.session,
-						course_code: offering.course_code,
+						course_code: reg.course_code || '',
 						course_title: course?.course_title || '',
 						qp_code: course?.qp_code || '',
 					})
@@ -154,19 +161,18 @@ export async function POST(request: Request) {
 
 		const studentConflicts: StudentConflict[] = []
 		for (const [, exams] of studentConflictMap) {
-			// Deduplicate by course_code (same student + same course = not a conflict)
-			const uniqueCourses = new Map<string, typeof exams[0]>()
+			const uniqueCourseMap = new Map<string, typeof exams[0]>()
 			for (const e of exams) {
-				if (!uniqueCourses.has(e.course_code)) uniqueCourses.set(e.course_code, e)
+				if (!uniqueCourseMap.has(e.course_code)) uniqueCourseMap.set(e.course_code, e)
 			}
-			if (uniqueCourses.size > 1) {
+			if (uniqueCourseMap.size > 1) {
 				const first = exams[0]
 				studentConflicts.push({
 					stu_register_no: first.stu_register_no,
 					student_name: first.student_name,
 					exam_date: first.exam_date,
 					session: first.session,
-					courses: Array.from(uniqueCourses.values()).map(e => ({
+					courses: Array.from(uniqueCourseMap.values()).map(e => ({
 						course_code: e.course_code,
 						course_title: e.course_title,
 						qp_code: e.qp_code,
@@ -183,12 +189,11 @@ export async function POST(request: Request) {
 			const hasSchedule = ttEntries && ttEntries.some(t => t.exam_date)
 
 			if (!hasSchedule) {
-				const offering = offeringsMap.get(reg.course_offering_id)
-				const course = offering ? coursesMap.get(offering.course_code) : null
+				const course = getCourseForReg(reg)
 				unscheduledCourses.push({
 					stu_register_no: reg.stu_register_no || '',
 					student_name: reg.student_name || '',
-					course_code: offering?.course_code || '',
+					course_code: reg.course_code || '',
 					course_title: course?.course_title || '',
 					qp_code: course?.qp_code || '',
 					course_offering_id: reg.course_offering_id,
@@ -196,30 +201,18 @@ export async function POST(request: Request) {
 			}
 		}
 
-		// Deduplicate unscheduled: group by course_code (show once per course, not per student)
-		const unscheduledByCode = new Map<string, UnscheduledCourse[]>()
-		for (const u of unscheduledCourses) {
-			if (!unscheduledByCode.has(u.course_code)) unscheduledByCode.set(u.course_code, [])
-			unscheduledByCode.get(u.course_code)!.push(u)
-		}
-
-		// Keep all individual entries but limit per course to avoid massive lists
-		const unscheduledFinal = unscheduledCourses
-
 		// ─── Rule 3: QP Code mismatch ───
 		// Same qp_code must have same exam_date + session across all courses
 
 		const qpScheduleMap = new Map<string, { course_code: string; course_title: string; exam_date: string; session: string }[]>()
 		for (const tt of (timetables || [])) {
-			if (!tt.exam_date || !tt.course_offering_id) continue
-			const offering = offeringsMap.get(tt.course_offering_id)
-			if (!offering) continue
-			const course = coursesMap.get(offering.course_code)
+			if (!tt.exam_date) continue
+			const course = getCourseForTT(tt)
 			if (!course?.qp_code) continue
 
 			if (!qpScheduleMap.has(course.qp_code)) qpScheduleMap.set(course.qp_code, [])
 			qpScheduleMap.get(course.qp_code)!.push({
-				course_code: offering.course_code,
+				course_code: course.course_code,
 				course_title: course.course_title,
 				exam_date: tt.exam_date,
 				session: tt.session,
@@ -228,14 +221,11 @@ export async function POST(request: Request) {
 
 		const qpCodeMismatches: QPCodeMismatch[] = []
 		for (const [qpCode, entries] of qpScheduleMap) {
-			// Deduplicate entries by course_code
 			const uniqueByCode = new Map<string, typeof entries[0]>()
 			for (const e of entries) {
 				if (!uniqueByCode.has(e.course_code)) uniqueByCode.set(e.course_code, e)
 			}
 			const uniqueEntries = Array.from(uniqueByCode.values())
-
-			// Check if all entries have the same date+session
 			const dateSessionPairs = new Set(uniqueEntries.map(e => `${e.exam_date}|${e.session}`))
 			if (dateSessionPairs.size > 1) {
 				qpCodeMismatches.push({
@@ -256,10 +246,9 @@ export async function POST(request: Request) {
 			if (!tt.duration_minutes) missing.push('duration_minutes')
 
 			if (missing.length > 0) {
-				const offering = offeringsMap.get(tt.course_offering_id)
-				const course = offering ? coursesMap.get(offering.course_code) : null
+				const course = getCourseForTT(tt)
 				incompleteTimetables.push({
-					course_code: offering?.course_code || '',
+					course_code: course?.course_code || '',
 					course_title: course?.course_title || '',
 					course_offering_id: tt.course_offering_id,
 					missing_fields: missing,
@@ -270,24 +259,34 @@ export async function POST(request: Request) {
 		// ─── Build summary ───
 
 		const uniqueStudents = new Set((registrations || []).map(r => r.stu_register_no).filter(Boolean))
-		const uniqueCourses = new Set(
-			Array.from(offeringsMap.values()).map(o => o.course_code).filter(Boolean)
-		)
+		const allCourseCodes = new Set([
+			...(registrations || []).map(r => r.course_code).filter(Boolean),
+			...Array.from(coursesByIdMap.values()).map(c => c.course_code).filter(Boolean),
+		])
+
+		// Rule statuses
+		const rules = [
+			{ rule: 1, name: 'Student Exam Conflicts', type: 'error' as const, count: studentConflicts.length, status: studentConflicts.length === 0 ? 'passed' as const : 'failed' as const },
+			{ rule: 2, name: 'Unscheduled Courses', type: 'warning' as const, count: unscheduledCourses.length, status: unscheduledCourses.length === 0 ? 'passed' as const : 'failed' as const },
+			{ rule: 3, name: 'QP Code Mismatches', type: 'error' as const, count: qpCodeMismatches.length, status: qpCodeMismatches.length === 0 ? 'passed' as const : 'failed' as const },
+			{ rule: 5, name: 'Incomplete Timetable Entries', type: 'warning' as const, count: incompleteTimetables.length, status: incompleteTimetables.length === 0 ? 'passed' as const : 'failed' as const },
+		]
 
 		const result: ValidationResult = {
 			summary: {
 				total_students: uniqueStudents.size,
-				total_courses: uniqueCourses.size,
+				total_courses: allCourseCodes.size,
 				total_timetable_entries: (timetables || []).length,
 				errors_count: studentConflicts.length + qpCodeMismatches.length,
-				warnings_count: unscheduledFinal.length + incompleteTimetables.length,
+				warnings_count: unscheduledCourses.length + incompleteTimetables.length,
 			},
+			rules,
 			errors: {
 				student_conflicts: studentConflicts,
 				qp_code_mismatches: qpCodeMismatches,
 			},
 			warnings: {
-				unscheduled_courses: unscheduledFinal,
+				unscheduled_courses: unscheduledCourses,
 				incomplete_timetables: incompleteTimetables,
 			},
 		}

@@ -24,7 +24,7 @@ import Link from 'next/link'
 interface Institution {
 	id: string
 	institution_code: string
-	institution_name: string
+	name: string
 }
 
 interface ExaminationSession {
@@ -88,10 +88,16 @@ export default function ValidateTimetablePage() {
 		const fetchSessions = async () => {
 			try {
 				const res = await fetch(`/api/exam-management/examination-sessions?institutions_id=${selectedInstitutionId}`)
+				if (!res.ok) {
+					console.error('Error fetching sessions:', res.status, res.statusText)
+					setSessions([])
+					return
+				}
 				const data = await res.json()
-				setSessions(data || [])
+				setSessions(Array.isArray(data) ? data : [])
 			} catch (err) {
 				console.error('Error fetching sessions:', err)
+				setSessions([])
 			}
 		}
 		fetchSessions()
@@ -250,7 +256,7 @@ export default function ValidateTimetablePage() {
 											<SelectContent>
 												{institutions.map(inst => (
 													<SelectItem key={inst.id} value={inst.id} className="text-xs">
-														{inst.institution_code} - {inst.institution_name}
+														{inst.institution_code} - {inst.name}
 													</SelectItem>
 												))}
 											</SelectContent>
@@ -335,6 +341,46 @@ export default function ValidateTimetablePage() {
 									</CardContent>
 								</Card>
 							</div>
+
+							{/* Rules Status */}
+							{result.rules && result.rules.length > 0 && (
+								<Card>
+									<CardContent className="p-4">
+										<h3 className="text-sm font-semibold mb-3">Validation Rules Status</h3>
+										<div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
+											{result.rules.map(rule => (
+												<div
+													key={rule.rule}
+													className={`flex items-center gap-3 rounded-lg border p-3 ${
+														rule.status === 'passed'
+															? 'border-green-200 bg-green-50 dark:bg-green-950/20'
+															: rule.type === 'error'
+																? 'border-red-200 bg-red-50 dark:bg-red-950/20'
+																: 'border-amber-200 bg-amber-50 dark:bg-amber-950/20'
+													}`}
+												>
+													{rule.status === 'passed' ? (
+														<CheckCircle className="h-5 w-5 text-green-500 shrink-0" />
+													) : rule.type === 'error' ? (
+														<XCircle className="h-5 w-5 text-red-500 shrink-0" />
+													) : (
+														<AlertTriangle className="h-5 w-5 text-amber-500 shrink-0" />
+													)}
+													<div className="min-w-0">
+														<div className="flex items-center gap-1.5">
+															<Badge variant="outline" className="text-[10px] shrink-0">RULE {rule.rule}</Badge>
+															{rule.status === 'failed' && (
+																<span className="text-xs font-semibold text-muted-foreground">({rule.count})</span>
+															)}
+														</div>
+														<p className="text-xs font-medium mt-0.5 truncate">{rule.name}</p>
+													</div>
+												</div>
+											))}
+										</div>
+									</CardContent>
+								</Card>
+							)}
 
 							{/* Success Message */}
 							{!hasAnyIssues(result) && (
