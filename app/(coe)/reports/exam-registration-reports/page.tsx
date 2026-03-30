@@ -66,6 +66,8 @@ const REPORT_OPTIONS: { value: ReportType; label: string; description: string; g
 	{ value: 'course-count-program-year-wise', label: 'Board & Program Wise Registration List', description: 'Course-wise count with Program Code, split by Year', group: 'registration' },
 	{ value: 'course-count-program-year-section', label: 'Program Wise Registration List', description: 'Course-wise student count grouped by Program', group: 'registration' },
 	{ value: 'board-wise-exam-timetable', label: 'Board Wise Exam Timetable', description: 'Board-wise exam timetable with date and session', group: 'exam-date' },
+	{ value: 'exam-date-wise-summary', label: 'Exam Date-wise Summary', description: 'Date-wise FN/AN registration count summary', group: 'exam-date' },
+	{ value: 'qp-packing-list', label: 'QP Packing List', description: 'Question Paper packing list - one page per date & session', group: 'exam-date' },
 	{ value: 'exam-date-wise-registration', label: 'Exam Date Wise Registration/QP Count', description: 'Course-wise registration count grouped by Exam Date and Session (FN/AN)', group: 'exam-date' },
 	{ value: 'exam-date-wise-attendance', label: 'Exam Date Wise Attendance/Answer Sheet Count', description: 'Course-wise registration and attendance count grouped by Exam Date and Session (FN/AN)', group: 'exam-date' },
 ]
@@ -293,6 +295,7 @@ export default function ExamRegistrationReportsPage() {
 			}
 
 			// Generate separate UG and PG PDFs
+			const skipCategoryFilter = selectedReportType === 'qp-packing-list'
 			const baseOpts = {
 				report_type: selectedReportType as ReportType,
 				institution_name: reportMeta.institution_name,
@@ -302,13 +305,13 @@ export default function ExamRegistrationReportsPage() {
 				data: filteredReportData,
 				logoImage: logoBase64,
 				rightLogoImage: rightLogoBase64,
-				course_category_filter: selectedCourseCategories.length < COURSE_CATEGORY_OPTIONS.length ? selectedCourseCategories : undefined,
+				course_category_filter: skipCategoryFilter ? undefined : (selectedCourseCategories.length < COURSE_CATEGORY_OPTIONS.length ? selectedCourseCategories : undefined),
 			}
 
 			const fileNames: string[] = []
 
 			// Exam date-wise reports: single combined file (no UG/PG split)
-			const isDateWiseReport = selectedReportType === 'exam-date-wise-registration' || selectedReportType === 'exam-date-wise-attendance' || selectedReportType === 'board-wise-exam-timetable'
+			const isDateWiseReport = selectedReportType === 'exam-date-wise-registration' || selectedReportType === 'exam-date-wise-attendance' || selectedReportType === 'board-wise-exam-timetable' || selectedReportType === 'exam-date-wise-summary' || selectedReportType === 'qp-packing-list'
 
 			if (isDateWiseReport) {
 				const file = generateExamRegistrationReportPdf(baseOpts)
@@ -556,6 +559,60 @@ export default function ExamRegistrationReportsPage() {
 				return Array.from(countMap.values()).sort((a: any, b: any) =>
 					(a.board_order - b.board_order) || (a.semester - b.semester) || (a.course_order - b.course_order) || a.course_code.localeCompare(b.course_code)
 				)
+			}
+
+			case 'qp-packing-list':
+			// Same preview as board-wise-exam-timetable but with count
+			{
+				const groupMap = new Map<string, any[]>()
+				for (const row of reportData2) {
+					const co = row.course_offering
+					if (!co) continue
+					const examDate = row.exam_date || ''
+					const examSession = row.exam_session || ''
+					if (!examDate || !examSession) continue
+					const groupKey = `${examDate}|${examSession}`
+					if (!groupMap.has(groupKey)) groupMap.set(groupKey, [])
+					const courses = groupMap.get(groupKey)!
+					let existing = courses.find((c: any) => c.course_code === co.course_code)
+					if (!existing) {
+						existing = { semester: co.semester || 0, board_code: co.board_code || '', board_name: co.board_name || '', board_order: co.board_order ?? 999, course_code: co.course_code, course_name: co.course_name || '', course_order: co.course_order ?? 999, registered: 0 }
+						courses.push(existing)
+					}
+					existing.registered++
+				}
+				const result: any[] = []
+				const sortedKeys = Array.from(groupMap.keys()).sort((a, b) => {
+					const [dA, sA] = a.split('|'); const [dB, sB] = b.split('|')
+					const dc = new Date(dA).getTime() - new Date(dB).getTime()
+					if (dc !== 0) return dc
+					return (sA === 'FN' ? 0 : 1) - (sB === 'FN' ? 0 : 1)
+				})
+				for (const key of sortedKeys) {
+					const [examDate, examSession] = key.split('|')
+					const courses = groupMap.get(key)!
+					courses.sort((a: any, b: any) => (a.semester - b.semester) || (a.board_order - b.board_order) || (a.course_order - b.course_order))
+					result.push({ exam_date: examDate, exam_session: examSession, courses })
+				}
+				return result
+			}
+
+			case 'exam-date-wise-summary': {
+				// Group registrations by exam_date, count FN and AN
+				const dateMap = new Map<string, { exam_date: string; fn: number; an: number }>()
+				for (const row of reportData2) {
+					const examDate = row.exam_date
+					if (!examDate) continue
+					const session = row.exam_session || ''
+					if (!dateMap.has(examDate)) {
+						dateMap.set(examDate, { exam_date: examDate, fn: 0, an: 0 })
+					}
+					const entry = dateMap.get(examDate)!
+					if (session === 'FN') entry.fn++
+					else if (session === 'AN') entry.an++
+				}
+				return Array.from(dateMap.values())
+					.sort((a, b) => new Date(a.exam_date).getTime() - new Date(b.exam_date).getTime())
 			}
 
 			default:
@@ -1148,6 +1205,83 @@ export default function ExamRegistrationReportsPage() {
 															<TableCell className="text-center text-xs">{row.semester ? toRoman(row.semester) : '-'}</TableCell>
 															<TableCell className="text-center text-xs font-medium">{row.course_code}</TableCell>
 															<TableCell className="text-xs max-w-[200px] break-words">{row.course_name || '-'}</TableCell>
+														</TableRow>
+													))
+												)}
+											</TableBody>
+										</Table>
+									)}
+
+									{selectedReportType === 'qp-packing-list' && (
+										<div className="space-y-6">
+											{previewData.length === 0 ? (
+												<div className="text-center py-8 text-muted-foreground">No data</div>
+											) : (
+												previewData.map((group: any) => (
+													<div key={`${group.exam_date}-${group.exam_session}`} className="border rounded-lg overflow-hidden">
+														<div className="bg-slate-100 dark:bg-slate-800 px-4 py-2">
+															<span className="font-semibold text-sm">
+																Exam Date : {group.exam_date} &nbsp;&nbsp; Session : {group.exam_session}
+															</span>
+														</div>
+														<Table>
+															<TableHeader>
+																<TableRow>
+																	<TableHead className="text-center w-12">S.No</TableHead>
+																	<TableHead className="text-center w-14">Sem</TableHead>
+																	<TableHead className="text-center">Board</TableHead>
+																	<TableHead className="text-center">Course Code</TableHead>
+																	<TableHead>Course Name</TableHead>
+																	<TableHead className="text-center w-20">QP Count</TableHead>
+																</TableRow>
+															</TableHeader>
+															<TableBody>
+																{group.courses.map((c: any, idx: number) => (
+																	<TableRow key={c.course_code}>
+																		<TableCell className="text-center text-xs">{idx + 1}</TableCell>
+																		<TableCell className="text-center text-xs">{toRoman(c.semester)}</TableCell>
+																		<TableCell className="text-center text-xs">{c.board_code}</TableCell>
+																		<TableCell className="text-center text-xs font-medium">{c.course_code}</TableCell>
+																		<TableCell className="text-xs">{c.course_name}</TableCell>
+																		<TableCell className="text-center text-xs font-semibold">{c.registered}</TableCell>
+																	</TableRow>
+																))}
+																<TableRow>
+																	<TableCell colSpan={5} className="text-right text-xs font-bold">Total :</TableCell>
+																	<TableCell className="text-center text-xs font-bold">{group.courses.reduce((s: number, c: any) => s + c.registered, 0)}</TableCell>
+																</TableRow>
+															</TableBody>
+														</Table>
+													</div>
+												))
+											)}
+										</div>
+									)}
+
+									{selectedReportType === 'exam-date-wise-summary' && (
+										<Table>
+											<TableHeader>
+												<TableRow>
+													<TableHead className="text-center w-12">S.No</TableHead>
+													<TableHead className="text-center">Exam Date</TableHead>
+													<TableHead className="text-center w-24">FN</TableHead>
+													<TableHead className="text-center w-24">AN</TableHead>
+													<TableHead className="text-center w-24">Total</TableHead>
+												</TableRow>
+											</TableHeader>
+											<TableBody>
+												{paginatedData.length === 0 ? (
+													<TableRow>
+														<TableCell colSpan={5} className="text-center py-8 text-muted-foreground">No data</TableCell>
+													</TableRow>
+												) : (
+													paginatedData.map((row: any, idx: number) => (
+														<TableRow key={idx}>
+															<TableCell className="text-center text-xs">{(currentPage - 1) * pageSize + idx + 1}</TableCell>
+															<TableCell className="text-center text-xs">{row.exam_date || '-'}</TableCell>
+															<TableCell className="text-center text-xs">{row.fn}</TableCell>
+															<TableCell className="text-center text-xs">{row.an}</TableCell>
+															<TableCell className="text-center text-xs font-semibold">{row.fn + row.an}</TableCell>
 														</TableRow>
 													))
 												)}

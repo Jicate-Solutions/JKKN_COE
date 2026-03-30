@@ -9,6 +9,8 @@ export type ReportType =
 	| 'exam-date-wise-registration'
 	| 'exam-date-wise-attendance'
 	| 'board-wise-exam-timetable'
+	| 'exam-date-wise-summary'
+	| 'qp-packing-list'
 
 // ── Report 2A: Course Count (Regular / Arrear) ──
 

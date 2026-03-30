@@ -101,6 +101,16 @@ export async function GET(request: Request) {
 			}
 		}
 
+		// Fetch all boards for reliable name/order lookup (FK join may miss some)
+		const boardLookup = new Map<string, { board_name: string; board_order: number }>()
+		const { data: allBoards } = await supabase
+			.from('board')
+			.select('board_code, board_name, board_order')
+			.order('board_order', { ascending: true })
+		for (const b of (allBoards || [])) {
+			boardLookup.set(b.board_code, { board_name: b.board_name, board_order: b.board_order })
+		}
+
 		// Build the relationships
 		const entries: {
 			board_code: string | null
@@ -122,11 +132,13 @@ export async function GET(request: Request) {
 			const progCode = (co as any).program_code
 			const progInfo = programInfoMap.get(progCode)
 			const courseMapping = (co as any).course_mapping
+			const bCode = course?.board_code || null
+			const bLookup = bCode ? boardLookup.get(bCode) : undefined
 
 			entries.push({
-				board_code: course?.board_code || null,
-				board_name: board?.board_name || null,
-				board_order: board?.board_order ?? null,
+				board_code: bCode,
+				board_name: board?.board_name || bLookup?.board_name || null,
+				board_order: board?.board_order ?? bLookup?.board_order ?? null,
 				program_code: progCode || null,
 				program_name: progInfo?.name || progCode || null,
 				program_order: progInfo?.order ?? null,
@@ -138,16 +150,17 @@ export async function GET(request: Request) {
 			})
 		}
 
-		// Extract unique boards sorted by board_order ASC
+		// Extract unique boards sorted by board_order ASC (use boardLookup for reliable names)
 		const boardSet = new Set<string>()
 		const boards: { board_code: string; board_name: string; board_order: number }[] = []
 		for (const e of entries) {
 			if (e.board_code && !boardSet.has(e.board_code)) {
 				boardSet.add(e.board_code)
+				const bl = boardLookup.get(e.board_code)
 				boards.push({
 					board_code: e.board_code,
-					board_name: e.board_name || e.board_code,
-					board_order: e.board_order ?? 999,
+					board_name: e.board_name || bl?.board_name || e.board_code,
+					board_order: e.board_order ?? bl?.board_order ?? 999,
 				})
 			}
 		}

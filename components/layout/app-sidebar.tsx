@@ -302,6 +302,7 @@ const data = {
 				{ title: "Marksheet Distribution", url: "/reports/marksheet-distribution", icon: FileText },
 				{ title: "Semester Marksheet", url: "/reports/semester-marksheet", icon: FileText },
 				{ title: "Practical Exam Reports", url: "/reports/practical-exam/practical-need", icon: FlaskConical },
+				{ title: "Dummy Number Report", url: "/reports/dummy-numbers", icon: Hash },
 			],
 		},
 		{

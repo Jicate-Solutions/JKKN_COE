@@ -92,17 +92,20 @@ export async function GET(request: Request) {
 
 		// Apply client-side filters for related data
 		if (board_code) {
-			filteredData = filteredData.filter(item =>
-				item.exam_registration?.course_offering?.course?.board?.board_code === board_code
-			)
+			filteredData = filteredData.filter(item => {
+				const course = item.exam_registration?.course_offering?.course
+				return course?.board_code === board_code || course?.board?.board_code === board_code
+			})
 		}
 
 		if (course_code) {
 			const codes = course_code.split(',').filter(Boolean)
 			const codeSet = new Set(codes)
-			filteredData = filteredData.filter(item =>
-				codeSet.has(item.exam_registration?.course_offering?.course?.course_code)
-			)
+			filteredData = filteredData.filter(item => {
+				const courseCode = item.exam_registration?.course_offering?.course?.course_code
+					|| item.exam_registration?.course_offering?.course_code
+				return codeSet.has(courseCode)
+			})
 		}
 
 		if (program_code) {

@@ -1326,6 +1326,146 @@ function generateCourseCountProgramYearSectionPdf(opts: ReportPdfOptions): strin
 
 // ── Report: Exam Date-wise Registration (A4 Portrait) ──
 
+// ── Report: Exam Date-wise Summary (A4 Portrait) ──
+
+function generateExamDateWiseSummaryPdf(opts: ReportPdfOptions): string {
+	const doc = new jsPDF('portrait', 'mm', 'a4')
+	const pageWidth = doc.internal.pageSize.getWidth()
+	const pageHeight = doc.internal.pageSize.getHeight()
+	const margin = 6.35
+
+	// Aggregate by exam_date: count FN and AN registrations
+	const dateMap = new Map<string, { exam_date: string; fn: number; an: number }>()
+	for (const row of opts.data) {
+		const examDate = row.exam_date
+		if (!examDate) continue
+		const session = row.exam_session || ''
+		if (!dateMap.has(examDate)) {
+			dateMap.set(examDate, { exam_date: examDate, fn: 0, an: 0 })
+		}
+		const entry = dateMap.get(examDate)!
+		if (session === 'FN') entry.fn++
+		else if (session === 'AN') entry.an++
+	}
+
+	const rows = Array.from(dateMap.values())
+		.sort((a, b) => new Date(a.exam_date).getTime() - new Date(b.exam_date).getTime())
+
+	if (rows.length === 0) return ''
+
+	const colWidths = [12, 50, 40, 40, 40]  // 182mm
+	const headers = ['S.No', 'Exam Date', 'FN', 'AN', 'Total']
+	const headerHeight = 10
+	const rowHeight = 7
+	const footerSpace = 10
+
+	function formatDate(dateStr: string): string {
+		try {
+			const d = new Date(dateStr)
+			if (isNaN(d.getTime())) return dateStr
+			return `${String(d.getDate()).padStart(2, '0')}-${String(d.getMonth() + 1).padStart(2, '0')}-${d.getFullYear()}`
+		} catch { return dateStr }
+	}
+
+	function drawSummaryHeader(y: number): number {
+		doc.setFont('times', 'bold')
+		doc.setFontSize(9)
+		doc.setDrawColor(0, 0, 0)
+		doc.setLineWidth(0.3)
+
+		let x = margin
+		for (let i = 0; i < headers.length; i++) {
+			doc.rect(x, y, colWidths[i], headerHeight)
+			doc.text(headers[i], x + colWidths[i] / 2, y + headerHeight / 2 + 1.5, { align: 'center' })
+			x += colWidths[i]
+		}
+		return y + headerHeight
+	}
+
+	let startY = drawHeader(doc, pageWidth, margin, opts, 'EXAM DATE-WISE SUMMARY')
+	let tableY = drawSummaryHeader(startY)
+
+	let grandFN = 0, grandAN = 0
+
+	for (let idx = 0; idx < rows.length; idx++) {
+		const row = rows[idx]
+
+		if (tableY + rowHeight > pageHeight - margin - footerSpace - rowHeight) {
+			doc.addPage()
+			tableY = margin + 2
+			tableY = drawSummaryHeader(tableY)
+		}
+
+		doc.setFont('times', 'normal')
+		doc.setFontSize(9)
+		doc.setDrawColor(0, 0, 0)
+		doc.setLineWidth(0.3)
+
+		let x = margin
+		const total = row.fn + row.an
+		grandFN += row.fn
+		grandAN += row.an
+
+		// S.No
+		doc.rect(x, tableY, colWidths[0], rowHeight)
+		doc.text(String(idx + 1), x + colWidths[0] / 2, tableY + rowHeight / 2 + 1.5, { align: 'center' })
+		x += colWidths[0]
+
+		// Exam Date
+		doc.rect(x, tableY, colWidths[1], rowHeight)
+		doc.text(formatDate(row.exam_date), x + colWidths[1] / 2, tableY + rowHeight / 2 + 1.5, { align: 'center' })
+		x += colWidths[1]
+
+		// FN
+		doc.rect(x, tableY, colWidths[2], rowHeight)
+		doc.text(String(row.fn), x + colWidths[2] / 2, tableY + rowHeight / 2 + 1.5, { align: 'center' })
+		x += colWidths[2]
+
+		// AN
+		doc.rect(x, tableY, colWidths[3], rowHeight)
+		doc.text(String(row.an), x + colWidths[3] / 2, tableY + rowHeight / 2 + 1.5, { align: 'center' })
+		x += colWidths[3]
+
+		// Total
+		doc.setFont('times', 'bold')
+		doc.rect(x, tableY, colWidths[4], rowHeight)
+		doc.text(String(total), x + colWidths[4] / 2, tableY + rowHeight / 2 + 1.5, { align: 'center' })
+		doc.setFont('times', 'normal')
+
+		tableY += rowHeight
+	}
+
+	// Grand total row
+	doc.setFont('times', 'bold')
+	doc.setFontSize(9)
+	let x = margin
+	const grandTotalWidth = colWidths[0] + colWidths[1]
+	doc.rect(x, tableY, grandTotalWidth, rowHeight)
+	doc.text('Grand Total', x + grandTotalWidth / 2, tableY + rowHeight / 2 + 1.5, { align: 'center' })
+	x += grandTotalWidth
+
+	doc.rect(x, tableY, colWidths[2], rowHeight)
+	doc.text(String(grandFN), x + colWidths[2] / 2, tableY + rowHeight / 2 + 1.5, { align: 'center' })
+	x += colWidths[2]
+
+	doc.rect(x, tableY, colWidths[3], rowHeight)
+	doc.text(String(grandAN), x + colWidths[3] / 2, tableY + rowHeight / 2 + 1.5, { align: 'center' })
+	x += colWidths[3]
+
+	doc.rect(x, tableY, colWidths[4], rowHeight)
+	doc.text(String(grandFN + grandAN), x + colWidths[4] / 2, tableY + rowHeight / 2 + 1.5, { align: 'center' })
+
+	const totalPages = doc.getNumberOfPages()
+	for (let p = 1; p <= totalPages; p++) {
+		doc.setPage(p)
+		drawFooter(doc, pageWidth, margin, p, totalPages)
+	}
+
+	const filename = `exam-date-wise-summary-${opts.session_code}-${new Date().toISOString().slice(0, 10)}.pdf`
+	doc.save(filename)
+	return filename
+}
+
 function generateExamDateWiseRegistrationPdf(opts: ReportPdfOptions): string {
 	return generateExamDateWisePdf(opts, false)
 }
@@ -1334,6 +1474,207 @@ function generateExamDateWiseRegistrationPdf(opts: ReportPdfOptions): string {
 
 function generateExamDateWiseAttendancePdf(opts: ReportPdfOptions): string {
 	return generateExamDateWisePdf(opts, true)
+}
+
+// ── Report: QP Packing List (A4 Landscape, 1 page per date+session) ──
+
+function generateQPPackingListPdf(opts: ReportPdfOptions): string {
+	const doc = new jsPDF('landscape', 'mm', 'a4')
+	const pageWidth = doc.internal.pageSize.getWidth()
+	const pageHeight = doc.internal.pageSize.getHeight()
+	const margin = 6.35
+
+	// Aggregate by date+session → courses with count
+	interface CourseAgg { semester: number; board_code: string; board_name: string; board_order: number; course_code: string; course_name: string; course_order: number; count: number }
+	const groupMap = new Map<string, CourseAgg[]>()
+
+	for (const row of opts.data) {
+		const co = row.course_offering
+		if (!co) continue
+		const examDate = row.exam_date || ''
+		const examSession = row.exam_session || ''
+		if (!examDate || !examSession) continue
+		const groupKey = `${examDate}|${examSession}`
+		if (!groupMap.has(groupKey)) groupMap.set(groupKey, [])
+		const courses = groupMap.get(groupKey)!
+		let existing = courses.find(c => c.course_code === co.course_code)
+		if (!existing) {
+			existing = { semester: co.semester || 0, board_code: co.board_code || '', board_name: co.board_name || '', board_order: co.board_order ?? 999, course_code: co.course_code, course_name: co.course_name || '', course_order: co.course_order ?? 999, count: 0 }
+			courses.push(existing)
+		}
+		existing.count++
+	}
+
+	if (groupMap.size === 0) return ''
+
+	const sortedKeys = Array.from(groupMap.keys()).sort((a, b) => {
+		const [dA, sA] = a.split('|'); const [dB, sB] = b.split('|')
+		const dc = new Date(dA).getTime() - new Date(dB).getTime()
+		if (dc !== 0) return dc
+		return (sA === 'FN' ? 0 : 1) - (sB === 'FN' ? 0 : 1)
+	})
+
+	// Sort courses within each group
+	for (const courses of groupMap.values()) {
+		courses.sort((a, b) => (a.semester - b.semester) || (a.board_order - b.board_order) || (a.course_order - b.course_order) || a.course_code.localeCompare(b.course_code))
+	}
+
+	function formatDate(dateStr: string): string {
+		try {
+			const d = new Date(dateStr)
+			if (isNaN(d.getTime())) return dateStr
+			return `${String(d.getDate()).padStart(2, '0')}-${String(d.getMonth() + 1).padStart(2, '0')}-${d.getFullYear()}`
+		} catch { return dateStr }
+	}
+
+	// Landscape A4 = ~284mm usable
+	const colWidths = [10, 15, 20, 28, 165, 25, 21]  // S.No, Sem, Board, Course Code, Course Name, QP Count, Signature
+	const headers = ['S.No', 'Sem', 'Board', 'Course\nCode', 'Name of the Course Code', 'QP\nCount', 'Verified\n(/)']
+	const headerHeight = 10
+	const rowHeight = 7
+	const signatureSpaceHeight = 25
+
+	function drawPackingHeader(y: number): number {
+		doc.setFont('times', 'bold')
+		doc.setFontSize(10)
+		doc.setDrawColor(0, 0, 0)
+		doc.setLineWidth(0.3)
+
+		let x = margin
+		for (let i = 0; i < headers.length; i++) {
+			doc.rect(x, y, colWidths[i], headerHeight)
+			const lines = headers[i].split('\n')
+			const lineH = headerHeight / (lines.length + 1)
+			lines.forEach((line, li) => {
+				doc.text(line, x + colWidths[i] / 2, y + lineH * (li + 1), { align: 'center' })
+			})
+			x += colWidths[i]
+		}
+		return y + headerHeight
+	}
+
+	function drawSignatureFooter(y: number) {
+		const sigY = y + 25
+		doc.setFont('times', 'bold')
+		doc.setFontSize(12)
+		doc.text('Signature of the COE', pageWidth - margin, sigY, { align: 'right' })
+	}
+
+	// Render each date+session on its own page
+	sortedKeys.forEach((key, groupIdx) => {
+		if (groupIdx > 0) doc.addPage()
+
+		const [examDate, examSession] = key.split('|')
+		const courses = groupMap.get(key)!
+
+		// Draw main header
+		let currentY = drawHeader(doc, pageWidth, margin, opts, 'QUESTION PAPER PACKING LIST')
+
+		// Date & Session subtitle
+		doc.setFont('times', 'bold')
+		doc.setFontSize(10)
+		doc.text(`Exam Date : ${formatDate(examDate)}`, margin, currentY + 3)
+		doc.text(`Session : ${examSession}`, pageWidth - margin, currentY + 3, { align: 'right' })
+		currentY += 6
+
+		let tableY = drawPackingHeader(currentY)
+
+		// Pre-compute row heights
+		doc.setFont('times', 'normal')
+		doc.setFontSize(10)
+		const rowHeights = courses.map(c => calcWrappedRowHeight(doc, c.course_name, colWidths[4] - 2, rowHeight))
+
+		let totalCount = 0
+
+		for (let idx = 0; idx < courses.length; idx++) {
+			const course = courses[idx]
+			const rh = rowHeights[idx]
+
+			// Page break within same date+session
+			if (tableY + rh + rowHeight > pageHeight - margin - signatureSpaceHeight - 5) {
+				doc.addPage()
+				let newY = drawHeader(doc, pageWidth, margin, opts, 'QUESTION PAPER PACKING LIST')
+				doc.setFont('times', 'bold')
+				doc.setFontSize(10)
+				doc.text(`Exam Date : ${formatDate(examDate)}`, margin, newY + 3)
+				doc.text(`Session : ${examSession}`, pageWidth - margin, newY + 3, { align: 'right' })
+				newY += 6
+				tableY = drawPackingHeader(newY)
+			}
+
+			doc.setFont('times', 'normal')
+			doc.setFontSize(10)
+			doc.setDrawColor(0, 0, 0)
+			doc.setLineWidth(0.3)
+
+			let x = margin
+			totalCount += course.count
+
+			// S.No
+			doc.rect(x, tableY, colWidths[0], rh)
+			doc.text(String(idx + 1), x + colWidths[0] / 2, tableY + rh / 2 + 1.5, { align: 'center' })
+			x += colWidths[0]
+
+			// Sem
+			doc.rect(x, tableY, colWidths[1], rh)
+			doc.text(toRoman(course.semester), x + colWidths[1] / 2, tableY + rh / 2 + 1.5, { align: 'center' })
+			x += colWidths[1]
+
+			// Board
+			doc.rect(x, tableY, colWidths[2], rh)
+			doc.text(course.board_code, x + colWidths[2] / 2, tableY + rh / 2 + 1.5, { align: 'center' })
+			x += colWidths[2]
+
+			// Course Code
+			doc.rect(x, tableY, colWidths[3], rh)
+			doc.text(course.course_code, x + colWidths[3] / 2, tableY + rh / 2 + 1.5, { align: 'center' })
+			x += colWidths[3]
+
+			// Course Name (wrapped)
+			doc.rect(x, tableY, colWidths[4], rh)
+			drawWrappedCell(doc, course.course_name, x, tableY, colWidths[4], rh)
+			x += colWidths[4]
+
+			// QP Count
+			doc.rect(x, tableY, colWidths[5], rh)
+			doc.text(String(course.count), x + colWidths[5] / 2, tableY + rh / 2 + 1.5, { align: 'center' })
+			x += colWidths[5]
+
+			// Verified (blank — header shows tick symbol)
+			doc.rect(x, tableY, colWidths[6], rh)
+
+			tableY += rh
+		}
+
+		// Total row
+		doc.setFont('times', 'bold')
+		doc.setFontSize(10)
+		let x = margin
+		const totalLabelWidth = colWidths[0] + colWidths[1] + colWidths[2] + colWidths[3] + colWidths[4]
+		doc.rect(x, tableY, totalLabelWidth, rowHeight)
+		doc.text('Total :', x + totalLabelWidth - 2, tableY + rowHeight / 2 + 1.5, { align: 'right' })
+		x += totalLabelWidth
+
+		doc.rect(x, tableY, colWidths[5], rowHeight)
+		doc.text(String(totalCount), x + colWidths[5] / 2, tableY + rowHeight / 2 + 1.5, { align: 'center' })
+		x += colWidths[5]
+
+		doc.rect(x, tableY, colWidths[6], rowHeight)
+		tableY += rowHeight
+
+		// Signature footer
+		drawSignatureFooter(tableY)
+	})
+
+	const totalPages = doc.getNumberOfPages()
+	for (let p = 1; p <= totalPages; p++) {
+		doc.setPage(p)
+		drawFooter(doc, pageWidth, margin, p, totalPages)
+	}
+
+	const filename = `qp-packing-list-${opts.session_code}-${new Date().toISOString().slice(0, 10)}.pdf`
+	doc.save(filename)
+	return filename
 }
 
 // ── Report: Board Wise Exam Timetable (A4 Portrait) ──
@@ -1831,8 +2172,12 @@ export function generateExamRegistrationReportPdf(opts: ReportPdfOptions): strin
 			return generateCourseCountProgramYearWisePdf(filteredOpts)
 		case 'course-count-program-year-section':
 			return generateCourseCountProgramYearSectionPdf(filteredOpts)
+		case 'qp-packing-list':
+			return generateQPPackingListPdf(filteredOpts)
 		case 'board-wise-exam-timetable':
 			return generateBoardWiseExamTimetablePdf(filteredOpts)
+		case 'exam-date-wise-summary':
+			return generateExamDateWiseSummaryPdf(filteredOpts)
 		case 'exam-date-wise-registration':
 			return generateExamDateWiseRegistrationPdf(filteredOpts)
 		case 'exam-date-wise-attendance':

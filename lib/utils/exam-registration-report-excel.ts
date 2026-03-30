@@ -573,6 +573,38 @@ export async function exportExamRegistrationReportExcel(opts: ExcelExportOptions
 		}
 
 		if (wb.SheetNames.length === 0) return
+	} else if (opts.report_type === 'exam-date-wise-summary') {
+		// Exam Date-wise Summary — single sheet
+		const dateMap = new Map<string, { exam_date: string; fn: number; an: number }>()
+		for (const row of opts.data) {
+			const examDate = row.exam_date
+			if (!examDate) continue
+			const session = row.exam_session || ''
+			if (!dateMap.has(examDate)) dateMap.set(examDate, { exam_date: examDate, fn: 0, an: 0 })
+			const entry = dateMap.get(examDate)!
+			if (session === 'FN') entry.fn++
+			else if (session === 'AN') entry.an++
+		}
+		const sorted = Array.from(dateMap.values())
+			.sort((a, b) => new Date(a.exam_date).getTime() - new Date(b.exam_date).getTime())
+
+		if (sorted.length === 0) return
+
+		const formatDate = (d: string) => { try { const dt = new Date(d); return isNaN(dt.getTime()) ? d : `${String(dt.getDate()).padStart(2,'0')}-${String(dt.getMonth()+1).padStart(2,'0')}-${dt.getFullYear()}` } catch { return d } }
+
+		const rows = sorted.map((row, idx) => ({
+			'S.No': idx + 1,
+			'Exam Date': formatDate(row.exam_date),
+			'FN': row.fn,
+			'AN': row.an,
+			'Total': row.fn + row.an,
+		}))
+
+		const result: ExcelReportResult = { rows, merges: [] }
+		const ws = XLSX.utils.json_to_sheet(result.rows)
+		applySheetFormatting(ws, result)
+		if (opts.course_category_filter?.length) prependInfoRow(ws, `Course Category : ${opts.course_category_filter.join(', ')}`)
+		XLSX.utils.book_append_sheet(wb, ws, 'Summary')
 	} else if (opts.report_type === 'board-wise-exam-timetable') {
 		// Board wise exam timetable — single sheet, no UG/PG split
 		const courseMap = new Map<string, any>()
@@ -618,6 +650,109 @@ export async function exportExamRegistrationReportExcel(opts: ExcelExportOptions
 		applySheetFormatting(ws, result)
 		if (opts.course_category_filter?.length) prependInfoRow(ws, `Course Category : ${opts.course_category_filter.join(', ')}`)
 		XLSX.utils.book_append_sheet(wb, ws, 'Timetable')
+	} else if (opts.report_type === 'qp-packing-list') {
+		// QP Packing List — one sheet per date+session
+		const groupMap = new Map<string, any[]>()
+		for (const row of opts.data) {
+			const co = row.course_offering
+			if (!co) continue
+			const examDate = row.exam_date || ''
+			const examSession = row.exam_session || ''
+			if (!examDate || !examSession) continue
+			const groupKey = `${examDate}|${examSession}`
+			if (!groupMap.has(groupKey)) groupMap.set(groupKey, [])
+			const courses = groupMap.get(groupKey)!
+			let existing = courses.find((c: any) => c.course_code === co.course_code)
+			if (!existing) {
+				existing = { semester: co.semester || 0, board_code: co.board_code || '', board_order: co.board_order ?? 999, course_code: co.course_code, course_name: co.course_name || '', course_order: co.course_order ?? 999, count: 0 }
+				courses.push(existing)
+			}
+			existing.count++
+		}
+		const formatDate = (d: string) => { try { const dt = new Date(d); return isNaN(dt.getTime()) ? d : `${String(dt.getDate()).padStart(2,'0')}-${String(dt.getMonth()+1).padStart(2,'0')}-${dt.getFullYear()}` } catch { return d } }
+		const sortedKeys = Array.from(groupMap.keys()).sort((a, b) => {
+			const [dA, sA] = a.split('|'); const [dB, sB] = b.split('|')
+			const dc = new Date(dA).getTime() - new Date(dB).getTime()
+			if (dc !== 0) return dc
+			return (sA === 'FN' ? 0 : 1) - (sB === 'FN' ? 0 : 1)
+		})
+		let sheetNum = 0
+		for (const key of sortedKeys) {
+			const [examDate, examSession] = key.split('|')
+			const courses = groupMap.get(key)!
+			courses.sort((a: any, b: any) => (a.semester - b.semester) || (a.board_order - b.board_order) || (a.course_order - b.course_order))
+			const rows = courses.map((c: any, idx: number) => ({
+				'S.No': idx + 1,
+				'Sem': c.semester ? toRoman(c.semester) : '',
+				'Board': c.board_code,
+				'Course Code': c.course_code,
+				'Course Name': c.course_name,
+				'QP Count': c.count,
+			}))
+			if (rows.length === 0) continue
+			const result: ExcelReportResult = { rows, merges: [] }
+			const ws = XLSX.utils.json_to_sheet(result.rows)
+			applySheetFormatting(ws, result)
+			prependInfoRow(ws, `Exam Date: ${formatDate(examDate)} | Session: ${examSession}`)
+			sheetNum++
+			const sheetName = `${formatDate(examDate)}-${examSession}`.replace(/[\\/*?[\]:]/g, '').slice(0, 31)
+			XLSX.utils.book_append_sheet(wb, ws, sheetName)
+		}
+		if (wb.SheetNames.length === 0) return
+	} else if (opts.report_type === 'exam-date-wise-registration' || opts.report_type === 'exam-date-wise-attendance') {
+		// Exam date-wise reports — single sheet, grouped by date+session
+		const includePresent = opts.report_type === 'exam-date-wise-attendance'
+		const groupMap = new Map<string, any[]>()
+		for (const row of opts.data) {
+			const co = row.course_offering
+			if (!co) continue
+			const examDate = row.exam_date || ''
+			const examSession = row.exam_session || ''
+			if (!examDate || !examSession) continue
+			const groupKey = `${examDate}|${examSession}`
+			if (!groupMap.has(groupKey)) groupMap.set(groupKey, [])
+			const courses = groupMap.get(groupKey)!
+			const courseKey = co.course_code
+			let existing = courses.find((c: any) => c.course_code === courseKey)
+			if (!existing) {
+				existing = { semester: co.semester || 0, board_code: co.board_code || '', board_order: co.board_order ?? 999, course_code: co.course_code, course_name: co.course_name || '', course_order: co.course_order ?? 999, registered: 0, present: 0 }
+				courses.push(existing)
+			}
+			existing.registered++
+			if (includePresent && row.is_present) existing.present++
+		}
+		const formatDate = (d: string) => { try { const dt = new Date(d); return isNaN(dt.getTime()) ? d : `${String(dt.getDate()).padStart(2,'0')}-${String(dt.getMonth()+1).padStart(2,'0')}-${dt.getFullYear()}` } catch { return d } }
+		const sortedKeys = Array.from(groupMap.keys()).sort((a, b) => {
+			const [dA, sA] = a.split('|'); const [dB, sB] = b.split('|')
+			const dc = new Date(dA).getTime() - new Date(dB).getTime()
+			if (dc !== 0) return dc
+			return (sA === 'FN' ? 0 : 1) - (sB === 'FN' ? 0 : 1)
+		})
+		const allRows: Record<string, any>[] = []
+		for (const key of sortedKeys) {
+			const [examDate, examSession] = key.split('|')
+			const courses = groupMap.get(key)!
+			courses.sort((a: any, b: any) => (a.semester - b.semester) || (a.board_order - b.board_order) || (a.course_order - b.course_order))
+			for (const c of courses) {
+				const row: Record<string, any> = {
+					'Exam Date': formatDate(examDate),
+					'Session': examSession,
+					'Sem': c.semester ? toRoman(c.semester) : '',
+					'Board': c.board_code,
+					'Course Code': c.course_code,
+					'Course Name': c.course_name,
+					'No. of Students Register/QP': c.registered,
+				}
+				if (includePresent) row['No. of Students Present'] = c.present
+				allRows.push(row)
+			}
+		}
+		if (allRows.length === 0) return
+		const result: ExcelReportResult = { rows: allRows, merges: [] }
+		const ws = XLSX.utils.json_to_sheet(result.rows)
+		applySheetFormatting(ws, result)
+		if (opts.course_category_filter?.length) prependInfoRow(ws, `Course Category : ${opts.course_category_filter.join(', ')}`)
+		XLSX.utils.book_append_sheet(wb, ws, includePresent ? 'Attendance' : 'Registration')
 	} else {
 		// Split data into UG / PG using board_type (most reliable), then fallback to prefix
 		const classifyRow = (row: any): 'UG' | 'PG' | null => {
@@ -673,6 +808,8 @@ export async function exportExamRegistrationReportExcel(opts: ExcelExportOptions
 		'course-count-program-year-wise': 'course-count-program-year-wise',
 		'course-count-program-year-section': 'course-count-program-year-section',
 		'board-wise-exam-timetable': 'board-wise-exam-timetable',
+		'exam-date-wise-summary': 'exam-date-wise-summary',
+		'qp-packing-list': 'qp-packing-list',
 	}
 
 	const filename = `exam-registration-${reportNames[opts.report_type]}-${opts.session_code}-${new Date().toISOString().slice(0, 10)}.xlsx`

@@ -31,7 +31,8 @@
       "Bash(head -200 \"/d/JKKN/Development/Application/COE/jkkncoe/app/\\(coe\\)/pre-exam/examiner-allotment/page.tsx\")",
       "Skill(commit-commands:commit)",
       "Skill(commit-commands:commit:*)",
-      "Bash(npx patch-package:*)"
+      "Bash(npx patch-package:*)",
+      "Bash(find \"/d/JKKN/Development/Application/JKKN_COE/app/\\(coe\\)/utilities\" -name \"page.tsx\" -o -name \"layout.tsx\")"
     ],
     "deny": [
       "Bash(rm -rf:*)",
