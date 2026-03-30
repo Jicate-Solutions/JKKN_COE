@@ -65,6 +65,7 @@ const REPORT_OPTIONS: { value: ReportType; label: string; description: string; g
 	{ value: 'course-count-year-wise', label: 'Board & Year Wise Course List', description: 'Course-wise student count split by Year', group: 'registration' },
 	{ value: 'course-count-program-year-wise', label: 'Board & Program Wise Registration List', description: 'Course-wise count with Program Code, split by Year', group: 'registration' },
 	{ value: 'course-count-program-year-section', label: 'Program Wise Registration List', description: 'Course-wise student count grouped by Program', group: 'registration' },
+	{ value: 'board-wise-exam-timetable', label: 'Board Wise Exam Timetable', description: 'Board-wise exam timetable with date and session', group: 'exam-date' },
 	{ value: 'exam-date-wise-registration', label: 'Exam Date Wise Registration/QP Count', description: 'Course-wise registration count grouped by Exam Date and Session (FN/AN)', group: 'exam-date' },
 	{ value: 'exam-date-wise-attendance', label: 'Exam Date Wise Attendance/Answer Sheet Count', description: 'Course-wise registration and attendance count grouped by Exam Date and Session (FN/AN)', group: 'exam-date' },
 ]
@@ -307,7 +308,7 @@ export default function ExamRegistrationReportsPage() {
 			const fileNames: string[] = []
 
 			// Exam date-wise reports: single combined file (no UG/PG split)
-			const isDateWiseReport = selectedReportType === 'exam-date-wise-registration' || selectedReportType === 'exam-date-wise-attendance'
+			const isDateWiseReport = selectedReportType === 'exam-date-wise-registration' || selectedReportType === 'exam-date-wise-attendance' || selectedReportType === 'board-wise-exam-timetable'
 
 			if (isDateWiseReport) {
 				const file = generateExamRegistrationReportPdf(baseOpts)
@@ -527,6 +528,34 @@ export default function ExamRegistrationReportsPage() {
 						courses: Array.from(section.courses.values())
 							.sort((a, b) => (a.semester - b.semester) || (a.course_order - b.course_order) || a.course_code.localeCompare(b.course_code)),
 					}))
+			}
+
+			case 'board-wise-exam-timetable': {
+				// Board-wise exam timetable: one row per board+course with exam date & session
+				const countMap = new Map<string, any>()
+				for (const row of reportData2) {
+					const co = row.course_offering
+					if (!co) continue
+					const examDate = row.exam_date || ''
+					const examSession = row.exam_session || ''
+					const key = `${co.board_code || ''}|${co.course_code}|${examDate}|${examSession}`
+					if (!countMap.has(key)) {
+						countMap.set(key, {
+							board_code: co.board_code || '',
+							board_name: co.board_name || '',
+							board_order: co.board_order ?? 999,
+							semester: co.semester || 0,
+							course_order: co.course_order ?? 999,
+							course_code: co.course_code,
+							course_name: co.course_name || '',
+							exam_date: examDate,
+							exam_session: examSession,
+						})
+					}
+				}
+				return Array.from(countMap.values()).sort((a: any, b: any) =>
+					(a.board_order - b.board_order) || (a.semester - b.semester) || (a.course_order - b.course_order) || a.course_code.localeCompare(b.course_code)
+				)
 			}
 
 			default:
@@ -1089,6 +1118,41 @@ export default function ExamRegistrationReportsPage() {
 												))
 											)}
 										</div>
+									)}
+
+									{selectedReportType === 'board-wise-exam-timetable' && (
+										<Table>
+											<TableHeader>
+												<TableRow>
+													<TableHead className="text-center w-12">S.No</TableHead>
+													<TableHead className="text-center">Board</TableHead>
+													<TableHead className="text-center">Exam Date</TableHead>
+													<TableHead className="text-center w-14">Session</TableHead>
+													<TableHead className="text-center w-14">Sem</TableHead>
+													<TableHead className="text-center">Course Code</TableHead>
+													<TableHead>Course Name</TableHead>
+												</TableRow>
+											</TableHeader>
+											<TableBody>
+												{paginatedData.length === 0 ? (
+													<TableRow>
+														<TableCell colSpan={7} className="text-center py-8 text-muted-foreground">No data</TableCell>
+													</TableRow>
+												) : (
+													paginatedData.map((row: any, idx: number) => (
+														<TableRow key={idx}>
+															<TableCell className="text-center text-xs">{(currentPage - 1) * pageSize + idx + 1}</TableCell>
+															<TableCell className="text-center text-xs whitespace-nowrap">{row.board_code ? `${row.board_code}${row.board_name ? ` (${row.board_name})` : ''}` : '-'}</TableCell>
+															<TableCell className="text-center text-xs">{row.exam_date || '-'}</TableCell>
+															<TableCell className="text-center text-xs">{row.exam_session || '-'}</TableCell>
+															<TableCell className="text-center text-xs">{row.semester ? toRoman(row.semester) : '-'}</TableCell>
+															<TableCell className="text-center text-xs font-medium">{row.course_code}</TableCell>
+															<TableCell className="text-xs max-w-[200px] break-words">{row.course_name || '-'}</TableCell>
+														</TableRow>
+													))
+												)}
+											</TableBody>
+										</Table>
 									)}
 								</div>
 

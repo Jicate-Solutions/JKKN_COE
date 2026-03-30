@@ -1336,6 +1336,191 @@ function generateExamDateWiseAttendancePdf(opts: ReportPdfOptions): string {
 	return generateExamDateWisePdf(opts, true)
 }
 
+// ── Report: Board Wise Exam Timetable (A4 Portrait) ──
+
+function generateBoardWiseExamTimetablePdf(opts: ReportPdfOptions): string {
+	const doc = new jsPDF('portrait', 'mm', 'a4')
+	const pageWidth = doc.internal.pageSize.getWidth()
+	const pageHeight = doc.internal.pageSize.getHeight()
+	const margin = 6.35
+
+	// Aggregate unique courses with exam date/session
+	const courseMap = new Map<string, any>()
+	for (const row of opts.data) {
+		const co = row.course_offering
+		if (!co) continue
+		const examDate = row.exam_date || ''
+		const examSession = row.exam_session || ''
+		const key = `${co.board_code || ''}|${co.course_code}|${examDate}|${examSession}`
+		if (!courseMap.has(key)) {
+			courseMap.set(key, {
+				board_code: co.board_code || '',
+				board_name: co.board_name || '',
+				board_order: co.board_order ?? 999,
+				semester: co.semester || 0,
+				course_order: co.course_order ?? 999,
+				course_code: co.course_code,
+				course_name: co.course_name || '',
+				exam_date: examDate,
+				exam_session: examSession,
+			})
+		}
+	}
+
+	const rows = Array.from(courseMap.values())
+		.sort((a, b) => (a.board_order - b.board_order) || (a.semester - b.semester) || (a.course_order - b.course_order) || a.course_code.localeCompare(b.course_code))
+
+	if (rows.length === 0) return ''
+
+	// Build board groups for merged cells
+	const boardGroups: { board_code: string, startIdx: number, count: number }[] = []
+	let prevBoard: string | null = null
+	for (let i = 0; i < rows.length; i++) {
+		if (rows[i].board_code !== prevBoard) {
+			boardGroups.push({ board_code: rows[i].board_code, startIdx: i, count: 1 })
+			prevBoard = rows[i].board_code
+		} else {
+			boardGroups[boardGroups.length - 1].count++
+		}
+	}
+
+	// Portrait A4 = ~197mm usable
+	const colWidths = [8, 25, 22, 12, 10, 22, 98]  // Total = 197
+	const headers = ['S.No', 'Board', 'Exam Date', 'Session', 'Sem', 'Course\nCode', 'Course Name']
+	const headerHeight = 10
+	const rowHeight = 7
+	const footerSpace = 10
+
+	let currentPage = 1
+	let rowsOnPage = 0
+
+	function drawTimetableHeader(y: number): number {
+		doc.setFont('times', 'bold')
+		doc.setFontSize(9)
+		doc.setDrawColor(0, 0, 0)
+		doc.setLineWidth(0.3)
+
+		let x = margin
+		for (let i = 0; i < headers.length; i++) {
+			doc.rect(x, y, colWidths[i], headerHeight)
+			const lines = headers[i].split('\n')
+			const lineH = headerHeight / (lines.length + 1)
+			lines.forEach((line, li) => {
+				doc.text(line, x + colWidths[i] / 2, y + lineH * (li + 1), { align: 'center' })
+			})
+			x += colWidths[i]
+		}
+		return y + headerHeight
+	}
+
+	function formatDate(dateStr: string): string {
+		try {
+			const d = new Date(dateStr)
+			if (isNaN(d.getTime())) return dateStr
+			return `${String(d.getDate()).padStart(2, '0')}-${String(d.getMonth() + 1).padStart(2, '0')}-${d.getFullYear()}`
+		} catch { return dateStr }
+	}
+
+	let startY = drawHeader(doc, pageWidth, margin, opts, 'BOARD WISE EXAM TIMETABLE')
+	let tableY = drawTimetableHeader(startY)
+
+	doc.setFont('times', 'normal')
+	doc.setFontSize(9)
+	const rowHeights = rows.map(row => calcWrappedRowHeight(doc, row.course_name, colWidths[6] - 2, rowHeight))
+
+	let boardGroupIdx = 0
+	let boardGroupRowOffset = 0
+
+	for (let idx = 0; idx < rows.length; idx++) {
+		const row = rows[idx]
+		const rh = rowHeights[idx]
+
+		if (tableY + rh > pageHeight - margin - footerSpace) {
+			doc.addPage()
+			currentPage++
+			tableY = margin + 2
+			tableY = drawTimetableHeader(tableY)
+			rowsOnPage = 0
+		}
+
+		const bg = boardGroups[boardGroupIdx]
+
+		doc.setFont('times', 'normal')
+		doc.setFontSize(9)
+		doc.setDrawColor(0, 0, 0)
+		doc.setLineWidth(0.3)
+
+		let x = margin
+
+		// S.No
+		doc.rect(x, tableY, colWidths[0], rh)
+		doc.text(String(idx + 1), x + colWidths[0] / 2, tableY + rh / 2 + 1.5, { align: 'center' })
+		x += colWidths[0]
+
+		// Board - merged
+		if (boardGroupRowOffset === 0 || rowsOnPage === 0) {
+			const remainingInGroup = bg.count - boardGroupRowOffset
+			const availableSpace = pageHeight - margin - footerSpace - tableY
+			let mergeHeight = 0
+			for (let ri = 0; ri < remainingInGroup; ri++) {
+				const h = rowHeights[bg.startIdx + boardGroupRowOffset + ri]
+				if (mergeHeight + h > availableSpace) break
+				mergeHeight += h
+			}
+			if (mergeHeight === 0) mergeHeight = rh
+			doc.rect(x, tableY, colWidths[1], mergeHeight)
+			const boardRow = rows[bg.startIdx]
+			const boardLabel = formatBoardDisplay(bg.board_code, boardRow?.board_name)
+			drawWrappedCell(doc, boardLabel, x, tableY, colWidths[1], mergeHeight, 'center')
+		}
+		x += colWidths[1]
+
+		// Exam Date
+		doc.rect(x, tableY, colWidths[2], rh)
+		doc.text(row.exam_date ? formatDate(row.exam_date) : '-', x + colWidths[2] / 2, tableY + rh / 2 + 1.5, { align: 'center' })
+		x += colWidths[2]
+
+		// Session
+		doc.rect(x, tableY, colWidths[3], rh)
+		doc.text(row.exam_session || '-', x + colWidths[3] / 2, tableY + rh / 2 + 1.5, { align: 'center' })
+		x += colWidths[3]
+
+		// Sem
+		doc.rect(x, tableY, colWidths[4], rh)
+		doc.text(row.semester ? toRoman(row.semester) : '', x + colWidths[4] / 2, tableY + rh / 2 + 1.5, { align: 'center' })
+		x += colWidths[4]
+
+		// Course Code
+		doc.rect(x, tableY, colWidths[5], rh)
+		doc.text(row.course_code, x + colWidths[5] / 2, tableY + rh / 2 + 1.5, { align: 'center' })
+		x += colWidths[5]
+
+		// Course Name - wrapped
+		doc.rect(x, tableY, colWidths[6], rh)
+		drawWrappedCell(doc, row.course_name, x, tableY, colWidths[6], rh)
+
+		tableY += rh
+		rowsOnPage++
+
+		boardGroupRowOffset++
+		if (boardGroupRowOffset >= bg.count) {
+			boardGroupIdx++
+			boardGroupRowOffset = 0
+		}
+	}
+
+	const totalPages = doc.getNumberOfPages()
+	for (let p = 1; p <= totalPages; p++) {
+		doc.setPage(p)
+		drawFooter(doc, pageWidth, margin, p, totalPages)
+	}
+
+	const levelSuffix = opts.course_level ? `-${opts.course_level}` : ''
+	const filename = `board-wise-exam-timetable-${opts.session_code}${levelSuffix}-${new Date().toISOString().slice(0, 10)}.pdf`
+	doc.save(filename)
+	return filename
+}
+
 /** Shared generator for both exam-date-wise Registration and Attendance reports.
  * Continuous layout: single institution header on page 1, all date+session groups
  * flow continuously. Page breaks only when content overflows. */
@@ -1646,6 +1831,8 @@ export function generateExamRegistrationReportPdf(opts: ReportPdfOptions): strin
 			return generateCourseCountProgramYearWisePdf(filteredOpts)
 		case 'course-count-program-year-section':
 			return generateCourseCountProgramYearSectionPdf(filteredOpts)
+		case 'board-wise-exam-timetable':
+			return generateBoardWiseExamTimetablePdf(filteredOpts)
 		case 'exam-date-wise-registration':
 			return generateExamDateWiseRegistrationPdf(filteredOpts)
 		case 'exam-date-wise-attendance':
