@@ -185,6 +185,22 @@ export interface ExaminerFormData {
 	willing_for_valuation: boolean
 	willing_for_practical: boolean
 	willing_for_scrutiny: boolean
+	// Engineering-specific fields
+	form_type: string
+	salutation: string
+	gender: string
+	highest_qualification: string
+	aicte_faculty_code: string
+	personal_email: string
+	official_email: string
+	institution_coe_contact: string
+	institution_coe_email: string
+	teaching_exp_years: number
+	industry_exp_years: number
+	total_exp_years: number
+	area_of_expertise: string
+	willingness_roles: string[]
+	additional_data: Record<string, unknown>
 }
 
 export interface PublicExaminerFormData {
@@ -300,6 +316,22 @@ export const DEFAULT_EXAMINER_FORM: ExaminerFormData = {
 	willing_for_valuation: true,
 	willing_for_practical: false,
 	willing_for_scrutiny: false,
+	// Engineering-specific defaults
+	form_type: 'arts',
+	salutation: '',
+	gender: '',
+	highest_qualification: '',
+	aicte_faculty_code: '',
+	personal_email: '',
+	official_email: '',
+	institution_coe_contact: '',
+	institution_coe_email: '',
+	teaching_exp_years: 0,
+	industry_exp_years: 0,
+	total_exp_years: 0,
+	area_of_expertise: '',
+	willingness_roles: [],
+	additional_data: {},
 }
 
 // ── Engineering Examiner Extension Types ────────────────────

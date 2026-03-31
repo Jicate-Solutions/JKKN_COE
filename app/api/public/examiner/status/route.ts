@@ -18,13 +18,7 @@ export async function GET(request: Request) {
 
 		const { data: examiner, error } = await supabase
 			.from('examiners')
-			.select(`
-				id, full_name, email, mobile, designation, department,
-				institution_name, institution_address, institution_code,
-				ug_experience_years, pg_experience_years,
-				examiner_type, status, status_remarks,
-				email_verified, is_enable, created_at
-			`)
+			.select('*')
 			.eq('email', email)
 			.maybeSingle()
 

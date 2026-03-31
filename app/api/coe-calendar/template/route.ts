@@ -1,22 +1,22 @@
 import { NextResponse } from 'next/server'
-import * as XLSX from 'xlsx'
+import ExcelJS from 'exceljs'
 
 export async function GET() {
-	const wb = XLSX.utils.book_new()
+	const wb = new ExcelJS.Workbook()
 
 	// Sheet 1: Data entry template with one example row
-	const dataRows = [
+	const dataSheet = wb.addWorksheet('Calendar Events')
+	dataSheet.addRows([
 		['Programme', 'Category', 'Event Title', 'From Date', 'To Date', 'Description'],
 		['BOTH', 'CIA_I', 'CIA-I Commencement', '03-02-2026', '03-02-2026', 'Optional description'],
+	])
+	dataSheet.columns = [
+		{ width: 12 }, { width: 18 }, { width: 40 }, { width: 14 }, { width: 14 }, { width: 30 },
 	]
-	const dataSheet = XLSX.utils.aoa_to_sheet(dataRows)
-	dataSheet['!cols'] = [
-		{ wch: 12 }, { wch: 18 }, { wch: 40 }, { wch: 14 }, { wch: 14 }, { wch: 30 },
-	]
-	XLSX.utils.book_append_sheet(wb, dataSheet, 'Calendar Events')
 
 	// Sheet 2: Reference values
-	const refRows = [
+	const refSheet = wb.addWorksheet('Reference')
+	refSheet.addRows([
 		['Field', 'Valid Values'],
 		['Programme', 'UG'],
 		['Programme', 'PG'],
@@ -30,12 +30,10 @@ export async function GET() {
 		['Category', 'GENERAL — General Academic Event'],
 		['', ''],
 		['Date Format', 'DD-MM-YYYY (e.g. 03-02-2026)'],
-	]
-	const refSheet = XLSX.utils.aoa_to_sheet(refRows)
-	refSheet['!cols'] = [{ wch: 14 }, { wch: 50 }]
-	XLSX.utils.book_append_sheet(wb, refSheet, 'Reference')
+	])
+	refSheet.columns = [{ width: 14 }, { width: 50 }]
 
-	const buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' })
+	const buffer = await wb.xlsx.writeBuffer()
 
 	return new NextResponse(buffer, {
 		status: 200,

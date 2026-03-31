@@ -1,18 +1,29 @@
 import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
-import * as XLSX from 'xlsx'
+import ExcelJS from 'exceljs'
 
 const VALID_CATEGORIES = ['CIA_I', 'CIA_II', 'MODEL_EXAM', 'PRACTICAL_EXAM', 'SEMESTER_THEORY', 'GENERAL']
 const VALID_PROGRAMMES = ['UG', 'PG', 'BOTH']
 
-function parseDate(raw: string | number | undefined): string | null {
+function parseDate(raw: string | number | Date | undefined): string | null {
 	if (!raw) return null
+
+	// Handle Date objects (exceljs returns Date for Excel date cells)
+	if (raw instanceof Date) {
+		const y = raw.getFullYear()
+		const m = String(raw.getMonth() + 1).padStart(2, '0')
+		const d = String(raw.getDate()).padStart(2, '0')
+		return `${y}-${m}-${d}`
+	}
 
 	// Handle Excel serial number dates
 	if (typeof raw === 'number') {
-		const date = XLSX.SSF.parse_date_code(raw)
-		if (!date) return null
-		return `${date.y}-${String(date.m).padStart(2, '0')}-${String(date.d).padStart(2, '0')}`
+		const excelEpoch = new Date(1899, 11, 30)
+		const date = new Date(excelEpoch.getTime() + raw * 86400000)
+		const y = date.getFullYear()
+		const m = String(date.getMonth() + 1).padStart(2, '0')
+		const d = String(date.getDate()).padStart(2, '0')
+		return `${y}-${m}-${d}`
 	}
 
 	const str = String(raw).trim()
@@ -46,10 +57,19 @@ export async function POST(request: Request) {
 		return NextResponse.json({ error: 'No file uploaded' }, { status: 400 })
 	}
 
-	const buffer = Buffer.from(await file.arrayBuffer())
-	const wb = XLSX.read(buffer, { type: 'buffer' })
-	const sheet = wb.Sheets[wb.SheetNames[0]]
-	const rows = XLSX.utils.sheet_to_json(sheet, { header: 1 }) as (string | number)[][]
+	const arrayBuffer = await file.arrayBuffer()
+	const wb = new ExcelJS.Workbook()
+	await wb.xlsx.load(arrayBuffer)
+	const sheet = wb.worksheets[0]
+	if (!sheet) {
+		return NextResponse.json({ error: 'No worksheet found in file' }, { status: 400 })
+	}
+	const rows: (string | number | Date)[][] = []
+	sheet.eachRow((row) => {
+		// row.values is 1-indexed (index 0 is empty), slice to normalize
+		const vals = Array.isArray(row.values) ? row.values.slice(1) : []
+		rows.push(vals as (string | number | Date)[])
+	})
 
 	if (rows.length < 2) {
 		return NextResponse.json({ error: 'File has no data rows' }, { status: 400 })

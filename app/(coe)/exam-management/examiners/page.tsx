@@ -18,6 +18,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Badge } from '@/components/ui/badge'
+import { Checkbox } from '@/components/ui/checkbox'
 import { Switch } from '@/components/ui/switch'
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet'
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog'
@@ -261,15 +262,30 @@ export default function ExaminersPage() {
 		return sortDirection === 'asc' ? <ArrowUp className="h-3 w-3" /> : <ArrowDown className="h-3 w-3" />
 	}
 
+	// Determine form type based on institution
+	const getFormTypeForInstitution = (instId: string, instCode?: string): string => {
+		// Check form configs first
+		const config = formConfigs.find(c =>
+			c.form_type === 'engineering' && (c.institution_code === instCode || c.institution_id === instId)
+		)
+		if (config) return 'engineering'
+		// Check institution name
+		const inst = institutions.find(i => i.id === instId || i.institution_code === instCode)
+		if (inst?.institution_name?.toLowerCase().includes('engineering')) return 'engineering'
+		return 'arts'
+	}
+
 	// Form handling
 	const resetForm = () => {
 		const autoInstitutionId = getInstitutionIdForCreate() || ''
 		const autoInstitutionCode = getInstitutionCodeForCreate() || ''
+		const autoFormType = autoInstitutionId ? getFormTypeForInstitution(autoInstitutionId, autoInstitutionCode) : 'arts'
 
 		setFormData({
 			...DEFAULT_EXAMINER_FORM,
 			institution_id: autoInstitutionId,
 			institution_code: autoInstitutionCode,
+			form_type: autoFormType,
 		})
 		setEditing(null)
 		setErrors({})
@@ -282,6 +298,9 @@ export default function ExaminersPage() {
 
 	const openEditForm = (examiner: Examiner) => {
 		setEditing(examiner)
+		const ad = (examiner.additional_data || {}) as Record<string, unknown>
+		const specs = (ad.specializations || {}) as Record<string, string>
+		const courses = (ad.courses || {}) as Record<string, { course: string; times: string }[]>
 		setFormData({
 			full_name: examiner.full_name,
 			email: examiner.email,
@@ -307,6 +326,28 @@ export default function ExaminersPage() {
 			pg_board_id: examiner.pg_board_id || '',
 			ug_board_codes: examiner.boards?.filter(b => b.board?.board_type === 'UG').map(b => b.board_code || '') || [],
 			pg_board_codes: examiner.boards?.filter(b => b.board?.board_type === 'PG').map(b => b.board_code || '') || [],
+			// Engineering-specific fields
+			form_type: examiner.form_type || 'arts',
+			salutation: examiner.salutation || '',
+			gender: examiner.gender || '',
+			highest_qualification: examiner.highest_qualification || '',
+			aicte_faculty_code: examiner.aicte_faculty_code || '',
+			personal_email: examiner.personal_email || '',
+			official_email: examiner.official_email || '',
+			institution_coe_contact: examiner.institution_coe_contact || '',
+			institution_coe_email: examiner.institution_coe_email || '',
+			teaching_exp_years: examiner.teaching_exp_years || 0,
+			industry_exp_years: examiner.industry_exp_years || 0,
+			total_exp_years: examiner.total_exp_years || 0,
+			area_of_expertise: examiner.area_of_expertise || '',
+			willingness_roles: examiner.willingness_roles || [],
+			additional_data: {
+				specializations: specs,
+				courses: {
+					theory: courses.theory || [],
+					practical: courses.practical || [],
+				},
+			},
 			willing_for_valuation: examiner.boards?.[0]?.willing_for_valuation ?? true,
 			willing_for_practical: examiner.boards?.[0]?.willing_for_practical ?? false,
 			willing_for_scrutiny: examiner.boards?.[0]?.willing_for_scrutiny ?? false,
@@ -747,8 +788,8 @@ export default function ExaminersPage() {
 						return row
 					})
 				} else {
-					const data = new Uint8Array(await file.arrayBuffer())
-					const wb = await XLSX.read(data, { type: 'array' })
+					const data = await file.arrayBuffer()
+					const wb = await XLSX.read(data)
 					const ws = wb.Sheets[wb.SheetNames[0]]
 					rows = XLSX.utils.sheet_to_json(ws) as any[]
 				}
@@ -1698,10 +1739,13 @@ export default function ExaminersPage() {
 										value={formData.institution_id || 'none'}
 										onValueChange={(v) => {
 											const inst = institutions.find(i => i.id === v)
+											const instCode = inst?.institution_code || ''
+											const formType = v !== 'none' ? getFormTypeForInstitution(v, instCode) : 'arts'
 											setFormData({
 												...formData,
 												institution_id: v === 'none' ? '' : v,
-												institution_code: inst?.institution_code || '',
+												institution_code: instCode,
+												form_type: formType,
 											})
 										}}
 									>
@@ -1731,12 +1775,32 @@ export default function ExaminersPage() {
 								</div>
 							) : null}
 
+							{/* Form Type Badge */}
+							<div className="flex items-center gap-2">
+								<Badge variant="outline" className={formData.form_type === 'engineering' ? 'text-blue-600 border-blue-200 bg-blue-50' : 'text-emerald-600 border-emerald-200 bg-emerald-50'}>
+									{formData.form_type === 'engineering' ? 'Engineering College' : 'Arts / Science College'}
+								</Badge>
+								<span className="text-xs text-muted-foreground">Auto-detected from institution</span>
+							</div>
+
 							{/* Personal Info */}
 							<div className="space-y-4">
 								<h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider pb-3 border-b">
 									Personal Information
 								</h3>
 								<div className="grid grid-cols-2 gap-4">
+									{formData.form_type === 'engineering' && (
+										<div className="space-y-2">
+											<Label>Salutation</Label>
+											<Select value={formData.salutation || 'none'} onValueChange={(v) => setFormData({ ...formData, salutation: v === 'none' ? '' : v })}>
+												<SelectTrigger><SelectValue placeholder="Select" /></SelectTrigger>
+												<SelectContent>
+													<SelectItem value="none">Select</SelectItem>
+													{['Dr', 'Mr', 'Mrs', 'Ms'].map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+												</SelectContent>
+											</Select>
+										</div>
+									)}
 									<div className="space-y-2">
 										<Label>Full Name <span className="text-red-500">*</span></Label>
 										<Input
@@ -1746,6 +1810,18 @@ export default function ExaminersPage() {
 										/>
 										{errors.full_name && <p className="text-sm text-red-500">{errors.full_name}</p>}
 									</div>
+									{formData.form_type === 'engineering' && (
+										<div className="space-y-2">
+											<Label>Gender</Label>
+											<Select value={formData.gender || 'none'} onValueChange={(v) => setFormData({ ...formData, gender: v === 'none' ? '' : v })}>
+												<SelectTrigger><SelectValue placeholder="Select" /></SelectTrigger>
+												<SelectContent>
+													<SelectItem value="none">Select</SelectItem>
+													{['Male', 'Female', 'Other'].map(g => <SelectItem key={g} value={g}>{g}</SelectItem>)}
+												</SelectContent>
+											</Select>
+										</div>
+									)}
 									<div className="space-y-2">
 										<Label>Email <span className="text-red-500">*</span></Label>
 										<Input
@@ -1770,8 +1846,45 @@ export default function ExaminersPage() {
 											onChange={(e) => setFormData({ ...formData, designation: e.target.value })}
 										/>
 									</div>
+									{formData.form_type === 'engineering' && (
+										<div className="space-y-2">
+											<Label>Highest Qualification</Label>
+											<Input
+												value={formData.highest_qualification}
+												onChange={(e) => setFormData({ ...formData, highest_qualification: e.target.value })}
+												placeholder="e.g., Ph.D, M.E., M.Tech"
+											/>
+										</div>
+									)}
 								</div>
 							</div>
+
+							{/* Contact Details - Engineering only */}
+							{formData.form_type === 'engineering' && (
+								<div className="space-y-4">
+									<h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider pb-3 border-b">
+										Contact Details
+									</h3>
+									<div className="grid grid-cols-2 gap-4">
+										<div className="space-y-2">
+											<Label>Personal Email</Label>
+											<Input
+												type="email"
+												value={formData.personal_email}
+												onChange={(e) => setFormData({ ...formData, personal_email: e.target.value })}
+											/>
+										</div>
+										<div className="space-y-2">
+											<Label>Official Email</Label>
+											<Input
+												type="email"
+												value={formData.official_email}
+												onChange={(e) => setFormData({ ...formData, official_email: e.target.value })}
+											/>
+										</div>
+									</div>
+								</div>
+							)}
 
 							{/* Institution Info */}
 							<div className="space-y-4">
@@ -1780,6 +1893,15 @@ export default function ExaminersPage() {
 								</h3>
 
 								<div className="grid grid-cols-2 gap-4">
+									{formData.form_type === 'engineering' && (
+										<div className="space-y-2">
+											<Label>AICTE/AU Faculty Code</Label>
+											<Input
+												value={formData.aicte_faculty_code}
+												onChange={(e) => setFormData({ ...formData, aicte_faculty_code: e.target.value })}
+											/>
+										</div>
+									)}
 									<div className="space-y-2">
 										<Label>Institution Name</Label>
 										<Input
@@ -1802,13 +1924,210 @@ export default function ExaminersPage() {
 											rows={2}
 										/>
 									</div>
+									{formData.form_type === 'engineering' && (
+										<>
+											<div className="space-y-2">
+												<Label>Institution COE Contact</Label>
+												<Input
+													value={formData.institution_coe_contact}
+													onChange={(e) => setFormData({ ...formData, institution_coe_contact: e.target.value })}
+												/>
+											</div>
+											<div className="space-y-2">
+												<Label>Institution COE Email</Label>
+												<Input
+													type="email"
+													value={formData.institution_coe_email}
+													onChange={(e) => setFormData({ ...formData, institution_coe_email: e.target.value })}
+												/>
+											</div>
+										</>
+									)}
 								</div>
 							</div>
 
-							{/* Experience & Type */}
+							{/* Engineering Experience */}
+							{formData.form_type === 'engineering' && (
+								<div className="space-y-4">
+									<h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider pb-3 border-b">
+										Experience
+									</h3>
+									<div className="grid grid-cols-3 gap-4">
+										<div className="space-y-2">
+											<Label>Teaching Exp. (Years)</Label>
+											<Input
+												type="number"
+												min="0"
+												value={formData.teaching_exp_years}
+												onChange={(e) => setFormData({ ...formData, teaching_exp_years: parseInt(e.target.value) || 0 })}
+											/>
+										</div>
+										<div className="space-y-2">
+											<Label>Industry Exp. (Years)</Label>
+											<Input
+												type="number"
+												min="0"
+												value={formData.industry_exp_years}
+												onChange={(e) => setFormData({ ...formData, industry_exp_years: parseInt(e.target.value) || 0 })}
+											/>
+										</div>
+										<div className="space-y-2">
+											<Label>Total Exp. (Years)</Label>
+											<Input
+												type="number"
+												min="0"
+												value={formData.total_exp_years}
+												onChange={(e) => setFormData({ ...formData, total_exp_years: parseInt(e.target.value) || 0 })}
+											/>
+										</div>
+									</div>
+								</div>
+							)}
+
+							{/* Engineering Academic Profile */}
+							{formData.form_type === 'engineering' && (
+								<div className="space-y-4">
+									<h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider pb-3 border-b">
+										Academic Profile
+									</h3>
+									<div className="grid grid-cols-2 gap-4">
+										<div className="space-y-2">
+											<Label>UG Specialization</Label>
+											<Input
+												value={((formData.additional_data?.specializations as Record<string, string>)?.ug) || ''}
+												onChange={(e) => {
+													const specs = { ...(formData.additional_data?.specializations as Record<string, string> || {}), ug: e.target.value }
+													setFormData({ ...formData, additional_data: { ...formData.additional_data, specializations: specs } })
+												}}
+												placeholder="e.g., Computer Science"
+											/>
+										</div>
+										<div className="space-y-2">
+											<Label>PG Specialization</Label>
+											<Input
+												value={((formData.additional_data?.specializations as Record<string, string>)?.pg) || ''}
+												onChange={(e) => {
+													const specs = { ...(formData.additional_data?.specializations as Record<string, string> || {}), pg: e.target.value }
+													setFormData({ ...formData, additional_data: { ...formData.additional_data, specializations: specs } })
+												}}
+												placeholder="e.g., Software Engineering"
+											/>
+										</div>
+										<div className="space-y-2">
+											<Label>PhD Specialization</Label>
+											<Input
+												value={((formData.additional_data?.specializations as Record<string, string>)?.phd) || ''}
+												onChange={(e) => {
+													const specs = { ...(formData.additional_data?.specializations as Record<string, string> || {}), phd: e.target.value }
+													setFormData({ ...formData, additional_data: { ...formData.additional_data, specializations: specs } })
+												}}
+												placeholder="e.g., Machine Learning"
+											/>
+										</div>
+										<div className="space-y-2">
+											<Label>Area of Expertise</Label>
+											<Input
+												value={formData.area_of_expertise}
+												onChange={(e) => setFormData({ ...formData, area_of_expertise: e.target.value })}
+												placeholder="e.g., Communication, VLSI"
+											/>
+										</div>
+									</div>
+								</div>
+							)}
+
+							{/* Engineering Willingness & Courses */}
+							{formData.form_type === 'engineering' && (
+								<div className="space-y-4">
+									<h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider pb-3 border-b">
+										Examiner Preferences & Courses
+									</h3>
+									<div className="space-y-2">
+										<Label>Willingness Roles</Label>
+										<div className="flex flex-wrap gap-2">
+											{['Question Paper Setter', 'Question Paper Scrutiny', 'External Examiner for Practical Exams', 'Theory Valuation', 'Chief Examiner'].map(role => (
+												<label key={role} className="flex items-center gap-1.5 text-sm border rounded-md px-2.5 py-1.5 cursor-pointer hover:bg-muted">
+													<Checkbox
+														checked={formData.willingness_roles.includes(role)}
+														onCheckedChange={(checked) => {
+															setFormData({
+																...formData,
+																willingness_roles: checked
+																	? [...formData.willingness_roles, role]
+																	: formData.willingness_roles.filter(r => r !== role),
+															})
+														}}
+													/>
+													{role}
+												</label>
+											))}
+										</div>
+									</div>
+
+									{/* Theory Courses */}
+									<div className="space-y-2">
+										<Label>Theory Courses</Label>
+										{((formData.additional_data?.courses as Record<string, { course: string; times: string }[]>)?.theory || []).map((tc, i) => (
+											<div key={i} className="grid grid-cols-[1fr,80px] gap-2">
+												<Input
+													value={tc.course}
+													onChange={(e) => {
+														const courses = { ...(formData.additional_data?.courses as Record<string, { course: string; times: string }[]> || {}) }
+														const theory = [...(courses.theory || [])]
+														theory[i] = { ...theory[i], course: e.target.value }
+														setFormData({ ...formData, additional_data: { ...formData.additional_data, courses: { ...courses, theory } } })
+													}}
+													placeholder={`Theory course ${i + 1}`}
+												/>
+												<Input
+													value={tc.times}
+													onChange={(e) => {
+														const courses = { ...(formData.additional_data?.courses as Record<string, { course: string; times: string }[]> || {}) }
+														const theory = [...(courses.theory || [])]
+														theory[i] = { ...theory[i], times: e.target.value }
+														setFormData({ ...formData, additional_data: { ...formData.additional_data, courses: { ...courses, theory } } })
+													}}
+													placeholder="Times"
+												/>
+											</div>
+										))}
+									</div>
+
+									{/* Practical Courses */}
+									<div className="space-y-2">
+										<Label>Practical Courses</Label>
+										{((formData.additional_data?.courses as Record<string, { course: string; times: string }[]>)?.practical || []).map((pc, i) => (
+											<div key={i} className="grid grid-cols-[1fr,80px] gap-2">
+												<Input
+													value={pc.course}
+													onChange={(e) => {
+														const courses = { ...(formData.additional_data?.courses as Record<string, { course: string; times: string }[]> || {}) }
+														const practical = [...(courses.practical || [])]
+														practical[i] = { ...practical[i], course: e.target.value }
+														setFormData({ ...formData, additional_data: { ...formData.additional_data, courses: { ...courses, practical } } })
+													}}
+													placeholder={`Practical course ${i + 1}`}
+												/>
+												<Input
+													value={pc.times}
+													onChange={(e) => {
+														const courses = { ...(formData.additional_data?.courses as Record<string, { course: string; times: string }[]> || {}) }
+														const practical = [...(courses.practical || [])]
+														practical[i] = { ...practical[i], times: e.target.value }
+														setFormData({ ...formData, additional_data: { ...formData.additional_data, courses: { ...courses, practical } } })
+													}}
+													placeholder="Times"
+												/>
+											</div>
+										))}
+									</div>
+								</div>
+							)}
+
+							{/* Experience & Type (Arts / shared) */}
 							<div className="space-y-4">
 								<h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider pb-3 border-b">
-									Experience & Classification
+									{formData.form_type === 'engineering' ? 'Board & Classification' : 'Experience & Classification'}
 								</h3>
 
 								{/* UG / PG Board */}

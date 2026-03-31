@@ -45,7 +45,7 @@ import { useAuth } from '@/context/auth-context'
 import { useInstitutionFilter } from '@/hooks/use-institution-filter'
 import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
-import * as XLSX from 'xlsx'
+import ExcelJS from 'exceljs'
 import Link from 'next/link'
 
 interface Institution {
@@ -348,7 +348,7 @@ export default function DummyNumbersPage() {
 		}
 	}
 
-	const exportPreviewToExcel = () => {
+	const exportPreviewToExcel = async () => {
 		if (!previewData || previewData.students.length === 0) return
 
 		const wsData = [
@@ -365,15 +365,21 @@ export default function DummyNumbersPage() {
 			])
 		]
 
-		const ws = XLSX.utils.aoa_to_sheet(wsData)
-		// Auto-width columns
-		ws['!cols'] = [
-			{ wch: 8 }, { wch: 15 }, { wch: 20 }, { wch: 30 },
-			{ wch: 8 }, { wch: 10 }, { wch: 12 }, { wch: 10 },
+		const wb = new ExcelJS.Workbook()
+		const ws = wb.addWorksheet('Dummy Numbers Preview')
+		ws.addRows(wsData)
+		ws.columns = [
+			{ width: 8 }, { width: 15 }, { width: 20 }, { width: 30 },
+			{ width: 8 }, { width: 10 }, { width: 12 }, { width: 10 },
 		]
-		const wb = XLSX.utils.book_new()
-		XLSX.utils.book_append_sheet(wb, ws, 'Dummy Numbers Preview')
-		XLSX.writeFile(wb, `dummy-numbers-preview-${new Date().toISOString().split('T')[0]}.xlsx`)
+		const buffer = await wb.xlsx.writeBuffer()
+		const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })
+		const url = URL.createObjectURL(blob)
+		const a = document.createElement('a')
+		a.href = url
+		a.download = `dummy-numbers-preview-${new Date().toISOString().split('T')[0]}.xlsx`
+		a.click()
+		URL.revokeObjectURL(url)
 
 		toast({
 			title: '✅ Excel Exported',

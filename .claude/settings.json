@@ -32,7 +32,8 @@
       "Skill(commit-commands:commit)",
       "Skill(commit-commands:commit:*)",
       "Bash(npx patch-package:*)",
-      "Bash(find \"/d/JKKN/Development/Application/JKKN_COE/app/\\(coe\\)/utilities\" -name \"page.tsx\" -o -name \"layout.tsx\")"
+      "Bash(find \"/d/JKKN/Development/Application/JKKN_COE/app/\\(coe\\)/utilities\" -name \"page.tsx\" -o -name \"layout.tsx\")",
+      "Bash(npx next:*)"
     ],
     "deny": [
       "Bash(rm -rf:*)",

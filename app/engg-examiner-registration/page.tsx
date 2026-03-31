@@ -38,7 +38,7 @@ import {
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
-const INSTITUTION_CODE = 'JKKNCET'
+const INSTITUTION_CODE = 'CET'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -481,7 +481,7 @@ export default function EnggExaminerRegistrationPage() {
 								<Field label="AICTE/AU Faculty Code" value={ex.aicte_faculty_code} />
 								<Field label="Working Institution" value={ex.institution_name} />
 							</div>
-							<Field label="Address & Pincode" value={(ex.additional_data as Record<string, unknown>)?.address_pincode || ex.address} />
+							<Field label="Address & Pincode" value={ex.institution_address} />
 							<div className="grid grid-cols-2 gap-4">
 								<Field label="Institution COE Contact" value={ex.institution_coe_contact} />
 								<Field label="Institution COE Email" value={ex.institution_coe_email} />
@@ -511,13 +511,57 @@ export default function EnggExaminerRegistrationPage() {
 							</h3>
 							<Field label="Department" value={ex.department} />
 							<div className="grid grid-cols-2 gap-4">
-								<Field label="UG Specialization" value={(ex.additional_data as Record<string, unknown>)?.ug_specialization} />
-								<Field label="PG Specialization" value={(ex.additional_data as Record<string, unknown>)?.pg_specialization} />
+								<Field label="UG Specialization" value={((ex.additional_data as Record<string, unknown>)?.specializations as Record<string, unknown>)?.ug} />
+								<Field label="PG Specialization" value={((ex.additional_data as Record<string, unknown>)?.specializations as Record<string, unknown>)?.pg} />
 							</div>
-							<Field label="PhD Specialization" value={(ex.additional_data as Record<string, unknown>)?.phd_specialization} />
+							<Field label="PhD Specialization" value={((ex.additional_data as Record<string, unknown>)?.specializations as Record<string, unknown>)?.phd} />
 							<Field label="Area of Expertise" value={ex.area_of_expertise} />
 						</CardContent>
 					</Card>
+
+					{/* Courses */}
+					{(() => {
+						const ad = ex.additional_data as Record<string, unknown>
+						const courses = ad?.courses as Record<string, { course: string; times: string }[]> | undefined
+						const theory = courses?.theory || []
+						const practical = courses?.practical || []
+						if (theory.length === 0 && practical.length === 0) return null
+						return (
+							<Card className="border-0 shadow-sm">
+								<CardContent className="p-5 space-y-4">
+									<h3 className="font-semibold text-gray-900 flex items-center gap-2">
+										<BookOpen className="w-4 h-4 text-blue-600" /> Courses
+									</h3>
+									{theory.length > 0 && (
+										<div className="space-y-2">
+											<p className="text-xs text-gray-500 font-medium uppercase tracking-wide">Theory Courses</p>
+											<div className="space-y-1.5">
+												{theory.map((c, i) => (
+													<div key={i} className="flex items-center gap-3 p-2.5 bg-gray-50 rounded-lg text-sm">
+														<span className="text-gray-900 flex-1">{c.course}</span>
+														{c.times && <span className="text-gray-500 text-xs">{c.times} time(s)</span>}
+													</div>
+												))}
+											</div>
+										</div>
+									)}
+									{practical.length > 0 && (
+										<div className="space-y-2">
+											<p className="text-xs text-gray-500 font-medium uppercase tracking-wide">Practical Courses</p>
+											<div className="space-y-1.5">
+												{practical.map((c, i) => (
+													<div key={i} className="flex items-center gap-3 p-2.5 bg-gray-50 rounded-lg text-sm">
+														<span className="text-gray-900 flex-1">{c.course}</span>
+														{c.times && <span className="text-gray-500 text-xs">{c.times} time(s)</span>}
+													</div>
+												))}
+											</div>
+										</div>
+									)}
+								</CardContent>
+							</Card>
+						)
+					})()}
 
 					{/* Willingness */}
 					<Card className="border-0 shadow-sm">
