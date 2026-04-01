@@ -5,6 +5,7 @@
 /.next
 /.obsidian
 /.playwright-mcp
+/.worktrees
 
 # dependencies
 /node_modules
