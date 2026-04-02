@@ -56,6 +56,7 @@ import { FlaskConical, Save, Check, ChevronsUpDown, Users, AlertTriangle, FileTe
 import { cn } from '@/lib/utils'
 import Link from 'next/link'
 import { useInstitutionFilter } from '@/hooks/use-institution-filter'
+import { useSessionSync } from '@/hooks/use-session-sync'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -138,7 +139,7 @@ export default function PracticalMarkEntryPage() {
 
 	// Selected values
 	const [selectedInstitutionId, setSelectedInstitutionId] = useState<string>('')
-	const [selectedSessionId, setSelectedSessionId] = useState<string>('')
+	const { selectedSessionId, setSelectedSessionId, mustSelectSession } = useSessionSync()
 	const [selectedCourseId, setSelectedCourseId] = useState<string>('')
 	const [selectedBatchId, setSelectedBatchId] = useState<string>('')
 
@@ -718,6 +719,7 @@ export default function PracticalMarkEntryPage() {
 									)}
 
 									{/* Exam Session */}
+									{mustSelectSession && (
 									<div className="space-y-1.5">
 										<Label className="text-xs font-medium">
 											Exam Session <span className="text-red-500">*</span>
@@ -768,6 +770,7 @@ export default function PracticalMarkEntryPage() {
 											</PopoverContent>
 										</Popover>
 									</div>
+									)}
 
 									{/* Course */}
 									<div className="space-y-1.5">

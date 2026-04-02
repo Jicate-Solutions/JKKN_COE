@@ -23,6 +23,7 @@ import {
 } from '@/components/ui/table'
 import { useToast } from '@/hooks/common/use-toast'
 import { useInstitutionFilter } from '@/hooks/use-institution-filter'
+import { useSessionSync } from '@/hooks/use-session-sync'
 import { Save, Loader2, MessageSquare, Search, RefreshCw, AlertCircle } from 'lucide-react'
 import type {
 	CommentGradeRow,
@@ -41,7 +42,7 @@ export default function CommentGradeEntryPage() {
 	const { isReady, institutionId } = useInstitutionFilter()
 
 	// ── filter state ──────────────────────────────────────────
-	const [sessionId, setSessionId] = useState('')
+	const { selectedSessionId: sessionId, setSelectedSessionId: setSessionId, mustSelectSession } = useSessionSync()
 	const [programId, setProgramId] = useState('')
 	const [courseId, setCourseId] = useState('')
 	const [courseOfferingId, setCourseOfferingId] = useState('')
@@ -241,6 +242,7 @@ export default function CommentGradeEntryPage() {
 						</CardHeader>
 						<CardContent className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
 							{/* Session */}
+							{mustSelectSession && (
 							<div className="space-y-2">
 								<label className="text-sm font-medium">Examination Session</label>
 								<Select
@@ -260,6 +262,7 @@ export default function CommentGradeEntryPage() {
 									</SelectContent>
 								</Select>
 							</div>
+							)}
 
 							{/* Program */}
 							<div className="space-y-2">

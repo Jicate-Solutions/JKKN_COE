@@ -215,6 +215,7 @@ export interface Course {
 	course_title: string
 	course_type: string
 	course_category?: string
+	board_code?: string
 }
 
 /**

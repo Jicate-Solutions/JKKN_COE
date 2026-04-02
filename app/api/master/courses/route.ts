@@ -321,11 +321,25 @@ export async function POST(req: NextRequest) {
       offeringDepartmentId = deptData.id
     }
 
-    // 4. Insert course with resolved IDs
+    // 4. Resolve board_id from board_code
+    let boardId = null
+    if (input.board_code) {
+      const { data: boardData } = await supabase2
+        .from('board')
+        .select('id')
+        .eq('board_code', String(input.board_code))
+        .single()
+      if (boardData) {
+        boardId = boardData.id
+      }
+    }
+
+    // 5. Insert course with resolved IDs
     const { data, error } = await supabase2.from('courses').insert({
       institutions_id: institutionData.id,
       regulation_id: regulationId,
       offering_department_id: offeringDepartmentId,
+      board_id: boardId,
       institution_code: String(input.institution_code),
       regulation_code: String(input.regulation_code),
       offering_department_code: input.offering_department_code ? String(input.offering_department_code) : null,

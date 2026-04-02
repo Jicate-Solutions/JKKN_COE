@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useSessionSync } from '@/hooks/use-session-sync'
 import { useInstitutionFilter } from '@/hooks/use-institution-filter'
 import { useExamSessions } from '@/hooks/use-exam-sessions'
 import { AppSidebar } from '@/components/layout/app-sidebar'
@@ -182,7 +183,7 @@ export default function ProgramWiseCourseOfferingPage() {
 	const institutionCode = institutionContextReady && !mustSelectInstitution ? (contextInstitutionCode ?? '') : (selectedInstitution?.institution_code ?? '')
 
 	// Selected filters
-	const [sessionId, setSessionId] = useState('')
+	const { selectedSessionId: sessionId, setSelectedSessionId: setSessionId, mustSelectSession } = useSessionSync()
 	const [sessionCode, setSessionCode] = useState('')
 	const [programCode, setProgramCode] = useState('')
 	const [regulationCode, setRegulationCode] = useState('')
@@ -659,6 +660,7 @@ export default function ProgramWiseCourseOfferingPage() {
 									)}
 
 									{/* Exam Session */}
+									{mustSelectSession && (
 									<div className="space-y-1.5">
 										<Label className="text-xs font-medium text-slate-600 uppercase tracking-wide">Exam Session</Label>
 										<Select
@@ -683,6 +685,7 @@ export default function ProgramWiseCourseOfferingPage() {
 											</SelectContent>
 										</Select>
 									</div>
+									)}
 
 									{/* Program */}
 									<div className="space-y-1.5">

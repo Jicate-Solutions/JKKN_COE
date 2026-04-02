@@ -71,6 +71,12 @@ import {
 	FlaskConical,
 	Download,
 	ShieldCheck,
+
+	// Developer Portal Icons
+	Code2,
+	LayoutDashboard,
+	AppWindow,
+	ScrollText,
 } from "lucide-react"
 
 import { NavMain } from "@/components/layout/nav-main"
@@ -319,7 +325,18 @@ const data = {
 				{ title: "NAD Compliance",    url: "/result/dashboard?tab=nad",     icon: Shield, coe_roles: ["super_admin", "coe", "deputy_coe", "nad_coordinator"] },
 			],
 		},
-
+		{
+			title: 'Developer Portal',
+			url: '#',
+			icon: Code2,
+			isActive: false,
+			coe_roles: ['admin', 'super_admin'],
+			items: [
+				{ title: 'Overview',      url: '/developer-portal',             icon: LayoutDashboard },
+				{ title: 'Applications',  url: '/developer-portal/applications', icon: AppWindow },
+				{ title: 'Audit Logs',    url: '/developer-portal/audit-logs',  icon: ScrollText },
+			],
+		},
 
 	],
 }
@@ -387,6 +404,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
 			{/* ===== Sidebar Footer with Toggle ===== */}
 			<SidebarFooter className="border-t border-sidebar-border">
 				<button
+					type="button"
 					onClick={toggleSidebar}
 					className="flex items-center justify-center gap-2 w-full p-2 rounded-md hover:bg-sidebar-accent transition-colors text-sidebar-foreground"
 					title={isCollapsed ? "Expand sidebar" : "Collapse sidebar"}

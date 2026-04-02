@@ -26,6 +26,7 @@ import Link from "next/link"
 
 // Institution filter hook
 import { useInstitutionFilter } from '@/hooks/use-institution-filter'
+import { useSessionSync } from '@/hooks/use-session-sync'
 // MyJKKN API integration hook for fetching programs
 import { useMyJKKNInstitutionFilter } from '@/hooks/use-myjkkn-institution-filter'
 
@@ -75,7 +76,7 @@ export default function ExamAttendancePage() {
 
 	// Selected values
 	const [selectedInstitutionId, setSelectedInstitutionId] = useState<string>("")
-	const [selectedSessionId, setSelectedSessionId] = useState<string>("")
+	const { selectedSessionId, setSelectedSessionId, mustSelectSession } = useSessionSync()
 	const [selectedProgramCode, setSelectedProgramCode] = useState<string>("")
 	const [selectedExamDate, setSelectedExamDate] = useState<string>("")
 	const [selectedSessionType, setSelectedSessionType] = useState<string>("")
@@ -789,6 +790,7 @@ export default function ExamAttendancePage() {
 								)}
 
 								{/* 2. Examination Session */}
+								{mustSelectSession && (
 								<div className="space-y-1">
 									<Label htmlFor="session" className="text-xs font-medium">
 										Examination Session <span className="text-red-500">*</span>
@@ -879,6 +881,7 @@ export default function ExamAttendancePage() {
 										</PopoverContent>
 									</Popover>
 								</div>
+								)}
 
 								{/* 3. Program Code */}
 								<div className="space-y-1">

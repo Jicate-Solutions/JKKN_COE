@@ -9,12 +9,17 @@ export async function GET(request: Request) {
 		const exam_timetable_id = searchParams.get('exam_timetable_id')
 		const exam_room_id = searchParams.get('exam_room_id')
 		const room_allocation_id = searchParams.get('room_allocation_id')
+		const institutions_id = searchParams.get('institutions_id')
 
 		let query = supabase
 			.from('seat_allocations')
 			.select('*')
 			.order('row_number', { ascending: true })
 			.order('column_number', { ascending: true })
+
+		if (institutions_id) {
+			query = query.eq('institutions_id', institutions_id)
+		}
 
 		if (exam_timetable_id) {
 			query = query.eq('exam_timetable_id', exam_timetable_id)

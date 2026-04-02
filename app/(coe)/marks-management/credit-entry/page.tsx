@@ -23,6 +23,7 @@ import {
 } from '@/components/ui/table'
 import { useToast } from '@/hooks/common/use-toast'
 import { useInstitutionFilter } from '@/hooks/use-institution-filter'
+import { useSessionSync } from '@/hooks/use-session-sync'
 import { Award, Loader2, Save, Search, RefreshCw, CheckCircle, Clock } from 'lucide-react'
 import type { SessionOption, CourseOfferingOption } from '@/types/credit-entry'
 
@@ -36,7 +37,7 @@ export default function CreditEntryPage() {
 	const { isReady, institutionId } = useInstitutionFilter()
 
 	// ── filter state ──────────────────────────────────────────
-	const [sessionId, setSessionId] = useState('')
+	const { selectedSessionId: sessionId, setSelectedSessionId: setSessionId, mustSelectSession } = useSessionSync()
 	const [programId, setProgramId] = useState('')
 	const [courseId, setCourseId] = useState('')
 	const [courseOfferingId, setCourseOfferingId] = useState('')
@@ -205,6 +206,7 @@ export default function CreditEntryPage() {
 						</CardHeader>
 						<CardContent className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
 							{/* Session */}
+							{mustSelectSession && (
 							<div className="space-y-2">
 								<label className="text-sm font-medium">Examination Session</label>
 								<Select
@@ -224,6 +226,7 @@ export default function CreditEntryPage() {
 									</SelectContent>
 								</Select>
 							</div>
+							)}
 
 							{/* Program */}
 							<div className="space-y-2">

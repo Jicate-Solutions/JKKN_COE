@@ -24,6 +24,7 @@ import {
 } from '@/services/post-exam/external-marks-bulk-service'
 import { useInstitutionFilter } from '@/hooks/use-institution-filter'
 import { useMyJKKNInstitutionFilter, ProgramOption } from '@/hooks/use-myjkkn-institution-filter'
+import { useSessionSync } from '@/hooks/use-session-sync'
 
 interface UseExternalMarksBulkReturn {
 	// Data
@@ -45,6 +46,7 @@ interface UseExternalMarksBulkReturn {
 	// Filters
 	selectedInstitution: string
 	selectedSession: string
+	mustSelectSession: boolean
 	selectedProgram: string
 	selectedCourse: string
 	statusFilter: string
@@ -128,7 +130,7 @@ export function useExternalMarksBulk(): UseExternalMarksBulkReturn {
 
 	// Filter State
 	const [selectedInstitution, setSelectedInstitutionState] = useState('')
-	const [selectedSession, setSelectedSession] = useState('')
+	const { selectedSessionId: selectedSession, setSelectedSessionId: setSelectedSession, mustSelectSession } = useSessionSync()
 	const [selectedProgram, setSelectedProgram] = useState('')
 	const [selectedCourse, setSelectedCourse] = useState('')
 	const [statusFilter, setStatusFilter] = useState('all')
@@ -587,6 +589,7 @@ export function useExternalMarksBulk(): UseExternalMarksBulkReturn {
 		// Filters
 		selectedInstitution,
 		selectedSession,
+		mustSelectSession,
 		selectedProgram,
 		selectedCourse,
 		statusFilter,

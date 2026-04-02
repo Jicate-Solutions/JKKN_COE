@@ -2,6 +2,7 @@
 
 import { ProtectedRoute } from '@/components/common/protected-route'
 import { InstitutionProvider } from '@/context/institution-context'
+import { ExaminationSessionProvider } from '@/context/examination-session-context'
 import { useAuth } from '@/lib/auth/auth-context-parent'
 import { ShieldX, Mail, LogOut } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -89,7 +90,9 @@ export default function AuthenticatedLayout({
 			}
 		>
 			<InstitutionProvider>
-				{children}
+				<ExaminationSessionProvider>
+					{children}
+				</ExaminationSessionProvider>
 			</InstitutionProvider>
 		</ProtectedRoute>
 	)

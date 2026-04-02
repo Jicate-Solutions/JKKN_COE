@@ -16,6 +16,7 @@ import { Badge } from '@/components/ui/badge'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useToast } from '@/hooks/common/use-toast'
 import { useInstitutionFilter } from '@/hooks/use-institution-filter'
+import { useSessionSync } from '@/hooks/use-session-sync'
 import { ShieldCheck, Loader2, CheckCircle, XCircle, AlertTriangle, FileSpreadsheet } from 'lucide-react'
 import { runTimetableValidation, hasAnyIssues } from '@/services/exam-management/validate-timetable-service'
 import type { ValidationResult } from '@/types/validate-timetable'
@@ -48,7 +49,7 @@ export default function ValidateTimetablePage() {
 
 	// Selected
 	const [selectedInstitutionId, setSelectedInstitutionId] = useState('')
-	const [selectedSessionId, setSelectedSessionId] = useState('')
+	const { selectedSessionId, setSelectedSessionId, mustSelectSession } = useSessionSync()
 
 	// Validation
 	const [loading, setLoading] = useState(false)
@@ -264,6 +265,7 @@ export default function ValidateTimetablePage() {
 									</div>
 								)}
 
+								{mustSelectSession && (
 								<div className="space-y-1.5">
 									<Label className="text-xs font-semibold">Examination Session <span className="text-red-500">*</span></Label>
 									<Select value={selectedSessionId} onValueChange={(v) => { setSelectedSessionId(v); setResult(null) }} disabled={!selectedInstitutionId}>
@@ -279,6 +281,7 @@ export default function ValidateTimetablePage() {
 										</SelectContent>
 									</Select>
 								</div>
+								)}
 
 								<div>
 									<Button

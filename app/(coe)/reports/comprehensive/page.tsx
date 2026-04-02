@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useEffect, useMemo, useCallback } from "react"
+import { useSessionSync } from '@/hooks/use-session-sync'
 import XLSX from "@/lib/utils/excel-compat"
 import { AppSidebar } from "@/components/layout/app-sidebar"
 import { AppHeader } from "@/components/layout/app-header"
@@ -95,7 +96,7 @@ export default function ComprehensiveReportsPage() {
 
 	// Selected filters
 	const [selectedInstitutionId, setSelectedInstitutionId] = useState<string>("")
-	const [selectedSessionId, setSelectedSessionId] = useState<string>("")
+	const { selectedSessionId, setSelectedSessionId, mustSelectSession } = useSessionSync()
 	const [selectedProgramId, setSelectedProgramId] = useState<string>("")
 	const [selectedSemester, setSelectedSemester] = useState<string>("")
 	const [selectedCourseId, setSelectedCourseId] = useState<string>("")
@@ -921,6 +922,7 @@ export default function ComprehensiveReportsPage() {
 								)}
 
 								{/* Session */}
+								{mustSelectSession && (
 								<div className="space-y-2">
 									<Label className="text-xs">Session *</Label>
 									<Popover open={sessionOpen} onOpenChange={setSessionOpen}>
@@ -956,6 +958,7 @@ export default function ComprehensiveReportsPage() {
 										</PopoverContent>
 									</Popover>
 								</div>
+								)}
 
 								{/* Program */}
 								<div className="space-y-2">

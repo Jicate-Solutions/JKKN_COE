@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/badge"
 import { BellRing } from "lucide-react"
 import { NavUser } from "@/components/layout/nav-user"
 import { InstitutionSelector } from "@/components/layout/institution-selector"
+import { SessionSelector } from "@/components/layout/session-selector"
 import { useInstitution } from "@/context/institution-context"
 
 // Isolated clock component to prevent re-rendering entire header every second
@@ -72,33 +73,29 @@ export function AppHeader({
       <div className="absolute inset-0 bg-[radial-gradient(circle_at_30%_20%,rgba(255,255,255,0.1),transparent_50%)]"></div>
       <div className="absolute inset-0 bg-[radial-gradient(circle_at_70%_80%,rgba(255,255,255,0.05),transparent_50%)]"></div>
 
-      <div className="flex items-center gap-4 relative z-10">
+      <div className="flex items-center gap-4 relative z-10 min-w-0">
         <SidebarTrigger className="-ml-1 text-white/90 hover:text-white hover:bg-white/20 transition-all duration-300 rounded-md" />
         <Separator orientation="vertical" className="mr-2 h-6 bg-white/30" />
-        <div className="flex items-center gap-3">
-
-          <div>
-            <div className="text-base md:text-lg font-bold text-white drop-shadow-lg font-[family-name:var(--font-space-grotesk)]">
-              {displayTitle}
-            </div>
-            <div className="text-xs text-emerald-100 opacity-90 font-semibold font-inter">
-              {displaySubtitle}
-            </div>
+        <div className="min-w-0">
+          <div className="text-base md:text-lg font-bold text-white drop-shadow-lg font-[family-name:var(--font-space-grotesk)] truncate">
+            {displayTitle}
+          </div>
+          <div className="text-xs text-emerald-100 opacity-90 font-semibold font-inter truncate">
+            {displaySubtitle}
           </div>
         </div>
       </div>
 
-      <div className="flex items-center gap-2 relative z-15 ml-auto">
-        {/* Institution Selector - positioned prominently in header */}
+      <div className="flex items-center gap-2 relative z-15 ml-auto flex-shrink-0">
+        {/* Institution Selector */}
         <InstitutionSelector variant="compact" />
-        <Separator orientation="vertical" className="hidden md:block h-6 bg-white/30" />
+        {/* Examination Session Selector */}
+        <SessionSelector variant="compact" />
         <HeaderClock />
-        <Separator orientation="vertical" className="hidden lg:block h-6 bg-white/30" />
         <Badge variant="secondary" className="bg-white/20 text-white border-0 hover:bg-white/30 transition-all duration-300 shadow-sm p-2 cursor-pointer backdrop-blur-sm">
           <BellRing className="h-4 w-4" />
         </Badge>
         <ModeToggle />
-        <Separator orientation="vertical" className="h-6 bg-white/30" />
         <NavUser variant="compact" />
       </div>
     </header>

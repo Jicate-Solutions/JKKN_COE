@@ -18,6 +18,7 @@ const publicApiRoutes = [
 	'/api/token',
 	'/api/myjkkn',
 	'/api/public',
+	'/api/v1',
 ]
 
 export async function middleware(request: NextRequest) {

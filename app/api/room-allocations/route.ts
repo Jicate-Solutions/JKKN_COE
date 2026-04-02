@@ -8,6 +8,7 @@ export async function GET(request: Request) {
 		const { searchParams } = new URL(request.url)
 		const exam_timetable_id = searchParams.get('exam_timetable_id')
 		const exam_room_id = searchParams.get('exam_room_id')
+		const institutions_id = searchParams.get('institutions_id')
 
 		let query = supabase
 			.from('room_allocations')
@@ -27,6 +28,10 @@ export async function GET(request: Request) {
 				)
 			`)
 			.order('created_at', { ascending: false })
+
+		if (institutions_id) {
+			query = query.eq('institutions_id', institutions_id)
+		}
 
 		if (exam_timetable_id) {
 			query = query.eq('exam_timetable_id', exam_timetable_id)

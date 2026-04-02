@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useEffect, useMemo } from "react"
+import { useSessionSync } from '@/hooks/use-session-sync'
 import { Card, CardContent, CardHeader } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
@@ -77,7 +78,7 @@ export default function PassPercentageReportPage() {
 
 	// Selected values
 	const [selectedInstitutionId, setSelectedInstitutionId] = useState<string>("")
-	const [selectedSessionId, setSelectedSessionId] = useState<string>("")
+	const { selectedSessionId, setSelectedSessionId, mustSelectSession } = useSessionSync()
 	const [reportType, setReportType] = useState<'board' | 'program'>('board')
 	const [selectedBoardCodes, setSelectedBoardCodes] = useState<string[]>([])
 	const [selectedProgramCodes, setSelectedProgramCodes] = useState<string[]>([])
@@ -563,6 +564,7 @@ export default function PassPercentageReportPage() {
 							)}
 
 							{/* Session */}
+							{mustSelectSession && (
 							<Popover open={sessionOpen} onOpenChange={setSessionOpen}>
 								<PopoverTrigger asChild>
 									<Button variant="outline" role="combobox" className="h-8 text-sm justify-between min-w-[200px]" disabled={!selectedInstitutionId || loadingSessions}>
@@ -589,6 +591,7 @@ export default function PassPercentageReportPage() {
 									</Command>
 								</PopoverContent>
 							</Popover>
+							)}
 
 							{/* Report Type */}
 							<RadioGroup value={reportType} onValueChange={(v) => setReportType(v as 'board' | 'program')} className="flex gap-3">

@@ -35,6 +35,7 @@ import { useToast } from '@/hooks/common/use-toast'
 import { Users, Check, ChevronsUpDown, Save, Lock, RefreshCcw, Eye } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useInstitutionFilter } from '@/hooks/use-institution-filter'
+import { useSessionSync } from '@/hooks/use-session-sync'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -103,7 +104,7 @@ export default function BatchAllotmentPage() {
 
 	// Selected values
 	const [selectedInstitutionId, setSelectedInstitutionId] = useState<string>('')
-	const [selectedSessionId, setSelectedSessionId] = useState<string>('')
+	const { selectedSessionId, setSelectedSessionId, mustSelectSession } = useSessionSync()
 	const [selectedCourseId, setSelectedCourseId] = useState<string>('')
 	const [selectedBatchId, setSelectedBatchId] = useState<string>('')
 	const [selectedStudentIds, setSelectedStudentIds] = useState<Set<string>>(new Set())
@@ -656,6 +657,7 @@ export default function BatchAllotmentPage() {
 									)}
 
 									{/* Exam Session */}
+									{mustSelectSession && (
 									<div className="space-y-1.5">
 										<Label className="text-xs font-medium">
 											Exam Session <span className="text-red-500">*</span>
@@ -706,6 +708,7 @@ export default function BatchAllotmentPage() {
 											</PopoverContent>
 										</Popover>
 									</div>
+									)}
 
 									{/* Course */}
 									<div className="space-y-1.5">

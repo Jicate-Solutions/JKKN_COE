@@ -19,6 +19,7 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { useToast } from "@/hooks/common/use-toast"
+import { useInstitutionFilter } from "@/hooks/use-institution-filter"
 import Link from "next/link"
 import { PlusCircle, Edit, Trash2, Search, ChevronLeft, ChevronRight, ArrowUpDown, ArrowUp, ArrowDown, BookOpen, TrendingUp, FileSpreadsheet, RefreshCw, Download, Upload, XCircle, AlertTriangle, MoreHorizontal, ChevronDown } from "lucide-react"
 
@@ -40,6 +41,7 @@ type Program = {
 
 export default function ProgramPage() {
   const { toast } = useToast()
+  const { mustSelectInstitution } = useInstitutionFilter()
   const [items, setItems] = useState<Program[]>([])
   const [loading, setLoading] = useState(false)
   const [searchTerm, setSearchTerm] = useState("")
@@ -896,7 +898,7 @@ export default function ProgramPage() {
                   <Table>
                     <TableHeader className="sticky top-0 z-10 bg-slate-50 dark:bg-slate-900/50">
                       <TableRow>
-                        <TableHead className="w-[110px] text-xs"><Button variant="ghost" size="sm" onClick={() => handleSort("institution_code")} className="h-auto p-0 font-medium hover:bg-transparent">Inst. Code <span className="ml-1">{getSortIcon("institution_code")}</span></Button></TableHead>
+                        {mustSelectInstitution && (<TableHead className="w-[110px] text-xs"><Button variant="ghost" size="sm" onClick={() => handleSort("institution_code")} className="h-auto p-0 font-medium hover:bg-transparent">Inst. Code <span className="ml-1">{getSortIcon("institution_code")}</span></Button></TableHead>)}
                         <TableHead className="w-[110px] text-xs"><Button variant="ghost" size="sm" onClick={() => handleSort("degree_code")} className="h-auto p-0 font-medium hover:bg-transparent">Degree <span className="ml-1">{getSortIcon("degree_code")}</span></Button></TableHead>
                         <TableHead className="w-[90px] text-xs"><Button variant="ghost" size="sm" onClick={() => handleSort("program_type")} className="h-auto p-0 font-medium hover:bg-transparent">Type <span className="ml-1">{getSortIcon("program_type")}</span></Button></TableHead>
                         <TableHead className="w-[140px] text-xs">Off. Dept</TableHead>
@@ -912,7 +914,7 @@ export default function ProgramPage() {
                     </TableHeader>
                     <TableBody>
                       {loading ? (
-                        <TableRow><TableCell colSpan={12} className="h-32 text-center">
+                        <TableRow><TableCell colSpan={mustSelectInstitution ? 12 : 11} className="h-32 text-center">
                           <div className="flex flex-col items-center gap-2 text-muted-foreground">
                             <RefreshCw className="h-5 w-5 animate-spin" />
                             <span className="text-sm">Loading...</span>
@@ -922,7 +924,7 @@ export default function ProgramPage() {
                         <>
                           {pageItems.map((row) => (
                             <TableRow key={row.id}>
-                              <TableCell className="text-sm font-medium">{row.institution_code}</TableCell>
+                              {mustSelectInstitution && (<TableCell className="text-sm font-medium">{row.institution_code}</TableCell>)}
                               <TableCell className="text-sm">{row.degree_code}</TableCell>
                               <TableCell className="text-sm">{row.program_type ? <Badge variant="outline" className="text-xs">{row.program_type}</Badge> : <span className="text-muted-foreground">-</span>}</TableCell>
                               <TableCell className="text-sm">{row.offering_department_code || "-"}</TableCell>
@@ -959,7 +961,7 @@ export default function ProgramPage() {
                           ))}
                         </>
                       ) : (
-                        <TableRow><TableCell colSpan={12} className="h-32 text-center">
+                        <TableRow><TableCell colSpan={mustSelectInstitution ? 12 : 11} className="h-32 text-center">
                           <div className="flex flex-col items-center gap-2 text-muted-foreground">
                             <BookOpen className="h-8 w-8 opacity-20" />
                             <span className="text-sm">No programs found</span>

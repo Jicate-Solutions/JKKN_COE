@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
+import { useSessionSync } from '@/hooks/use-session-sync'
 import { AppSidebar } from '@/components/layout/app-sidebar'
 import { AppHeader } from '@/components/layout/app-header'
 import { AppFooter } from '@/components/layout/app-footer'
@@ -100,7 +101,7 @@ export default function DummyNumbersPage() {
 	// Form state - removed local institution selection (uses global filter)
 	const [institutions, setInstitutions] = useState<Institution[]>([])
 	const [sessions, setSessions] = useState<ExaminationSession[]>([])
-	const [selectedSession, setSelectedSession] = useState('')
+	const { selectedSessionId: selectedSession, setSelectedSessionId: setSelectedSession, mustSelectSession } = useSessionSync()
 	const [sourceMode, setSourceMode] = useState<'attendance' | 'registration'>('attendance')
 	const [generationMode, setGenerationMode] = useState<'sequence' | 'shuffle'>('sequence')
 	const [dummyNumberFormat, setDummyNumberFormat] = useState('DN{N:4}')
@@ -749,8 +750,8 @@ export default function DummyNumbersPage() {
 						</div>
 					)}
 
-					{/* Session Selection - only show when institution is selected */}
-					{!mustSelectInstitution && (
+					{/* Session Selection - only show when institution is selected and no global session */}
+					{!mustSelectInstitution && mustSelectSession && (
 						<div className="space-y-2">
 							<Label htmlFor="session">
 								Examination Session <span className="text-red-500">*</span>

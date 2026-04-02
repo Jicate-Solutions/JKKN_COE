@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useEffect, useMemo } from "react"
+import { useSessionSync } from '@/hooks/use-session-sync'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
@@ -212,7 +213,7 @@ export default function GalleyReportPage() {
 
 	// Selected values
 	const [selectedInstitutionId, setSelectedInstitutionId] = useState<string>("")
-	const [selectedSessionId, setSelectedSessionId] = useState<string>("")
+	const { selectedSessionId, setSelectedSessionId, mustSelectSession } = useSessionSync()
 	const [selectedProgramId, setSelectedProgramId] = useState<string>("")
 	const [selectedSemester, setSelectedSemester] = useState<string>("")
 
@@ -578,6 +579,7 @@ export default function GalleyReportPage() {
 						)}
 
 						{/* Examination Session */}
+						{mustSelectSession && (
 						<div className="space-y-2">
 							<Label className="text-xs font-medium">
 								Examination Session <span className="text-red-500">*</span>
@@ -627,6 +629,7 @@ export default function GalleyReportPage() {
 								</PopoverContent>
 							</Popover>
 						</div>
+						)}
 
 						{/* Program */}
 						<div className="space-y-2">

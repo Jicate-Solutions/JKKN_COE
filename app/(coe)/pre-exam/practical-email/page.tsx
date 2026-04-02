@@ -52,6 +52,7 @@ import {
 import { Progress } from '@/components/ui/progress'
 import { useToast } from '@/hooks/common/use-toast'
 import { useInstitutionFilter } from '@/hooks/use-institution-filter'
+import { useSessionSync } from '@/hooks/use-session-sync'
 import {
 	ChevronDown,
 	ChevronRight,
@@ -188,7 +189,7 @@ export default function PracticalEmailPage() {
 	const [institutions, setInstitutions] = useState<Institution[]>([])
 	const [sessions, setSessions] = useState<Session[]>([])
 	const [selectedInstitutionId, setSelectedInstitutionId] = useState('')
-	const [selectedSessionId, setSelectedSessionId] = useState('')
+	const { selectedSessionId, setSelectedSessionId, mustSelectSession } = useSessionSync()
 	const [searchTerm, setSearchTerm] = useState('')
 
 	// Loading states
@@ -785,6 +786,7 @@ export default function PracticalEmailPage() {
 									)}
 
 									{/* Exam Session */}
+									{mustSelectSession && (
 									<div className="flex flex-col gap-1.5 min-w-[220px]">
 										<span className="text-xs font-medium text-muted-foreground">
 											Exam Session <span className="text-red-500">*</span>
@@ -814,6 +816,7 @@ export default function PracticalEmailPage() {
 											</SelectContent>
 										</Select>
 									</div>
+									)}
 
 									{/* Search */}
 									<div className="flex flex-col gap-1.5 flex-1 min-w-[180px]">

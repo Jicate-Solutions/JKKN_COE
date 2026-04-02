@@ -22,6 +22,7 @@ import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { useAuth } from "@/lib/auth/auth-context-parent"
 import { useInstitutionFilter } from "@/hooks/use-institution-filter"
+import { useSessionSync } from '@/hooks/use-session-sync'
 import { cn } from "@/lib/utils"
 
 interface Institution {
@@ -81,7 +82,7 @@ export default function AttendanceCorrectionPage() {
 
 	// Exam session selection
 	const [examSessions, setExamSessions] = useState<ExamSession[]>([])
-	const [selectedSessionId, setSelectedSessionId] = useState<string>("")
+	const { selectedSessionId, setSelectedSessionId, mustSelectSession } = useSessionSync()
 	const [loadingSessions, setLoadingSessions] = useState(false)
 
 	// Course selection
@@ -523,6 +524,7 @@ export default function AttendanceCorrectionPage() {
 									)}
 
 									{/* Exam Session Selection */}
+									{mustSelectSession && (
 									<div className="space-y-2">
 										<Label htmlFor="exam_session" className="text-xs font-semibold">
 											Exam Session <span className="text-red-500">*</span>
@@ -553,6 +555,7 @@ export default function AttendanceCorrectionPage() {
 											</SelectContent>
 										</Select>
 									</div>
+									)}
 
 									{/* Course Selection */}
 									<div className="space-y-2">

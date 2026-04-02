@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useInstitutionFilter } from '@/hooks/use-institution-filter'
 import { useMyJKKNInstitutionFilter, type ProgramOption, type SemesterOption } from '@/hooks/use-myjkkn-institution-filter'
 import { useInstitution } from '@/context/institution-context'
+import { useExaminationSession } from '@/context/examination-session-context'
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -109,6 +110,7 @@ export interface UseCascadeDropdownsReturn {
 	// Context info
 	isReady: boolean
 	mustSelectInstitution: boolean
+	mustSelectSession: boolean
 
 	// Current institution's myjkkn IDs (for custom usage)
 	myjkknInstitutionIds: string[]
@@ -161,6 +163,10 @@ export function useCascadeDropdowns(config?: CascadeConfig): UseCascadeDropdowns
 	} = useInstitutionFilter()
 
 	const { availableInstitutions } = useInstitution()
+
+	// Global session context - sync session selection from header
+	const { currentSession: globalSession } = useExaminationSession()
+	const mustSelectSession = !globalSession
 
 	// MyJKKN API hook
 	const { fetchPrograms: fetchMyJKKNPrograms, fetchSemesters: fetchMyJKKNSemesters } = useMyJKKNInstitutionFilter()
@@ -423,6 +429,20 @@ export function useCascadeDropdowns(config?: CascadeConfig): UseCascadeDropdowns
 		}
 	}, [isReady, cfg.autoFillInstitution, mustSelectInstitution, contextInstitutionId, institutions, selectedInstitutionId])
 
+	// Level 1.5: Auto-fill session from global context (header selector)
+	useEffect(() => {
+		if (!isReady || !globalSession) return
+		if (levels.has('session') && sessions.length > 0) {
+			const exists = sessions.some(s => s.id === globalSession.id)
+			if (exists && selectedSessionId !== globalSession.id) {
+				setSelectedSessionId(globalSession.id)
+			}
+		} else if (globalSession.id && selectedSessionId !== globalSession.id) {
+			// Sessions list may not have loaded yet - set directly
+			setSelectedSessionId(globalSession.id)
+		}
+	}, [isReady, globalSession, sessions, selectedSessionId])
+
 	// Level 1 → 2: When institution changes, fetch sessions and programs
 	useEffect(() => {
 		if (!effectiveInstitutionId || !isReady) return
@@ -552,6 +572,7 @@ export function useCascadeDropdowns(config?: CascadeConfig): UseCascadeDropdowns
 		},
 		isReady,
 		mustSelectInstitution,
+		mustSelectSession,
 		myjkknInstitutionIds,
 		effectiveInstitutionCode,
 		effectiveInstitutionId,

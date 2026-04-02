@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useEffect, useCallback } from "react"
+import { useSessionSync } from '@/hooks/use-session-sync'
 import { AppSidebar } from "@/components/layout/app-sidebar"
 import { AppHeader } from "@/components/layout/app-header"
 import { AppFooter } from "@/components/layout/app-footer"
@@ -63,7 +64,7 @@ export default function CourseCountReportPage() {
 
 	// Selected values
 	const [selectedInstitutionId, setSelectedInstitutionId] = useState<string>("")
-	const [selectedSessionId, setSelectedSessionId] = useState<string>("")
+	const { selectedSessionId, setSelectedSessionId, mustSelectSession } = useSessionSync()
 	const [selectedCourseCodes, setSelectedCourseCodes] = useState<string[]>([])
 
 	// Report data
@@ -466,6 +467,7 @@ export default function CourseCountReportPage() {
 								)}
 
 								{/* Examination Session */}
+								{mustSelectSession && (
 								<div className="space-y-2">
 									<Label htmlFor="session" className="text-xs font-medium">
 										Examination Session <span className="text-red-500">*</span>
@@ -530,6 +532,7 @@ export default function CourseCountReportPage() {
 										</PopoverContent>
 									</Popover>
 								</div>
+								)}
 
 								{/* Course Filter (Multi-select) */}
 								{selectedSessionId && (

@@ -21,6 +21,7 @@ import { generateHallTicketDistributionPDF } from "@/lib/utils/generate-hall-tic
 import type { HallTicketData, HallTicketApiResponse, HallTicketPdfSettings } from "@/types/hall-ticket"
 import { useInstitutionFilter } from "@/hooks/use-institution-filter"
 import { useMyJKKNInstitutionFilter } from "@/hooks/use-myjkkn-institution-filter"
+import { useSessionSync } from "@/hooks/use-session-sync"
 
 interface Institution {
 	id: string
@@ -222,7 +223,7 @@ export default function HallTicketsPage() {
 
 	// Selected values
 	const [selectedInstitutionCode, setSelectedInstitutionCode] = useState<string>("")
-	const [selectedSessionId, setSelectedSessionId] = useState<string>("")
+	const { selectedSessionId, setSelectedSessionId, mustSelectSession } = useSessionSync()
 	const [selectedProgramId, setSelectedProgramId] = useState<string>("")
 	const [selectedSemesters, setSelectedSemesters] = useState<string[]>([])
 	const [selectedStudentRegNo, setSelectedStudentRegNo] = useState<string>("")
@@ -903,6 +904,7 @@ export default function HallTicketsPage() {
 									)}
 
 									{/* Examination Session */}
+									{mustSelectSession && (
 									<div className="space-y-2">
 										<Label className="text-sm font-medium">
 											Examination Session <span className="text-red-500">*</span>
@@ -963,6 +965,7 @@ export default function HallTicketsPage() {
 											</PopoverContent>
 										</Popover>
 									</div>
+									)}
 
 									{/* Program with Badge */}
 									<div className="space-y-2">

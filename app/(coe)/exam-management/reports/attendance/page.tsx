@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useEffect, useCallback } from "react"
+import { useSessionSync } from '@/hooks/use-session-sync'
 import { AppSidebar } from "@/components/layout/app-sidebar"
 import { AppHeader } from "@/components/layout/app-header"
 import { AppFooter } from "@/components/layout/app-footer"
@@ -78,7 +79,7 @@ export default function AttendanceReportsPage() {
 
 	// Selected values
 	const [selectedInstitutionId, setSelectedInstitutionId] = useState<string>("")
-	const [selectedSessionId, setSelectedSessionId] = useState<string>("")
+	const { selectedSessionId, setSelectedSessionId, mustSelectSession } = useSessionSync()
 	const [selectedExamDate, setSelectedExamDate] = useState<string>("")
 	const [selectedSessionType, setSelectedSessionType] = useState<string>("")
 	const [selectedProgramCode, setSelectedProgramCode] = useState<string>("")
@@ -691,6 +692,7 @@ export default function AttendanceReportsPage() {
 								)}
 
 								{/* Examination Session */}
+								{mustSelectSession && (
 								<div className="space-y-2">
 									<Label htmlFor="session" className="text-xs font-medium">
 										Examination Session <span className="text-red-500">*</span>
@@ -755,6 +757,7 @@ export default function AttendanceReportsPage() {
 										</PopoverContent>
 									</Popover>
 								</div>
+								)}
 							</div>
 
 							{/* Optional Filters */}

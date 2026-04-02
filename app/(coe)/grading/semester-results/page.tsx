@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useEffect, useMemo, useRef, useCallback } from "react"
+import { useSessionSync } from '@/hooks/use-session-sync'
 import XLSX from "@/lib/utils/excel-compat"
 import { AppSidebar } from "@/components/layout/app-sidebar"
 import { AppHeader } from "@/components/layout/app-header"
@@ -577,7 +578,7 @@ export default function SemesterResultsPage() {
 
 	// Selection state - updated for multi-select
 	const [selectedInstitution, setSelectedInstitution] = useState("")
-	const [selectedSession, setSelectedSession] = useState("")
+	const { selectedSessionId: selectedSession, setSelectedSessionId: setSelectedSession, mustSelectSession } = useSessionSync()
 	const [selectedPrograms, setSelectedPrograms] = useState<string[]>([])
 	const [selectedSemesters, setSelectedSemesters] = useState<number[]>([])
 	const [programType, setProgramType] = useState<ProgramType | null>(null)
@@ -1623,6 +1624,7 @@ export default function SemesterResultsPage() {
 										/>
 									</div>
 								)}
+								{mustSelectSession && (
 								<div className="space-y-2">
 									<Label>Examination Session *</Label>
 									<SearchableSelect
@@ -1633,6 +1635,7 @@ export default function SemesterResultsPage() {
 										disabled={mustSelectInstitution && !selectedInstitution}
 									/>
 								</div>
+								)}
 								<div className="space-y-2">
 									<div className="flex items-center justify-between">
 										<Label>Program(s) *</Label>

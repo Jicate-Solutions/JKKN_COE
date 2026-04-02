@@ -33,6 +33,7 @@ import { useToast } from '@/hooks/common/use-toast'
 import { Download, Check, ChevronsUpDown, FileText, FlaskConical, RefreshCw, Package, Layers } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useInstitutionFilter } from '@/hooks/use-institution-filter'
+import { useSessionSync } from '@/hooks/use-session-sync'
 import { ProtectedRoute } from '@/components/common/protected-route'
 
 // ---------------------------------------------------------------------------
@@ -107,7 +108,7 @@ export default function FoilSheetDownloadPage() {
 
 	// Shared selected values
 	const [selectedInstitutionId, setSelectedInstitutionId] = useState('')
-	const [selectedSessionId, setSelectedSessionId] = useState('')
+	const { selectedSessionId, setSelectedSessionId, mustSelectSession } = useSessionSync()
 
 	// Combobox open states
 	const [institutionOpen, setInstitutionOpen] = useState(false)
@@ -639,7 +640,7 @@ export default function FoilSheetDownloadPage() {
 			)}
 
 			{/* Exam Session */}
-			{renderCombobox(
+			{mustSelectSession && renderCombobox(
 				'Exam Session',
 				sessions.map(s => ({ id: s.id, label: s.session_name })),
 				selectedSessionId,

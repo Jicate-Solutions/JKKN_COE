@@ -26,6 +26,7 @@ import Link from 'next/link'
 
 // Institution filter hook
 import { useInstitutionFilter } from '@/hooks/use-institution-filter'
+import { useSessionSync } from '@/hooks/use-session-sync'
 
 // Auth context
 import { useAuth } from '@/lib/auth/auth-context-parent'
@@ -73,7 +74,7 @@ export default function PracticalAttendancePage() {
 
 	// Selected values
 	const [selectedInstitutionId, setSelectedInstitutionId] = useState<string>('')
-	const [selectedSessionId, setSelectedSessionId] = useState<string>('')
+	const { selectedSessionId, setSelectedSessionId, mustSelectSession } = useSessionSync()
 	const [selectedCourseId, setSelectedCourseId] = useState<string>('')
 	const [selectedBatchId, setSelectedBatchId] = useState<string>('')
 
@@ -637,6 +638,7 @@ export default function PracticalAttendancePage() {
 									)}
 
 									{/* 2. Exam Session */}
+									{mustSelectSession && (
 									<div className="space-y-1">
 										<Label htmlFor="session" className="text-xs font-medium">
 											Exam Session <span className="text-red-500">*</span>
@@ -700,6 +702,7 @@ export default function PracticalAttendancePage() {
 											</PopoverContent>
 										</Popover>
 									</div>
+									)}
 
 									{/* 3. Course */}
 									<div className="space-y-1">

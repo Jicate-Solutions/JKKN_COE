@@ -29,6 +29,7 @@ interface ExternalMarksFiltersProps {
 
 	// Institution filter info
 	mustSelectInstitution: boolean
+	mustSelectSession?: boolean
 
 	// Handlers
 	onInstitutionChange: (id: string) => void
@@ -65,6 +66,7 @@ export function ExternalMarksFilters({
 	searchTerm,
 	lookupMode,
 	mustSelectInstitution,
+	mustSelectSession = true,
 	onInstitutionChange,
 	onSessionChange,
 	onProgramChange,
@@ -176,6 +178,7 @@ export function ExternalMarksFilters({
 				)}
 
 				{/* Session Dropdown - filtered by institution when applicable */}
+				{mustSelectSession && (
 				<Popover open={sessionOpen} onOpenChange={setSessionOpen}>
 					<PopoverTrigger asChild>
 						<Button
@@ -226,6 +229,7 @@ export function ExternalMarksFilters({
 						</Command>
 					</PopoverContent>
 				</Popover>
+				)}
 
 				{/* Program Dropdown */}
 				<Popover open={programOpen} onOpenChange={setProgramOpen}>

@@ -19,6 +19,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Textarea } from '@/components/ui/textarea'
 import { useToast } from '@/hooks/common/use-toast'
 import { useInstitutionFilter } from '@/hooks/use-institution-filter'
+import { useSessionSync } from '@/hooks/use-session-sync'
 import { Edit3, Check, ChevronsUpDown, History, Save, AlertTriangle, Download, FileText, Search, Loader2 } from 'lucide-react'
 import { numberToWords } from '@/services/post-exam/external-mark-entry-service'
 import { cn } from '@/lib/utils'
@@ -98,7 +99,7 @@ export default function ExternalMarkCorrectionPage() {
 
 	// Selected values
 	const [selectedInstitutionId, setSelectedInstitutionId] = useState<string>('')
-	const [selectedSessionId, setSelectedSessionId] = useState<string>('')
+	const { selectedSessionId, setSelectedSessionId, mustSelectSession } = useSessionSync()
 	const [selectedCourseId, setSelectedCourseId] = useState<string>('')
 	const [registerNumber, setRegisterNumber] = useState<string>('')
 
@@ -583,6 +584,7 @@ export default function ExternalMarkCorrectionPage() {
 								)}
 
 								{/* Exam Session */}
+								{mustSelectSession && (
 								<div className="space-y-1.5">
 									<Label className="text-xs font-medium">Exam Session <span className="text-red-500">*</span></Label>
 									<Select
@@ -610,6 +612,7 @@ export default function ExternalMarkCorrectionPage() {
 										</SelectContent>
 									</Select>
 								</div>
+								)}
 
 								{/* Course Combobox */}
 								<div className="space-y-1.5">

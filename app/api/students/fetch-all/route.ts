@@ -7,7 +7,7 @@ import { fetchAllRows } from '@/lib/utils/supabase-fetch-all'
  * GET /api/students/fetch-all
  *
  * Query Parameters:
- * - institution_id (optional): Filter by institution
+ * - institution_id (required): Filter by institution
  * - is_active (optional): Filter by active status
  * - program_code (optional): Filter by program
  */
@@ -17,6 +17,14 @@ export async function GET(request: Request) {
 		const institution_id = searchParams.get('institution_id')
 		const is_active = searchParams.get('is_active')
 		const program_code = searchParams.get('program_code')
+
+		// Security: institution_id is required to prevent fetching all students across institutions
+		if (!institution_id) {
+			return NextResponse.json({
+				success: false,
+				error: 'institution_id is required'
+			}, { status: 400 })
+		}
 
 		const supabase = getSupabaseServer()
 

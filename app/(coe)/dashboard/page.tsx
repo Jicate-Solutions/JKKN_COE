@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useMemo, useRef, memo } from 'react'
 import { useInstitutionFilter } from '@/hooks/use-institution-filter'
+import { useInstitution } from '@/context/institution-context'
 import { SidebarProvider, SidebarInset } from '@/components/ui/sidebar'
 import { AppSidebar } from '@/components/layout/app-sidebar'
 import { AppHeaderWhite } from '@/components/layout/app-header-white'
@@ -243,6 +244,7 @@ export default function Page() {
 	const { user } = useAuth()
 	const { toast } = useToast()
 	const { filter, isReady, appendToUrl, institutionId, mustSelectInstitution } = useInstitutionFilter()
+	const { currentInstitution } = useInstitution()
 
 	const [stats, setStats] = useState<DashboardStats | null>(null)
 	const [loading, setLoading] = useState(true)
@@ -564,7 +566,10 @@ export default function Page() {
 												<div className="flex items-center gap-1.5">
 													<Globe className="h-3 w-3 text-emerald-500" />
 													<span className="text-[11px] font-medium text-slate-700 dark:text-slate-300">
-														{stats?.isSuperAdmin ? 'All Institutions' : 'Institution Only'}
+														{stats?.isSuperAdmin
+															? (currentInstitution?.institution_name || 'All Institutions')
+															: (currentInstitution?.institution_name || 'Institution Only')
+														}
 													</span>
 												</div>
 											</div>

@@ -11,6 +11,7 @@ Standard UI/UX patterns for all JKKN COE CRUD/table pages.
 - `app/(coe)/grading/grades/page.tsx` (canonical)
 - `app/(coe)/master/courses/page.tsx`
 - `app/(coe)/exam-management/examiners/page.tsx`
+- `app/(coe)/developer-portal/applications/page.tsx` (tabbed detail view pattern)
 
 ## Required Imports
 
@@ -50,6 +51,15 @@ For complete code snippets, see [references/patterns.md](references/patterns.md)
 - `PageTransition` wrapper (removed)
 - `AppFooter` inside SidebarInset
 - `overflow-hidden` on SidebarInset
+
+**Spacing between header and breadcrumb:**
+- Use `pt-0` or `pt-2` on the main content wrapper to keep breadcrumb tight against the header bar
+- Never use `p-6` (24px top padding pushes breadcrumb too far from header)
+- Preferred pattern: `px-6 pt-2 pb-6 space-y-6` or `p-4 pt-0`
+
+**Spacing between breadcrumb and scorecards:**
+- Add `-mb-3` on the `<Breadcrumb>` component to reduce gap to scorecards below
+- Do NOT wrap breadcrumb in extra `<div>` — place `<Breadcrumb>` directly as a child of the content wrapper
 
 ### 1. Scorecards (border-l-4)
 

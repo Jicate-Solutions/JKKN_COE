@@ -1,6 +1,7 @@
 'use client'
 
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useMemo } from 'react'
+import { useSessionSync } from '@/hooks/use-session-sync'
 import { AppSidebar } from '@/components/layout/app-sidebar'
 import { AppHeader } from '@/components/layout/app-header'
 import { AppFooter } from '@/components/layout/app-footer'
@@ -61,7 +62,8 @@ export default function StudentStrengthPage() {
 
 	const [sessions, setSessions] = useState<ExamSession[]>([])
 	const [sessionOpen, setSessionOpen] = useState(false)
-	const [selectedSession, setSelectedSession] = useState<ExamSession | null>(null)
+	const { selectedSessionId, setSelectedSessionId, mustSelectSession } = useSessionSync()
+	const selectedSession = useMemo(() => sessions.find(s => s.id === selectedSessionId) || null, [sessions, selectedSessionId])
 
 	const [loading, setLoading] = useState(false)
 	const [report, setReport] = useState<StudentStrengthReport | null>(null)
@@ -297,6 +299,7 @@ export default function StudentStrengthPage() {
 						<CardContent>
 							<div className='flex flex-wrap items-end gap-4'>
 								{/* Exam Session */}
+								{mustSelectSession && (
 								<div className='flex flex-col gap-1.5'>
 									<Label>Exam Session</Label>
 									<Popover open={sessionOpen} onOpenChange={setSessionOpen}>
@@ -324,7 +327,7 @@ export default function StudentStrengthPage() {
 																key={s.id}
 																value={s.session_name}
 																onSelect={() => {
-																	setSelectedSession(s)
+																	setSelectedSessionId(s.id)
 																	setSessionOpen(false)
 																}}
 															>
@@ -343,6 +346,7 @@ export default function StudentStrengthPage() {
 										</PopoverContent>
 									</Popover>
 								</div>
+								)}
 
 								{/* Generate */}
 								<Button onClick={() => handleGenerate(false)} disabled={loading || !selectedSession}>

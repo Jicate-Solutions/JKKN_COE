@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect, useState, useCallback, useMemo } from "react"
+import { useSessionSync } from '@/hooks/use-session-sync'
 import { useAuth } from "@/lib/auth/auth-context-parent"
 import { SidebarProvider, SidebarInset } from "@/components/ui/sidebar"
 import { AppSidebar } from "@/components/layout/app-sidebar"
@@ -218,7 +219,7 @@ export default function ResultAnalyticsDashboard() {
 
 	// Selected values
 	const [selectedInstitutionId, setSelectedInstitutionId] = useState<string>("")
-	const [selectedSessionId, setSelectedSessionId] = useState<string>("")
+	const { selectedSessionId, setSelectedSessionId, mustSelectSession } = useSessionSync()
 	const [selectedProgramId, setSelectedProgramId] = useState<string>("")
 	const [selectedSemesters, setSelectedSemesters] = useState<number[]>([])
 
@@ -1063,6 +1064,7 @@ export default function ResultAnalyticsDashboard() {
 							<CardContent>
 								<div className="grid grid-cols-1 md:grid-cols-3 gap-4">
 									{/* Examination Session */}
+									{mustSelectSession && (
 									<div className="space-y-1.5">
 										<Label className="text-xs font-medium">
 											Examination Session <span className="text-red-500">*</span>
@@ -1112,6 +1114,7 @@ export default function ResultAnalyticsDashboard() {
 											</PopoverContent>
 										</Popover>
 									</div>
+									)}
 
 									{/* Program */}
 									<div className="space-y-1.5">

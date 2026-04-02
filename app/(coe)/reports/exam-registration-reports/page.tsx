@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useEffect, useMemo, useCallback } from "react"
+import { useSessionSync } from '@/hooks/use-session-sync'
 import { AppSidebar } from "@/components/layout/app-sidebar"
 import { AppHeader } from "@/components/layout/app-header"
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar"
@@ -88,7 +89,7 @@ export default function ExamRegistrationReportsPage() {
 	const [institutions, setInstitutions] = useState<InstitutionOption[]>([])
 	const [sessions, setSessions] = useState<SessionOption[]>([])
 	const [selectedInstitutionId, setSelectedInstitutionId] = useState<string>('')
-	const [selectedSessionId, setSelectedSessionId] = useState<string>('')
+	const { selectedSessionId, setSelectedSessionId, mustSelectSession } = useSessionSync()
 	const [selectedCourseCategories, setSelectedCourseCategories] = useState<string[]>([])
 	const [selectedReportCategory, setSelectedReportCategory] = useState<ReportCategory | ''>('')
 	const [selectedReportType, setSelectedReportType] = useState<ReportType | ''>('')
@@ -737,6 +738,7 @@ export default function ExamRegistrationReportsPage() {
 								)}
 
 								{/* Exam Session */}
+								{mustSelectSession && (
 								<div className="space-y-1.5">
 									<Label className="text-xs">Examination Session *</Label>
 									<Popover open={sessionOpen} onOpenChange={setSessionOpen}>
@@ -774,6 +776,7 @@ export default function ExamRegistrationReportsPage() {
 										</PopoverContent>
 									</Popover>
 								</div>
+								)}
 
 								{/* Course Category (multi-select) */}
 								<div className="space-y-1.5">

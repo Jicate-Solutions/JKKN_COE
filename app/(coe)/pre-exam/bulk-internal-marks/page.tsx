@@ -19,6 +19,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { useToast } from "@/hooks/common/use-toast"
 import { useAuth } from "@/lib/auth/auth-context-parent"
 import { useInstitutionFilter } from "@/hooks/use-institution-filter"
+import { useSessionSync } from "@/hooks/use-session-sync"
 import Link from "next/link"
 import {
 	Trash2,
@@ -172,7 +173,7 @@ export default function BulkInternalMarksPage() {
 	const [sessions, setSessions] = useState<Session[]>([])
 	const [programs, setPrograms] = useState<Program[]>([])
 	const [courses, setCourses] = useState<Course[]>([])
-	const [selectedSession, setSelectedSession] = useState("")
+	const { selectedSessionId: selectedSession, setSelectedSessionId: setSelectedSession, mustSelectSession } = useSessionSync()
 	const [selectedProgram, setSelectedProgram] = useState("")
 	const [selectedCourse, setSelectedCourse] = useState("")
 	const [statusFilter, setStatusFilter] = useState("all")
@@ -1254,6 +1255,7 @@ export default function BulkInternalMarksPage() {
 
 							{/* Filters Row 1 - No institution filter in index, institution column shown in table for super_admin */}
 							<div className="flex flex-wrap gap-2 mb-2">
+								{mustSelectSession && (
 								<Select value={selectedSession || "all"} onValueChange={(v) => setSelectedSession(v === "all" ? "" : v)}>
 									<SelectTrigger className="w-[180px] h-8">
 										<SelectValue placeholder="Select Session" />
@@ -1267,6 +1269,7 @@ export default function BulkInternalMarksPage() {
 										))}
 									</SelectContent>
 								</Select>
+								)}
 
 								<Select value={selectedProgram || "all"} onValueChange={(v) => setSelectedProgram(v === "all" ? "" : v)}>
 									<SelectTrigger className="w-[180px] h-8">

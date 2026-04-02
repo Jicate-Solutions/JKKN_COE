@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useEffect, useCallback } from "react"
+import { useSessionSync } from '@/hooks/use-session-sync'
 import { AppSidebar } from "@/components/layout/app-sidebar"
 import { AppHeader } from "@/components/layout/app-header"
 import { AppFooter } from "@/components/layout/app-footer"
@@ -165,7 +166,7 @@ export default function SemesterMarksheetPage() {
 	// Selected values
 	const [selectedInstitutionId, setSelectedInstitutionId] = useState<string>("")
 	const [selectedProgramCode, setSelectedProgramCode] = useState<string>("")
-	const [selectedSessionId, setSelectedSessionId] = useState<string>("")
+	const { selectedSessionId, setSelectedSessionId, mustSelectSession } = useSessionSync()
 	const [selectedSemester, setSelectedSemester] = useState<string>("")
 	const [selectedStudentId, setSelectedStudentId] = useState<string>("")
 
@@ -877,6 +878,7 @@ export default function SemesterMarksheetPage() {
 								)}
 
 								{/* Session Select */}
+								{mustSelectSession && (
 								<div className="space-y-2">
 									<Label>Exam Session</Label>
 									<Popover open={sessionOpen} onOpenChange={setSessionOpen}>
@@ -926,6 +928,7 @@ export default function SemesterMarksheetPage() {
 										</PopoverContent>
 									</Popover>
 								</div>
+								)}
 
 								{/* Program Select */}
 								<div className="space-y-2">

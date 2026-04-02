@@ -269,6 +269,11 @@ export async function POST(request: Request) {
 		const body = await request.json()
 		const supabase = getSupabaseServer()
 
+		// Validate institutions_id is provided
+		if (!body.institutions_id) {
+			return NextResponse.json({ error: 'institutions_id is required' }, { status: 400 })
+		}
+
 		const { data, error } = await supabase
 			.from('marks_entry')
 			.insert(body)

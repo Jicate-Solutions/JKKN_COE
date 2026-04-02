@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useEffect, useMemo, useRef } from "react"
+import { useSessionSync } from '@/hooks/use-session-sync'
 import XLSX from "@/lib/utils/excel-compat"
 import { AppSidebar } from "@/components/layout/app-sidebar"
 import { AppHeader } from "@/components/layout/app-header"
@@ -163,7 +164,7 @@ export default function GenerateFinalMarksPage() {
 	// Selection state
 	const [selectedInstitution, setSelectedInstitution] = useState("")
 	const [selectedProgram, setSelectedProgram] = useState("")
-	const [selectedSession, setSelectedSession] = useState("")
+	const { selectedSessionId: selectedSession, setSelectedSessionId: setSelectedSession, mustSelectSession } = useSessionSync()
 	const [selectedCourses, setSelectedCourses] = useState<string[]>([])
 	// gradeSystemCode and regulationId are derived from the selected program (useMemo)
 	const gradeSystemCode = useMemo<'UG' | 'PG'>(() => {
@@ -737,6 +738,7 @@ export default function GenerateFinalMarksPage() {
 											</Select>
 										</div>
 									)}
+									{mustSelectSession && (
 									<div className="space-y-2">
 										<Label>Examination Session *</Label>
 										<Select value={selectedSession} onValueChange={setSelectedSession} disabled={mustSelectInstitution && !selectedInstitution}>
@@ -752,6 +754,7 @@ export default function GenerateFinalMarksPage() {
 											</SelectContent>
 										</Select>
 									</div>
+									)}
 									<div className="space-y-2">
 										<Label>Program *</Label>
 										<Select value={selectedProgram} onValueChange={setSelectedProgram} disabled={(mustSelectInstitution && !selectedInstitution) || programsLoading}>

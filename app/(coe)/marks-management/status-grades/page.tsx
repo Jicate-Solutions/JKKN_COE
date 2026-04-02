@@ -39,6 +39,7 @@ import {
 import { cn } from '@/lib/utils'
 import Link from 'next/link'
 import { useInstitutionFilter } from '@/hooks/use-institution-filter'
+import { useSessionSync } from '@/hooks/use-session-sync'
 import { StatusGradeDropdown, StatusGradeBadge } from '@/components/marks/status-grade-dropdown'
 import { StatusGradeImportDialog } from '@/components/marks/status-grade-import-dialog'
 import { BulkStatusUpdateDialog } from '@/components/marks/bulk-status-update-dialog'
@@ -79,7 +80,7 @@ export default function StatusGradesPage() {
 
 	// Selected values
 	const [selectedInstitutionId, setSelectedInstitutionId] = useState<string>('')
-	const [selectedSessionId, setSelectedSessionId] = useState<string>('')
+	const { selectedSessionId, setSelectedSessionId, mustSelectSession } = useSessionSync()
 	const [selectedProgramId, setSelectedProgramId] = useState<string>('')
 	const [selectedCourseId, setSelectedCourseId] = useState<string>('')
 	const [statusType, setStatusType] = useState<StatusType>('internal')
@@ -783,6 +784,7 @@ export default function StatusGradesPage() {
 									)}
 
 									{/* Exam Session */}
+									{mustSelectSession && (
 									<div className="space-y-1.5">
 										<Label className="text-xs font-medium">
 											Exam Session <span className="text-red-500">*</span>
@@ -827,6 +829,7 @@ export default function StatusGradesPage() {
 											</PopoverContent>
 										</Popover>
 									</div>
+									)}
 
 									{/* Program (mandatory filter) */}
 									<div className="space-y-1.5">

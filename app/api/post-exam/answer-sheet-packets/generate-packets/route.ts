@@ -125,7 +125,7 @@ export async function POST(request: NextRequest) {
 					const studentIds = courseStudents.map(s => s.id)
 					await supabase
 						.from('student_dummy_numbers')
-						.update({ packet_id: null })
+						.update({ packet_id: null, packet_no: null })
 						.in('id', studentIds)
 				}
 
@@ -186,33 +186,13 @@ export async function POST(request: NextRequest) {
 				// Filter students who have attendance
 				const studentsWithAttendance: StudentWithAttendance[] = []
 
-				// Batch-fetch all students by register_numbers for O(1) lookup
-				const registerNumbers = dummyNumbers.map(d => d.actual_register_number).filter(Boolean)
-				const studentMap = new Map<string, string>() // register_number -> student id
-
-				if (registerNumbers.length > 0) {
-					// Fetch in chunks of 500 to avoid query limits
-					for (let i = 0; i < registerNumbers.length; i += 500) {
-						const chunk = registerNumbers.slice(i, i + 500)
-						const { data: studentsData } = await supabase
-							.from('students')
-							.select('id, register_number')
-							.in('register_number', chunk)
-
-						if (studentsData) {
-							for (const s of studentsData) {
-								studentMap.set(s.register_number, s.id)
-							}
-						}
-					}
-				}
-
 				// Batch-fetch all exam_attendance records for this course/session marked Present
-				const attendanceSet = new Set<string>() // student_id values with Present attendance
+				// Use exam_registration_id for matching (direct relationship, no students table needed)
+				const attendanceSet = new Set<string>() // exam_registration_id values with Present attendance
 
 				const { data: attendanceData } = await supabase
 					.from('exam_attendance')
-					.select('student_id')
+					.select('exam_registration_id')
 					.eq('examination_session_id', sessionData.id)
 					.eq('course_id', course.id)
 					.eq('attendance_status', 'Present')
@@ -220,20 +200,15 @@ export async function POST(request: NextRequest) {
 
 				if (attendanceData) {
 					for (const att of attendanceData) {
-						attendanceSet.add(att.student_id)
+						if (att.exam_registration_id) {
+							attendanceSet.add(att.exam_registration_id)
+						}
 					}
 				}
 
-				// Use Maps for O(1) lookup instead of individual queries
+				// Match dummy numbers to attendance via exam_registration_id
 				for (const dummy of dummyNumbers) {
-					const studentId = studentMap.get(dummy.actual_register_number)
-
-					if (!studentId) {
-						console.warn(`Student with register_number ${dummy.actual_register_number} not found`)
-						continue
-					}
-
-					if (attendanceSet.has(studentId)) {
+					if (dummy.exam_registration_id && attendanceSet.has(dummy.exam_registration_id)) {
 						studentsWithAttendance.push({
 							id: dummy.id,
 							actual_register_number: dummy.actual_register_number,
@@ -315,7 +290,7 @@ export async function POST(request: NextRequest) {
 
 					const { data: updateData, error: updateError } = await supabase
 						.from('student_dummy_numbers')
-						.update({ packet_id: packetData.id })
+						.update({ packet_id: packetData.id, packet_no: packetNo })
 						.in('id', studentIds)
 						.select()
 

@@ -9,7 +9,7 @@ import { Breadcrumb, BreadcrumbItem, BreadcrumbLink, BreadcrumbList, BreadcrumbP
 import { Card, CardContent, CardHeader } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Badge } from "@/components/ui/badge"
 import { Label } from "@/components/ui/label"
@@ -17,14 +17,35 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Checkbox } from "@/components/ui/checkbox"
 import { useToast } from "@/hooks/common/use-toast"
+import { useInstitutionFilter } from "@/hooks/use-institution-filter"
 import Link from "next/link"
-import { Package, Search, ChevronLeft, ChevronRight, ArrowUpDown, ArrowUp, ArrowDown, RefreshCw, Trash2, FileSpreadsheet, Sparkles, AlertTriangle, XCircle, CheckCircle, ChevronsUpDown } from "lucide-react"
+import { Package, Search, ChevronLeft, ChevronRight, ArrowUpDown, ArrowUp, ArrowDown, RefreshCw, Trash2, FileSpreadsheet, Sparkles, XCircle, CheckCircle, ChevronsUpDown } from "lucide-react"
 
 // Import types
 import type { AnswerSheetPacket, PacketDetailView, Institution, ExaminationSession, Course, PacketStatus } from "@/types/answer-sheet-packets"
 
+interface Board {
+	id: string
+	board_code: string
+	board_name: string
+	board_type?: string
+	board_order?: number
+	institution_code?: string
+	institutions_id?: string
+}
+
 export default function AnswerSheetPacketsPage() {
 	const { toast } = useToast()
+	const {
+		filter,
+		isReady,
+		appendToUrl,
+		institutionCode,
+		institutionId,
+		shouldFilter,
+		mustSelectInstitution,
+	} = useInstitutionFilter()
+
 	const [items, setItems] = useState<AnswerSheetPacket[]>([])
 	const [loading, setLoading] = useState(true)
 	const [searchTerm, setSearchTerm] = useState("")
@@ -33,22 +54,24 @@ export default function AnswerSheetPacketsPage() {
 	const [currentPage, setCurrentPage] = useState(1)
 	const itemsPerPage = 15
 
-	// Filters
-	const [institutionFilter, setInstitutionFilter] = useState("all")
+	// Filters (session, board, course, status — institution comes from global context)
 	const [sessionFilter, setSessionFilter] = useState("all")
+	const [boardFilter, setBoardFilter] = useState("all")
 	const [courseFilter, setCourseFilter] = useState("all")
 	const [statusFilter, setStatusFilter] = useState<PacketStatus | "all">("all")
 
 	// Dropdowns
 	const [institutions, setInstitutions] = useState<Institution[]>([])
 	const [sessions, setSessions] = useState<ExaminationSession[]>([])
+	const [boards, setBoards] = useState<Board[]>([])
 	const [courses, setCourses] = useState<Course[]>([])
 	const [allPackets, setAllPackets] = useState<PacketDetailView[]>([]) // Store ALL packets for filtering
 
 	// Generation state
 	const [generating, setGenerating] = useState(false)
-	const [genInstitution, setGenInstitution] = useState("")
+	const [genInstitution, setGenInstitution] = useState("") // Only used when mustSelectInstitution
 	const [genSession, setGenSession] = useState("")
+	const [genBoard, setGenBoard] = useState("")
 	const [genCourses, setGenCourses] = useState<string[]>([])
 	const [coursePopoverOpen, setCoursePopoverOpen] = useState(false)
 	const [generationResult, setGenerationResult] = useState<{
@@ -63,7 +86,11 @@ export default function AnswerSheetPacketsPage() {
 	// Search states for dropdowns
 	const [institutionSearch, setInstitutionSearch] = useState("")
 	const [sessionSearch, setSessionSearch] = useState("")
+	const [boardSearch, setBoardSearch] = useState("")
 	const [courseSearch, setCourseSearch] = useState("")
+
+	// Effective institution code: from global context or local selection (for super_admin "All")
+	const effectiveInstitutionCode = mustSelectInstitution ? genInstitution : institutionCode
 
 	// Filtered dropdown lists
 	const filteredInstitutions = useMemo(() => {
@@ -84,17 +111,29 @@ export default function AnswerSheetPacketsPage() {
 		)
 	}, [sessions, sessionSearch])
 
-	const filteredCourses = useMemo(() => {
-		// First filter to only show Theory courses
-		let theoryCourses = courses.filter(course =>
-			course.course_category === "Theory"
+	const filteredBoards = useMemo(() => {
+		const sorted = [...boards].sort((a, b) => (a.board_order ?? 999) - (b.board_order ?? 999))
+		if (!boardSearch) return sorted
+		const search = boardSearch.toLowerCase()
+		return sorted.filter(b =>
+			b.board_code.toLowerCase().includes(search) ||
+			b.board_name?.toLowerCase().includes(search)
 		)
+	}, [boards, boardSearch])
+
+	const filteredCourses = useMemo(() => {
+		// First filter to only show Theory courses, filtered by selected board
+		let theoryCourses = courses.filter(course => {
+			if (course.course_category !== "Theory") return false
+			if (genBoard && genBoard !== 'all' && course.board_code !== genBoard) return false
+			return true
+		})
 
 		// Exclude courses that already have packets generated for the selected institution + session
-		if (genInstitution && genSession) {
+		if (effectiveInstitutionCode && genSession) {
 			// Filter packets for current institution and session
 			const matchingPackets = allPackets.filter(packet => {
-				const instMatch = packet.institution_code === genInstitution
+				const instMatch = packet.institution_code === effectiveInstitutionCode
 				const sessMatch = packet.session_code === genSession
 				return instMatch && sessMatch
 			})
@@ -104,28 +143,9 @@ export default function AnswerSheetPacketsPage() {
 				matchingPackets.map(packet => packet.course_code)
 			)
 
-			// Debug: Log the filtering details
-			console.log(`[Course Filter] Selected Institution: "${genInstitution}"`)
-			console.log(`[Course Filter] Selected Session: "${genSession}"`)
-			console.log(`[Course Filter] Total packets in DB: ${allPackets.length}`)
-			console.log(`[Course Filter] Matching packets: ${matchingPackets.length}`)
-			console.log(`[Course Filter] Unique course codes with packets:`, Array.from(generatedCourseCodes))
-			console.log(`[Course Filter] Theory courses before exclusion: ${theoryCourses.length}`)
-
-			// Sample packet for debugging
-			if (matchingPackets.length > 0) {
-				console.log(`[Course Filter] Sample matching packet:`, {
-					institution_code: matchingPackets[0].institution_code,
-					session_code: matchingPackets[0].session_code,
-					course_code: matchingPackets[0].course_code
-				})
-			}
-
 			theoryCourses = theoryCourses.filter(course =>
 				!generatedCourseCodes.has(course.course_code)
 			)
-
-			console.log(`[Course Filter] Theory courses after exclusion: ${theoryCourses.length}`)
 		}
 
 		// Sort courses alphabetically by course_code
@@ -137,15 +157,15 @@ export default function AnswerSheetPacketsPage() {
 			course.course_code.toLowerCase().includes(search) ||
 			course.course_title?.toLowerCase().includes(search)
 		)
-	}, [courses, courseSearch, genInstitution, genSession, allPackets])
+	}, [courses, courseSearch, effectiveInstitutionCode, genSession, genBoard, allPackets])
 
-	// Fetch ALL packets (unfiltered) for course dropdown filtering
+	// Fetch ALL packets for course dropdown filtering (scoped to institution)
 	const fetchAllPackets = async () => {
 		try {
-			const response = await fetch('/api/post-exam/answer-sheet-packets')
+			const url = appendToUrl('/api/post-exam/answer-sheet-packets')
+			const response = await fetch(url)
 			if (response.ok) {
 				const data = await response.json()
-				console.log('[fetchAllPackets] Fetched packets count:', data.length)
 				setAllPackets(data)
 			}
 		} catch (error) {
@@ -153,12 +173,12 @@ export default function AnswerSheetPacketsPage() {
 		}
 	}
 
-	// Fetch data from API
+	// Fetch packets with filters
 	const fetchPackets = async () => {
 		try {
 			setLoading(true)
 			const params = new URLSearchParams()
-			if (institutionFilter !== 'all') params.append('institution_code', institutionFilter)
+			if (shouldFilter && institutionCode) params.append('institution_code', institutionCode)
 			if (sessionFilter !== 'all') params.append('exam_session', sessionFilter)
 			if (courseFilter !== 'all') params.append('course_code', courseFilter)
 			if (statusFilter !== 'all') params.append('status', statusFilter)
@@ -177,45 +197,87 @@ export default function AnswerSheetPacketsPage() {
 		}
 	}
 
-	// Fetch dropdowns
-	const fetchDropdowns = async () => {
+	// Fetch sessions (filtered by institution)
+	const fetchSessions = async () => {
 		try {
-			// Fetch institutions
-			const instRes = await fetch('/api/master/institutions')
-			if (instRes.ok) {
-				const instData = await instRes.json()
-				setInstitutions(instData)
-			}
-
-			// Fetch examination sessions
-			const sessRes = await fetch('/api/exam-management/examination-sessions')
-			if (sessRes.ok) {
-				const sessData = await sessRes.json()
-				setSessions(sessData)
-			}
-
-			// Fetch courses
-			const courseRes = await fetch('/api/master/courses')
-			if (courseRes.ok) {
-				const courseData = await courseRes.json()
-				setCourses(courseData)
+			const url = appendToUrl('/api/exam-management/examination-sessions')
+			const res = await fetch(url)
+			if (res.ok) {
+				const data = await res.json()
+				setSessions(data)
 			}
 		} catch (error) {
-			console.error('Error fetching dropdowns:', error)
+			console.error('Error fetching sessions:', error)
 		}
 	}
 
-	// Load data on component mount
-	useEffect(() => {
-		fetchDropdowns()
-		fetchPackets()
-		fetchAllPackets() // Fetch all packets for course filtering
-	}, [])
+	// Fetch boards (filtered by institution)
+	const fetchBoards = async () => {
+		try {
+			const url = appendToUrl('/api/master/boards')
+			const res = await fetch(url)
+			if (res.ok) {
+				const data = await res.json()
+				setBoards(data)
+			}
+		} catch (error) {
+			console.error('Error fetching boards:', error)
+		}
+	}
 
-	// Reload packets when filters change
+	// Fetch courses (filtered by institution)
+	const fetchCourses = async () => {
+		try {
+			const url = appendToUrl('/api/master/courses')
+			const res = await fetch(url)
+			if (res.ok) {
+				const data = await res.json()
+				setCourses(data)
+			}
+		} catch (error) {
+			console.error('Error fetching courses:', error)
+		}
+	}
+
+	// Fetch institutions (for super_admin "All Institutions" mode)
+	const fetchInstitutions = async () => {
+		try {
+			const res = await fetch('/api/master/institutions')
+			if (res.ok) {
+				const data = await res.json()
+				setInstitutions(data)
+			}
+		} catch (error) {
+			console.error('Error fetching institutions:', error)
+		}
+	}
+
+	// Load data when institution filter is ready or changes
 	useEffect(() => {
+		if (!isReady) return
+		if (mustSelectInstitution) {
+			fetchInstitutions()
+		}
+		fetchSessions()
+		fetchBoards()
+		fetchCourses()
 		fetchPackets()
-	}, [institutionFilter, sessionFilter, courseFilter, statusFilter])
+		fetchAllPackets()
+		// Reset cascading filters when institution changes
+		setSessionFilter('all')
+		setBoardFilter('all')
+		setCourseFilter('all')
+		setGenInstitution('')
+		setGenSession('')
+		setGenBoard('')
+		setGenCourses([])
+	}, [isReady, filter])
+
+	// Reload packets when table filters change
+	useEffect(() => {
+		if (!isReady) return
+		fetchPackets()
+	}, [sessionFilter, courseFilter, statusFilter])
 
 	const handleSort = (column: string) => {
 		if (sortColumn === column) {
@@ -234,6 +296,12 @@ export default function AnswerSheetPacketsPage() {
 	const filtered = useMemo(() => {
 		const q = searchTerm.toLowerCase()
 		const data = items.filter((i) => {
+			// Board filter (client-side since API doesn't support it)
+			if (boardFilter !== 'all') {
+				const matchedCourse = courses.find(c => c.course_code === (i as any).course_code)
+				if (matchedCourse && matchedCourse.board_code !== boardFilter) return false
+			}
+
 			const searchFields = [
 				i.packet_no,
 				i.barcode,
@@ -252,7 +320,7 @@ export default function AnswerSheetPacketsPage() {
 			return av < bv ? 1 : -1
 		})
 		return sorted
-	}, [items, searchTerm, sortColumn, sortDirection])
+	}, [items, searchTerm, sortColumn, sortDirection, boardFilter, courses])
 
 	const totalPages = Math.ceil(filtered.length / itemsPerPage) || 1
 	const startIndex = (currentPage - 1) * itemsPerPage
@@ -262,10 +330,12 @@ export default function AnswerSheetPacketsPage() {
 	useEffect(() => setCurrentPage(1), [searchTerm, sortColumn, sortDirection, itemsPerPage])
 
 	const handleGeneratePackets = async () => {
-		if (!genInstitution || !genSession) {
+		if (!effectiveInstitutionCode || !genSession) {
 			toast({
 				title: "⚠️ Validation Error",
-				description: "Please select institution and examination session.",
+				description: !effectiveInstitutionCode
+					? "Please select an institution."
+					: "Please select an examination session.",
 				variant: "destructive",
 				className: "bg-red-50 border-red-200 text-red-800 dark:bg-red-900/20 dark:border-red-800 dark:text-red-200",
 			})
@@ -294,7 +364,7 @@ export default function AnswerSheetPacketsPage() {
 					method: 'POST',
 					headers: { 'Content-Type': 'application/json' },
 					body: JSON.stringify({
-						institution_code: genInstitution,
+						institution_code: effectiveInstitutionCode,
 						exam_session: genSession,
 						course_code: courseCode,
 					}),
@@ -512,49 +582,62 @@ export default function AnswerSheetPacketsPage() {
 							</div>
 						</CardHeader>
 						<CardContent>
-							<div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-								<div>
-									<Label htmlFor="gen-institution">Institution <span className="text-red-500">*</span></Label>
-									<Select
-										value={genInstitution}
-										onValueChange={setGenInstitution}
-										onOpenChange={(open) => !open && setInstitutionSearch("")}
-									>
-										<SelectTrigger id="gen-institution">
-											<SelectValue placeholder="Select institution" />
-										</SelectTrigger>
-										<SelectContent>
-											<div className="p-2 border-b sticky top-0 bg-popover z-10">
-												<Input
-													placeholder="Search institutions..."
-													value={institutionSearch}
-													onChange={(e) => setInstitutionSearch(e.target.value)}
-													className="h-8"
-													onClick={(e) => e.stopPropagation()}
-												/>
-											</div>
-											{filteredInstitutions.length === 0 ? (
-												<div className="p-2 text-sm text-muted-foreground text-center">No institutions found</div>
-											) : (
-												filteredInstitutions.map((inst) => (
-													<SelectItem key={inst.id} value={inst.institution_code}>
-														{inst.institution_code} - {inst.name}
-													</SelectItem>
-												))
-											)}
-										</SelectContent>
-									</Select>
-								</div>
+							<div className={`grid grid-cols-1 gap-4 ${mustSelectInstitution ? 'md:grid-cols-5' : 'md:grid-cols-4'}`}>
+								{/* Institution — only visible when "All Institutions" is selected globally */}
+								{mustSelectInstitution && (
+									<div>
+										<Label htmlFor="gen-institution">Institution <span className="text-red-500">*</span></Label>
+										<Select
+											value={genInstitution}
+											onValueChange={(v) => {
+												setGenInstitution(v)
+												setGenSession('')
+												setGenBoard('')
+												setGenCourses([])
+											}}
+											onOpenChange={(open) => !open && setInstitutionSearch("")}
+										>
+											<SelectTrigger id="gen-institution">
+												<SelectValue placeholder="Select institution" />
+											</SelectTrigger>
+											<SelectContent>
+												<div className="p-2 border-b sticky top-0 bg-popover z-10">
+													<Input
+														placeholder="Search institutions..."
+														value={institutionSearch}
+														onChange={(e) => setInstitutionSearch(e.target.value)}
+														className="h-8"
+														onClick={(e) => e.stopPropagation()}
+													/>
+												</div>
+												{filteredInstitutions.length === 0 ? (
+													<div className="p-2 text-sm text-muted-foreground text-center">No institutions found</div>
+												) : (
+													filteredInstitutions.map((inst) => (
+														<SelectItem key={inst.id} value={inst.institution_code}>
+															{inst.institution_code} - {inst.name}
+														</SelectItem>
+													))
+												)}
+											</SelectContent>
+										</Select>
+									</div>
+								)}
 
 								<div>
 									<Label htmlFor="gen-session">Exam Session <span className="text-red-500">*</span></Label>
 									<Select
 										value={genSession}
-										onValueChange={setGenSession}
+										onValueChange={(v) => {
+											setGenSession(v)
+											setGenBoard('')
+											setGenCourses([])
+										}}
 										onOpenChange={(open) => !open && setSessionSearch("")}
+										disabled={mustSelectInstitution && !genInstitution}
 									>
 										<SelectTrigger id="gen-session">
-											<SelectValue placeholder="Select session" />
+											<SelectValue placeholder={mustSelectInstitution && !genInstitution ? "Select institution first" : "Select session"} />
 										</SelectTrigger>
 										<SelectContent>
 											<div className="p-2 border-b sticky top-0 bg-popover z-10">
@@ -571,7 +654,7 @@ export default function AnswerSheetPacketsPage() {
 											) : (
 												filteredSessions.map((sess) => (
 													<SelectItem key={sess.id} value={sess.session_code}>
-														{sess.session_code} - {sess.session_name}
+														{sess.session_name && sess.session_name !== sess.session_code ? `${sess.session_code} - ${sess.session_name}` : sess.session_code}
 													</SelectItem>
 												))
 											)}
@@ -580,7 +663,63 @@ export default function AnswerSheetPacketsPage() {
 								</div>
 
 								<div>
-									<Label htmlFor="gen-course">Courses (Select Multiple - Theory Only)</Label>
+									<Label htmlFor="gen-board">Board</Label>
+									<Select
+										value={genBoard}
+										onValueChange={(v) => {
+											setGenBoard(v)
+											setGenCourses([])
+										}}
+										onOpenChange={(open) => !open && setBoardSearch("")}
+										disabled={!genSession}
+									>
+										<SelectTrigger id="gen-board">
+											<SelectValue placeholder={genSession ? "Select board" : "Select session first"} />
+										</SelectTrigger>
+										<SelectContent>
+											<div className="p-2 border-b sticky top-0 bg-popover z-10">
+												<Input
+													placeholder="Search boards..."
+													value={boardSearch}
+													onChange={(e) => setBoardSearch(e.target.value)}
+													className="h-8"
+													onClick={(e) => e.stopPropagation()}
+													onKeyDown={(e) => e.stopPropagation()}
+												/>
+											</div>
+											<SelectItem value="all">All Boards</SelectItem>
+											{filteredBoards.length === 0 ? (
+												<div className="p-2 text-sm text-muted-foreground text-center">No boards found</div>
+											) : (
+												<>
+													{filteredBoards.some(b => b.board_type === 'UG') && (
+														<SelectGroup>
+															<SelectLabel>UG Boards</SelectLabel>
+															{filteredBoards.filter(b => b.board_type === 'UG').map((board) => (
+																<SelectItem key={board.id} value={board.board_code}>
+																	{board.board_code} - {board.board_name}
+																</SelectItem>
+															))}
+														</SelectGroup>
+													)}
+													{filteredBoards.some(b => b.board_type === 'PG') && (
+														<SelectGroup>
+															<SelectLabel>PG Boards</SelectLabel>
+															{filteredBoards.filter(b => b.board_type === 'PG').map((board) => (
+																<SelectItem key={board.id} value={board.board_code}>
+																	{board.board_code} - {board.board_name}
+																</SelectItem>
+															))}
+														</SelectGroup>
+													)}
+												</>
+											)}
+										</SelectContent>
+									</Select>
+								</div>
+
+								<div>
+									<Label htmlFor="gen-course">Courses (Theory Only)</Label>
 
 									{/* Selected Courses Display */}
 									{genCourses.length > 0 && (
@@ -628,7 +767,7 @@ export default function AnswerSheetPacketsPage() {
 											<div className="max-h-[400px] overflow-y-auto">
 												{filteredCourses.length === 0 ? (
 													<div className="p-4 text-sm text-muted-foreground text-center">
-														{genInstitution && genSession ? "All courses have packets generated" : "No theory courses available"}
+														{effectiveInstitutionCode && genSession ? "All courses have packets generated or no theory courses for selected board" : "Select session first"}
 													</div>
 												) : (
 													<div className="p-2 space-y-1">
@@ -690,7 +829,7 @@ export default function AnswerSheetPacketsPage() {
 								<div className="flex items-end">
 									<Button
 										onClick={handleGeneratePackets}
-										disabled={generating || !genInstitution || !genSession}
+										disabled={generating || !effectiveInstitutionCode || !genSession}
 										className="w-full bg-gradient-to-r from-purple-500 to-pink-600 hover:from-purple-600 hover:to-pink-700"
 									>
 										{generating ? (
@@ -788,13 +927,13 @@ export default function AnswerSheetPacketsPage() {
 					{/* Filters & Search */}
 					<Card>
 						<CardContent className="pt-6">
-							<div className="grid grid-cols-1 md:grid-cols-6 gap-4">
+							<div className="grid grid-cols-1 md:grid-cols-5 gap-4">
 								{/* Search */}
-								<div className="md:col-span-2">
+								<div>
 									<div className="relative">
 										<Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
 										<Input
-											placeholder="Search by packet no, barcode, location..."
+											placeholder="Search packet no, barcode..."
 											value={searchTerm}
 											onChange={(e) => setSearchTerm(e.target.value)}
 											className="pl-9"
@@ -802,26 +941,13 @@ export default function AnswerSheetPacketsPage() {
 									</div>
 								</div>
 
-								{/* Institution Filter */}
-								<div>
-									<Select value={institutionFilter} onValueChange={setInstitutionFilter}>
-										<SelectTrigger>
-											<SelectValue placeholder="All Institutions" />
-										</SelectTrigger>
-										<SelectContent>
-											<SelectItem value="all">All Institutions</SelectItem>
-											{institutions.map((inst) => (
-												<SelectItem key={inst.id} value={inst.institution_code}>
-													{inst.institution_code}
-												</SelectItem>
-											))}
-										</SelectContent>
-									</Select>
-								</div>
-
 								{/* Session Filter */}
 								<div>
-									<Select value={sessionFilter} onValueChange={setSessionFilter}>
+									<Select value={sessionFilter} onValueChange={(v) => {
+										setSessionFilter(v)
+										setBoardFilter('all')
+										setCourseFilter('all')
+									}}>
 										<SelectTrigger>
 											<SelectValue placeholder="All Sessions" />
 										</SelectTrigger>
@@ -836,6 +962,41 @@ export default function AnswerSheetPacketsPage() {
 									</Select>
 								</div>
 
+								{/* Board Filter */}
+								<div>
+									<Select value={boardFilter} onValueChange={(v) => {
+										setBoardFilter(v)
+										setCourseFilter('all')
+									}}>
+										<SelectTrigger>
+											<SelectValue placeholder="All Boards" />
+										</SelectTrigger>
+										<SelectContent>
+											<SelectItem value="all">All Boards</SelectItem>
+											{filteredBoards.some(b => b.board_type === 'UG') && (
+												<SelectGroup>
+													<SelectLabel>UG Boards</SelectLabel>
+													{filteredBoards.filter(b => b.board_type === 'UG').map((board) => (
+														<SelectItem key={board.id} value={board.board_code}>
+															{board.board_code} - {board.board_name}
+														</SelectItem>
+													))}
+												</SelectGroup>
+											)}
+											{filteredBoards.some(b => b.board_type === 'PG') && (
+												<SelectGroup>
+													<SelectLabel>PG Boards</SelectLabel>
+													{filteredBoards.filter(b => b.board_type === 'PG').map((board) => (
+														<SelectItem key={board.id} value={board.board_code}>
+															{board.board_code} - {board.board_name}
+														</SelectItem>
+													))}
+												</SelectGroup>
+											)}
+										</SelectContent>
+									</Select>
+								</div>
+
 								{/* Course Filter */}
 								<div>
 									<Select value={courseFilter} onValueChange={setCourseFilter}>
@@ -844,7 +1005,9 @@ export default function AnswerSheetPacketsPage() {
 										</SelectTrigger>
 										<SelectContent>
 											<SelectItem value="all">All Courses</SelectItem>
-											{courses.map((course) => (
+											{courses
+												.filter(c => boardFilter === 'all' || (c as any).board_code === boardFilter)
+												.map((course) => (
 												<SelectItem key={course.id} value={course.course_code}>
 													{course.course_code}
 												</SelectItem>

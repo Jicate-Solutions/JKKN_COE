@@ -35,6 +35,7 @@ import { useToast } from '@/hooks/common/use-toast'
 import { UserCheck, Check, ChevronsUpDown, Loader2, FileText, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useInstitutionFilter } from '@/hooks/use-institution-filter'
+import { useSessionSync } from '@/hooks/use-session-sync'
 import { AllotmentReportTab } from './allotment-report-tab'
 
 // ---------------------------------------------------------------------------
@@ -137,7 +138,7 @@ export default function ExaminerAllotmentPage() {
 
 	// Selected values
 	const [selectedInstitutionId, setSelectedInstitutionId] = useState('')
-	const [selectedSessionId, setSelectedSessionId] = useState('')
+	const { selectedSessionId, setSelectedSessionId, mustSelectSession } = useSessionSync()
 	const [selectedBoardCode, setSelectedBoardCode] = useState('')
 
 	// Combobox open states
@@ -453,6 +454,7 @@ export default function ExaminerAllotmentPage() {
 									)}
 
 									{/* Exam Session */}
+									{mustSelectSession && (
 									<div className="space-y-1.5">
 										<Label className="text-xs font-medium">
 											Exam Session <span className="text-red-500">*</span>
@@ -502,6 +504,7 @@ export default function ExaminerAllotmentPage() {
 											</PopoverContent>
 										</Popover>
 									</div>
+									)}
 
 									{/* Board (optional filter) */}
 									<div className="space-y-1.5">

@@ -19,6 +19,7 @@ import { Loader2, Check, ChevronsUpDown, ClipboardList, Download } from "lucide-
 import { cn } from "@/lib/utils"
 import Link from "next/link"
 import { useInstitutionFilter } from "@/hooks/use-institution-filter"
+import { useSessionSync } from "@/hooks/use-session-sync"
 import {
 	fetchSessions as fetchSessionsService,
 	fetchExamDates as fetchExamDatesService,
@@ -59,7 +60,7 @@ export default function ExamAttendanceSheetPage() {
 	const [sessionTypes, setSessionTypes] = useState<SessionTypeOption[]>([])
 
 	// Selected values
-	const [selectedSessionId, setSelectedSessionId] = useState<string>("")
+	const { selectedSessionId, setSelectedSessionId, mustSelectSession } = useSessionSync()
 	const [selectedExamDate, setSelectedExamDate] = useState<string>("")
 	const [selectedSessionType, setSelectedSessionType] = useState<string>("")
 
@@ -384,6 +385,7 @@ export default function ExamAttendanceSheetPage() {
 								<CardContent>
 									<div className={cn("grid grid-cols-1 md:grid-cols-3 gap-4", generating && "opacity-50 pointer-events-none")}>
 										{/* Exam Session Dropdown */}
+										{mustSelectSession && (
 										<div className="space-y-2">
 											<Label>Exam Session</Label>
 											<Popover open={sessionOpen} onOpenChange={setSessionOpen}>
@@ -430,6 +432,7 @@ export default function ExamAttendanceSheetPage() {
 												</PopoverContent>
 											</Popover>
 										</div>
+										)}
 
 										{/* Exam Date Dropdown */}
 										<div className="space-y-2">

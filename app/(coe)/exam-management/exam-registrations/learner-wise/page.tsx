@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useSessionSync } from '@/hooks/use-session-sync'
 import { useInstitutionFilter } from '@/hooks/use-institution-filter'
 import { useExamSessions } from '@/hooks/use-exam-sessions'
 import { AppSidebar } from '@/components/layout/app-sidebar'
@@ -64,7 +65,7 @@ export default function LearnerWiseExamRegistrationPage() {
 	}, [mustSelectInstitution, selectedInstitution, currentMyJKKNInstitutionIds])
 
 	// Filters
-	const [sessionId, setSessionId] = useState('')
+	const { selectedSessionId: sessionId, setSelectedSessionId: setSessionId, mustSelectSession } = useSessionSync()
 	const [sessionCode, setSessionCode] = useState('')
 
 	// Learner search
@@ -409,6 +410,7 @@ export default function LearnerWiseExamRegistrationPage() {
 									)}
 
 									{/* Session */}
+									{mustSelectSession && (
 									<div className="space-y-1.5">
 										<Label className="text-xs font-medium">Exam Session</Label>
 										<Select
@@ -430,6 +432,7 @@ export default function LearnerWiseExamRegistrationPage() {
 											</SelectContent>
 										</Select>
 									</div>
+									)}
 
 									{/* Learner Search */}
 									<div className="space-y-1.5">

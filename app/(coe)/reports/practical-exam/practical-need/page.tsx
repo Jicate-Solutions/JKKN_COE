@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
+import { useSessionSync } from '@/hooks/use-session-sync'
 import { AppSidebar } from '@/components/layout/app-sidebar'
 import { AppHeader } from '@/components/layout/app-header'
 import { AppFooter } from '@/components/layout/app-footer'
@@ -105,7 +106,7 @@ export default function PracticalExamReportsPage() {
 
 	// Selected values
 	const [selectedInstitutionId, setSelectedInstitutionId] = useState('')
-	const [selectedSessionId, setSelectedSessionId] = useState('')
+	const { selectedSessionId, setSelectedSessionId, mustSelectSession } = useSessionSync()
 	const [institutionOpen, setInstitutionOpen] = useState(false)
 
 	// Lunch data
@@ -528,6 +529,7 @@ export default function PracticalExamReportsPage() {
 								)}
 
 								{/* Exam Session */}
+								{mustSelectSession && (
 								<div className="space-y-1.5">
 									<Label className="text-xs font-medium">Exam Session <span className="text-red-500">*</span></Label>
 									<Select value={selectedSessionId} onValueChange={setSelectedSessionId} disabled={loadingSessions || !selectedInstitutionId}>
@@ -546,6 +548,7 @@ export default function PracticalExamReportsPage() {
 										</SelectContent>
 									</Select>
 								</div>
+								)}
 							</div>
 						</CardContent>
 					</Card>

@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useSessionSync } from '@/hooks/use-session-sync'
 import { useInstitutionFilter } from '@/hooks/use-institution-filter'
 import { useExamSessions } from '@/hooks/use-exam-sessions'
 import { AppSidebar } from '@/components/layout/app-sidebar'
@@ -126,7 +127,7 @@ export default function CourseWiseExamRegistrationPage() {
 	}, [mustSelectInstitution, selectedInstitution, currentMyJKKNInstitutionIds])
 
 	// Filters
-	const [sessionId, setSessionId] = useState('')
+	const { selectedSessionId: sessionId, setSelectedSessionId: setSessionId, mustSelectSession } = useSessionSync()
 	const [sessionCode, setSessionCode] = useState('')
 	const [courseOfferingId, setCourseOfferingId] = useState('')
 	const [courseCode, setCourseCode] = useState('')
@@ -470,6 +471,7 @@ export default function CourseWiseExamRegistrationPage() {
 									)}
 
 									{/* Exam Session */}
+									{mustSelectSession && (
 									<div className="space-y-1.5">
 										<Label className="text-xs font-medium">Exam Session</Label>
 										<Select
@@ -491,6 +493,7 @@ export default function CourseWiseExamRegistrationPage() {
 											</SelectContent>
 										</Select>
 									</div>
+									)}
 
 									{/* Course */}
 									<div className="space-y-1.5">

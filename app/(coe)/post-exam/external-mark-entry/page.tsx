@@ -20,6 +20,7 @@ import { numberToWords } from '@/services/post-exam/external-mark-entry-service'
 import { cn } from '@/lib/utils'
 import Link from 'next/link'
 import { useInstitutionFilter } from '@/hooks/use-institution-filter'
+import { useSessionSync } from '@/hooks/use-session-sync'
 
 interface Institution {
 	id: string
@@ -90,7 +91,7 @@ export default function ExternalMarkEntryPage() {
 
 	// Selected values (using IDs instead of codes)
 	const [selectedInstitutionId, setSelectedInstitutionId] = useState<string>('')
-	const [selectedSessionId, setSelectedSessionId] = useState<string>('')
+	const { selectedSessionId, setSelectedSessionId, mustSelectSession } = useSessionSync()
 	const [selectedCourseId, setSelectedCourseId] = useState<string>('')
 	const [selectedPacketId, setSelectedPacketId] = useState<string>('')
 	const [selectedPacket, setSelectedPacket] = useState<Packet | null>(null)
@@ -608,6 +609,7 @@ export default function ExternalMarkEntryPage() {
 								)}
 
 								{/* Session Combobox */}
+								{mustSelectSession && (
 								<div className="space-y-1.5">
 									<Label htmlFor="session" className="text-xs font-medium">Exam Session <span className="text-red-500">*</span></Label>
 									<Popover open={sessionOpen} onOpenChange={setSessionOpen}>
@@ -656,6 +658,7 @@ export default function ExternalMarkEntryPage() {
 										</PopoverContent>
 									</Popover>
 								</div>
+								)}
 
 								{/* Course Combobox */}
 								<div className="space-y-1.5">

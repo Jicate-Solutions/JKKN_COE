@@ -1,12 +1,14 @@
 'use client'
 
 import { useState, useEffect, useMemo } from 'react'
+import { useSessionSync } from '@/hooks/use-session-sync'
 import { AppSidebar } from '@/components/layout/app-sidebar'
 import { AppHeader } from '@/components/layout/app-header'
 import { AppFooter } from '@/components/layout/app-footer'
 import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar'
 import { Breadcrumb, BreadcrumbItem, BreadcrumbLink, BreadcrumbList, BreadcrumbPage, BreadcrumbSeparator } from '@/components/ui/breadcrumb'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import {
@@ -28,10 +30,11 @@ import { Badge } from '@/components/ui/badge'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from '@/components/ui/command'
 import { useToast } from '@/hooks/common/use-toast'
-import { Download, FileText, ChevronsUpDown, X, Search, Loader2, Check } from 'lucide-react'
+import { Download, FileText, ChevronsUpDown, X, Search, Loader2, Check, Package } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useInstitutionFilter } from '@/hooks/use-institution-filter'
 import { generateDummyNumberReportPDF } from '@/lib/utils/generate-dummy-number-report-pdf'
+import { generateAnswerSheetPacketsReportPDF, type PacketReportRecord, type PacketReportBoard } from '@/lib/utils/generate-answer-sheet-packets-report-pdf'
 import Link from 'next/link'
 
 interface Institution {
@@ -87,7 +90,7 @@ export default function DummyNumberReportPage() {
 	const [institutions, setInstitutions] = useState<Institution[]>([])
 	const [sessions, setSessions] = useState<ExaminationSession[]>([])
 	const [selectedInstitutionId, setSelectedInstitutionId] = useState('')
-	const [selectedSession, setSelectedSession] = useState('')
+	const { selectedSessionId: selectedSession, setSelectedSessionId: setSelectedSession, mustSelectSession } = useSessionSync()
 	const [institutionOpen, setInstitutionOpen] = useState(false)
 
 	// Filter options from filter-options API
@@ -112,6 +115,17 @@ export default function DummyNumberReportPage() {
 	const [dummyNumbers, setDummyNumbers] = useState<DummyNumber[]>([])
 	const [loading, setLoading] = useState(false)
 	const [exporting, setExporting] = useState(false)
+
+	// Answer Sheet Packets tab state
+	const [pktSession, setPktSession] = useState('')
+	const [pktSelectedBoards, setPktSelectedBoards] = useState<string[]>([])
+	const [pktBoardOpen, setPktBoardOpen] = useState(false)
+	const [pktBoardSearch, setPktBoardSearch] = useState('')
+	const [pktBoards, setPktBoards] = useState<PacketReportBoard[]>([])
+	const [pktPackets, setPktPackets] = useState<PacketReportRecord[]>([])
+	const [pktLoading, setPktLoading] = useState(false)
+	const [pktExporting, setPktExporting] = useState(false)
+	const [activeTab, setActiveTab] = useState('dummy-numbers')
 
 	// Effective institution ID (local selection or global filter)
 	const institutionId = selectedInstitutionId || contextInstitutionId
@@ -469,6 +483,153 @@ export default function DummyNumberReportPage() {
 
 	const allCoursesSelected = courses.length > 0 && selectedCourses.length === courses.length
 
+	// ========== Answer Sheet Packets Tab Logic ==========
+
+	// Fetch packet boards when session changes
+	useEffect(() => {
+		if (pktSession && institutionId) {
+			fetchPktBoards()
+			setPktSelectedBoards([])
+			setPktPackets([])
+		}
+	}, [pktSession, institutionId])
+
+	const fetchPktBoards = async () => {
+		if (!institutionId) return
+		try {
+			const res = await fetch(`/api/master/boards?institutions_id=${institutionId}`)
+			if (res.ok) {
+				const data = await res.json()
+				const sorted = (data || []).sort((a: any, b: any) => (a.board_order ?? 999) - (b.board_order ?? 999))
+				setPktBoards(sorted)
+			}
+		} catch (error) {
+			console.error('Error fetching boards:', error)
+		}
+	}
+
+	const pktFilteredBoards = useMemo(() => {
+		if (!pktBoardSearch.trim()) return pktBoards
+		const q = pktBoardSearch.toLowerCase()
+		return pktBoards.filter((b: any) =>
+			b.board_code.toLowerCase().includes(q) || b.board_name.toLowerCase().includes(q)
+		)
+	}, [pktBoards, pktBoardSearch])
+
+	const pktUgBoards = useMemo(() => pktFilteredBoards.filter((b: any) => b.board_type === 'UG'), [pktFilteredBoards])
+	const pktPgBoards = useMemo(() => pktFilteredBoards.filter((b: any) => b.board_type === 'PG'), [pktFilteredBoards])
+
+	const handlePktBoardToggle = (boardCode: string) => {
+		setPktSelectedBoards(prev =>
+			prev.includes(boardCode) ? prev.filter(c => c !== boardCode) : [...prev, boardCode]
+		)
+	}
+
+	const handlePktSelectAllType = (type: 'UG' | 'PG') => {
+		const typeCodes = pktBoards.filter((b: any) => b.board_type === type).map((b: any) => b.board_code)
+		const allSelected = typeCodes.every(c => pktSelectedBoards.includes(c))
+		if (allSelected) {
+			setPktSelectedBoards(prev => prev.filter(c => !typeCodes.includes(c)))
+		} else {
+			setPktSelectedBoards(prev => [...new Set([...prev, ...typeCodes])])
+		}
+	}
+
+	const handlePktSelectAll = () => {
+		if (pktSelectedBoards.length === pktBoards.length) {
+			setPktSelectedBoards([])
+		} else {
+			setPktSelectedBoards(pktBoards.map((b: any) => b.board_code))
+		}
+	}
+
+	const fetchPktReport = async () => {
+		if (!institutionId || !pktSession) {
+			toast({ title: '⚠️ Missing Information', description: 'Please select an examination session', variant: 'destructive' })
+			return
+		}
+		try {
+			setPktLoading(true)
+			setPktPackets([])
+			let url = `/api/reports/answer-sheet-packets?institutions_id=${institutionId}&examination_session_id=${pktSession}`
+			if (pktSelectedBoards.length > 0) url += `&board_codes=${pktSelectedBoards.join(',')}`
+			const res = await fetch(url)
+			if (res.ok) {
+				const result = await res.json()
+				setPktPackets(result.packets || [])
+				if (!result.boards) setPktBoards(prev => prev)
+				if ((result.packets || []).length === 0) {
+					toast({ title: '⚠️ No Data', description: 'No answer sheet packets found for the selected filters', variant: 'destructive' })
+				}
+			}
+		} catch (error) {
+			console.error('Error fetching packet report:', error)
+			toast({ title: '❌ Error', description: 'Failed to fetch report data', variant: 'destructive' })
+		} finally {
+			setPktLoading(false)
+		}
+	}
+
+	const exportPktPDF = async () => {
+		if (pktPackets.length === 0) return
+		try {
+			setPktExporting(true)
+			const institution = institutions.find(i => i.id === institutionId)
+			const session = sessions.find(s => s.id === pktSession)
+
+			let logoImage: string | undefined
+			let rightLogoImage: string | undefined
+			try {
+				const logoResponse = await fetch('/jkkn_logo.png')
+				if (logoResponse.ok) {
+					const blob = await logoResponse.blob()
+					logoImage = await new Promise<string>((resolve) => {
+						const reader = new FileReader()
+						reader.onloadend = () => resolve(reader.result as string)
+						reader.readAsDataURL(blob)
+					})
+				}
+				const rightLogoResponse = await fetch('/jkkncas_logo.png')
+				if (rightLogoResponse.ok) {
+					const blob = await rightLogoResponse.blob()
+					rightLogoImage = await new Promise<string>((resolve) => {
+						const reader = new FileReader()
+						reader.onloadend = () => resolve(reader.result as string)
+						reader.readAsDataURL(blob)
+					})
+				}
+			} catch (e) {
+				console.warn('Failed to load logos:', e)
+			}
+
+			// Get boards for the selected packets
+			const boardCodesInPackets = [...new Set(pktPackets.map(p => p.board_code))]
+			const reportBoards = pktBoards.filter((b: any) => boardCodesInPackets.includes(b.board_code))
+
+			generateAnswerSheetPacketsReportPDF({
+				institutionName: institution?.name || '',
+				institutionCode: institution?.institution_code || '',
+				sessionName: session?.session_name || '',
+				sessionCode: session?.session_code || '',
+				logoImage,
+				rightLogoImage,
+				boards: reportBoards,
+				packets: pktPackets,
+			})
+
+			toast({
+				title: '✅ PDF Exported',
+				description: `Exported ${pktPackets.length} packet records to PDF`,
+				className: 'bg-green-50 border-green-200 text-green-800',
+			})
+		} catch (error) {
+			console.error('PDF export error:', error)
+			toast({ title: '❌ Export Failed', description: 'Failed to generate PDF', variant: 'destructive' })
+		} finally {
+			setPktExporting(false)
+		}
+	}
+
 	return (
 		<SidebarProvider>
 			<AppSidebar />
@@ -500,12 +661,27 @@ export default function DummyNumberReportPage() {
 					<div className="space-y-6">
 						{/* Header */}
 						<div>
-							<h1 className="text-3xl font-bold text-heading">Dummy Number Report</h1>
+							<h1 className="text-3xl font-bold text-heading">Reports</h1>
 							<p className="text-muted-foreground mt-2">
-								Download dummy number allocation report as PDF or Excel
+								Download dummy number or answer sheet packet reports
 							</p>
 						</div>
 
+						<Tabs value={activeTab} onValueChange={setActiveTab}>
+							<TabsList className="bg-gradient-to-r from-slate-100 to-slate-50 dark:from-slate-800 dark:to-slate-900 p-1 h-12 gap-1">
+								<TabsTrigger value="dummy-numbers"
+									className="data-[state=active]:bg-gradient-to-r data-[state=active]:from-blue-500 data-[state=active]:to-indigo-600 data-[state=active]:text-white data-[state=active]:shadow-md h-9 px-4 rounded-md transition-all">
+									<FileText className="h-4 w-4 mr-2" />
+									Dummy Numbers
+								</TabsTrigger>
+								<TabsTrigger value="answer-sheet-packets"
+									className="data-[state=active]:bg-gradient-to-r data-[state=active]:from-purple-500 data-[state=active]:to-pink-600 data-[state=active]:text-white data-[state=active]:shadow-md h-9 px-4 rounded-md transition-all">
+									<Package className="h-4 w-4 mr-2" />
+									Answer Sheet Packets
+								</TabsTrigger>
+							</TabsList>
+
+						<TabsContent value="dummy-numbers" className="space-y-6 mt-4">
 						{/* Filters Card */}
 						<Card>
 							<CardHeader>
@@ -563,6 +739,7 @@ export default function DummyNumberReportPage() {
 									)}
 
 									{/* Exam Session */}
+									{mustSelectSession && (
 									<div className="space-y-2">
 										<Label>
 											Examination Session <span className="text-red-500">*</span>
@@ -587,6 +764,7 @@ export default function DummyNumberReportPage() {
 										</SelectContent>
 									</Select>
 									</div>
+									)}
 								</div>
 
 								{/* Board & Course Filters */}
@@ -850,6 +1028,247 @@ export default function DummyNumberReportPage() {
 								</CardContent>
 							</Card>
 						)}
+						</TabsContent>
+
+						{/* ========== Answer Sheet Packets Tab ========== */}
+						<TabsContent value="answer-sheet-packets" className="space-y-6 mt-4">
+							<Card>
+								<CardHeader>
+									<CardTitle>Report Filters</CardTitle>
+									<CardDescription>Select exam session and boards to generate the answer sheet packets report</CardDescription>
+								</CardHeader>
+								<CardContent className="space-y-6">
+									{/* Institution, Session & Board - single row */}
+									<div className={cn("grid gap-4", showInstitutionDropdown ? "grid-cols-1 md:grid-cols-3" : "grid-cols-1 md:grid-cols-2")}>
+										{showInstitutionDropdown && (
+											<div className="space-y-2">
+												<Label>Institution <span className="text-red-500">*</span></Label>
+												<Popover>
+													<PopoverTrigger asChild>
+														<Button variant="outline" className="w-full justify-between font-normal">
+															{selectedInstitutionId
+																? (() => { const inst = institutions.find(i => i.id === selectedInstitutionId); return inst ? `${inst.institution_code} - ${inst.name}` : 'Select institution' })()
+																: 'Select institution'}
+															<ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+														</Button>
+													</PopoverTrigger>
+													<PopoverContent className="w-[350px] p-0" align="start">
+														<Command>
+															<CommandInput placeholder="Search institution..." />
+															<CommandList>
+																<CommandEmpty>No institution found.</CommandEmpty>
+																<CommandGroup>
+																	{institutions.map((inst) => (
+																		<CommandItem key={inst.id} value={`${inst.institution_code} ${inst.name}`}
+																			onSelect={() => setSelectedInstitutionId(inst.id)}>
+																			<Check className={cn("mr-2 h-4 w-4", selectedInstitutionId === inst.id ? "opacity-100" : "opacity-0")} />
+																			{inst.institution_code} - {inst.name}
+																		</CommandItem>
+																	))}
+																</CommandGroup>
+															</CommandList>
+														</Command>
+													</PopoverContent>
+												</Popover>
+											</div>
+										)}
+
+										<div className="space-y-2">
+											<Label>Examination Session <span className="text-red-500">*</span></Label>
+											<Select value={pktSession} onValueChange={(v) => { setPktSession(v); setPktPackets([]) }} disabled={!institutionId}>
+												<SelectTrigger>
+													<SelectValue placeholder={!institutionId ? 'Select institution first' : 'Select session'} />
+												</SelectTrigger>
+												<SelectContent>
+													{sessions.map((session) => (
+														<SelectItem key={session.id} value={session.id}>
+															{session.session_name}{session.session_code !== session.session_name ? ` (${session.session_code})` : ''}
+														</SelectItem>
+													))}
+												</SelectContent>
+											</Select>
+										</div>
+
+										<div className="space-y-2">
+											<Label>Name of the Board</Label>
+											<div className="flex gap-2">
+												<Popover open={pktBoardOpen} onOpenChange={(open) => { setPktBoardOpen(open); if (!open) setPktBoardSearch('') }}>
+													<PopoverTrigger asChild>
+														<Button variant="outline" className="flex-1 justify-between font-normal">
+															{pktSelectedBoards.length === 0
+																? 'All boards'
+																: pktSelectedBoards.length === pktBoards.length
+																	? 'All boards selected'
+																	: `${pktSelectedBoards.length} board(s) selected`}
+															<ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+														</Button>
+													</PopoverTrigger>
+													<PopoverContent className="w-[400px] p-0" align="start">
+														<div className="p-2 border-b">
+															<input
+																type="text"
+																placeholder="Search board..."
+																value={pktBoardSearch}
+																onChange={(e) => setPktBoardSearch(e.target.value)}
+																className="w-full px-2 py-1.5 text-sm border rounded-md outline-none focus:ring-1 focus:ring-ring"
+															/>
+														</div>
+														<div className="max-h-72 overflow-y-auto p-1">
+															{/* Select All */}
+															<button type="button"
+																className="flex items-center gap-2 w-full rounded-md px-2 py-1.5 text-sm cursor-pointer hover:bg-accent font-semibold"
+																onClick={handlePktSelectAll}>
+																<Check className={cn("h-4 w-4 shrink-0", pktSelectedBoards.length === pktBoards.length && pktBoards.length > 0 ? "opacity-100" : "opacity-0")} />
+																Select All ({pktBoards.length})
+															</button>
+
+															{/* All UG */}
+															{pktUgBoards.length > 0 && (
+																<>
+																	<button type="button"
+																		className="flex items-center gap-2 w-full rounded-md px-2 py-1.5 text-sm cursor-pointer hover:bg-accent font-medium text-blue-700 dark:text-blue-400"
+																		onClick={() => handlePktSelectAllType('UG')}>
+																		<Check className={cn("h-4 w-4 shrink-0",
+																			pktUgBoards.every((b: any) => pktSelectedBoards.includes(b.board_code)) ? "opacity-100" : "opacity-0")} />
+																		All UG Boards ({pktUgBoards.length})
+																	</button>
+																	{pktUgBoards.map((board: any) => (
+																		<button key={board.board_code} type="button"
+																			className={cn("flex items-center gap-2 w-full rounded-md px-2 py-1.5 text-sm cursor-pointer hover:bg-accent pl-6",
+																				pktSelectedBoards.includes(board.board_code) && "bg-accent")}
+																			onClick={() => handlePktBoardToggle(board.board_code)}>
+																			<Check className={cn("h-4 w-4 shrink-0", pktSelectedBoards.includes(board.board_code) ? "opacity-100" : "opacity-0")} />
+																			{board.board_code} - {board.board_name}
+																		</button>
+																	))}
+																</>
+															)}
+
+															{/* All PG */}
+															{pktPgBoards.length > 0 && (
+																<>
+																	<button type="button"
+																		className="flex items-center gap-2 w-full rounded-md px-2 py-1.5 text-sm cursor-pointer hover:bg-accent font-medium text-purple-700 dark:text-purple-400 mt-1"
+																		onClick={() => handlePktSelectAllType('PG')}>
+																		<Check className={cn("h-4 w-4 shrink-0",
+																			pktPgBoards.every((b: any) => pktSelectedBoards.includes(b.board_code)) ? "opacity-100" : "opacity-0")} />
+																		All PG Boards ({pktPgBoards.length})
+																	</button>
+																	{pktPgBoards.map((board: any) => (
+																		<button key={board.board_code} type="button"
+																			className={cn("flex items-center gap-2 w-full rounded-md px-2 py-1.5 text-sm cursor-pointer hover:bg-accent pl-6",
+																				pktSelectedBoards.includes(board.board_code) && "bg-accent")}
+																			onClick={() => handlePktBoardToggle(board.board_code)}>
+																			<Check className={cn("h-4 w-4 shrink-0", pktSelectedBoards.includes(board.board_code) ? "opacity-100" : "opacity-0")} />
+																			{board.board_code} - {board.board_name}
+																		</button>
+																	))}
+																</>
+															)}
+														</div>
+													</PopoverContent>
+												</Popover>
+												{pktSelectedBoards.length > 0 && (
+													<Button variant="outline" size="sm" onClick={() => setPktSelectedBoards([])} className="px-2">
+														<X className="h-4 w-4" />
+													</Button>
+												)}
+											</div>
+										</div>
+									</div>
+
+									{/* Selected boards badges */}
+									{pktSelectedBoards.length > 0 && pktSelectedBoards.length <= 10 && (
+										<div className="flex flex-wrap gap-1">
+											{pktSelectedBoards.map(code => (
+												<Badge key={code} variant="secondary" className="text-xs">
+													{code}
+													<button type="button" title={`Remove ${code}`} className="ml-1 hover:text-destructive"
+														onClick={() => setPktSelectedBoards(prev => prev.filter(c => c !== code))}>
+														<X className="h-3 w-3" />
+													</button>
+												</Badge>
+											))}
+										</div>
+									)}
+
+									{/* Generate & Export */}
+									{institutionId && pktSession && (
+										<div className="flex flex-wrap gap-2">
+											<Button onClick={fetchPktReport} disabled={pktLoading}>
+												{pktLoading ? (
+													<><Loader2 className="h-4 w-4 mr-2 animate-spin" />Loading...</>
+												) : (
+													<><Search className="h-4 w-4 mr-2" />Generate Report</>
+												)}
+											</Button>
+											{pktPackets.length > 0 && (
+												<Button variant="outline" onClick={exportPktPDF} disabled={pktExporting}>
+													<FileText className="h-4 w-4 mr-2" />
+													Export PDF
+												</Button>
+											)}
+										</div>
+									)}
+								</CardContent>
+							</Card>
+
+							{/* Results Table */}
+							{pktPackets.length > 0 && (
+								<Card>
+									<CardHeader>
+										<div className="flex items-center justify-between">
+											<div>
+												<CardTitle>Packet Report Data</CardTitle>
+												<CardDescription>Total {pktPackets.length} packet records found</CardDescription>
+											</div>
+											<Badge variant="outline" className="text-sm">{pktPackets.length} packets</Badge>
+										</div>
+									</CardHeader>
+									<CardContent>
+										<div className="rounded-md border overflow-auto max-h-[600px]">
+											<Table>
+												<TableHeader className="sticky top-0 bg-background z-10">
+													<TableRow>
+														<TableHead className="w-[50px] text-center">S.No</TableHead>
+														<TableHead className="text-center">Board</TableHead>
+														<TableHead className="text-center">Course Code</TableHead>
+														<TableHead>Course Name</TableHead>
+														<TableHead className="text-center">Packet No</TableHead>
+														<TableHead className="text-center">Total Sheets</TableHead>
+														<TableHead className="text-center">Dummy Numbers</TableHead>
+													</TableRow>
+												</TableHeader>
+												<TableBody>
+													{pktPackets.map((pkt, idx) => (
+														<TableRow key={`${pkt.packet_id || idx}`}>
+															<TableCell className="text-center">{idx + 1}</TableCell>
+															<TableCell className="text-center font-medium">{pkt.board_code}</TableCell>
+															<TableCell className="text-center font-mono">{pkt.course_code}</TableCell>
+															<TableCell className="text-sm">{pkt.course_name}</TableCell>
+															<TableCell className="text-center font-medium">{pkt.packet_no}</TableCell>
+															<TableCell className="text-center">{pkt.total_sheets}</TableCell>
+															<TableCell className="text-center font-mono text-xs">{pkt.dummy_range}</TableCell>
+														</TableRow>
+													))}
+												</TableBody>
+											</Table>
+										</div>
+									</CardContent>
+								</Card>
+							)}
+
+							{/* Empty state */}
+							{!pktLoading && pktPackets.length === 0 && pktSession && (
+								<Card>
+									<CardContent className="py-12 text-center text-muted-foreground">
+										<Package className="h-12 w-12 mx-auto mb-4 opacity-30" />
+										<p>Click &quot;Generate Report&quot; to fetch answer sheet packet data</p>
+									</CardContent>
+								</Card>
+							)}
+						</TabsContent>
+						</Tabs>
 					</div>
 				</div>
 

@@ -25,6 +25,7 @@ import { useToast } from "@/hooks/common/use-toast"
 import Link from "next/link"
 import { PlusCircle, Edit, Trash2, Search, ChevronLeft, ChevronRight, ArrowUpDown, ArrowUp, ArrowDown, Calendar, TrendingUp, FileSpreadsheet, RefreshCw, CheckCircle, XCircle, AlertTriangle, CalendarCheck, Sparkles, FileDown, FileText, ShieldCheck } from "lucide-react"
 import { useInstitutionFilter } from "@/hooks/use-institution-filter"
+import { useSessionSync } from '@/hooks/use-session-sync'
 
 // Import types from module
 import type {
@@ -95,7 +96,7 @@ export default function ExamTimetablePage() {
 
   // Parent section filters
   const [selectedInstitutionCode, setSelectedInstitutionCode] = useState<string>("")
-  const [selectedSessionId, setSelectedSessionId] = useState<string>("")
+  const { selectedSessionId, setSelectedSessionId, mustSelectSession } = useSessionSync()
   const [selectedProgramType, setSelectedProgramType] = useState<string>("")
   const [selectedProgramId, setSelectedProgramId] = useState<string>("")
   const [selectedSemesterId, setSelectedSemesterId] = useState<string>("")
@@ -1273,6 +1274,7 @@ export default function ExamTimetablePage() {
                   )}
 
                   {/* Session Name - Optional (filtered by institution) */}
+                  {mustSelectSession && (
                   <div className="space-y-1">
                     <Label htmlFor="session_name" className="text-xs font-medium">
                       Session Name
@@ -1295,6 +1297,7 @@ export default function ExamTimetablePage() {
                       </SelectContent>
                     </Select>
                   </div>
+                  )}
 
                   {/* Program Type - Optional (filtered by institution) */}
                   <div className="space-y-1">

@@ -55,6 +55,7 @@ import XLSX from "@/lib/utils/excel-compat"
 
 // Institution filter hook
 import { useInstitutionFilter } from "@/hooks/use-institution-filter"
+import { useSessionSync } from '@/hooks/use-session-sync'
 
 // Types
 interface Institution {
@@ -135,7 +136,7 @@ export default function ExamAttendanceBulkPage() {
 	// Filters
 	const [selectedInstitutionId, setSelectedInstitutionId] = useState<string>("")
 	const [filterInstitutionId, setFilterInstitutionId] = useState<string>("all") // For super_admin client-side filtering
-	const [selectedSessionId, setSelectedSessionId] = useState<string>("")
+	const { selectedSessionId, setSelectedSessionId, mustSelectSession } = useSessionSync()
 	const [searchQuery, setSearchQuery] = useState("")
 	const [statusFilter, setStatusFilter] = useState("all")
 
@@ -964,6 +965,7 @@ export default function ExamAttendanceBulkPage() {
 								{/* Filters */}
 								<div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 flex-1">
 									{/* Session Filter */}
+									{mustSelectSession && (
 									<div className="space-y-1">
 										<Label className="text-xs">Examination Session</Label>
 										<Select
@@ -983,6 +985,7 @@ export default function ExamAttendanceBulkPage() {
 											</SelectContent>
 										</Select>
 									</div>
+									)}
 
 									{/* Status Filter */}
 									<div className="space-y-1">

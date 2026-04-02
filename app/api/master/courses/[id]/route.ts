@@ -187,8 +187,24 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
       data.offering_department_code = String(input.offering_department_code)
     }
 
-    // Add board_code if provided
-    if (input.board_code !== undefined) data.board_code = input.board_code ? String(input.board_code) : null
+    // Resolve board_id from board_code
+    if (input.board_code !== undefined) {
+      if (input.board_code) {
+        const { data: boardData } = await supabase
+          .from('board')
+          .select('id')
+          .eq('board_code', String(input.board_code))
+          .single()
+
+        if (boardData) {
+          data.board_id = boardData.id
+        }
+        data.board_code = String(input.board_code)
+      } else {
+        data.board_id = null
+        data.board_code = null
+      }
+    }
 
     // Add all other fields
     if (input.course_code !== undefined) data.course_code = String(input.course_code)

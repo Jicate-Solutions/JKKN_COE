@@ -1,12 +1,14 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useExaminationSession } from '@/context/examination-session-context'
 
 interface ExaminationSession {
 	id: string
 	session_name: string
 	session_code: string
 	institutions_id: string
+	[key: string]: unknown
 }
 
 interface UseExamSessionsOptions {
@@ -18,12 +20,30 @@ interface UseExamSessionsReturn {
 	loading: boolean
 	error: string | null
 	refetch: () => void
+
+	/** The globally selected session from the header selector (or null if "All Sessions") */
+	globalSessionId: string | null
+
+	/** true when no global session is selected — show the session dropdown on the page */
+	mustSelectSession: boolean
 }
 
 export function useExamSessions({ institutionsId }: UseExamSessionsOptions): UseExamSessionsReturn {
 	const [sessions, setSessions] = useState<ExaminationSession[]>([])
 	const [loading, setLoading] = useState(false)
 	const [error, setError] = useState<string | null>(null)
+
+	// Consume global session context from header selector
+	let globalSession: { id: string } | null = null
+	try {
+		const ctx = useExaminationSession()
+		globalSession = ctx.currentSession
+	} catch {
+		// Context not available (e.g., outside provider) — ignore
+	}
+
+	const globalSessionId = useMemo(() => globalSession?.id || null, [globalSession])
+	const mustSelectSession = useMemo(() => !globalSession, [globalSession])
 
 	const fetchSessions = useCallback(async () => {
 		if (!institutionsId) {
@@ -52,5 +72,5 @@ export function useExamSessions({ institutionsId }: UseExamSessionsOptions): Use
 		fetchSessions()
 	}, [fetchSessions])
 
-	return { sessions, loading, error, refetch: fetchSessions }
+	return { sessions, loading, error, refetch: fetchSessions, globalSessionId, mustSelectSession }
 }
