@@ -5,7 +5,8 @@
  *
  * Returns all registrations grouped by (program, subject) for a given exam date & session.
  * Includes student photos from MyJKKN API.
- * Sorted by program_order ASC, then subject_code within each program.
+ * Sorted by semester ASC, then program_order ASC, then course_code ASC.
+ * This matches the QP count report ordering.
  * Within each sheet, students sorted: regular first then arrears, both by register_number.
  *
  * KEY: Sheet keys are built from exam_registrations (not timetables), because
@@ -119,10 +120,10 @@ export async function GET(request: Request) {
 		}
 
 		// Step 6: Fetch ALL registrations for these course_codes (across ALL programs)
-		// This is the key fix — don't filter by program_code here, let registrations tell us which programs exist
+		// Include course_offerings join to get semester for proper ordering
 		const { data: allRegistrations, error: regError } = await supabase
 			.from('exam_registrations')
-			.select('id, student_id, stu_register_no, student_name, is_regular, attempt_number, program_code, course_code')
+			.select('id, student_id, stu_register_no, student_name, is_regular, attempt_number, program_code, course_code, course_offering_id, course_offerings(semester)')
 			.eq('institutions_id', institutionId)
 			.eq('examination_session_id', examinationSessionId)
 			.in('course_code', allCourseCodesFromTimetable)
@@ -216,23 +217,34 @@ export async function GET(request: Request) {
 			program_code: string
 			course_code: string
 			course_title: string
+			semester: number
 		}
 
 		const sheetKeys: SheetKey[] = []
 		for (const key of sheetKeySet) {
 			const [programCode, courseCode] = key.split('::')
+			// Get semester from the first registration's course_offering
+			const regs = registrationMap.get(key) || []
+			const firstReg = regs[0] as any
+			const semester = firstReg?.course_offerings?.semester ?? 999
 			sheetKeys.push({
 				program_code: programCode,
 				course_code: courseCode,
-				course_title: courseCodeToTitle.get(courseCode) || courseCode
+				course_title: courseCodeToTitle.get(courseCode) || courseCode,
+				semester
 			})
 		}
 
-		// Sort by program_order ASC, then course_code ASC
+		// Sort by semester ASC, then program_order ASC, then course_code ASC
+		// This matches the QP count report ordering
 		sheetKeys.sort((a, b) => {
+			// Primary: semester ascending
+			if (a.semester !== b.semester) return a.semester - b.semester
+			// Secondary: program_order ascending
 			const orderA = programInfoMap.get(a.program_code)?.order ?? 999
 			const orderB = programInfoMap.get(b.program_code)?.order ?? 999
 			if (orderA !== orderB) return orderA - orderB
+			// Tertiary: course_code ascending
 			return a.course_code.localeCompare(b.course_code)
 		})
 
@@ -338,6 +350,7 @@ export async function GET(request: Request) {
 				program_code: sk.program_code,
 				program_name: programInfo?.name || sk.program_code,
 				program_order: programInfo?.order ?? 999,
+				semester: sk.semester,
 				course_code: sk.course_code,
 				course_title: sk.course_title,
 				exam_date: examDate,

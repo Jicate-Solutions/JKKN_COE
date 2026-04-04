@@ -78,10 +78,23 @@ class ParentAuthService {
 		const accessTokenExpiryDays = 7 // Extended to 7 days for longer work sessions
 		const refreshTokenExpiryDays = 30 // Refresh token typically lasts longer
 
-		// Store tokens in cookies with actual expiry
-		Cookies.set('access_token', token, { expires: accessTokenExpiryDays, path: '/' })
+		// Store tokens in cookies with security flags
+		const isProduction = typeof window !== 'undefined' && window.location.protocol === 'https:'
+		Cookies.set('access_token', token, {
+			expires: accessTokenExpiryDays,
+			path: '/',
+			sameSite: 'Lax',
+			secure: isProduction,
+		})
 		if (refreshToken) {
-			Cookies.set('refresh_token', refreshToken, { expires: refreshTokenExpiryDays, path: '/' })
+			// Refresh token is set server-side with httpOnly: true.
+			// Only set client-side as fallback for callback flow.
+			Cookies.set('refresh_token', refreshToken, {
+				expires: refreshTokenExpiryDays,
+				path: '/',
+				sameSite: 'Lax',
+				secure: isProduction,
+			})
 		}
 
 		// Store timestamp
@@ -170,9 +183,10 @@ class ParentAuthService {
 			}
 
 			const data = await response.json()
-			Cookies.set('access_token', data.access_token, { expires: 7, path: '/' })
+			const isProduction = typeof window !== 'undefined' && window.location.protocol === 'https:'
+			Cookies.set('access_token', data.access_token, { expires: 7, path: '/', sameSite: 'Lax', secure: isProduction })
 			if (data.refresh_token) {
-				Cookies.set('refresh_token', data.refresh_token, { expires: 30, path: '/' })
+				Cookies.set('refresh_token', data.refresh_token, { expires: 30, path: '/', sameSite: 'Lax', secure: isProduction })
 			}
 			localStorage.setItem('auth_timestamp', Date.now().toString())
 

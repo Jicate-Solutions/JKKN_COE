@@ -26,6 +26,7 @@ export interface AttendanceSheet {
 	program_code: string
 	program_name: string
 	program_order: number
+	semester: number
 	course_code: string
 	course_title: string
 	exam_date: string

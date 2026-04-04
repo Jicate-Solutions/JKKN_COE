@@ -80,7 +80,7 @@ export function generatePracticalMarksPDF(data: PracticalMarksPDFData): string {
 	// Report Title
 	doc.setFont('times', 'bolditalic')
 	doc.setFontSize(11)
-	const titleText = 'EXAMINATION FOIL SHEET'
+	const titleText = 'FOIL SHEET'
 	const titleWidth = doc.getTextWidth(titleText)
 	doc.text(titleText, pageWidth / 2, currentY + 27, { align: 'center' })
 	// Underline
@@ -117,7 +117,7 @@ export function generatePracticalMarksPDF(data: PracticalMarksPDFData): string {
 	doc.rect(margin + col1Width + col2Width + col3Width, currentY - 4, col4Width, rowHeight)
 	doc.text('Subject Code', margin + cellPadding, currentY)
 	doc.text(data.course_code, margin + col1Width + cellPadding, currentY)
-	doc.text('Maximum Marks', margin + col1Width + col2Width + cellPadding, currentY)
+	doc.text('Maximum Mark', margin + col1Width + col2Width + cellPadding, currentY)
 	doc.text(data.maximum_marks.toString(), margin + col1Width + col2Width + col3Width + cellPadding, currentY)
 
 	currentY += rowHeight

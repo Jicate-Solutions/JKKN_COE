@@ -1,12 +1,14 @@
 import { NextResponse } from 'next/server'
 import { getSupabaseParent } from '@/lib/supabase-parent'
+import { withAdminAuth } from '@/lib/security/admin-guard'
+import { sanitizeSearch } from '@/lib/security/escape-like'
 
 /**
  * Search users from parent MyJKKN Supabase for role assignment
  */
-export async function GET(request: Request) {
+export const GET = withAdminAuth(async (request, _adminUser) => {
 	const { searchParams } = new URL(request.url)
-	const search = searchParams.get('search')
+	const search = sanitizeSearch(searchParams.get('search'))
 
 	if (!search || search.length < 2) {
 		return NextResponse.json({ error: 'Search query must be at least 2 characters' }, { status: 400 })
@@ -32,4 +34,4 @@ export async function GET(request: Request) {
 		console.error('MyJKKN user search error:', err)
 		return NextResponse.json({ error: 'Failed to connect to MyJKKN' }, { status: 500 })
 	}
-}
+})

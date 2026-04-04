@@ -99,7 +99,7 @@ export async function GET(request: NextRequest) {
 		response.cookies.set('access_token', access_token, {
 			path: '/',
 			maxAge: maxAge,
-			httpOnly: false, // Allow client-side access for auth checks
+			httpOnly: false, // Client reads this for auth context + transaction log session lookup
 			secure: process.env.NODE_ENV === 'production',
 			sameSite: 'lax',
 		})
@@ -108,7 +108,7 @@ export async function GET(request: NextRequest) {
 			response.cookies.set('refresh_token', refresh_token, {
 				path: '/',
 				maxAge: 30 * 24 * 60 * 60, // 30 days
-				httpOnly: false,
+				httpOnly: true, // Refresh token never needs client-side access
 				secure: process.env.NODE_ENV === 'production',
 				sameSite: 'lax',
 			})

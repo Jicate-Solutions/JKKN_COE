@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useToast } from '@/hooks/common/use-toast'
+import { secureFetch } from '@/lib/security/secure-fetch'
 
 interface UseCRUDOptions<T> {
   apiEndpoint: string
@@ -81,7 +82,7 @@ export function useCRUD<T extends { id: string }>(
     setError(null)
 
     try {
-      const response = await fetch(apiEndpoint)
+      const response = await secureFetch(apiEndpoint)
 
       if (!response.ok) {
         throw new Error(`Failed to fetch ${entityName}s`)
@@ -110,7 +111,7 @@ export function useCRUD<T extends { id: string }>(
     setError(null)
 
     try {
-      const response = await fetch(apiEndpoint, {
+      const response = await secureFetch(apiEndpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(data)
@@ -158,7 +159,7 @@ export function useCRUD<T extends { id: string }>(
     setError(null)
 
     try {
-      const response = await fetch(`${apiEndpoint}/${id}`, {
+      const response = await secureFetch(`${apiEndpoint}/${id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(data)
@@ -206,7 +207,7 @@ export function useCRUD<T extends { id: string }>(
     setError(null)
 
     try {
-      const response = await fetch(`${apiEndpoint}/${id}`, {
+      const response = await secureFetch(`${apiEndpoint}/${id}`, {
         method: 'DELETE'
       })
 

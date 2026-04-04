@@ -194,6 +194,7 @@ export async function GET(request: Request) {
 						exam_registration_id,
 						exam_registrations (
 							id,
+							program_code,
 							course_offering_id,
 							course_offerings (
 								id,
@@ -214,7 +215,7 @@ export async function GET(request: Request) {
 					return NextResponse.json({ error: 'No students found for this packet' }, { status: 404 })
 				}
 
-				// Extract semester info from first student (assuming all students in packet have same semester)
+				// Extract semester info and program_code from first student
 				const firstStudent = studentData[0] as any
 				const semesterInt = firstStudent?.exam_registrations?.course_offerings?.semester || 1
 
@@ -224,6 +225,7 @@ export async function GET(request: Request) {
 
 				// Calculate year group: Semester 1-2 = Year 1, Semester 3-4 = Year 2, etc.
 				const semesterType = Math.ceil(semesterInt / 2).toString()
+				const programCode = firstStudent?.exam_registrations?.program_code || ''
 
 				// Extract course details with semester info
 				const courses = packetData.courses as any
@@ -236,6 +238,7 @@ export async function GET(request: Request) {
 					total_sheets: packetData.total_sheets,
 					semester_number: semesterNumber,
 					semester_year: semesterType, // Year group (1, 2, 3)
+					program_code: programCode,
 				}
 
 				// Format students data - extract program_id from nested relationship

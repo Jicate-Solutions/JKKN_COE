@@ -47,10 +47,11 @@ function CallbackContent() {
 
         const data = await response.json();
 
-        // Save tokens
-        localStorage.setItem('access_token', data.access_token);
-        localStorage.setItem('refresh_token', data.refresh_token);
+        // Tokens are set as cookies by the /api/token response.
+        // Do NOT store tokens in localStorage — they are vulnerable to XSS there.
         localStorage.removeItem('oauth_state');
+        localStorage.removeItem('access_token');  // Clean up any legacy storage
+        localStorage.removeItem('refresh_token');
 
         // Redirect to home
         router.push('/');

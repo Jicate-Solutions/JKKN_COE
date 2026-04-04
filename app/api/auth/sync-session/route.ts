@@ -328,7 +328,7 @@ export async function POST(request: Request) {
 					response.cookies.set('refresh_token', refresh_token, {
 						path: '/',
 						maxAge: thirtyDaysInSeconds,
-						httpOnly: false,
+						httpOnly: true, // Refresh token never needs client-side access
 						sameSite: 'lax',
 						secure: process.env.NODE_ENV === 'production'
 					})

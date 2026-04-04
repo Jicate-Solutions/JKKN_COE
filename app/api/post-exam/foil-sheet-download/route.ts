@@ -488,6 +488,7 @@ export async function GET(request: Request) {
 						exam_registration_id,
 						exam_registrations (
 							id,
+							program_code,
 							course_offering_id,
 							course_offerings (
 								id,
@@ -515,12 +516,13 @@ export async function GET(request: Request) {
 					marksMap.set(m.student_dummy_number_id, m)
 				}
 
-				// Extract semester info from first student
+				// Extract semester info and program_code from first student
 				const firstStudent = studentDummies[0] as any
 				const semesterInt = firstStudent?.exam_registrations?.course_offerings?.semester || 1
 				const romanNumerals = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X', 'XI', 'XII']
 				const semesterNumber = romanNumerals[semesterInt - 1] || 'I'
 				const semesterType = Math.ceil(semesterInt / 2).toString()
+				const programCode = firstStudent?.exam_registrations?.program_code || ''
 
 				const courses = packetData.courses as any
 				const courseDetails = {
@@ -532,6 +534,7 @@ export async function GET(request: Request) {
 					total_sheets: packetData.total_sheets,
 					semester_number: semesterNumber,
 					semester_year: semesterType,
+					program_code: programCode,
 				}
 
 				const students = studentDummies.map((s: any) => {

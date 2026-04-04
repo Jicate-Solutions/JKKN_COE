@@ -81,7 +81,7 @@ export function generateExternalMarksPDF(data: ExternalMarksPDFData): string {
 	// Report Title with underline - "EXAMINATION FOIL SHEET" centered with "DATE:" on right
 	doc.setFont('times', 'bolditalic')
 	doc.setFontSize(11)
-	const titleText = 'EXAMINATION FOIL SHEET'
+	const titleText = 'FOIL SHEET'
 	const titleWidth = doc.getTextWidth(titleText)
 	doc.text(titleText, pageWidth / 2, currentY + 27, { align: 'center' })
 	// Underline
@@ -120,7 +120,7 @@ export function generateExternalMarksPDF(data: ExternalMarksPDFData): string {
 	doc.rect(margin + col1Width + col2Width, currentY - 4, col3Width, rowHeight)
 	doc.rect(margin + col1Width + col2Width + col3Width, currentY - 4, col4Width, rowHeight)
 	doc.text('Program Code', margin + cellPadding, currentY)
-	// Value blank
+	doc.text(data.program_code || '', margin + col1Width + cellPadding, currentY)
 	doc.text('Semester & Year', margin + col1Width + col2Width + cellPadding, currentY)
 	doc.text(`${data.semester} - ${data.year}`, margin + col1Width + col2Width + col3Width + cellPadding, currentY)
 
@@ -133,7 +133,7 @@ export function generateExternalMarksPDF(data: ExternalMarksPDFData): string {
 	doc.rect(margin + col1Width + col2Width + col3Width, currentY - 4, col4Width, rowHeight)
 	doc.text('Subject Code', margin + cellPadding, currentY)
 	doc.text(data.subject_code, margin + col1Width + cellPadding, currentY)
-	doc.text('Maximum Marks', margin + col1Width + col2Width + cellPadding, currentY)
+	doc.text('Maximum Mark', margin + col1Width + col2Width + cellPadding, currentY)
 	doc.text(data.maximum_marks.toString(), margin + col1Width + col2Width + col3Width + cellPadding, currentY)
 
 	currentY += rowHeight
@@ -155,7 +155,7 @@ export function generateExternalMarksPDF(data: ExternalMarksPDFData): string {
 	doc.setFontSize(9)
 	doc.text(subjectLines, margin + col1Width + cellPadding, currentY)
 	doc.setFontSize(10)
-	doc.text('Minimum pass marks', margin + col1Width + col2Width + cellPadding, currentY)
+	doc.text('Minimum pass mark', margin + col1Width + col2Width + cellPadding, currentY)
 	doc.text(data.minimum_pass_marks.toString(), margin + col1Width + col2Width + col3Width + cellPadding, currentY)
 
 	currentY += subjectRowHeight - rowHeight // Adjust for extra height used

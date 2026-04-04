@@ -2,6 +2,7 @@
  * Transaction Log Service
  * Handles logging of user actions and transactions to the database
  */
+import { secureFetch } from '@/lib/security/secure-fetch'
 
 export interface TransactionLogEntry {
 	action: string
@@ -60,7 +61,7 @@ class TransactionLogService {
 	async log(entry: TransactionLogEntry): Promise<TransactionLogResponse> {
 		try {
 			const { user_email, access_token } = this.getUserData()
-			const response = await fetch(this.baseUrl, {
+			const response = await secureFetch(this.baseUrl, {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({
@@ -124,7 +125,7 @@ class TransactionLogService {
 		const { user_email, access_token } = this.getUserData()
 
 		try {
-			await fetch(`${this.baseUrl}/batch`, {
+			await secureFetch(`${this.baseUrl}/batch`, {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({ entries: batch, user_email, access_token }),

@@ -8,6 +8,7 @@ export const API_MODULES = [
 	'results',
 	'registrations',
 	'marks',
+	'cia-marks',
 	'learners',
 	'timetables',
 	'courses',

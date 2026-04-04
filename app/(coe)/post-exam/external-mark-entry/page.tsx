@@ -68,6 +68,7 @@ interface CourseDetails {
 	total_sheets: number
 	semester_number: string
 	semester_year: string
+	program_code: string
 }
 
 export default function ExternalMarkEntryPage() {
@@ -424,13 +425,9 @@ export default function ExternalMarkEntryPage() {
 			// Dynamic import for client-side only
 			const { generateExternalMarksPDF } = await import('@/lib/utils/generate-external-marks-pdf')
 
-			// Get current date for exam_month_year format
 			const now = new Date()
-			const monthNames = ['JANUARY', 'FEBRUARY', 'MARCH', 'APRIL', 'MAY', 'JUNE', 'JULY', 'AUGUST', 'SEPTEMBER', 'OCTOBER', 'NOVEMBER', 'DECEMBER']
-			const examMonthYear = `${monthNames[now.getMonth()]}, ${now.getFullYear()}`
-
-			// Get selected session for semester info
 			const selectedSession = sessions.find(s => s.id === selectedSessionId)
+			const examMonthYear = selectedSession ? `SEMESTER EXAMINATION ${selectedSession.session_name}` : ''
 
 			// Load logos as base64
 			const loadImageAsBase64 = async (url: string): Promise<string> => {
@@ -461,7 +458,7 @@ export default function ExternalMarkEntryPage() {
 				minimum_pass_marks: courseDetails.minimum_pass_marks,
 				exam_date: new Date().toLocaleDateString('en-GB'),
 				exam_month_year: examMonthYear,
-				program_code: '', // Left blank as requested
+				program_code: courseDetails.program_code || '',
 				program_name: '',
 				semester: courseDetails.semester_number || 'I', // From semester table
 				year: courseDetails.semester_year || '1', // Year group from semester table (1, 2, 3)

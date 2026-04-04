@@ -106,6 +106,7 @@ const MODULE_LABELS: Record<ApiModule, string> = {
 	results: 'Results',
 	registrations: 'Registrations',
 	marks: 'Marks',
+	'cia-marks': 'CIA Marks',
 	learners: 'Learners',
 	timetables: 'Timetables',
 	courses: 'Courses',

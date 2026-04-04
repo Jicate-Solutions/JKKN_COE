@@ -1,10 +1,12 @@
 import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
+import { withAdminAuth } from '@/lib/security/admin-guard'
 
 /**
- * Remove a user from COE entirely — deletes all role assignments and the user record
+ * Remove a user from COE entirely — deletes all role assignments and the user record.
+ * Restricted to super_admin only.
  */
-export async function POST(request: Request) {
+export const POST = withAdminAuth(async (request, _adminUser) => {
 	const supabase = getSupabaseServer()
 	const body = await request.json()
 	const { user_id } = body
@@ -33,4 +35,4 @@ export async function POST(request: Request) {
 	}
 
 	return NextResponse.json({ success: true, message: 'User removed from COE' })
-}
+}, { requiredRoles: ['super_admin'] })

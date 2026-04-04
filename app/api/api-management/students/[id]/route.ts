@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 
-const API_KEY ='jk_2f13e1385d431c1368c69ef68780b11e_mh4h4ml7';
+const API_KEY = process.env.MYJKKN_API_KEY || '';
 const BASE_URL = process.env.STUDENT_API_BASE_URL || 'https://www.jkkn.ai/api/api-management';
 
 // Mock student data for testing when BASE_URL is not set

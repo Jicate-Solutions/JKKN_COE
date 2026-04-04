@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { randomUUID } from 'crypto'
 import { getSupabaseServer } from '@/lib/supabase-server'
 import { sendWelcomeEmail } from '@/services/shared/email-service'
+import { sanitizeSearch } from '@/lib/security/escape-like'
 
 export async function GET(req: NextRequest) {
   try {
@@ -42,8 +43,9 @@ export async function GET(req: NextRequest) {
       .order('created_at', { ascending: false })
       .limit(200)
 
-    if (q) {
-      usersQuery = usersQuery.or(`full_name.ilike.%${q}%,email.ilike.%${q}%`)
+    const safeQ = sanitizeSearch(q || null)
+    if (safeQ) {
+      usersQuery = usersQuery.or(`full_name.ilike.%${safeQ}%,email.ilike.%${safeQ}%`)
     }
 
     const { data: users, error: usersError } = await usersQuery

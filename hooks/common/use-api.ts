@@ -1,4 +1,5 @@
 import { useState, useCallback } from 'react'
+import { secureFetch } from '@/lib/security/secure-fetch'
 
 interface UseAPIOptions {
   onSuccess?: (data: any) => void
@@ -40,7 +41,7 @@ export function useAPI<T = any>(options: UseAPIOptions = {}): APIResponse<T> {
     setError(null)
 
     try {
-      const response = await fetch(url, fetchOptions)
+      const response = await secureFetch(url, fetchOptions)
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}))

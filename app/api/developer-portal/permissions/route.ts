@@ -41,14 +41,17 @@ export async function POST(request: NextRequest) {
 			institution_id: p.institution_id || null,
 		}))
 
+		// Use insert (not upsert) because the frontend always deletes all
+		// permissions first. Upsert fails with NULL institution_id due to
+		// PostgreSQL NULLS DISTINCT behavior in unique constraints.
 		const { data, error } = await supabase
 			.from('api_permissions')
-			.upsert(records, { onConflict: 'app_id,module,operation,institution_id' })
+			.insert(records)
 			.select()
 
 		if (error) {
 			console.error('Bulk permission error:', error)
-			return NextResponse.json({ error: 'Failed to save permissions' }, { status: 500 })
+			return NextResponse.json({ error: 'Failed to save permissions', details: error.message }, { status: 500 })
 		}
 
 		return NextResponse.json(data, { status: 201 })

@@ -20,6 +20,8 @@ import { validateDomain } from './domain-validator'
 import { checkPermission } from './permission-check'
 import { logApiRequest } from './audit-logger'
 import { generateSecureRandom } from './crypto'
+import { verifyRequestSignature } from './hmac-verify'
+import { checkApiKeyRateLimit, getApiKeyRateLimitInfo } from './api-rate-limit'
 
 // =====================================================
 // Header names
@@ -79,6 +81,20 @@ export async function authenticateExternalApi(
 	}
 
 	const { data: validatedKey } = keyResult
+
+	// 2b. Verify HMAC request signature (if provided)
+	const hmacResult = await verifyRequestSignature(request, secretKey)
+	if (!hmacResult.valid) {
+		return {
+			success: false,
+			status: 401,
+			error: {
+				error: hmacResult.error || 'Invalid request signature',
+				code: hmacResult.code || 'INVALID_SIGNATURE',
+				request_id: requestId,
+			},
+		}
+	}
 
 	// 3. Check domain
 	const origin = request.headers.get('origin')
@@ -191,8 +207,32 @@ export function withExternalAuth(handler: ExternalApiHandler) {
 			accessKeyId = context.accessKeyId
 			requestId = context.requestId
 
+			// Per-API-key rate limiting
+			const rateLimitResponse = checkApiKeyRateLimit(context.accessKeyId, requestId)
+			if (rateLimitResponse) {
+				logApiRequest({
+					app_id: appId,
+					access_key_id: accessKeyId,
+					method: request.method,
+					endpoint: url.pathname,
+					query_params: Object.fromEntries(url.searchParams.entries()),
+					response_status: 429,
+					response_time_ms: Date.now() - startTime,
+					ip_address: request.headers.get('x-forwarded-for') || request.headers.get('x-real-ip'),
+					origin: request.headers.get('origin'),
+					user_agent: request.headers.get('user-agent'),
+					error_message: 'Rate limit exceeded',
+				})
+				return addSecurityHeaders(rateLimitResponse, requestId)
+			}
+
 			// Call the actual handler
 			const response = await handler(request, context)
+
+			// Add rate limit info to response headers
+			const rlInfo = getApiKeyRateLimitInfo(context.accessKeyId)
+			response.headers.set('X-RateLimit-Limit', String(rlInfo.limit))
+			response.headers.set('X-RateLimit-Remaining', String(rlInfo.remaining))
 
 			// Log successful request
 			logApiRequest({

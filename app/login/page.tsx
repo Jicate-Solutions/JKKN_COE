@@ -46,10 +46,12 @@ function LoginContent() {
 		}
 		if (isAuthenticated && !hasTokenInUrl) {
 			const redirectParam = searchParams.get('redirect');
+			// Validate redirect is a safe internal path (prevent open redirect attacks)
+			const safeRedirect = redirectParam && redirectParam.startsWith('/') && !redirectParam.startsWith('//') ? redirectParam : '/dashboard';
 			if (typeof window !== 'undefined') {
-				window.location.replace(redirectParam || '/dashboard');
+				window.location.replace(safeRedirect);
 			} else {
-				router.replace(redirectParam || '/dashboard');
+				router.replace(safeRedirect);
 			}
 		}
   }, [isAuthenticated, router, searchParams, hasTokenInUrl, isReauthComplete, isLoading, loginWithGoogle]);

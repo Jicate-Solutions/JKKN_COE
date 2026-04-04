@@ -1,10 +1,11 @@
 import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
+import { withAdminAuth } from '@/lib/security/admin-guard'
 
 // This is a one-time admin endpoint to apply the trigger fix
 // DELETE THIS FILE after successfully applying the fix
 
-export async function POST() {
+export const POST = withAdminAuth(async () => {
 	try {
 		const supabase = getSupabaseServer()
 
@@ -189,4 +190,4 @@ $$ LANGUAGE plpgsql;
 			{ status: 500 }
 		)
 	}
-}
+}, { requiredRoles: ['super_admin'] })

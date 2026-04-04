@@ -1,8 +1,9 @@
 import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
 import { getSupabaseParent } from '@/lib/supabase-parent'
+import { withAdminAuth } from '@/lib/security/admin-guard'
 
-export async function POST(request: Request) {
+export const POST = withAdminAuth(async (request, _adminUser) => {
 	const supabase = getSupabaseServer()
 	const body = await request.json()
 	const { email, full_name, role_name, role_names, assigned_by, parent_user_id, institution_id, avatar_url } = body
@@ -89,4 +90,4 @@ export async function POST(request: Request) {
 
 	const assignedNames = roles.map(r => r.name).join(', ')
 	return NextResponse.json({ success: true, message: `Roles "${assignedNames}" assigned to ${email}` }, { status: 201 })
-}
+})

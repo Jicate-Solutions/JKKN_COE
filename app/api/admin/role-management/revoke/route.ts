@@ -1,7 +1,8 @@
 import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
+import { withAdminAuth } from '@/lib/security/admin-guard'
 
-export async function POST(request: Request) {
+export const POST = withAdminAuth(async (request, _adminUser) => {
 	const supabase = getSupabaseServer()
 	const body = await request.json()
 	const { user_id, role_name } = body
@@ -32,4 +33,4 @@ export async function POST(request: Request) {
 	}
 
 	return NextResponse.json({ success: true, message: `Role "${role_name}" revoked` })
-}
+})

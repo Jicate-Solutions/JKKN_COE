@@ -235,6 +235,17 @@ To turn concrete examples into an effective skill, analyze each example by:
 
 1. Considering how to execute on the example from scratch
 2. Identifying what scripts, references, and assets would be helpful when executing these workflows repeatedly
+3. Assessing whether the workflow needs multi-agent orchestration (see below)
+
+**Single-agent vs. Multi-agent decision:**
+
+| Criteria | Single Agent | Multi-Agent |
+|----------|-------------|-------------|
+| Workflow phases | 1-2 distinct phases | 3+ distinct phases |
+| Context needs | Fits in one context window | Would degrade a single window |
+| Phase expertise | Same skill level throughout | Different models suit different phases |
+
+If multi-agent is appropriate, see [references/multi-agent.md](references/multi-agent.md) for architecture patterns, agent file format, and orchestration archetypes.
 
 Example: When building a `pdf-editor` skill to handle queries like "Help me rotate this PDF," the analysis shows:
 
@@ -286,6 +297,9 @@ Consult these helpful guides based on your skill's needs:
 
 - **Multi-step processes**: See references/workflows.md for sequential workflows and conditional logic
 - **Specific output formats or quality standards**: See references/output-patterns.md for template and example patterns
+- **Multi-agent orchestration**: See [references/multi-agent.md](references/multi-agent.md) for subagent architecture, phase contracts, and model selection
+- **Skill versioning**: See [references/versioning.md](references/versioning.md) for semantic versioning, changelogs, and migration guidance
+- **Testing and evaluation**: See [references/eval-testing.md](references/eval-testing.md) for smoke tests, scenario testing, eval Q&A pairs, and variance analysis
 
 These files contain established best practices for effective skill design.
 
@@ -344,13 +358,45 @@ The packaging script will:
 
 If validation fails, the script will report the errors and exit without creating a package. Fix any validation errors and run the packaging command again.
 
-### Step 6: Iterate
+#### Versioning Before Packaging
 
-After testing the skill, users may request improvements. Often this happens right after using the skill, with fresh context of how the skill performed.
+Before packaging, bump the skill version in SKILL.md frontmatter and add a changelog entry:
+
+```yaml
+---
+name: my-skill
+description: Does X when Y happens
+version: 1.1.0
+---
+```
+
+**Version bumping rules:**
+- **MAJOR** (X.0.0): Breaking workflow changes, removed steps, restructured phases
+- **MINOR** (x.Y.0): New capabilities, added reference files, new steps
+- **PATCH** (x.y.Z): Clarity fixes, typo corrections, prompt refinements
+
+For detailed versioning patterns including changelogs and migration guidance, see [references/versioning.md](references/versioning.md).
+
+### Step 6: Test and Iterate
+
+Before considering a skill complete, test it. After testing, users may request improvements — often right after using the skill, with fresh context of how it performed.
+
+**Testing before release (minimum):**
+
+1. **Smoke test** — Run the skill on a real task, verify all steps execute
+2. **Scenario tests** — Define 3 scenarios (basic, edge case, complex) and verify expected outputs
+3. **Script verification** — Run any bundled scripts to ensure they execute without errors
+
+**For shared/published skills, also run:**
+
+4. **Eval Q&A pairs** — Create 5+ verifiable question-answer pairs testing the skill's rules
+5. **Variance analysis** — Run the same prompt 3 times, measure output consistency (target: <10% divergence)
+
+For detailed testing workflows, see [references/eval-testing.md](references/eval-testing.md).
 
 **Iteration workflow:**
 
 1. Use the skill on real tasks
-2. Notice struggles or inefficiencies
+2. Notice struggles or inefficiencies (high variance = ambiguous instructions)
 3. Identify how SKILL.md or bundled resources should be updated
-4. Implement changes and test again
+4. Implement changes, bump version (see Step 5), and re-test

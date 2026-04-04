@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 
 const MYJKKN_BASE_URL = 'https://www.jkkn.ai/api'
-const MYJKKN_API_KEY = process.env.MYJKKN_API_KEY || 'jk_2f13e1385d431c1368c69ef68780b11e_mh4h4ml7'
+const MYJKKN_API_KEY = process.env.MYJKKN_API_KEY || ''
 
 /**
  * GET /api/myjkkn/students/[id]

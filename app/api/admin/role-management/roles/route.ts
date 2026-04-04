@@ -1,7 +1,8 @@
 import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
+import { withAdminAuth } from '@/lib/security/admin-guard'
 
-export async function GET() {
+export const GET = withAdminAuth(async (_request, _adminUser) => {
 	const supabase = getSupabaseServer()
 
 	const { data, error } = await supabase
@@ -16,4 +17,4 @@ export async function GET() {
 	}
 
 	return NextResponse.json(data || [])
-}
+})

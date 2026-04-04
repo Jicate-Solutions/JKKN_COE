@@ -1,10 +1,12 @@
 import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
+import { withAdminAuth } from '@/lib/security/admin-guard'
+import { sanitizeSearch } from '@/lib/security/escape-like'
 
-export async function GET(request: Request) {
+export const GET = withAdminAuth(async (request, _adminUser) => {
 	const supabase = getSupabaseServer()
 	const { searchParams } = new URL(request.url)
-	const search = searchParams.get('search')
+	const search = sanitizeSearch(searchParams.get('search'))
 
 	let query = supabase
 		.from('users')
@@ -49,4 +51,4 @@ export async function GET(request: Request) {
 	}))
 
 	return NextResponse.json(users)
-}
+})

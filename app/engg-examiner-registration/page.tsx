@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import Image from 'next/image'
 import Script from 'next/script'
+import { useNonce } from '@/components/common/nonce-provider'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -69,6 +70,7 @@ declare global {
 
 export default function EnggExaminerRegistrationPage() {
 	const { toast } = useToast()
+	const nonce = useNonce()
 
 	// Google auth
 	const [googleVerified, setGoogleVerified] = useState(false)
@@ -632,7 +634,7 @@ export default function EnggExaminerRegistrationPage() {
 
 	return (
 		<>
-			<Script src="https://accounts.google.com/gsi/client" onLoad={initGoogleSignIn} strategy="afterInteractive" />
+			<Script src="https://accounts.google.com/gsi/client" onLoad={initGoogleSignIn} strategy="afterInteractive" nonce={nonce} />
 
 			<div className="min-h-screen bg-gray-50">
 

@@ -54,6 +54,32 @@ export async function POST(request: NextRequest) {
 		return NextResponse.json({ error: 'Application is suspended' }, { status: 400 })
 	}
 
+	// Enforce mandatory expiry with 90-day maximum
+	const MAX_KEY_LIFETIME_DAYS = 90
+	let expiresAt = body.expires_at ? new Date(body.expires_at) : null
+
+	if (!expiresAt) {
+		// Default to 90 days if no expiry provided
+		expiresAt = new Date()
+		expiresAt.setDate(expiresAt.getDate() + MAX_KEY_LIFETIME_DAYS)
+	} else {
+		// Enforce maximum lifetime
+		const maxDate = new Date()
+		maxDate.setDate(maxDate.getDate() + MAX_KEY_LIFETIME_DAYS)
+		if (expiresAt > maxDate) {
+			return NextResponse.json(
+				{ error: `API keys cannot expire more than ${MAX_KEY_LIFETIME_DAYS} days from now` },
+				{ status: 400 }
+			)
+		}
+		if (expiresAt <= new Date()) {
+			return NextResponse.json(
+				{ error: 'Expiry date must be in the future' },
+				{ status: 400 }
+			)
+		}
+	}
+
 	const keyPair = await generateApiKeyPair()
 
 	const { data, error } = await supabase
@@ -64,7 +90,7 @@ export async function POST(request: NextRequest) {
 			secret_key_hash: keyPair.secretKeyHash,
 			key_name: body.key_name.trim(),
 			status: 'active',
-			expires_at: body.expires_at || null,
+			expires_at: expiresAt.toISOString(),
 			created_by: body.created_by || null,
 		})
 		.select()

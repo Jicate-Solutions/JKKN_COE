@@ -173,10 +173,12 @@ function DevLoginContent() {
 			token_type: 'Bearer',
 		}
 
-		localStorage.setItem('auth_token', devSession.access_token)
-		localStorage.setItem('refresh_token', devSession.refresh_token)
-		localStorage.setItem('user_data', JSON.stringify(devUser))
-		localStorage.setItem('auth_session', JSON.stringify(devSession))
+		// Store in sessionStorage (not localStorage) — dev-only, clears on tab close
+		sessionStorage.setItem('user_data', JSON.stringify(devUser))
+		sessionStorage.setItem('auth_session', JSON.stringify(devSession))
+		// Tokens should be set as cookies, not in storage
+		document.cookie = `access_token=${devSession.access_token}; path=/; SameSite=Lax`
+		document.cookie = `coe_access=true; path=/; SameSite=Lax`
 
 		window.location.href = '/dashboard'
 	}

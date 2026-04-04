@@ -386,8 +386,8 @@ export default function FoilSheetDownloadPage() {
 			const { generateExternalMarksPDF } = await import('@/lib/utils/generate-external-marks-pdf')
 
 			const now = new Date()
-			const monthNames = ['JANUARY', 'FEBRUARY', 'MARCH', 'APRIL', 'MAY', 'JUNE', 'JULY', 'AUGUST', 'SEPTEMBER', 'OCTOBER', 'NOVEMBER', 'DECEMBER']
-			const examMonthYear = `${monthNames[now.getMonth()]}, ${now.getFullYear()}`
+			const selectedSession = sessions.find(s => s.id === selectedSessionId)
+			const examMonthYear = selectedSession ? `SEMESTER EXAMINATION ${selectedSession.session_name}` : ''
 
 			const [leftLogo, rightLogo] = await Promise.all([
 				loadImageAsBase64('/jkkncas_logo.png'),
@@ -404,7 +404,7 @@ export default function FoilSheetDownloadPage() {
 				minimum_pass_marks: data.course_details.minimum_pass_marks,
 				exam_date: now.toLocaleDateString('en-GB'),
 				exam_month_year: examMonthYear,
-				program_code: '',
+				program_code: data.course_details.program_code || '',
 				program_name: '',
 				semester: data.course_details.semester_number || 'I',
 				year: data.course_details.semester_year || '1',
@@ -466,8 +466,8 @@ export default function FoilSheetDownloadPage() {
 			const { generatePracticalMarksPDF } = await import('@/lib/utils/generate-practical-marks-pdf')
 
 			const now = new Date()
-			const monthNames = ['JANUARY', 'FEBRUARY', 'MARCH', 'APRIL', 'MAY', 'JUNE', 'JULY', 'AUGUST', 'SEPTEMBER', 'OCTOBER', 'NOVEMBER', 'DECEMBER']
-			const examMonthYear = `${monthNames[now.getMonth()]}, ${now.getFullYear()}`
+			const selectedSession = sessions.find(s => s.id === selectedSessionId)
+			const examMonthYear = selectedSession ? `SEMESTER EXAMINATION ${selectedSession.session_name}` : ''
 			const dateStr = `${String(now.getDate()).padStart(2, '0')}/${String(now.getMonth() + 1).padStart(2, '0')}/${now.getFullYear()}`
 
 			const selectedBatch = batches.find(b => b.id === selectedBatchId)
