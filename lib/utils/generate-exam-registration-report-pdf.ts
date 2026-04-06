@@ -62,6 +62,25 @@ function formatBoardDisplay(boardCode: string, boardName?: string | null): strin
 	return boardName ? `${boardCode} -\n${boardName}` : boardCode
 }
 
+/** Ensure board group row heights accommodate the board label's wrapped text */
+function padBoardGroupHeights(doc: jsPDF, rows: any[], boardGroups: { board_code: string, startIdx: number, count: number }[], rowHeights: number[], boardColWidth: number) {
+	const savedSize = doc.getFontSize()
+	doc.setFont('times', 'normal')
+	doc.setFontSize(9)
+	for (const bg of boardGroups) {
+		const boardRow = rows[bg.startIdx]
+		const boardLabel = formatBoardDisplay(bg.board_code, boardRow?.board_name)
+		if (!boardLabel) continue
+		const neededHeight = calcWrappedRowHeight(doc, boardLabel, boardColWidth - 2, 0) + 3
+		let groupHeight = 0
+		for (let i = 0; i < bg.count; i++) groupHeight += rowHeights[bg.startIdx + i]
+		if (neededHeight > groupHeight) {
+			rowHeights[bg.startIdx] += (neededHeight - groupHeight)
+		}
+	}
+	doc.setFontSize(savedSize)
+}
+
 /** Draw text with wrapping, vertically centered in cell. Caller must set font on doc first. */
 function drawWrappedCell(doc: jsPDF, text: string, x: number, y: number, cellWidth: number, cellHeight: number, align: 'left' | 'center' = 'left') {
 	if (!text) return
@@ -533,6 +552,7 @@ function generateCourseCountRegularArrearPdf(opts: ReportPdfOptions): string {
 	doc.setFont('times', 'normal')
 	doc.setFontSize(9)
 	const rowHeights = rows.map(row => calcWrappedRowHeight(doc, row.course_name, colWidths[4] - 2, rowHeight))
+	padBoardGroupHeights(doc, rows, boardGroups, rowHeights, colWidths[1])
 
 	// Track which board group the current row belongs to
 	let boardGroupIdx = 0
@@ -748,6 +768,7 @@ function generateCourseCountYearWisePdf(opts: ReportPdfOptions): string {
 	doc.setFont('times', 'normal')
 	doc.setFontSize(9)
 	const rowHeights = rows.map(row => calcWrappedRowHeight(doc, row.course_name, fixedColWidths[4] - 2, rowHeight))
+	padBoardGroupHeights(doc, rows, boardGroups, rowHeights, fixedColWidths[1])
 
 	let boardGroupIdx = 0
 	let boardGroupRowOffset = 0
@@ -985,6 +1006,7 @@ function generateCourseCountProgramYearWisePdf(opts: ReportPdfOptions): string {
 	doc.setFont('times', 'normal')
 	doc.setFontSize(9)
 	const rowHeights = rows.map(row => calcWrappedRowHeight(doc, row.course_name, fixedColWidths[5] - 2, rowHeight))
+	padBoardGroupHeights(doc, rows, boardGroups, rowHeights, fixedColWidths[1])
 
 	for (let idx = 0; idx < rows.length; idx++) {
 		const row = rows[idx]
@@ -1768,6 +1790,7 @@ function generateBoardWiseExamTimetablePdf(opts: ReportPdfOptions): string {
 	doc.setFont('times', 'normal')
 	doc.setFontSize(9)
 	const rowHeights = rows.map(row => calcWrappedRowHeight(doc, row.course_name, colWidths[6] - 2, rowHeight))
+	padBoardGroupHeights(doc, rows, boardGroups, rowHeights, colWidths[1])
 
 	let boardGroupIdx = 0
 	let boardGroupRowOffset = 0
