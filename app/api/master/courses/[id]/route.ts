@@ -348,9 +348,16 @@ export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ 
     const supabase = getSupabaseServer()
     const { id } = await params
     const { error } = await supabase.from('courses').delete().eq('id', id)
-    if (error) throw error
+    if (error) {
+      if (error.code === '23503') {
+        return NextResponse.json({ error: 'Cannot delete - this course has related records (e.g. course offerings, registrations)' }, { status: 400 })
+      }
+      console.error('Delete course error:', error)
+      return NextResponse.json({ error: error.message || 'Failed to delete course' }, { status: 500 })
+    }
     return NextResponse.json({ message: 'Course deleted successfully' })
   } catch (err) {
-    return NextResponse.json({ error: 'Failed to delete course' }, { status: 500 })
+    const message = err instanceof Error ? err.message : 'Unknown error'
+    return NextResponse.json({ error: 'Failed to delete course', details: message }, { status: 500 })
   }
 }

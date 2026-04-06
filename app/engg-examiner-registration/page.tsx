@@ -213,8 +213,6 @@ export default function EnggExaminerRegistrationPage() {
 		if (!dept) e.department = 'Required'
 		if (!formData.ug_specialization.trim()) e.ug_specialization = 'Required'
 		if (!formData.pg_specialization.trim()) e.pg_specialization = 'Required'
-		if (!formData.phd_specialization.trim()) e.phd_specialization = 'Required'
-		if (!formData.area_of_expertise.trim()) e.area_of_expertise = 'Required'
 
 		// Willingness
 		if (formData.willingness_roles.length === 0) e.willingness_roles = 'Select at least one role'
@@ -279,18 +277,18 @@ export default function EnggExaminerRegistrationPage() {
 
 	// ── Helper functions for course updates ─────────────────────────────────
 
-	const updateTheoryCourse = (index: number, field: 'course' | 'times', value: string) => {
+	const updateTheoryCourse = (index: number, value: string) => {
 		setFormData(prev => {
 			const updated = [...prev.theory_courses]
-			updated[index] = { ...updated[index], [field]: value }
+			updated[index] = { course: value }
 			return { ...prev, theory_courses: updated }
 		})
 	}
 
-	const updatePracticalCourse = (index: number, field: 'course' | 'times', value: string) => {
+	const updatePracticalCourse = (index: number, value: string) => {
 		setFormData(prev => {
 			const updated = [...prev.practical_courses]
-			updated[index] = { ...updated[index], [field]: value }
+			updated[index] = { course: value }
 			return { ...prev, practical_courses: updated }
 		})
 	}
@@ -524,7 +522,7 @@ export default function EnggExaminerRegistrationPage() {
 					{/* Courses */}
 					{(() => {
 						const ad = ex.additional_data as Record<string, unknown>
-						const courses = ad?.courses as Record<string, { course: string; times: string }[]> | undefined
+						const courses = ad?.courses as Record<string, { course: string }[]> | undefined
 						const theory = courses?.theory || []
 						const practical = courses?.practical || []
 						if (theory.length === 0 && practical.length === 0) return null
@@ -541,7 +539,6 @@ export default function EnggExaminerRegistrationPage() {
 												{theory.map((c, i) => (
 													<div key={i} className="flex items-center gap-3 p-2.5 bg-gray-50 rounded-lg text-sm">
 														<span className="text-gray-900 flex-1">{c.course}</span>
-														{c.times && <span className="text-gray-500 text-xs">{c.times} time(s)</span>}
 													</div>
 												))}
 											</div>
@@ -554,7 +551,6 @@ export default function EnggExaminerRegistrationPage() {
 												{practical.map((c, i) => (
 													<div key={i} className="flex items-center gap-3 p-2.5 bg-gray-50 rounded-lg text-sm">
 														<span className="text-gray-900 flex-1">{c.course}</span>
-														{c.times && <span className="text-gray-500 text-xs">{c.times} time(s)</span>}
 													</div>
 												))}
 											</div>
@@ -1116,7 +1112,7 @@ export default function EnggExaminerRegistrationPage() {
 												<SelectValue placeholder="Select department" />
 											</SelectTrigger>
 											<SelectContent>
-												{(formConfig?.departments || ['Computer Science and Engineering', 'Electronics and Communication Engineering', 'Electrical and Electronics Engineering', 'Mechanical Engineering', 'Civil Engineering', 'Information Technology']).map(d => (
+												{(formConfig?.departments || ['Computer Science and Engineering', 'Electronics and Communication Engineering', 'Electrical and Electronics Engineering', 'Mechanical Engineering', 'Civil Engineering', 'Information Technology', 'MBA']).map(d => (
 													<SelectItem key={d} value={d}>{d}</SelectItem>
 												))}
 												<SelectItem value="Other">Other</SelectItem>
@@ -1168,7 +1164,7 @@ export default function EnggExaminerRegistrationPage() {
 									{/* PhD Specialization */}
 									<div className="space-y-1.5">
 										<Label htmlFor="phd_specialization" className="text-sm">
-											PhD Specialization <span className="text-red-500">*</span>
+											PhD Specialization
 										</Label>
 										<Textarea
 											id="phd_specialization"
@@ -1176,24 +1172,22 @@ export default function EnggExaminerRegistrationPage() {
 											onChange={(e) => setFormData({ ...formData, phd_specialization: e.target.value })}
 											placeholder="Describe your PhD specialization area"
 											rows={2}
-											className={`text-base ${errors.phd_specialization ? 'border-red-500' : ''}`}
+											className="text-base"
 										/>
-										{errors.phd_specialization && <p className="text-xs text-red-500 mt-1">{errors.phd_specialization}</p>}
 									</div>
 
 									{/* Area of Expertise */}
 									<div className="space-y-1.5">
 										<Label htmlFor="area_of_expertise" className="text-sm">
-											Area of Expertise <span className="text-red-500">*</span>
+											Area of Expertise
 										</Label>
 										<Input
 											id="area_of_expertise"
 											value={formData.area_of_expertise}
 											onChange={(e) => setFormData({ ...formData, area_of_expertise: e.target.value })}
 											placeholder="e.g., Machine Learning, Data Structures"
-											className={`text-base h-11 ${errors.area_of_expertise ? 'border-red-500' : ''}`}
+											className="text-base h-11"
 										/>
-										{errors.area_of_expertise && <p className="text-xs text-red-500 mt-1">{errors.area_of_expertise}</p>}
 									</div>
 								</CardContent>
 							</Card>
@@ -1240,23 +1234,13 @@ export default function EnggExaminerRegistrationPage() {
 									<div className="space-y-3">
 										<p className="text-sm font-medium text-gray-700">Theory Courses <span className="text-red-500">*</span></p>
 										{formData.theory_courses.map((tc, i) => (
-											<div key={i} className="grid grid-cols-[1fr_100px] gap-2">
-												<Input
-													value={tc.course}
-													onChange={(e) => updateTheoryCourse(i, 'course', e.target.value)}
-													placeholder={`Theory course ${i + 1}`}
-													className="text-base h-11"
-												/>
-												<Input
-													value={tc.times}
-													onChange={(e) => updateTheoryCourse(i, 'times', e.target.value)}
-													placeholder="Times"
-													type="number"
-													inputMode="numeric"
-													min="0"
-													className="text-base h-11"
-												/>
-											</div>
+											<Input
+												key={i}
+												value={tc.course}
+												onChange={(e) => updateTheoryCourse(i, e.target.value)}
+												placeholder={`Theory Courses ${i + 1}`}
+												className="text-base h-11"
+											/>
 										))}
 										{errors.theory_courses && <p className="text-xs text-red-500 mt-1">{errors.theory_courses}</p>}
 									</div>
@@ -1265,23 +1249,13 @@ export default function EnggExaminerRegistrationPage() {
 									<div className="space-y-3">
 										<p className="text-sm font-medium text-gray-700">Practical Courses <span className="text-red-500">*</span></p>
 										{formData.practical_courses.map((pc, i) => (
-											<div key={i} className="grid grid-cols-[1fr_100px] gap-2">
-												<Input
-													value={pc.course}
-													onChange={(e) => updatePracticalCourse(i, 'course', e.target.value)}
-													placeholder={`Practical course ${i + 1}`}
-													className="text-base h-11"
-												/>
-												<Input
-													value={pc.times}
-													onChange={(e) => updatePracticalCourse(i, 'times', e.target.value)}
-													placeholder="Times"
-													type="number"
-													inputMode="numeric"
-													min="0"
-													className="text-base h-11"
-												/>
-											</div>
+											<Input
+												key={i}
+												value={pc.course}
+												onChange={(e) => updatePracticalCourse(i, e.target.value)}
+												placeholder={`Practical Courses ${i + 1}`}
+												className="text-base h-11"
+											/>
 										))}
 										{errors.practical_courses && <p className="text-xs text-red-500 mt-1">{errors.practical_courses}</p>}
 									</div>

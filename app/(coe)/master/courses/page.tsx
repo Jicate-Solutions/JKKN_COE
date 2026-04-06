@@ -868,22 +868,13 @@ export default function CoursesPage() {
   const refreshCourses = async () => {
     setLoading(true)
     try {
-      const response = await fetch('/api/master/courses')
-      if (response.ok) {
-        const data = await response.json()
-        setCourses(data)
-        toast({
-          title: '✅ Refreshed',
-          description: `Loaded ${data.length} courses.`,
-          className: 'bg-green-50 border-green-200 text-green-800 dark:bg-green-900/20 dark:border-green-800 dark:text-green-200'
-        })
-      } else {
-        toast({
-          title: '❌ Refresh Failed',
-          description: 'Failed to load courses.',
-          variant: 'destructive'
-        })
-      }
+      const data = await fetchCoursesService(shouldFilter ? institutionFilter : undefined, shouldFilter)
+      setCourses(data)
+      toast({
+        title: '✅ Refreshed',
+        description: `Loaded ${data.length} courses.`,
+        className: 'bg-green-50 border-green-200 text-green-800 dark:bg-green-900/20 dark:border-green-800 dark:text-green-200'
+      })
     } catch (error) {
       console.error('Error refreshing courses:', error)
       toast({
@@ -1073,12 +1064,9 @@ export default function CoursesPage() {
         }
       }
 
-      // Refresh courses list
-      const response = await fetch('/api/master/courses')
-      if (response.ok) {
-        const data = await response.json()
-        setCourses(data)
-      }
+      // Refresh courses list with institution filter
+      const refreshedData = await fetchCoursesService(shouldFilter ? institutionFilter : undefined, shouldFilter)
+      setCourses(refreshedData)
 
       // Update upload summary
       setUploadSummary({
@@ -1361,12 +1349,9 @@ export default function CoursesPage() {
         }
       }
 
-      // Refresh courses list
-      const response = await fetch('/api/master/courses')
-      if (response.ok) {
-        const data = await response.json()
-        setCourses(data)
-      }
+      // Refresh courses list with institution filter
+      const refreshedData = await fetchCoursesService(shouldFilter ? institutionFilter : undefined, shouldFilter)
+      setCourses(refreshedData)
 
       // Update upload summary
       setUploadSummary({

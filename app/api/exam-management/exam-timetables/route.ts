@@ -54,27 +54,28 @@ export async function GET(request: Request) {
 
     // Bulk fetch student counts and seat allocations (2 queries instead of 820+)
     const timetableIds = (timetables || []).map((t: any) => t.id)
-    const courseOfferingIds = [...new Set((timetables || []).map((t: any) => t.course_offering_id).filter(Boolean))]
 
-    // Bulk query 1: Registration counts per course_offering_id (fee_paid only)
+    // Bulk query 1: Registration counts via DB-level aggregation (avoids row limit issues)
+    // Uses RPC function that does COUNT + GROUP BY in Postgres, returning ~382 rows
+    // instead of fetching 11,000+ individual registration rows
+    const courseCodes = [...new Set((timetables || []).map((t: any) => t.courses?.course_code).filter(Boolean))]
+    const institutionIds = [...new Set((timetables || []).map((t: any) => t.institutions_id).filter(Boolean))]
     let regCountMap = new Map<string, number>()
-    if (courseOfferingIds.length > 0) {
-      let regQuery = supabase
-        .from('exam_registrations')
-        .select('course_offering_id')
-        .in('course_offering_id', courseOfferingIds)
-        .eq('fee_paid', true)
-        .range(0, 99999)
+    if (courseCodes.length > 0 && examination_session_id) {
+      const { data: regCounts, error: regError } = await supabase.rpc('get_registration_counts_by_course', {
+        p_examination_session_id: examination_session_id,
+        p_course_codes: courseCodes,
+        p_institution_ids: institutionIds,
+      })
 
-      if (examination_session_id) {
-        regQuery = regQuery.eq('examination_session_id', examination_session_id)
+      if (regError) {
+        console.error('Error fetching registration counts:', regError)
       }
-
-      const { data: regCounts } = await regQuery
 
       if (regCounts) {
         for (const reg of regCounts) {
-          regCountMap.set(reg.course_offering_id, (regCountMap.get(reg.course_offering_id) || 0) + 1)
+          const key = `${reg.course_code}|${examination_session_id}|${reg.institutions_id}`
+          regCountMap.set(key, Number(reg.cnt))
         }
       }
     }
@@ -97,7 +98,7 @@ export async function GET(request: Request) {
     // Flatten data using lookup maps — no per-row queries
     const enrichedData = (timetables || []).map((timetable: any) => ({
       ...timetable,
-      student_count: regCountMap.get(timetable.course_offering_id) || 0,
+      student_count: regCountMap.get(`${timetable.courses?.course_code}|${timetable.examination_session_id}|${timetable.institutions_id}`) || 0,
       seat_alloc_count: seatAllocMap.get(timetable.id) || 0,
       institution_code: timetable.institutions?.institution_code || 'N/A',
       institution_name: timetable.institutions?.name || 'N/A',

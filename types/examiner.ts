@@ -388,8 +388,8 @@ export interface EngineeringExaminerFormData {
 	// Willingness
 	willingness_roles: string[]
 	// Courses
-	theory_courses: { course: string; times: string }[]
-	practical_courses: { course: string; times: string }[]
+	theory_courses: { course: string }[]
+	practical_courses: { course: string }[]
 	// Declaration
 	declaration_acknowledged: boolean
 }
@@ -420,14 +420,18 @@ export const DEFAULT_ENGINEERING_FORM: EngineeringExaminerFormData = {
 	area_of_expertise: '',
 	willingness_roles: [],
 	theory_courses: [
-		{ course: '', times: '' },
-		{ course: '', times: '' },
-		{ course: '', times: '' },
+		{ course: '' },
+		{ course: '' },
+		{ course: '' },
+		{ course: '' },
+		{ course: '' },
 	],
 	practical_courses: [
-		{ course: '', times: '' },
-		{ course: '', times: '' },
-		{ course: '', times: '' },
+		{ course: '' },
+		{ course: '' },
+		{ course: '' },
+		{ course: '' },
+		{ course: '' },
 	],
 	declaration_acknowledged: false,
 }

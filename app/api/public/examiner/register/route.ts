@@ -97,13 +97,13 @@ export async function POST(request: Request) {
 			const courses: Record<string, unknown> = {}
 			if (Array.isArray(body.theory_courses) && body.theory_courses.length > 0) {
 				const filtered = body.theory_courses.filter(
-					(c: { course?: string; times?: string }) => c.course?.trim()
+					(c: { course?: string }) => c.course?.trim()
 				)
 				if (filtered.length > 0) courses.theory = filtered
 			}
 			if (Array.isArray(body.practical_courses) && body.practical_courses.length > 0) {
 				const filtered = body.practical_courses.filter(
-					(c: { course?: string; times?: string }) => c.course?.trim()
+					(c: { course?: string }) => c.course?.trim()
 				)
 				if (filtered.length > 0) courses.practical = filtered
 			}

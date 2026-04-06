@@ -147,7 +147,7 @@ interface InstitutionOption {
 	id: string
 	institution_code: string
 	name?: string
-	counselling_code?: string | null
+	myjkkn_institution_ids?: string[] | null
 }
 
 interface RegulationOption {
@@ -286,7 +286,7 @@ export default function InternalMarkSettingPage() {
 						id: i.id,
 						institution_code: i.institution_code,
 						name: i.institution_name || i.name,
-						counselling_code: i.counselling_code || null
+						myjkkn_institution_ids: i.myjkkn_institution_ids || null
 					}))
 					: []
 				setInstitutions(mapped)
@@ -296,7 +296,7 @@ export default function InternalMarkSettingPage() {
 		}
 	}
 
-	// Fetch regulations from MyJKKN API using hook (two-step lookup with client-side filtering)
+	// Fetch regulations from MyJKKN API using myjkkn_institution_ids directly
 	const fetchRegulations = useCallback(async (institutionCode?: string) => {
 		try {
 			setRegulationsLoading(true)
@@ -307,12 +307,12 @@ export default function InternalMarkSettingPage() {
 				return
 			}
 
-			// Find the counselling_code for the selected institution
+			// Find the myjkkn_institution_ids for the selected institution
 			const institution = institutions.find(i => i.institution_code === institutionCode)
-			const counsellingCode = institution?.counselling_code || undefined
+			const myjkknIds = institution?.myjkkn_institution_ids || []
 
-			// Use hook to fetch regulations (handles two-step lookup and deduplication)
-			const regs = await fetchMyJKKNRegulations(counsellingCode)
+			// Use hook to fetch regulations with myjkkn_institution_ids directly
+			const regs = await fetchMyJKKNRegulations(myjkknIds)
 
 			setRegulations(regs.map(r => ({
 				id: r.id,
