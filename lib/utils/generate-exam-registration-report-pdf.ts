@@ -493,7 +493,7 @@ function generateCourseCountRegularArrearPdf(opts: ReportPdfOptions): string {
 	}
 
 	// A4 portrait usable = 210 - 2*6.35 = 197.3mm
-	const colWidths = [8, 25, 10, 22, 62, 24, 24, 20]  // Total = 195mm
+	const colWidths = [8, 30, 10, 22, 57, 24, 24, 20]  // Total = 195mm
 	const headers = ['S.No', 'Board', 'Sem', 'Course\nCode', 'Course Name', 'Regular\nStudents', 'Arrear\nStudents', 'Total']
 	const headerHeight = 14
 	const rowHeight = 7
@@ -706,7 +706,7 @@ function generateCourseCountYearWisePdf(opts: ReportPdfOptions): string {
 	}
 
 	// Dynamic columns: fixed cols + year cols + total col (portrait A4 = ~197mm usable)
-	const fixedColWidths = [8, 25, 10, 22, 62]
+	const fixedColWidths = [8, 30, 10, 22, 57]
 	const fixedTotal = fixedColWidths.reduce((a, b) => a + b, 0)
 	const totalColWidth = 18
 	const yearColWidth = Math.min(25, (pageWidth - margin * 2 - fixedTotal - totalColWidth) / Math.max(sortedYears.length, 1))
@@ -944,7 +944,7 @@ function generateCourseCountProgramYearWisePdf(opts: ReportPdfOptions): string {
 	})
 
 	// Dynamic columns with total (portrait A4 = ~197mm usable)
-	const fixedColWidths = [8, 22, 18, 10, 20, 52]
+	const fixedColWidths = [8, 27, 18, 10, 20, 47]
 	const fixedTotal2c = fixedColWidths.reduce((a, b) => a + b, 0)
 	const totalColWidth = 18
 	const yearColWidth = Math.min(25, (pageWidth - margin * 2 - fixedTotal2c - totalColWidth) / Math.max(sortedYears.length, 1))
@@ -1748,7 +1748,7 @@ function generateBoardWiseExamTimetablePdf(opts: ReportPdfOptions): string {
 	}
 
 	// Portrait A4 = ~197mm usable
-	const colWidths = [8, 25, 22, 12, 10, 22, 98]  // Total = 197
+	const colWidths = [8, 30, 22, 12, 10, 22, 93]  // Total = 197
 	const headers = ['S.No', 'Board', 'Exam Date', 'Session', 'Sem', 'Course\nCode', 'Course Name']
 	const headerHeight = 10
 	const rowHeight = 7
