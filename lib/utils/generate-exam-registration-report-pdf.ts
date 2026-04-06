@@ -56,10 +56,10 @@ function calcWrappedRowHeight(doc: jsPDF, text: string, maxWidth: number, baseHe
 	return Math.max(baseHeight, lines.length * lineH + 3)
 }
 
-/** Format board display as "CODE (Name)" or just "CODE" */
+/** Format board display as "CODE - Name" or just "CODE" */
 function formatBoardDisplay(boardCode: string, boardName?: string | null): string {
 	if (!boardCode) return ''
-	return boardName ? `${boardCode}\n(${boardName})` : boardCode
+	return boardName ? `${boardCode} -\n${boardName}` : boardCode
 }
 
 /** Draw text with wrapping, vertically centered in cell. Caller must set font on doc first. */

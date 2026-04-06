@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { AppSidebar } from '@/components/layout/app-sidebar'
 import { AppHeader } from '@/components/layout/app-header'
 import { AppFooter } from '@/components/layout/app-footer'
@@ -117,6 +117,9 @@ export default function ExternalMarkEntryPage() {
 
 	// View mode state (after saving marks)
 	const [isViewMode, setIsViewMode] = useState(false)
+
+	// Refs for mark entry inputs (Enter key → next field navigation)
+	const markInputRefs = useRef<(HTMLInputElement | null)[]>([])
 
 	// Get the effective institution ID (from selection or context)
 	const effectiveInstitutionId = selectedInstitutionId || contextInstitutionId
@@ -803,59 +806,127 @@ export default function ExternalMarkEntryPage() {
 								)}
 							</CardHeader>
 							<CardContent className="space-y-2 pt-0">
-								<div className="border rounded-lg">
+								{/* Entry progress bar */}
+								<div className="flex items-center gap-3 mb-3">
+									<div className="flex-1 h-2 bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden">
+										<div
+											className="h-full bg-gradient-to-r from-emerald-500 to-teal-400 rounded-full transition-all duration-500 ease-out"
+											style={{ width: `${(students.filter(s => s.total_marks_obtained !== null).length / students.length) * 100}%` }}
+										/>
+									</div>
+									<span className="text-xs font-medium text-slate-500 dark:text-slate-400 whitespace-nowrap">
+										{students.filter(s => s.total_marks_obtained !== null).length}/{students.length} entered
+									</span>
+								</div>
+
+								<div className="border rounded-xl overflow-hidden shadow-sm">
 									<Table>
 										<TableHeader>
-											<TableRow className="bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-600 hover:to-teal-600">
-												<TableHead className="w-12 text-white font-semibold text-sm">#</TableHead>
-												<TableHead className="text-white font-semibold text-sm">Dummy No</TableHead>
-												<TableHead className="text-white font-semibold text-sm">Marks</TableHead>
-												<TableHead className="text-white font-semibold text-sm">Marks in Words</TableHead>
-												<TableHead className="text-white font-semibold text-sm">Result</TableHead>
+											<TableRow className="bg-gradient-to-r from-emerald-600 via-teal-600 to-cyan-600 hover:from-emerald-600 hover:via-teal-600 hover:to-cyan-600">
+												<TableHead className="w-12 text-white/90 font-semibold text-xs uppercase tracking-wider">#</TableHead>
+												<TableHead className="text-white/90 font-semibold text-xs uppercase tracking-wider">Dummy No</TableHead>
+												<TableHead className="text-white/90 font-semibold text-xs uppercase tracking-wider">Marks</TableHead>
+												<TableHead className="text-white/90 font-semibold text-xs uppercase tracking-wider">Marks in Words</TableHead>
+												<TableHead className="text-white/90 font-semibold text-xs uppercase tracking-wider">Result</TableHead>
 											</TableRow>
 										</TableHeader>
 										<TableBody>
-											{students.map((student, index) => (
-												<TableRow key={student.student_dummy_id} className="hover:bg-emerald-50/50 dark:hover:bg-emerald-900/10">
-													<TableCell className="font-medium text-sm py-2">{index + 1}</TableCell>
-													<TableCell className="font-semibold text-sm py-2">{student.dummy_number}</TableCell>
-													<TableCell className="py-2">
-														<Input
-															type="text"
-															inputMode="numeric"
-															pattern="[0-9]*"
-															value={student.total_marks_obtained ?? ''}
-															onChange={(e) => {
-																const val = e.target.value
-																if (val === '' || /^\d+$/.test(val)) {
-																	handleMarksChange(index, val)
-																}
-															}}
-															placeholder="00"
-															className={cn(
-																"h-8 w-20 text-center text-sm",
-																isViewMode && "bg-muted cursor-not-allowed"
-															)}
-															disabled={isViewMode}
-														/>
+											{students.map((student, index) => {
+												const hasMarks = student.total_marks_obtained !== null
+												const isPassing = hasMarks && courseDetails && student.total_marks_obtained! >= courseDetails.minimum_pass_marks
+												const isFailing = hasMarks && courseDetails && student.total_marks_obtained! < courseDetails.minimum_pass_marks
+
+												return (
+												<TableRow
+													key={student.student_dummy_id}
+													className={cn(
+														"transition-colors duration-200",
+														isPassing && "bg-emerald-50/60 dark:bg-emerald-950/20",
+														isFailing && "bg-red-50/60 dark:bg-red-950/20",
+														!hasMarks && "hover:bg-slate-50/80 dark:hover:bg-slate-900/20"
+													)}
+												>
+													<TableCell className="font-medium text-sm py-2.5">{index + 1}</TableCell>
+													<TableCell className="py-2.5">
+														<span className="font-mono font-bold text-sm tracking-wide text-slate-800 dark:text-slate-200">
+															{student.dummy_number}
+														</span>
 													</TableCell>
-													<TableCell className="text-sm py-2">{student.total_marks_in_words || '-'}</TableCell>
-													<TableCell className="py-2">
+													<TableCell className="py-2.5">
+														<div className={cn(
+															"relative inline-flex items-center rounded-lg transition-all duration-200",
+															!isViewMode && !hasMarks && "ring-2 ring-slate-200 dark:ring-slate-700 focus-within:ring-2 focus-within:ring-emerald-400 focus-within:shadow-[0_0_0_3px_rgba(16,185,129,0.15)]",
+															isPassing && "ring-2 ring-emerald-300 dark:ring-emerald-700 shadow-[0_0_0_3px_rgba(16,185,129,0.1)]",
+															isFailing && "ring-2 ring-red-300 dark:ring-red-700 shadow-[0_0_0_3px_rgba(239,68,68,0.1)]",
+															isViewMode && "opacity-80"
+														)}>
+															<Input
+																ref={(el) => { markInputRefs.current[index] = el }}
+																type="text"
+																inputMode="numeric"
+																pattern="[0-9]*"
+																value={student.total_marks_obtained ?? ''}
+																onChange={(e) => {
+																	const val = e.target.value
+																	if (val === '' || /^\d+$/.test(val)) {
+																		handleMarksChange(index, val)
+																	}
+																}}
+																onKeyDown={(e) => {
+																	if (e.key === 'Enter') {
+																		e.preventDefault()
+																		const nextIndex = index + 1
+																		if (nextIndex < students.length) {
+																			markInputRefs.current[nextIndex]?.focus()
+																			markInputRefs.current[nextIndex]?.select()
+																		}
+																	}
+																}}
+																placeholder="—"
+																className={cn(
+																	"h-9 w-[72px] text-center font-semibold text-sm border-0 shadow-none focus-visible:ring-0 bg-transparent",
+																	isPassing && "text-emerald-700 dark:text-emerald-300",
+																	isFailing && "text-red-700 dark:text-red-300",
+																	!hasMarks && "text-slate-500",
+																	isViewMode && "cursor-not-allowed"
+																)}
+																disabled={isViewMode}
+															/>
+															{hasMarks && (
+																<span className={cn(
+																	"absolute -top-1.5 -right-1.5 flex h-4 w-4 items-center justify-center rounded-full text-[9px] font-bold text-white",
+																	isPassing ? "bg-emerald-500" : "bg-red-500"
+																)}>
+																	{isPassing ? '✓' : '✗'}
+																</span>
+															)}
+														</div>
+													</TableCell>
+													<TableCell className="text-sm py-2.5">
+														<span className={cn(
+															"italic",
+															hasMarks ? "text-slate-600 dark:text-slate-400" : "text-slate-300 dark:text-slate-600"
+														)}>
+															{student.total_marks_in_words || '—'}
+														</span>
+													</TableCell>
+													<TableCell className="py-2.5">
 														<Badge
 															className={cn(
-																"font-medium text-sm",
+																"font-semibold text-xs px-2.5 py-0.5 rounded-full shadow-sm",
 																student.remarks === 'PASS'
-																	? "bg-green-100 text-green-800 hover:bg-green-200 dark:bg-green-900/30 dark:text-green-300"
+																	? "bg-gradient-to-r from-emerald-500 to-green-500 text-white hover:from-emerald-600 hover:to-green-600"
 																	: student.remarks === 'FAIL'
-																		? "bg-red-100 text-red-800 hover:bg-red-200 dark:bg-red-900/30 dark:text-red-300"
-																		: "bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400"
+																		? "bg-gradient-to-r from-red-500 to-rose-500 text-white hover:from-red-600 hover:to-rose-600"
+																		: "bg-slate-100 text-slate-400 dark:bg-slate-800 dark:text-slate-500 border border-dashed border-slate-300 dark:border-slate-600"
 															)}
 														>
-															{student.remarks || '-'}
+															{student.remarks || 'Pending'}
 														</Badge>
 													</TableCell>
 												</TableRow>
-											))}
+												)
+											})}
 										</TableBody>
 									</Table>
 								</div>

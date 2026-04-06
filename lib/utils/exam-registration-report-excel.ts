@@ -174,7 +174,7 @@ function exportCourseCountRegularArrearExcel(opts: ExcelExportOptions): ExcelRep
 
 	const rows = sorted.map((row, idx) => ({
 		'S.No': idx + 1,
-		'Board': row.board_code ? `${row.board_code}${row.board_name ? ` (${row.board_name})` : ''}` : '',
+		'Board': row.board_code ? `${row.board_code}${row.board_name ? ` - ${row.board_name}` : ''}` : '',
 		'Sem': row.semester ? toRoman(row.semester) : '',
 		'Course Code': row.course_code,
 		'Course Name': row.course_name,
@@ -243,7 +243,7 @@ function exportCourseCountYearWiseExcel(opts: ExcelExportOptions): ExcelReportRe
 		})
 		return {
 			'S.No': idx + 1,
-			'Board': row.board_code ? `${row.board_code}${row.board_name ? ` (${row.board_name})` : ''}` : '',
+			'Board': row.board_code ? `${row.board_code}${row.board_name ? ` - ${row.board_name}` : ''}` : '',
 			'Sem': row.semester ? toRoman(row.semester) : '',
 			'Course Code': row.course_code,
 			'Course Name': row.course_name,
@@ -330,7 +330,7 @@ function exportCourseCountProgramYearWiseExcel(opts: ExcelExportOptions): ExcelR
 		})
 		return {
 			'S.No': idx + 1,
-			'Board': row.board_code ? `${row.board_code}${row.board_name ? ` (${row.board_name})` : ''}` : '',
+			'Board': row.board_code ? `${row.board_code}${row.board_name ? ` - ${row.board_name}` : ''}` : '',
 			'Program Code': row.program_code,
 			'Sem': row.semester ? toRoman(row.semester) : '',
 			'Course Code': row.course_code,
@@ -637,7 +637,7 @@ export async function exportExamRegistrationReportExcel(opts: ExcelExportOptions
 
 		const rows = sorted.map((row, idx) => ({
 			'S.No': idx + 1,
-			'Board': row.board_code ? `${row.board_code}${row.board_name ? ` (${row.board_name})` : ''}` : '',
+			'Board': row.board_code ? `${row.board_code}${row.board_name ? ` - ${row.board_name}` : ''}` : '',
 			'Exam Date': row.exam_date ? formatDate(row.exam_date) : '',
 			'Session': row.exam_session || '',
 			'Sem': row.semester ? toRoman(row.semester) : '',
