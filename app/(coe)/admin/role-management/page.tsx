@@ -5,6 +5,7 @@ import { AppSidebar } from '@/components/layout/app-sidebar'
 import { AppHeader } from '@/components/layout/app-header'
 import { AppFooter } from '@/components/layout/app-footer'
 import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar'
+import { useInstitutionFilter } from '@/hooks/use-institution-filter'
 import {
 	Breadcrumb,
 	BreadcrumbItem,
@@ -74,6 +75,9 @@ interface CoeUser {
 	avatar_url: string | null
 	is_active: boolean
 	institution_id: string | null
+	institution_code: string | null
+	institution_name: string | null
+	coe_institution_id: string | null
 	coe_roles: CoeRole[]
 }
 
@@ -118,6 +122,14 @@ function getInitials(name: string | null | undefined, email: string): string {
 export default function RoleManagementPage() {
 	const { toast } = useToast()
 
+	// Institution filter
+	const {
+		isReady,
+		shouldFilter,
+		institutionId,
+		mustSelectInstitution,
+		appendToUrl,
+	} = useInstitutionFilter()
 	// COE users state
 	const [coeUsers, setCoeUsers] = useState<CoeUser[]>([])
 	const [usersLoading, setUsersLoading] = useState(true)
@@ -145,11 +157,16 @@ export default function RoleManagementPage() {
 	// ---- Data fetching -------------------------------------------------------
 
 	const fetchCoeUsers = useCallback(async () => {
+		if (!isReady) return
 		try {
 			setUsersLoading(true)
-			const url = usersSearch.trim()
-				? `/api/admin/role-management?search=${encodeURIComponent(usersSearch.trim())}`
-				: '/api/admin/role-management'
+			let url = '/api/admin/role-management'
+			// Apply institution filter via appendToUrl (adds institutions_id param)
+			url = appendToUrl(url)
+			if (usersSearch.trim()) {
+				const sep = url.includes('?') ? '&' : '?'
+				url = `${url}${sep}search=${encodeURIComponent(usersSearch.trim())}`
+			}
 			const response = await fetch(url)
 			if (!response.ok) throw new Error('Failed to fetch users')
 			const data = await response.json()
@@ -165,7 +182,7 @@ export default function RoleManagementPage() {
 		} finally {
 			setUsersLoading(false)
 		}
-	}, [usersSearch, toast])
+	}, [usersSearch, toast, isReady, appendToUrl])
 
 	const fetchAvailableRoles = async () => {
 		try {
@@ -207,11 +224,18 @@ export default function RoleManagementPage() {
 		}
 	}, [toast])
 
-	// Initial load
+	// Initial load — wait for institution filter to be ready
 	useEffect(() => {
+		if (!isReady) return
 		fetchCoeUsers()
 		fetchAvailableRoles()
-	}, []) // eslint-disable-line react-hooks/exhaustive-deps
+	}, [isReady]) // eslint-disable-line react-hooks/exhaustive-deps
+
+	// Re-fetch when institution filter changes
+	useEffect(() => {
+		if (!isReady) return
+		fetchCoeUsers()
+	}, [shouldFilter, institutionId]) // eslint-disable-line react-hooks/exhaustive-deps
 
 	// Debounced MyJKKN search
 	useEffect(() => {
@@ -664,6 +688,7 @@ export default function RoleManagementPage() {
 												<TableHead className="w-10 text-xs" />
 												<TableHead className="text-xs">Name</TableHead>
 												<TableHead className="text-xs">Email</TableHead>
+												{mustSelectInstitution && <TableHead className="text-xs">Institution</TableHead>}
 												<TableHead className="text-xs">COE Roles</TableHead>
 												<TableHead className="w-[80px] text-xs text-center">Status</TableHead>
 												<TableHead className="w-[80px] text-xs text-center">Actions</TableHead>
@@ -672,7 +697,7 @@ export default function RoleManagementPage() {
 										<TableBody>
 											{usersLoading ? (
 												<TableRow>
-													<TableCell colSpan={6} className="h-32 text-center">
+													<TableCell colSpan={mustSelectInstitution ? 7 : 6} className="h-32 text-center">
 														<div className="flex flex-col items-center gap-2 text-muted-foreground">
 															<RefreshCw className="h-5 w-5 animate-spin" />
 															<span className="text-sm">Loading...</span>
@@ -681,7 +706,7 @@ export default function RoleManagementPage() {
 												</TableRow>
 											) : coeUsers.length === 0 ? (
 												<TableRow>
-													<TableCell colSpan={6} className="h-32 text-center">
+													<TableCell colSpan={mustSelectInstitution ? 7 : 6} className="h-32 text-center">
 														<div className="flex flex-col items-center gap-2 text-muted-foreground">
 															<Users className="h-8 w-8 opacity-20" />
 															<span className="text-sm">No users found</span>
@@ -714,6 +739,15 @@ export default function RoleManagementPage() {
 														<TableCell className="text-sm text-muted-foreground py-2">
 															{user.email}
 														</TableCell>
+
+														{/* Institution — only when All Institutions selected */}
+														{mustSelectInstitution && (
+															<TableCell className="text-sm py-2">
+																<Badge variant="outline" className="text-xs">
+																	{user.institution_code || '—'}
+																</Badge>
+															</TableCell>
+														)}
 
 														{/* Roles — badges with X to revoke */}
 														<TableCell className="py-2">

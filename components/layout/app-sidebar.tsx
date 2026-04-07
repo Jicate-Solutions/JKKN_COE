@@ -124,7 +124,6 @@ const data = {
 			isActive: false,
 			coe_roles: ["admin", "super_admin"], // Admin and super admin
 			items: [
-				{ title: "Users",           url: "/users/users-list",     icon: Users },
 				{ title: "Role Management", url: "/admin/role-management", icon: ShieldCheck },
 				{ title: "Roles",           url: "/users/roles",          icon: Shield },
 				{ title: "Permissions",     url: "/users/permissions",    icon: Key },
@@ -217,6 +216,8 @@ const data = {
 				{ title: "Exam Attendance Sheet", url: "/pre-exam/exam-attendance-sheet",       icon: ClipboardList },
 				{ title: "Practical Allotment",   url: "/pre-exam/practical-allotment",         icon: FlaskConical },
 				{ title: "Bulk Internal Marks",   url: "/pre-exam/bulk-internal-marks",         icon: FileText },
+				{ title: "CIA Entry Setting",     url: "/pre-exam/internal-mark-entry-setting", icon: Settings2 },
+				{ title: "Internal Mark Entry",   url: "/pre-exam/internal-mark-entry",         icon: Edit },
 				{ title: "COE Calendar",          url: "/pre-exam/coe-calendar",               icon: CalendarDays },
 			],
 		},

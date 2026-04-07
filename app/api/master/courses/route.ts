@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
+import { logTransaction } from '@/lib/logging/server-transaction-log'
 
 export async function GET(req: NextRequest) {
   try {
@@ -395,33 +396,51 @@ export async function POST(req: NextRequest) {
     if (error) {
       console.error('Supabase error:', error)
 
-      // Handle foreign key constraint violation
+      let errorMsg = error.message
+      if (error.code === '23503') errorMsg = 'Foreign key constraint failed. Ensure institution, regulation, and department exist.'
+      if (error.code === '23505') errorMsg = 'Course already exists. Please use different values.'
+      if (error.code === '23514') errorMsg = 'Invalid value. Please check your input values and ensure they match the allowed options.'
+
+      await logTransaction({
+        action: 'create',
+        resource_type: 'course',
+        resource_id: '/master/courses',
+        new_values: { course_code: input.course_code, course_title: input.course_title, institution_code: input.institution_code },
+        status: 'error',
+        error_message: errorMsg,
+      })
+
       if (error.code === '23503') {
-        return NextResponse.json({
-          error: 'Foreign key constraint failed. Ensure institution, regulation, and department exist.'
-        }, { status: 400 })
+        return NextResponse.json({ error: errorMsg }, { status: 400 })
       }
-
-      // Handle duplicate key violation
       if (error.code === '23505') {
-        return NextResponse.json({
-          error: 'Course already exists. Please use different values.'
-        }, { status: 400 })
+        return NextResponse.json({ error: errorMsg }, { status: 400 })
       }
-
-      // Handle check constraint violation
       if (error.code === '23514') {
-        return NextResponse.json({
-          error: 'Invalid value. Please check your input values and ensure they match the allowed options.'
-        }, { status: 400 })
+        return NextResponse.json({ error: errorMsg }, { status: 400 })
       }
 
       throw error
     }
 
+    await logTransaction({
+      action: 'create',
+      resource_type: 'course',
+      resource_id: '/master/courses',
+      new_values: data as Record<string, unknown>,
+      metadata: { record_id: data.id },
+    })
+
     return NextResponse.json(data, { status: 201 })
   } catch (err) {
     console.error('API Error:', err)
+    await logTransaction({
+      action: 'create',
+      resource_type: 'course',
+      status: 'error',
+      error_message: err instanceof Error ? err.message : 'Unknown error',
+      metadata: { page: '/master/courses' },
+    }).catch(() => {})
     return NextResponse.json({
       error: 'Failed to create course',
       details: err instanceof Error ? err.message : 'Unknown error'

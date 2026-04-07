@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
 import { withAdminAuth } from '@/lib/security/admin-guard'
+import { logTransaction } from '@/lib/logging/server-transaction-log'
 
 export const POST = withAdminAuth(async (request, _adminUser) => {
 	const supabase = getSupabaseServer()
@@ -29,8 +30,26 @@ export const POST = withAdminAuth(async (request, _adminUser) => {
 
 	if (error) {
 		console.error('Failed to revoke role:', error)
+		await logTransaction({
+			action: 'update',
+			resource_type: 'user_role',
+			resource_id: '/admin/role-management',
+			old_values: { role_name, is_active: true },
+			new_values: { role_name, is_active: false },
+			status: 'error',
+			error_message: error.message,
+		})
 		return NextResponse.json({ error: 'Failed to revoke role' }, { status: 500 })
 	}
+
+	await logTransaction({
+		action: 'update',
+		resource_type: 'user_role',
+		resource_id: '/admin/role-management',
+		old_values: { role_name, is_active: true },
+		new_values: { role_name, is_active: false },
+		metadata: { record_id: user_id },
+	})
 
 	return NextResponse.json({ success: true, message: `Role "${role_name}" revoked` })
 })

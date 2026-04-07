@@ -3,6 +3,7 @@
  * Handles logging of user actions and transactions to the database
  */
 import { secureFetch } from '@/lib/security/secure-fetch'
+import Cookies from 'js-cookie'
 
 export interface TransactionLogEntry {
 	action: string
@@ -30,16 +31,16 @@ class TransactionLogService {
 	private readonly MAX_BATCH_SIZE = 10
 
 	/**
-	 * Get user data and access token from localStorage (from parent app auth)
+	 * Get user data and access token from cookies (parent app auth stores tokens in cookies)
 	 * access_token is used to lookup session in sessions table (where session_token = access_token)
 	 */
 	private getUserData(): { user_email: string | null; access_token: string | null } {
 		if (typeof window === 'undefined') return { user_email: null, access_token: null }
 		try {
-			const userData = localStorage.getItem('user_data')
-			const accessToken = localStorage.getItem('access_token')
+			const accessToken = Cookies.get('access_token') || null
 
 			let userEmail: string | null = null
+			const userData = localStorage.getItem('user_data')
 			if (userData) {
 				const user = JSON.parse(userData)
 				userEmail = user.email || null
@@ -47,7 +48,7 @@ class TransactionLogService {
 
 			return {
 				user_email: userEmail,
-				access_token: accessToken || null,
+				access_token: accessToken,
 			}
 		} catch {
 			// Ignore parsing errors

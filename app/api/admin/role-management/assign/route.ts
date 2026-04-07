@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
 import { getSupabaseParent } from '@/lib/supabase-parent'
 import { withAdminAuth } from '@/lib/security/admin-guard'
+import { logTransaction } from '@/lib/logging/server-transaction-log'
 
 export const POST = withAdminAuth(async (request, _adminUser) => {
 	const supabase = getSupabaseServer()
@@ -85,9 +86,26 @@ export const POST = withAdminAuth(async (request, _adminUser) => {
 
 	if (assignErr) {
 		console.error('Failed to assign roles:', assignErr)
+		await logTransaction({
+			action: 'create',
+			resource_type: 'user_role',
+			resource_id: '/admin/role-management',
+			new_values: { email, roles: rolesToAssign },
+			status: 'error',
+			error_message: assignErr.message,
+		})
 		return NextResponse.json({ error: 'Failed to assign roles: ' + assignErr.message }, { status: 500 })
 	}
 
 	const assignedNames = roles.map(r => r.name).join(', ')
+
+	await logTransaction({
+		action: 'create',
+		resource_type: 'user_role',
+		resource_id: '/admin/role-management',
+		new_values: { email, full_name, roles: rolesToAssign, institution_id },
+		metadata: { record_id: user.id },
+	})
+
 	return NextResponse.json({ success: true, message: `Roles "${assignedNames}" assigned to ${email}` }, { status: 201 })
 })

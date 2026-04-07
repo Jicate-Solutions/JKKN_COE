@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
+import { logTransaction, fetchOldValues } from '@/lib/logging/server-transaction-log'
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
@@ -135,6 +136,9 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
     const body = await req.json()
     const input = body as Record<string, unknown>
 
+    // Fetch old values BEFORE update for audit trail
+    const oldRecord = await fetchOldValues('courses', id)
+
     const data: Record<string, unknown> = {
       updated_at: new Date().toISOString(),
     }
@@ -262,22 +266,39 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
     if (error) {
       console.error('Supabase update error:', error)
 
-      // Handle foreign key constraint violation
-      if (error.code === '23503') {
-        return NextResponse.json({
-          error: 'Foreign key constraint failed. Ensure institution, regulation, and department exist.'
-        }, { status: 400 })
-      }
+      let errorMsg = error.message
+      if (error.code === '23503') errorMsg = 'Foreign key constraint failed. Ensure institution, regulation, and department exist.'
+      if (error.code === '23514') errorMsg = 'Invalid value. Please check your input values and ensure they match the allowed options.'
 
-      // Handle check constraint violation
+      await logTransaction({
+        action: 'update',
+        resource_type: 'course',
+        resource_id: '/master/courses',
+        old_values: oldRecord,
+        new_values: data,
+        status: 'error',
+        error_message: errorMsg,
+        metadata: { record_id: id },
+      })
+
+      if (error.code === '23503') {
+        return NextResponse.json({ error: errorMsg }, { status: 400 })
+      }
       if (error.code === '23514') {
-        return NextResponse.json({
-          error: 'Invalid value. Please check your input values and ensure they match the allowed options.'
-        }, { status: 400 })
+        return NextResponse.json({ error: errorMsg }, { status: 400 })
       }
 
       throw error
     }
+
+    await logTransaction({
+      action: 'update',
+      resource_type: 'course',
+      resource_id: '/master/courses',
+      old_values: oldRecord,
+      new_values: updated as Record<string, unknown>,
+      metadata: { record_id: id },
+    })
 
     // Map database fields to frontend expected fields
     const mapped = {
@@ -347,14 +368,41 @@ export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ 
   try {
     const supabase = getSupabaseServer()
     const { id } = await params
+
+    // Fetch old values BEFORE deletion for audit trail
+    const oldRecord = await fetchOldValues('courses', id)
+
     const { error } = await supabase.from('courses').delete().eq('id', id)
     if (error) {
+      const errorMsg = error.code === '23503'
+        ? 'Cannot delete - this course has related records (e.g. course offerings, registrations)'
+        : error.message || 'Failed to delete course'
+
+      await logTransaction({
+        action: 'delete',
+        resource_type: 'course',
+        resource_id: '/master/courses',
+        old_values: oldRecord,
+        status: 'error',
+        error_message: errorMsg,
+        metadata: { record_id: id },
+      })
+
       if (error.code === '23503') {
-        return NextResponse.json({ error: 'Cannot delete - this course has related records (e.g. course offerings, registrations)' }, { status: 400 })
+        return NextResponse.json({ error: errorMsg }, { status: 400 })
       }
       console.error('Delete course error:', error)
-      return NextResponse.json({ error: error.message || 'Failed to delete course' }, { status: 500 })
+      return NextResponse.json({ error: errorMsg }, { status: 500 })
     }
+
+    await logTransaction({
+      action: 'delete',
+      resource_type: 'course',
+      resource_id: '/master/courses',
+      old_values: oldRecord,
+      metadata: { record_id: id },
+    })
+
     return NextResponse.json({ message: 'Course deleted successfully' })
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown error'
