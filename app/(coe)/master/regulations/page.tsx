@@ -60,6 +60,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip"
 import { useToast } from "@/hooks/common/use-toast"
+import { useInstitutionFilter } from "@/hooks/use-institution-filter"
 import {
   Download,
   Upload,
@@ -125,6 +126,14 @@ interface FormData {
 
 export default function RegulationsPage() {
 	const { toast } = useToast()
+	const {
+		filter,
+		isReady,
+		appendToUrl,
+		mustSelectInstitution,
+		getInstitutionIdForCreate,
+		getInstitutionCodeForCreate,
+	} = useInstitutionFilter()
 	const [regulations, setRegulations] = useState<Regulation[]>([])
 	const [loading, setLoading] = useState(true)
 	const [searchTerm, setSearchTerm] = useState("")
@@ -166,7 +175,7 @@ export default function RegulationsPage() {
 	const fetchRegulations = useCallback(async () => {
 		try {
 			setLoading(true)
-			const response = await fetch('/api/master/regulations')
+			const response = await fetch(appendToUrl('/api/master/regulations'))
 			if (response.ok) {
 				const data = await response.json()
 				setRegulations(data)
@@ -195,7 +204,7 @@ export default function RegulationsPage() {
 		} finally {
 			setLoading(false)
 		}
-	}, [toast])
+	}, [toast, appendToUrl])
 
 	// Fetch institutions for dropdown
 	const fetchInstitutions = useCallback(async () => {
@@ -220,9 +229,11 @@ export default function RegulationsPage() {
 	}, [])
 
 	useEffect(() => {
-		fetchRegulations()
-		fetchInstitutions()
-	}, [fetchRegulations, fetchInstitutions])
+		if (isReady) {
+			fetchRegulations()
+			fetchInstitutions()
+		}
+	}, [isReady, filter, fetchRegulations, fetchInstitutions])
 
 	// Form functions
 	const resetForm = useCallback(() => {
@@ -240,12 +251,12 @@ export default function RegulationsPage() {
 			maximum_qp_marks: 0,
 			condonation_range_start: 0,
 			condonation_range_end: 0,
-			institutions_id: undefined,
-			institution_code: "",
+			institutions_id: getInstitutionIdForCreate() || undefined,
+			institution_code: getInstitutionCodeForCreate() || "",
 		})
 		setErrors({})
 		setEditing(null)
-	}, [])
+	}, [getInstitutionIdForCreate, getInstitutionCodeForCreate])
 
 	const validate = useCallback(() => {
 		const e: Record<string, string> = {}

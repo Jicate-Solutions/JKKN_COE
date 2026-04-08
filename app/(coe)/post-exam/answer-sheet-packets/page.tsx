@@ -18,6 +18,8 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Checkbox } from "@/components/ui/checkbox"
 import { useToast } from "@/hooks/common/use-toast"
 import { useInstitutionFilter } from "@/hooks/use-institution-filter"
+import { useSessionSync } from "@/hooks/use-session-sync"
+import { useExaminationSession } from "@/context/examination-session-context"
 import Link from "next/link"
 import { Package, Search, ChevronLeft, ChevronRight, ArrowUpDown, ArrowUp, ArrowDown, RefreshCw, Trash2, FileSpreadsheet, Sparkles, XCircle, CheckCircle, ChevronsUpDown } from "lucide-react"
 
@@ -45,6 +47,14 @@ export default function AnswerSheetPacketsPage() {
 		shouldFilter,
 		mustSelectInstitution,
 	} = useInstitutionFilter()
+
+	// Global session sync — hide session dropdowns when global session is selected
+	let globalSession: { id: string; session_code: string } | null = null
+	try {
+		const ctx = useExaminationSession()
+		globalSession = ctx.currentSession as any
+	} catch {}
+	const mustSelectSession = !globalSession
 
 	const [items, setItems] = useState<AnswerSheetPacket[]>([])
 	const [loading, setLoading] = useState(true)
@@ -88,6 +98,14 @@ export default function AnswerSheetPacketsPage() {
 	const [sessionSearch, setSessionSearch] = useState("")
 	const [boardSearch, setBoardSearch] = useState("")
 	const [courseSearch, setCourseSearch] = useState("")
+
+	// Auto-sync session from global selector
+	useEffect(() => {
+		if (globalSession?.session_code) {
+			setGenSession(globalSession.session_code)
+			setSessionFilter(globalSession.session_code)
+		}
+	}, [globalSession?.session_code])
 
 	// Effective institution code: from global context or local selection (for super_admin "All")
 	const effectiveInstitutionCode = mustSelectInstitution ? genInstitution : institutionCode
@@ -624,6 +642,7 @@ export default function AnswerSheetPacketsPage() {
 									</div>
 								)}
 
+								{mustSelectSession && (
 								<div>
 									<Label htmlFor="gen-session">Exam Session <span className="text-red-500">*</span></Label>
 									<Select
@@ -661,6 +680,7 @@ export default function AnswerSheetPacketsPage() {
 										</SelectContent>
 									</Select>
 								</div>
+								)}
 
 								<div>
 									<Label htmlFor="gen-board">Board</Label>
@@ -941,7 +961,8 @@ export default function AnswerSheetPacketsPage() {
 									</div>
 								</div>
 
-								{/* Session Filter */}
+								{/* Session Filter — hidden when global session is selected */}
+								{mustSelectSession && (
 								<div>
 									<Select value={sessionFilter} onValueChange={(v) => {
 										setSessionFilter(v)
@@ -961,6 +982,7 @@ export default function AnswerSheetPacketsPage() {
 										</SelectContent>
 									</Select>
 								</div>
+								)}
 
 								{/* Board Filter */}
 								<div>

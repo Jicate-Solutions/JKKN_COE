@@ -19,6 +19,7 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { useToast } from "@/hooks/common/use-toast"
+import { useInstitutionFilter } from "@/hooks/use-institution-filter"
 import { Toaster } from "@/components/ui/toaster"
 import Link from "next/link"
 import { PlusCircle, Edit, Trash2, Search, ChevronLeft, ChevronRight, ArrowUpDown, ArrowUp, ArrowDown, BookOpen, TrendingUp, FileSpreadsheet, RefreshCw, XCircle, AlertTriangle, Upload, MoreHorizontal, ChevronDown, Download } from "lucide-react"
@@ -45,6 +46,7 @@ const MOCK_SEMESTERS: Semester[] = [
 
 export default function SemesterPage() {
   const { toast } = useToast()
+  const { isReady, appendToUrl, mustSelectInstitution, getInstitutionCodeForCreate } = useInstitutionFilter()
   const [items, setItems] = useState<Semester[]>([])
   const [loading, setLoading] = useState(true)
   const [searchTerm, setSearchTerm] = useState("")
@@ -98,7 +100,7 @@ export default function SemesterPage() {
   const fetchSemesters = async () => {
     try {
       setLoading(true)
-      const response = await fetch('/api/master/semesters')
+      const response = await fetch(appendToUrl('/api/master/semesters'))
       if (!response.ok) {
         throw new Error('Failed to fetch semesters')
       }
@@ -181,14 +183,16 @@ export default function SemesterPage() {
     }
   }
 
-  // Load data on component mount
+  // Load data when institution filter is ready
   useEffect(() => {
-    fetchSemesters()
-    fetchInstitutions()
-    fetchPrograms()
-  }, [])
+    if (isReady) {
+      fetchSemesters()
+      fetchInstitutions()
+      fetchPrograms()
+    }
+  }, [isReady])
 
-  const resetForm = () => { setFormData({ institution_code: "", program_code: "", semester_code: "", semester_name: "", display_name: "", semester_type: "", semester_group: "", display_order: 1, initial_semester: false, terminal_semester: false }); setErrors({}); setEditing(null) }
+  const resetForm = () => { setFormData({ institution_code: getInstitutionCodeForCreate() || "", program_code: "", semester_code: "", semester_name: "", display_name: "", semester_type: "", semester_group: "", display_order: 1, initial_semester: false, terminal_semester: false }); setErrors({}); setEditing(null) }
 
   const handleSort = (c: string) => { if (sortColumn === c) setSortDirection(sortDirection === "asc" ? "desc" : "asc"); else { setSortColumn(c); setSortDirection("asc") } }
   const getSortIcon = (c: string) => sortColumn !== c ? <ArrowUpDown className="h-3 w-3 text-muted-foreground" /> : (sortDirection === "asc" ? <ArrowUp className="h-3 w-3" /> : <ArrowDown className="h-3 w-3" />)

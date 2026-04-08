@@ -33,7 +33,8 @@
       "Skill(commit-commands:commit:*)",
       "Bash(npx patch-package:*)",
       "Bash(find \"/d/JKKN/Development/Application/JKKN_COE/app/\\(coe\\)/utilities\" -name \"page.tsx\" -o -name \"layout.tsx\")",
-      "Bash(npx next:*)"
+      "Bash(npx next:*)",
+      "Edit(/.claude/skills/search-and-favorites/**)"
     ],
     "deny": [
       "Bash(rm -rf:*)",

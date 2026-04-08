@@ -127,29 +127,34 @@ export async function GET(request: Request) {
 					const [coursesRes, cmRes] = await Promise.all([
 						supabase
 							.from('courses')
-							.select('id, course_code, course_name, internal_max_mark')
+							.select('id, course_code, course_name, internal_max_mark, evaluation_type, course_category')
 							.eq('institutions_id', institutionsId)
 							.in('course_code', uniqueCourseCodes),
 						supabase
 							.from('course_mapping')
-							.select('id, course_order')
-							.in('id', cmIds)
+							.select('course_code, program_code, course_order')
+							.eq('program_code', programCode)
+							.in('course_code', uniqueCourseCodes)
 					])
 
 					const courseByCode = new Map((coursesRes.data || []).map(c => [c.course_code, c]))
-					const cmById = new Map((cmRes.data || []).map(cm => [cm.id, cm]))
+					// Key by course_code for lookup (since program_code is already filtered)
+					const cmByCode = new Map((cmRes.data || []).map(cm => [cm.course_code, cm]))
 
-					// Deduplicate by course_offering_id
+					// Deduplicate by course_offering_id, filter to CIA/CIA+ESE only, sort by course_order
 					const seen = new Set<string>()
 					const results = offerings
 						.filter(co => {
 							if (seen.has(co.id)) return false
 							seen.add(co.id)
-							return true
+							// Only include courses with CIA or CIA + ESE evaluation type
+							const course = courseByCode.get(co.course_code)
+							const evalType = course?.evaluation_type || ''
+							return evalType === 'CIA' || evalType === 'CIA + ESE'
 						})
 						.map(co => {
 							const course = courseByCode.get(co.course_code)
-							const cm = cmById.get(co.course_id)
+							const cm = cmByCode.get(co.course_code)
 							return {
 								course_offering_id: co.id,
 								course_mapping_id: co.course_id,
@@ -157,6 +162,7 @@ export async function GET(request: Request) {
 								course_code: co.course_code,
 								course_name: course?.course_name || co.course_code,
 								internal_max_mark: course?.internal_max_mark || 100,
+								course_category: course?.course_category || null,
 								course_order: cm?.course_order ?? 999,
 								program_id: co.program_id,
 								program_code: co.program_code,
@@ -230,6 +236,7 @@ export async function GET(request: Request) {
 				return NextResponse.json({
 					setting_id: matched.id,
 					total_rounds: matched.total_rounds,
+					use_course_max: matched.use_course_max || false,
 					cia_rounds: matched.cia_rounds,
 				})
 			}
@@ -237,20 +244,42 @@ export async function GET(request: Request) {
 			case 'learners': {
 				const courseOfferingId = searchParams.get('course_offering_id')
 				const sessionId = searchParams.get('examination_session_id')
+				const programCode = searchParams.get('program_code')
 				const ciaRound = searchParams.get('cia_round') || '1'
 
 				if (!courseOfferingId || !sessionId) {
 					return NextResponse.json({ error: 'course_offering_id and examination_session_id are required' }, { status: 400 })
 				}
 
-				// Fetch regular exam registrations for this course offering
-				const { data: registrations, error: regError } = await supabase
+				// Get the course_code from the selected offering
+				const { data: selectedOffering } = await supabase
+					.from('course_offerings')
+					.select('course_code')
+					.eq('id', courseOfferingId)
+					.single()
+
+				const courseCode = selectedOffering?.course_code
+
+				// Fetch learners for this course_code + program
+				let regQuery = supabase
 					.from('exam_registrations')
-					.select('id, student_id, stu_register_no, student_name, course_offering_id, institutions_id, is_regular')
-					.eq('course_offering_id', courseOfferingId)
+					.select('id, student_id, stu_register_no, student_name, course_offering_id, institutions_id, is_regular, program_code')
 					.eq('examination_session_id', sessionId)
 					.eq('is_regular', true)
 					.order('stu_register_no')
+
+				if (courseCode) {
+					regQuery = regQuery.eq('course_code', courseCode)
+				} else {
+					regQuery = regQuery.eq('course_offering_id', courseOfferingId)
+				}
+
+				// Filter by program if provided
+				if (programCode) {
+					regQuery = regQuery.eq('program_code', programCode)
+				}
+
+				const { data: registrations, error: regError } = await regQuery.range(0, 9999)
 
 				if (regError) {
 					console.error('Error fetching exam registrations:', regError)
@@ -261,28 +290,33 @@ export async function GET(request: Request) {
 					return NextResponse.json([])
 				}
 
-				// Get student IDs that already have cia_marks for this course + session + round
-				const studentIds = registrations.map(r => r.student_id)
+				// Fetch existing cia_marks for all learners in this course + session + round
+				const allCOIds = [...new Set(registrations.map(r => r.course_offering_id))]
 				const { data: existingMarks, error: marksError } = await supabase
 					.from('cia_marks')
-					.select('student_id')
-					.eq('course_offering_id', courseOfferingId)
+					.select('*')
+					.in('course_offering_id', allCOIds)
 					.eq('examination_session_id', sessionId)
 					.eq('cia_round', Number(ciaRound))
 					.eq('is_active', true)
-					.in('student_id', studentIds)
 
 				if (marksError) {
-					console.error('Error checking existing cia_marks:', marksError)
-					return NextResponse.json({ error: 'Failed to check existing marks' }, { status: 500 })
+					console.error('Error fetching existing cia_marks:', marksError)
 				}
 
-				const existingStudentIds = new Set((existingMarks || []).map(m => m.student_id))
+				// Build lookup: student_id → saved marks
+				const marksMap = new Map<string, any>()
+				for (const m of (existingMarks || [])) {
+					marksMap.set(m.student_id, m)
+				}
 
-				// Filter out learners who already have cia_marks
-				const filtered = registrations.filter(r => !existingStudentIds.has(r.student_id))
+				// Return ALL learners with saved marks attached
+				const result = registrations.map(r => ({
+					...r,
+					saved_marks: marksMap.get(r.student_id) || null,
+				}))
 
-				return NextResponse.json(filtered)
+				return NextResponse.json(result)
 			}
 
 			case 'pattern-components': {
@@ -521,27 +555,70 @@ export async function POST(request: Request) {
 			return NextResponse.json({ error: 'Validation failed', details: errors }, { status: 400 })
 		}
 
-		// Bulk insert into cia_marks
-		const { data, error } = await supabase
+		// Split records: update existing, insert new
+		// Check which students already have marks for this course + session + round
+		const studentIdsToCheck = records.map((r: any) => r.student_id)
+		const coId = records[0]?.course_offering_id
+		const { data: existingRows } = await supabase
 			.from('cia_marks')
-			.insert(records)
 			.select('id, student_id')
+			.eq('course_offering_id', coId)
+			.eq('examination_session_id', examination_session_id)
+			.eq('cia_round', Number(cia_round) || 1)
+			.eq('is_active', true)
+			.in('student_id', studentIdsToCheck)
 
-		if (error) {
-			console.error('Error inserting cia_marks:', error)
-			if (error.code === '23505') {
-				return NextResponse.json({ error: 'Some learners already have marks for this course offering' }, { status: 400 })
+		const existingMap = new Map((existingRows || []).map(r => [r.student_id, r.id]))
+
+		const toInsert: any[] = []
+		const toUpdate: { id: string, data: any }[] = []
+
+		for (const record of records) {
+			const existingId = existingMap.get(record.student_id)
+			if (existingId) {
+				// Update existing row
+				const { institutions_id: _i, examination_session_id: _e, course_offering_id: _c, student_id: _s, exam_registration_id: _r, cia_round: _cr, ...updateFields } = record
+				toUpdate.push({ id: existingId, data: updateFields })
+			} else {
+				toInsert.push(record)
 			}
-			if (error.code === '23503') {
-				return NextResponse.json({ error: 'Invalid reference - check course offering and registration IDs' }, { status: 400 })
+		}
+
+		let insertCount = 0
+		let updateCount = 0
+
+		// Bulk insert new records
+		if (toInsert.length > 0) {
+			const { data: inserted, error: insertError } = await supabase
+				.from('cia_marks')
+				.insert(toInsert)
+				.select('id')
+			if (insertError) {
+				console.error('Error inserting cia_marks:', insertError)
+				return NextResponse.json({ error: 'Failed to save new marks', details: insertError.message }, { status: 500 })
 			}
-			return NextResponse.json({ error: 'Failed to save marks', details: error.message }, { status: 500 })
+			insertCount = inserted?.length || 0
+		}
+
+		// Update existing records one by one
+		for (const { id, data: updateData } of toUpdate) {
+			const { error: updateError } = await supabase
+				.from('cia_marks')
+				.update(updateData)
+				.eq('id', id)
+			if (updateError) {
+				console.error('Error updating cia_marks:', updateError)
+			} else {
+				updateCount++
+			}
 		}
 
 		return NextResponse.json({
 			success: true,
-			count: data?.length || 0,
-			message: `Successfully saved marks for ${data?.length || 0} learners`
+			count: insertCount + updateCount,
+			inserted: insertCount,
+			updated: updateCount,
+			message: `Saved marks: ${insertCount} new, ${updateCount} updated`
 		}, { status: 201 })
 	} catch (error) {
 		console.error('Internal mark entry POST error:', error)

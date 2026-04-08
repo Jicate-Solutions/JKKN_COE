@@ -62,6 +62,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip"
 import { useToast } from "@/hooks/common/use-toast"
+import { useInstitutionFilter } from "@/hooks/use-institution-filter"
 import { Toaster } from "@/components/ui/toaster"
 import {
   Download,
@@ -107,7 +108,6 @@ import type {
 
 // Import service layer functions
 import {
-	fetchUsers as fetchUsersService,
 	fetchInstitutions as fetchInstitutionsService,
 	fetchRoles as fetchRolesService,
 	createUser,
@@ -132,6 +132,7 @@ import {
 export default function UsersPage() {
   const router = useRouter()
   const { toast } = useToast()
+  const { isReady, appendToUrl, mustSelectInstitution } = useInstitutionFilter()
 
   const [users, setUsers] = useState<User[]>([])
   const [institutions, setInstitutions] = useState<Institution[]>([])
@@ -168,7 +169,18 @@ export default function UsersPage() {
   const fetchUsers = async (showLoader = true) => {
     try {
       if (showLoader) setLoading(true)
-      const data = await fetchUsersService(searchTerm)
+      const baseUrl = searchTerm
+        ? `/api/users/users-list?q=${encodeURIComponent(searchTerm)}`
+        : '/api/users/users-list'
+      const url = appendToUrl(baseUrl)
+      const response = await fetch(url, {
+        cache: 'no-store',
+        headers: { 'Content-Type': 'application/json' },
+      })
+      if (!response.ok) {
+        throw new Error(`Failed to fetch users: ${response.statusText}`)
+      }
+      const data = await response.json()
       if (Array.isArray(data)) {
         setUsers(data)
       } else {
@@ -214,13 +226,16 @@ export default function UsersPage() {
   }
 
   useEffect(() => {
-    fetchUsers()
-    fetchInstitutions()
-    fetchRoles()
+    if (isReady) {
+      fetchUsers()
+      fetchInstitutions()
+      fetchRoles()
+    }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, [isReady])
 
   useEffect(() => {
+    if (!isReady) return
     const debounceTimer = setTimeout(() => {
       if (searchTerm) {
         fetchUsers(false)
@@ -231,7 +246,7 @@ export default function UsersPage() {
 
     return () => clearTimeout(debounceTimer)
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchTerm])
+  }, [searchTerm, isReady])
 
   const handleRefresh = () => {
     setRefreshing(true)

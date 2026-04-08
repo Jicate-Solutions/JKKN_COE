@@ -27,6 +27,7 @@ import { AppFooter } from "@/components/layout/app-footer"
 import { SidebarProvider, SidebarInset } from "@/components/ui/sidebar"
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet"
 import { useToast } from "@/hooks/common/use-toast"
+import { useInstitutionFilter } from "@/hooks/use-institution-filter"
 import {
 	AlertDialog,
 	AlertDialogAction,
@@ -139,12 +140,13 @@ export default function CourseAssociationsPage() {
 	const [associationToDelete, setAssociationToDelete] = useState<AssociationWithRelations | null>(null)
 
 	const { toast } = useToast()
+	const { isReady, appendToUrl } = useInstitutionFilter()
 
 	// Fetch associations
 	const fetchAssociations = async () => {
 		try {
 			setLoading(true)
-			const response = await fetch("/api/internal-assessment-patterns/course-associations")
+			const response = await fetch(appendToUrl("/api/internal-assessment-patterns/course-associations"))
 			if (response.ok) {
 				const data = await response.json()
 				setAssociations(data)
@@ -166,7 +168,7 @@ export default function CourseAssociationsPage() {
 	// Fetch patterns for dropdown
 	const fetchPatterns = async () => {
 		try {
-			const response = await fetch("/api/internal-assessment-patterns")
+			const response = await fetch(appendToUrl("/api/internal-assessment-patterns"))
 			if (response.ok) {
 				const data = await response.json()
 				setPatterns(data.filter((p: InternalAssessmentPattern) => p.status === "active"))
@@ -179,7 +181,7 @@ export default function CourseAssociationsPage() {
 	// Fetch courses for dropdown
 	const fetchCourses = async () => {
 		try {
-			const response = await fetch("/api/courses")
+			const response = await fetch(appendToUrl("/api/courses"))
 			if (response.ok) {
 				const data = await response.json()
 				setCourses(data)
@@ -190,10 +192,12 @@ export default function CourseAssociationsPage() {
 	}
 
 	useEffect(() => {
-		fetchAssociations()
-		fetchPatterns()
-		fetchCourses()
-	}, [])
+		if (isReady) {
+			fetchAssociations()
+			fetchPatterns()
+			fetchCourses()
+		}
+	}, [isReady])
 
 	// Filter associations
 	const filteredAssociations = useMemo(() => {

@@ -24,6 +24,7 @@ import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { Switch } from "@/components/ui/switch"
 import { useInstitutionFilter } from "@/hooks/use-institution-filter"
+import { useSessionSync } from "@/hooks/use-session-sync"
 import { DateRangePicker } from "@/components/ui/date-range-picker"
 import { DateRange } from "react-day-picker"
 
@@ -110,6 +111,7 @@ export default function ExamTimetablesListPage() {
 	const [sessionFilter, setSessionFilter] = useState("all")
 	const [modeFilter, setModeFilter] = useState("all")
 	const [examTypeFilter, setExamTypeFilter] = useState("all")
+	const { selectedSessionId: syncedSessionId, mustSelectSession } = useSessionSync()
 	const [examSessionFilter, setExamSessionFilter] = useState("") // Will be set to latest session after fetch
 
 	// Date range filter - default "upcoming" to show upcoming exams
@@ -135,9 +137,10 @@ export default function ExamTimetablesListPage() {
 				const sessionsData = await sessionsRes.json()
 				setExaminationSessions(sessionsData || [])
 
-				// Auto-select the latest session (first in array since sorted by created_at desc)
-				// Only set if examSessionFilter is empty (initial load)
-				if (sessionsData && sessionsData.length > 0 && !examSessionFilter) {
+				// Auto-select: global session takes priority, otherwise use latest session
+				if (syncedSessionId) {
+					setExamSessionFilter(syncedSessionId)
+				} else if (sessionsData && sessionsData.length > 0 && !examSessionFilter) {
 					setExamSessionFilter(sessionsData[0].id)
 				}
 			}
@@ -155,6 +158,13 @@ export default function ExamTimetablesListPage() {
 			console.error('Error fetching reference data:', error)
 		}
 	}
+
+	// Sync examSessionFilter from global session selector
+	useEffect(() => {
+		if (syncedSessionId) {
+			setExamSessionFilter(syncedSessionId)
+		}
+	}, [syncedSessionId])
 
 	// Upload state
 	const [uploadSummary, setUploadSummary] = useState<{
@@ -1320,7 +1330,8 @@ export default function ExamTimetablesListPage() {
 
 								{/* Row 2: Filter and Search Row - Exam Session (1st), Date (2nd) */}
 								<div className="flex items-center gap-2 flex-wrap">
-									{/* 1. Exam Session Filter (Primary) */}
+									{/* 1. Exam Session Filter — hidden when global session selected */}
+									{mustSelectSession && (
 									<Select value={examSessionFilter} onValueChange={setExamSessionFilter}>
 										<SelectTrigger className="h-9 rounded-lg border-slate-300 focus:border-blue-500 w-[180px]">
 											<SelectValue placeholder="All Exam Sessions" />
@@ -1334,6 +1345,7 @@ export default function ExamTimetablesListPage() {
 											))}
 										</SelectContent>
 									</Select>
+									)}
 
 									{/* 2. Date Range Filter (Secondary) */}
 									<Select value={dateRangePreset} onValueChange={(val) => {

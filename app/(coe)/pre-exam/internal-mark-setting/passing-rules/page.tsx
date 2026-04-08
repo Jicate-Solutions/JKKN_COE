@@ -28,6 +28,7 @@ import { AppFooter } from "@/components/layout/app-footer"
 import { SidebarProvider, SidebarInset } from "@/components/ui/sidebar"
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet"
 import { useToast } from "@/hooks/common/use-toast"
+import { useInstitutionFilter } from "@/hooks/use-institution-filter"
 import {
 	AlertDialog,
 	AlertDialogAction,
@@ -139,12 +140,13 @@ export default function PassingRulesPage() {
 	const [ruleToDelete, setRuleToDelete] = useState<RuleWithPattern | null>(null)
 
 	const { toast } = useToast()
+	const { isReady, appendToUrl } = useInstitutionFilter()
 
 	// Fetch rules
 	const fetchRules = async () => {
 		try {
 			setLoading(true)
-			const response = await fetch("/api/internal-assessment-patterns/passing-rules")
+			const response = await fetch(appendToUrl("/api/internal-assessment-patterns/passing-rules"))
 			if (response.ok) {
 				const data = await response.json()
 				setRules(data)
@@ -166,7 +168,7 @@ export default function PassingRulesPage() {
 	// Fetch patterns for dropdown
 	const fetchPatterns = async () => {
 		try {
-			const response = await fetch("/api/internal-assessment-patterns")
+			const response = await fetch(appendToUrl("/api/internal-assessment-patterns"))
 			if (response.ok) {
 				const data = await response.json()
 				setPatterns(data)
@@ -177,9 +179,11 @@ export default function PassingRulesPage() {
 	}
 
 	useEffect(() => {
-		fetchRules()
-		fetchPatterns()
-	}, [])
+		if (isReady) {
+			fetchRules()
+			fetchPatterns()
+		}
+	}, [isReady])
 
 	// Filter rules
 	const filteredRules = useMemo(() => {

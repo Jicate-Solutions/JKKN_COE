@@ -27,6 +27,7 @@ import { AppFooter } from "@/components/layout/app-footer"
 import { SidebarProvider, SidebarInset } from "@/components/ui/sidebar"
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet"
 import { useToast } from "@/hooks/common/use-toast"
+import { useInstitutionFilter } from "@/hooks/use-institution-filter"
 import {
 	AlertDialog,
 	AlertDialogAction,
@@ -137,12 +138,13 @@ export default function ProgramAssociationsPage() {
 	const [associationToDelete, setAssociationToDelete] = useState<AssociationWithRelations | null>(null)
 
 	const { toast } = useToast()
+	const { isReady, appendToUrl } = useInstitutionFilter()
 
 	// Fetch associations
 	const fetchAssociations = async () => {
 		try {
 			setLoading(true)
-			const response = await fetch("/api/internal-assessment-patterns/program-associations")
+			const response = await fetch(appendToUrl("/api/internal-assessment-patterns/program-associations"))
 			if (response.ok) {
 				const data = await response.json()
 				setAssociations(data)
@@ -164,7 +166,7 @@ export default function ProgramAssociationsPage() {
 	// Fetch patterns for dropdown
 	const fetchPatterns = async () => {
 		try {
-			const response = await fetch("/api/internal-assessment-patterns")
+			const response = await fetch(appendToUrl("/api/internal-assessment-patterns"))
 			if (response.ok) {
 				const data = await response.json()
 				setPatterns(data.filter((p: InternalAssessmentPattern) => p.status === "active"))
@@ -177,7 +179,7 @@ export default function ProgramAssociationsPage() {
 	// Fetch programs for dropdown
 	const fetchPrograms = async () => {
 		try {
-			const response = await fetch("/api/program")
+			const response = await fetch(appendToUrl("/api/program"))
 			if (response.ok) {
 				const data = await response.json()
 				setPrograms(data)
@@ -188,10 +190,12 @@ export default function ProgramAssociationsPage() {
 	}
 
 	useEffect(() => {
-		fetchAssociations()
-		fetchPatterns()
-		fetchPrograms()
-	}, [])
+		if (isReady) {
+			fetchAssociations()
+			fetchPatterns()
+			fetchPrograms()
+		}
+	}, [isReady])
 
 	// Filter associations
 	const filteredAssociations = useMemo(() => {

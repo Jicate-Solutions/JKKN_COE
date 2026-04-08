@@ -29,10 +29,12 @@ import { useToast } from "@/hooks/common/use-toast"
 import { Switch } from "@/components/ui/switch"
 import Link from "next/link"
 import { PlusCircle, Edit, Trash2, Search, ChevronLeft, ChevronRight, ArrowUpDown, ArrowUp, ArrowDown, ClipboardCheck, TrendingUp, FileSpreadsheet, RefreshCw, CheckCircle, XCircle, AlertTriangle, FileJson, Download, Upload, Loader2, LayoutList, MoreHorizontal, ChevronDown } from "lucide-react"
+import { useSessionSync } from "@/hooks/use-session-sync"
 
 
 export default function ExamRegistrationsPage() {
 	const { toast } = useToast()
+	const { selectedSessionId: syncedSessionId, mustSelectSession } = useSessionSync()
 
 	// Filter states - defined first so they can be passed to hook
 	const [programFilter, setProgramFilter] = useState("all")
@@ -107,6 +109,15 @@ export default function ExamRegistrationsPage() {
 	useEffect(() => {
 		setProgramFilter('all')
 	}, [institutionId])
+
+	// Sync session filter + form field from global session selector
+	useEffect(() => {
+		if (syncedSessionId) {
+			setSessionFilter(syncedSessionId)
+			setSelectedExaminationSessionId(syncedSessionId)
+			setFormData(prev => ({ ...prev, examination_session_id: syncedSessionId }))
+		}
+	}, [syncedSessionId])
 
 	// Local UI state
 	const [items, setItems] = useState<ExamRegistration[]>([])
@@ -189,7 +200,7 @@ export default function ExamRegistrationsPage() {
 		setFormData({
 			institutions_id: autoInstitutionId,
 			student_id: "",
-			examination_session_id: "",
+			examination_session_id: syncedSessionId || "",
 			course_offering_id: "",
 			stu_register_no: "",
 			student_name: "",
@@ -1635,6 +1646,7 @@ export default function ExamRegistrationsPage() {
 											</SelectContent>
 										</Select>
 
+										{mustSelectSession && (
 										<Select value={sessionFilter} onValueChange={setSessionFilter}>
 											<SelectTrigger className="h-8 text-sm w-[180px]">
 												<SelectValue placeholder="All Sessions" />
@@ -1648,6 +1660,7 @@ export default function ExamRegistrationsPage() {
 												))}
 											</SelectContent>
 										</Select>
+										)}
 
 										<Select value={programFilter} onValueChange={setProgramFilter} disabled={programsLoading}>
 											<SelectTrigger className="h-8 text-sm w-[180px]">
@@ -1910,7 +1923,8 @@ export default function ExamRegistrationsPage() {
 								)}
 
 
-								{/* Examination Session dropdown */}
+								{/* Examination Session dropdown — hidden when global session selected */}
+								{mustSelectSession && (
 								<div className="space-y-2">
 									<Label htmlFor="examination_session_id" className="text-sm font-semibold">
 										Examination Session <span className="text-red-500">*</span>
@@ -1940,6 +1954,7 @@ export default function ExamRegistrationsPage() {
 									{errors.examination_session_id && <p className="text-xs text-destructive">{errors.examination_session_id}</p>}
 									{!formData.institutions_id && <p className="text-xs text-muted-foreground">Please select an institution first</p>}
 								</div>
+								)}
 
 								{/* Learner Register Number – type to auto-lookup */}
 								<div className="space-y-2">

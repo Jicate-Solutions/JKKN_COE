@@ -76,6 +76,7 @@ import {
 } from "lucide-react"
 import { Switch } from "@/components/ui/switch"
 import { useToast } from "@/hooks/common/use-toast"
+import { useInstitutionFilter } from "@/hooks/use-institution-filter"
 
 // Batch type definition - matching actual database schema
 interface Batch {
@@ -98,6 +99,14 @@ type InstitutionOption = {
 }
 
 export default function BatchPage() {
+  const {
+    isReady,
+    appendToUrl,
+    mustSelectInstitution,
+    getInstitutionIdForCreate,
+    getInstitutionCodeForCreate
+  } = useInstitutionFilter()
+
   const [batches, setBatches] = useState<Batch[]>([])
   const [loading, setLoading] = useState(true)
   const [searchTerm, setSearchTerm] = useState("")
@@ -128,8 +137,8 @@ export default function BatchPage() {
 
   const resetForm = () => {
     setFormData({
-      institutions_id: '',
-      institution_code: '',
+      institutions_id: getInstitutionIdForCreate() || '',
+      institution_code: getInstitutionCodeForCreate() || '',
       batch_year: new Date().getFullYear(),
       batch_name: '',
       batch_code: '',
@@ -190,7 +199,7 @@ export default function BatchPage() {
   const fetchBatches = async () => {
     try {
       setLoading(true)
-      const response = await fetch('/api/master/batches')
+      const response = await fetch(appendToUrl('/api/master/batches'))
       if (response.ok) {
         const data = await response.json()
         setBatches(data)
@@ -211,8 +220,10 @@ export default function BatchPage() {
   }
 
   useEffect(() => {
-    fetchBatches()
-  }, [])
+    if (isReady) {
+      fetchBatches()
+    }
+  }, [isReady])
 
   useEffect(() => {
     const fetchInstitutions = async () => {

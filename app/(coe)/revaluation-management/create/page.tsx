@@ -18,6 +18,7 @@ import {
 import { Switch } from '@/components/ui/switch'
 import { useToast } from '@/hooks/common/use-toast'
 import { useInstitutionFilter } from '@/hooks/use-institution-filter'
+import { useSessionSync } from '@/hooks/use-session-sync'
 import { AppSidebar } from '@/components/layout/app-sidebar'
 import { AppHeader } from '@/components/layout/app-header'
 import { AppFooter } from '@/components/layout/app-footer'
@@ -44,6 +45,7 @@ export default function CreateRevaluationPage() {
 	const { toast } = useToast()
 	const router = useRouter()
 	const { institutionId, isReady, filter } = useInstitutionFilter()
+	const { selectedSessionId: syncedSessionId, mustSelectSession } = useSessionSync()
 
 	// Form state
 	const [sessions, setSessions] = useState<ExamSession[]>([])
@@ -86,6 +88,21 @@ export default function CreateRevaluationPage() {
 
 		fetchSessions()
 	}, [isReady, institutionId])
+
+	// Auto-fill form from global session selector
+	useEffect(() => {
+		if (syncedSessionId && sessions.length > 0) {
+			const session = sessions.find(s => s.id === syncedSessionId)
+			if (session) {
+				setFormData(prev => ({
+					...prev,
+					examination_session_id: syncedSessionId,
+					session_code: session.session_code || '',
+					session_name: session.session_name || '',
+				}))
+			}
+		}
+	}, [syncedSessionId, sessions])
 
 	// Handle session selection
 	const handleSessionChange = (sessionId: string) => {
@@ -243,7 +260,8 @@ export default function CreateRevaluationPage() {
 							</CardHeader>
 							<CardContent className="pt-6">
 								<div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-									{/* Examination Session */}
+									{/* Examination Session — hidden when global session selected */}
+									{mustSelectSession && (
 									<div className="space-y-2 md:col-span-2">
 										<Label htmlFor="session">
 											Examination Session <span className="text-red-500">*</span>
@@ -273,6 +291,7 @@ export default function CreateRevaluationPage() {
 											<p className="text-sm text-red-500">{errors.examination_session_id}</p>
 										)}
 									</div>
+									)}
 
 									{/* Start Date */}
 									<div className="space-y-2">

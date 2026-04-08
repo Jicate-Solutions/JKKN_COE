@@ -168,14 +168,18 @@ export default function RoleManagementPage() {
 				url = `${url}${sep}search=${encodeURIComponent(usersSearch.trim())}`
 			}
 			const response = await fetch(url)
-			if (!response.ok) throw new Error('Failed to fetch users')
+			if (!response.ok) {
+				const errorBody = await response.json().catch(() => ({}))
+				throw new Error(errorBody.error || `Failed to fetch users (${response.status})`)
+			}
 			const data = await response.json()
 			setCoeUsers(data)
 		} catch (error) {
 			console.error('Error fetching COE users:', error)
+			const message = error instanceof Error ? error.message : 'Please refresh and try again.'
 			toast({
 				title: 'Failed to load users',
-				description: 'Please refresh and try again.',
+				description: message,
 				variant: 'destructive',
 				className: 'bg-red-50 border-red-200 text-red-800 dark:bg-red-900/20 dark:border-red-800 dark:text-red-200',
 			})

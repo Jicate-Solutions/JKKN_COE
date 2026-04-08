@@ -4,6 +4,7 @@ import { useMemo, useState, useEffect } from 'react'
 import XLSX from '@/lib/utils/excel-compat'
 import supabaseAuthService from '@/services/auth/supabase-auth-service'
 import { useInstitutionFilter } from '@/hooks/use-institution-filter'
+import { useSessionSync } from '@/hooks/use-session-sync'
 import { useInstitution } from '@/context/institution-context'
 import { useMyJKKNInstitutionFilter } from '@/hooks/use-myjkkn-institution-filter'
 import { useMyJKKNReferenceLookup } from '@/hooks/myjkkn/use-myjkkn-reference-lookup'
@@ -76,6 +77,8 @@ export default function CourseOfferingPage() {
 		shouldFilter,
 		getInstitutionIdForCreate
 	} = useInstitutionFilter()
+
+	const { selectedSessionId: syncedSessionId, mustSelectSession } = useSessionSync()
 
 	const {
 		availableInstitutions,
@@ -642,13 +645,20 @@ export default function CourseOfferingPage() {
 		}
 	}, [institutionContextReady, getInstitutionIdForCreate, formData.institutions_id])
 
+	// Sync form session from global session selector
+	useEffect(() => {
+		if (syncedSessionId) {
+			setFormData(prev => ({ ...prev, examination_session_id: syncedSessionId }))
+		}
+	}, [syncedSessionId])
+
 	const resetForm = () => {
 		// Use institution filter helper to preserve or auto-fill institution
 		const preservedInstitutionId = getInstitutionIdForCreate() || ''
 		setFormData({
 			institutions_id: preservedInstitutionId,
 			course_id: "",
-			examination_session_id: "",
+			examination_session_id: syncedSessionId || "",
 			program_id: "",
 			semester_id: "",
 			semester_code: "",
@@ -1776,7 +1786,8 @@ export default function CourseOfferingPage() {
 									</div>
 								) : null}
 
-								{/* Examination Session */}
+								{/* Examination Session — hidden when global session selected */}
+								{mustSelectSession && (
 								<div className="space-y-2 md:col-span-2">
 									<Label htmlFor="examination_session_id" className="text-sm font-semibold">
 										Examination Session <span className="text-red-500">*</span>
@@ -1799,6 +1810,7 @@ export default function CourseOfferingPage() {
 									</Select>
 									{errors.examination_session_id && <p className="text-xs text-destructive">{errors.examination_session_id}</p>}
 								</div>
+								)}
 
 								{/* Program */}
 								<div className="space-y-2 md:col-span-2">

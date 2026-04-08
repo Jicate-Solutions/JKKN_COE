@@ -3,6 +3,7 @@
 import { useState, useEffect, useMemo, useCallback } from "react"
 import type { ExamRegistration, InstitutionOption, ExaminationSessionOption, CourseOfferingOption } from "@/types/exam-registrations"
 import { useInstitutionFilter } from "@/hooks/use-institution-filter"
+import { useSessionSync } from "@/hooks/use-session-sync"
 import { fetchInstitutions, fetchExaminationSessions, fetchCourseOfferings } from "@/services/exam-management/exam-registrations-service"
 import { AppSidebar } from "@/components/layout/app-sidebar"
 import { AppHeader } from "@/components/layout/app-header"
@@ -42,6 +43,8 @@ export default function ExamRegistrationsLookupPage() {
 		institutionId,
 		getInstitutionIdForCreate,
 	} = useInstitutionFilter()
+
+	const { selectedSessionId: syncedSessionId, mustSelectSession } = useSessionSync()
 
 	// Dropdown data
 	const [institutions, setInstitutions] = useState<InstitutionOption[]>([])
@@ -145,6 +148,13 @@ export default function ExamRegistrationsLookupPage() {
 		})
 		setLookupPerformed(false)
 	}
+
+	// Sync session filter from global session selector
+	useEffect(() => {
+		if (syncedSessionId) {
+			setFilters(prev => ({ ...prev, examination_session_id: syncedSessionId }))
+		}
+	}, [syncedSessionId])
 
 	const handleSessionChange = (value: string) => {
 		setFilters(prev => ({
@@ -424,7 +434,8 @@ export default function ExamRegistrationsLookupPage() {
 										</Select>
 									</div>
 
-									{/* Session Filter */}
+									{/* Session Filter — hidden when global session selected */}
+									{mustSelectSession && (
 									<div className="space-y-2">
 										<Label className="text-xs font-medium">Exam Session</Label>
 										<Select
@@ -445,6 +456,7 @@ export default function ExamRegistrationsLookupPage() {
 											</SelectContent>
 										</Select>
 									</div>
+									)}
 
 									{/* Program Filter */}
 									<div className="space-y-2">

@@ -20,6 +20,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSepara
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { Textarea } from "@/components/ui/textarea"
 import { useToast } from "@/hooks/common/use-toast"
+import { useInstitutionFilter } from "@/hooks/use-institution-filter"
 import Link from "next/link"
 import { PlusCircle, Edit, Trash2, Search, ChevronLeft, ChevronRight, ArrowUpDown, ArrowUp, ArrowDown, Calendar, TrendingUp, FileSpreadsheet, RefreshCw, CheckCircle, XCircle, AlertTriangle, Building2, MoreHorizontal, ChevronDown, Download, Upload } from "lucide-react"
 
@@ -44,6 +45,14 @@ interface Institution {
 
 export default function AcademicYearsPage() {
 	const { toast } = useToast()
+	const {
+		isReady,
+		appendToUrl,
+		mustSelectInstitution,
+		shouldFilter,
+		institutionId,
+		getInstitutionIdForCreate
+	} = useInstitutionFilter()
 
 	const [items, setItems] = useState<AcademicYear[]>([])
 	const [institutions, setInstitutions] = useState<Institution[]>([])
@@ -88,7 +97,7 @@ export default function AcademicYearsPage() {
 	const fetchAcademicYears = async () => {
 		try {
 			setLoading(true)
-			const response = await fetch('/api/master/academic-years')
+			const response = await fetch(appendToUrl('/api/master/academic-years'))
 			if (!response.ok) {
 				throw new Error('Failed to fetch academic years')
 			}
@@ -124,13 +133,17 @@ export default function AcademicYearsPage() {
 
 	// Load data on mount
 	useEffect(() => {
-		fetchAcademicYears()
-		fetchInstitutions()
-	}, [])
+		if (isReady) {
+			fetchAcademicYears()
+			fetchInstitutions()
+		}
+	}, [isReady])
 
 	const resetForm = () => {
+		const autoInstId = getInstitutionIdForCreate()
+		const autoInst = autoInstId ? institutions.find(i => i.id === autoInstId) : null
 		setFormData({
-			institution_code: "",
+			institution_code: autoInst?.institution_code || "",
 			academic_year: "",
 			start_date: "",
 			end_date: "",

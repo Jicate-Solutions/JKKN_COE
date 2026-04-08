@@ -3,6 +3,7 @@
 import { useState, useEffect, useMemo } from 'react'
 import Link from 'next/link'
 import { useAuth } from '@/lib/auth/auth-context-parent'
+import { useInstitutionFilter } from '@/hooks/use-institution-filter'
 import { AppSidebar } from '@/components/layout/app-sidebar'
 import { AppHeader } from '@/components/layout/app-header'
 import { AppFooter } from '@/components/layout/app-footer'
@@ -35,6 +36,7 @@ interface Board {
 
 export default function SendEmailPage() {
 	const { toast } = useToast()
+	const { isReady, appendToUrl } = useInstitutionFilter()
 
 	// Data
 	const [examiners, setExaminers] = useState<Examiner[]>([])
@@ -68,15 +70,15 @@ export default function SendEmailPage() {
 
 	// Fetch data
 	useEffect(() => {
-		fetchData()
-	}, [])
+		if (isReady) fetchData()
+	}, [isReady])
 
 	const fetchData = async () => {
 		try {
 			setLoading(true)
 			const [examinersRes, boardsRes] = await Promise.all([
-				fetch('/api/examiners?status=ACTIVE'),
-				fetch('/api/master/boards'),
+				fetch(appendToUrl('/api/examiners?status=ACTIVE')),
+				fetch(appendToUrl('/api/master/boards')),
 			])
 
 			if (examinersRes.ok) {

@@ -19,6 +19,7 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { useToast } from "@/hooks/common/use-toast"
+import { useInstitutionFilter } from "@/hooks/use-institution-filter"
 import { useFormValidation, ValidationPresets } from "@/hooks/common/use-form-validation"
 import Link from "next/link"
 import { Search, ChevronLeft, ChevronRight, ArrowUpDown, ArrowUp, ArrowDown, Users, TrendingUp, FileSpreadsheet, RefreshCw, XCircle, AlertTriangle, PlusCircle, MoreHorizontal, ChevronDown, Download, Upload } from "lucide-react"
@@ -44,6 +45,12 @@ type Section = {
 
 export default function SectionPage() {
   const { toast } = useToast()
+  const {
+    isReady,
+    appendToUrl,
+    mustSelectInstitution,
+    getInstitutionIdForCreate
+  } = useInstitutionFilter()
   const [items, setItems] = useState<Section[]>([])
   const [institutions, setInstitutions] = useState<Institution[]>([])
   const [loading, setLoading] = useState(true)
@@ -86,7 +93,7 @@ export default function SectionPage() {
   const fetchSections = async () => {
     try {
       setLoading(true)
-      const response = await fetch('/api/master/sections')
+      const response = await fetch(appendToUrl('/api/master/sections'))
       if (!response.ok) {
         throw new Error('Failed to fetch sections')
       }
@@ -118,16 +125,20 @@ export default function SectionPage() {
     }
   }
 
-  // Load data on component mount
+  // Load data when institution filter is ready
   useEffect(() => {
-    fetchSections()
-    fetchInstitutions()
-  }, [])
+    if (isReady) {
+      fetchSections()
+      fetchInstitutions()
+    }
+  }, [isReady])
 
   const resetForm = () => {
+    const institutionId = getInstitutionIdForCreate()
+    const institution = institutions.find(i => i.id === institutionId)
     setFormData({
-      institutions_id: "",
-      institution_code: "",
+      institutions_id: institutionId || "",
+      institution_code: institution?.institution_code || "",
       section_name: "",
       section_id: "",
       section_description: "",

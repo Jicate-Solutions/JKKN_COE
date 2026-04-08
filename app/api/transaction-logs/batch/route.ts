@@ -21,17 +21,19 @@ async function getSessionByToken(supabase: ReturnType<typeof getSupabaseServer>,
 	if (!accessToken) return { sessionId: null, userId: null }
 
 	// Lookup session by session_token (which is the access_token)
-	const { data: session } = await supabase
+	// Use limit(1) instead of .single() — duplicate active sessions can exist
+	const { data: sessions } = await supabase
 		.from('sessions')
 		.select('id, user_id')
 		.eq('session_token', accessToken)
 		.eq('is_active', true)
-		.single()
+		.order('created_at', { ascending: false })
+		.limit(1)
 
-	if (session) {
+	if (sessions && sessions.length > 0) {
 		return {
-			sessionId: session.id,
-			userId: session.user_id
+			sessionId: sessions[0].id,
+			userId: sessions[0].user_id
 		}
 	}
 

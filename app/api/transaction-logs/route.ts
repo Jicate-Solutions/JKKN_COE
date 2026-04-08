@@ -10,17 +10,19 @@ async function getSessionByToken(supabase: ReturnType<typeof getSupabaseServer>,
 	if (!accessToken) return { sessionId: null, userId: null }
 
 	// Lookup session by session_token (which is the access_token)
-	const { data: session } = await supabase
+	// Use limit(1) instead of .single() — duplicate active sessions can exist
+	const { data: sessions } = await supabase
 		.from('sessions')
 		.select('id, user_id')
 		.eq('session_token', accessToken)
 		.eq('is_active', true)
-		.single()
+		.order('created_at', { ascending: false })
+		.limit(1)
 
-	if (session) {
+	if (sessions && sessions.length > 0) {
 		return {
-			sessionId: session.id,
-			userId: session.user_id
+			sessionId: sessions[0].id,
+			userId: sessions[0].user_id
 		}
 	}
 
@@ -125,13 +127,10 @@ export async function GET(request: Request) {
 		const supabase = getSupabaseServer()
 		const offset = (page - 1) * limit
 
-		// Build query
+		// Build query — no FK join on user_id, fetch users separately
 		let query = supabase
 			.from('transaction_logs')
-			.select(`
-				*,
-				users:user_id (id, email, full_name)
-			`, { count: 'exact' })
+			.select('*', { count: 'exact' })
 
 		// Apply filters
 		if (user_id) query = query.eq('user_id', user_id)
@@ -152,8 +151,28 @@ export async function GET(request: Request) {
 			return NextResponse.json({ error: 'Failed to fetch logs' }, { status: 500 })
 		}
 
+		// Batch-fetch user details for logs that have a user_id
+		const userIds = [...new Set((data || []).map(d => d.user_id).filter(Boolean))]
+		let usersMap: Record<string, { id: string; email: string; full_name: string | null }> = {}
+
+		if (userIds.length > 0) {
+			const { data: users } = await supabase
+				.from('users')
+				.select('id, email, full_name')
+				.in('id', userIds)
+			if (users) {
+				usersMap = Object.fromEntries(users.map(u => [u.id, u]))
+			}
+		}
+
+		// Merge user data into logs
+		const enrichedData = (data || []).map(log => ({
+			...log,
+			users: log.user_id ? (usersMap[log.user_id] || null) : null,
+		}))
+
 		return NextResponse.json({
-			data,
+			data: enrichedData,
 			pagination: {
 				page,
 				limit,
