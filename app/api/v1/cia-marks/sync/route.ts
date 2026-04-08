@@ -49,6 +49,8 @@ const ALLOWED_FIELDS = new Set([
 	'submission_date', 'submitted_by',
 	// Status
 	'marks_status', 'remarks',
+	// Audit (auto-set by server, but allowed if caller sends)
+	'created_by', 'submitted_by', 'updated_by',
 ])
 
 // Required fields — program_id and course_id are NOT required (auto-resolved)
@@ -151,6 +153,11 @@ export const POST = withExternalAuth(async (request: Request, ctx: ExternalApiCo
 		// Default marks_status
 		if (!sanitized.marks_status) sanitized.marks_status = 'Submitted'
 
+		// Audit: set created_by / submitted_by from API key context
+		const apiIdentity = `api:${ctx.appName}` // e.g. "api:MyJKKN Internal Marks"
+		sanitized.created_by = apiIdentity
+		sanitized.submitted_by = raw.submitted_by || apiIdentity
+
 		// Ensure is_active
 		sanitized.is_active = true
 
@@ -230,8 +237,10 @@ export const POST = withExternalAuth(async (request: Request, ctx: ExternalApiCo
 	}
 
 	// Update existing records
+	const apiIdentityForUpdate = `api:${ctx.appName}`
 	for (const { record } of toUpdate) {
-		const { student_id, course_offering_id, examination_session_id, cia_round, institutions_id, exam_registration_id, is_active, ...updateFields } = record as any
+		const { student_id, course_offering_id, examination_session_id, cia_round, institutions_id, exam_registration_id, is_active, created_by, ...updateFields } = record as any
+		updateFields.updated_by = apiIdentityForUpdate
 		const { error } = await supabase
 			.from('cia_marks')
 			.update(updateFields)
