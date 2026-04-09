@@ -24,6 +24,12 @@ import Link from "next/link"
 // TYPES
 // =====================================================
 
+interface Institution {
+	id: string
+	institution_code: string
+	institution_name: string
+}
+
 interface ExamSession {
 	id: string
 	session_name: string
@@ -48,40 +54,99 @@ export default function NADReportPage() {
 	useSessionSync()
 	const { toast } = useToast()
 	const { hasAnyRole, hasPermission } = useAuth()
-	const { isReady, institutionId: globalInstitutionId, mustSelectInstitution } = useInstitutionFilter()
+	const { isReady, appendToUrl, institutionId: contextInstitutionId, shouldFilter, mustSelectInstitution } = useInstitutionFilter()
 
 	// NAD access: same logic as the dashboard used
 	const canAccessNAD = hasAnyRole(['super_admin', 'coe', 'deputy_coe', 'nad_coordinator']) || hasPermission('nad.view')
 	const canExportNAD = hasAnyRole(['super_admin', 'coe', 'deputy_coe', 'nad_coordinator']) || hasPermission('nad.export')
 
 	// Dropdown data
+	const [institutions, setInstitutions] = useState<Institution[]>([])
 	const [sessions, setSessions] = useState<ExamSession[]>([])
 	const [programs, setPrograms] = useState<Program[]>([])
 	const [semesters, setSemesters] = useState<Semester[]>([])
+	const [loadingInstitutions, setLoadingInstitutions] = useState(false)
 	const [loadingSessions, setLoadingSessions] = useState(false)
 	const [loadingPrograms, setLoadingPrograms] = useState(false)
 	const [loadingSemesters, setLoadingSemesters] = useState(false)
 
 	// Selected filter values
+	const [selectedInstitutionId, setSelectedInstitutionId] = useState<string>("")
 	const [selectedSessionId, setSelectedSessionId] = useState<string>("")
 	const [selectedProgramId, setSelectedProgramId] = useState<string>("")
 	const [selectedSemesters, setSelectedSemesters] = useState<number[]>([])
 
 	// Combobox open state
+	const [institutionOpen, setInstitutionOpen] = useState(false)
 	const [sessionOpen, setSessionOpen] = useState(false)
 	const [programOpen, setProgramOpen] = useState(false)
 	const [semesterOpen, setSemesterOpen] = useState(false)
 
+	const selectedInstitution = institutions.find(i => i.id === selectedInstitutionId)
 	const selectedProgram = programs.find(p => p.id === selectedProgramId)
 
 	// =====================================================
-	// DROPDOWN FETCHING (same pattern as dashboard)
+	// DROPDOWN FETCHING — Institution → Session → Program → Semester
 	// =====================================================
+
+	// Load institutions once context is ready.
+	// The exam-attendance dropdowns endpoint respects the institution-filter
+	// query params (via appendToUrl), so normal users get just their own
+	// institution and super_admins get the full list.
+	useEffect(() => {
+		if (!isReady) return
+
+		let cancelled = false
+		const fetchInstitutions = async () => {
+			try {
+				setLoadingInstitutions(true)
+				const url = appendToUrl('/api/exam-management/exam-attendance/dropdowns?type=institutions')
+				const res = await fetch(url)
+				if (!res.ok) throw new Error('Failed to load institutions')
+				const data = await res.json()
+				if (cancelled) return
+
+				setInstitutions(data)
+
+				// Auto-select logic:
+				// - If only one institution (normal user), pick it automatically.
+				// - If super_admin with a specific institution chosen globally, pick that.
+				if (data.length === 1) {
+					setSelectedInstitutionId(data[0].id)
+				} else if (shouldFilter && contextInstitutionId) {
+					setSelectedInstitutionId(contextInstitutionId)
+				} else if (!mustSelectInstitution && contextInstitutionId) {
+					setSelectedInstitutionId(contextInstitutionId)
+				}
+			} catch (error) {
+				if (cancelled) return
+				console.error('Error fetching institutions:', error)
+				toast({
+					title: "Failed to load institutions",
+					description: error instanceof Error ? error.message : "Unknown error",
+					variant: "destructive"
+				})
+			} finally {
+				if (!cancelled) setLoadingInstitutions(false)
+			}
+		}
+		fetchInstitutions()
+		return () => { cancelled = true }
+	}, [isReady, appendToUrl, shouldFilter, contextInstitutionId, mustSelectInstitution, toast])
 
 	// Institution → Sessions
 	useEffect(() => {
-		if (!isReady || !globalInstitutionId) return
+		if (!selectedInstitutionId) {
+			setSessions([])
+			setPrograms([])
+			setSemesters([])
+			setSelectedSessionId("")
+			setSelectedProgramId("")
+			setSelectedSemesters([])
+			return
+		}
 
+		// Clear downstream state when institution changes
 		setSelectedSessionId("")
 		setSelectedProgramId("")
 		setSelectedSemesters([])
@@ -89,77 +154,83 @@ export default function NADReportPage() {
 		setPrograms([])
 		setSemesters([])
 
+		let cancelled = false
 		const fetchSessions = async () => {
 			try {
 				setLoadingSessions(true)
-				const res = await fetch(`/api/grading/galley-report?type=sessions&institution_id=${globalInstitutionId}`)
+				const res = await fetch(`/api/grading/galley-report?type=sessions&institution_id=${selectedInstitutionId}`)
 				if (res.ok) {
 					const data = await res.json()
-					setSessions(data)
+					if (!cancelled) setSessions(data)
 				}
 			} catch (error) {
 				console.error('Error fetching sessions:', error)
 			} finally {
-				setLoadingSessions(false)
+				if (!cancelled) setLoadingSessions(false)
 			}
 		}
 		fetchSessions()
-	}, [isReady, globalInstitutionId])
+		return () => { cancelled = true }
+	}, [selectedInstitutionId])
 
 	// Session → Programs
 	useEffect(() => {
-		if (!selectedSessionId || !globalInstitutionId) return
+		if (!selectedSessionId || !selectedInstitutionId) return
 
 		setSelectedProgramId("")
 		setSelectedSemesters([])
 		setPrograms([])
 		setSemesters([])
 
+		let cancelled = false
 		const fetchPrograms = async () => {
 			try {
 				setLoadingPrograms(true)
-				const res = await fetch(`/api/grading/galley-report?type=programs&institution_id=${globalInstitutionId}&session_id=${selectedSessionId}`)
+				const res = await fetch(`/api/grading/galley-report?type=programs&institution_id=${selectedInstitutionId}&session_id=${selectedSessionId}`)
 				if (res.ok) {
 					const data = await res.json()
-					setPrograms(data)
+					if (!cancelled) setPrograms(data)
 				}
 			} catch (error) {
 				console.error('Error fetching programs:', error)
 			} finally {
-				setLoadingPrograms(false)
+				if (!cancelled) setLoadingPrograms(false)
 			}
 		}
 		fetchPrograms()
-	}, [selectedSessionId, globalInstitutionId])
+		return () => { cancelled = true }
+	}, [selectedSessionId, selectedInstitutionId])
 
 	// Program → Semesters
 	useEffect(() => {
-		if (!selectedProgramId || !selectedSessionId || !globalInstitutionId) {
+		if (!selectedProgramId || !selectedSessionId || !selectedInstitutionId) {
 			setSemesters([])
 			return
 		}
 
 		setSelectedSemesters([])
 
+		let cancelled = false
 		const fetchSemesters = async () => {
 			try {
 				setLoadingSemesters(true)
 				const program = programs.find(p => p.id === selectedProgramId)
 				const programCode = program?.program_code || selectedProgramId
-				const res = await fetch(`/api/grading/galley-report?type=semesters&institution_id=${globalInstitutionId}&session_id=${selectedSessionId}&program_id=${programCode}`)
+				const res = await fetch(`/api/grading/galley-report?type=semesters&institution_id=${selectedInstitutionId}&session_id=${selectedSessionId}&program_id=${programCode}`)
 				if (res.ok) {
 					const data = await res.json()
-					setSemesters(data)
+					if (!cancelled) setSemesters(data)
 				}
 			} catch (error) {
 				console.error('Error fetching semesters:', error)
 			} finally {
-				setLoadingSemesters(false)
+				if (!cancelled) setLoadingSemesters(false)
 			}
 		}
 		fetchSemesters()
+		return () => { cancelled = true }
 	// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [selectedProgramId, selectedSessionId, globalInstitutionId])
+	}, [selectedProgramId, selectedSessionId, selectedInstitutionId])
 
 	// =====================================================
 	// SEMESTER SELECTION HELPERS
@@ -180,19 +251,19 @@ export default function NADReportPage() {
 	}
 
 	// =====================================================
-	// DOWNLOAD HANDLERS (copied verbatim from dashboard)
+	// DOWNLOAD HANDLERS
 	// =====================================================
 
 	const buildParams = useCallback(() => {
 		const params = new URLSearchParams()
-		if (globalInstitutionId) params.set('institution_id', globalInstitutionId)
+		if (selectedInstitutionId) params.set('institution_id', selectedInstitutionId)
 		if (selectedSessionId) params.set('examination_session_id', selectedSessionId)
-		// The export endpoints filter by fm.program_id (UUID). selectedProgramId
+		// Export endpoints filter by fm.program_id (UUID). selectedProgramId
 		// already holds the UUID from the galley-report response.
 		if (selectedProgramId) params.set('program_id', selectedProgramId)
 		if (selectedSemesters.length === 1) params.set('semester', String(selectedSemesters[0]))
 		return params
-	}, [globalInstitutionId, selectedSessionId, selectedProgramId, selectedSemesters])
+	}, [selectedInstitutionId, selectedSessionId, selectedProgramId, selectedSemesters])
 
 	// NAD ABC CSV Export (Official Upload Format - one row per subject)
 	const handleExportNADCSV = useCallback(async () => {
@@ -302,7 +373,7 @@ export default function NADReportPage() {
 	// RENDER
 	// =====================================================
 
-	const hasRequiredFilters = selectedSessionId !== "" && selectedProgramId !== ""
+	const hasRequiredFilters = selectedInstitutionId !== "" && selectedSessionId !== "" && selectedProgramId !== ""
 	const canDownload = canExportNAD && hasRequiredFilters
 
 	return (
@@ -353,36 +424,69 @@ export default function NADReportPage() {
 						</Card>
 					)}
 
-					{/* Institution guard */}
-					{canAccessNAD && mustSelectInstitution && (
-						<Card>
-							<CardContent className="p-12 text-center">
-								<AlertCircle className="h-12 w-12 mx-auto text-muted-foreground mb-3" />
-								<p className="text-sm text-muted-foreground">
-									Please select a specific institution from the header dropdown before using NAD Report.
-								</p>
-							</CardContent>
-						</Card>
-					)}
-
 					{/* Filter bar */}
-					{canAccessNAD && !mustSelectInstitution && (
+					{canAccessNAD && (
 						<Card>
 							<CardHeader>
 								<CardTitle className="text-base">Report Filters</CardTitle>
-								<CardDescription>Select an examination session and program to enable downloads.</CardDescription>
+								<CardDescription>Pick an institution, examination session, and program to enable downloads.</CardDescription>
 							</CardHeader>
-							<CardContent className="grid grid-cols-1 md:grid-cols-3 gap-4">
+							<CardContent className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+								{/* Institution */}
+								<div className="space-y-2">
+									<Label>Institution <span className="text-red-500">*</span></Label>
+									<Popover open={institutionOpen} onOpenChange={setInstitutionOpen}>
+										<PopoverTrigger asChild>
+											<Button variant="outline" role="combobox" className="w-full justify-between" disabled={loadingInstitutions}>
+												<span className="truncate">
+													{selectedInstitution
+														? `${selectedInstitution.institution_code} - ${selectedInstitution.institution_name}`
+														: loadingInstitutions ? "Loading..." : "Select institution"}
+												</span>
+												<ChevronsUpDown className="h-3 w-3 opacity-50" />
+											</Button>
+										</PopoverTrigger>
+										<PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0" align="start">
+											<Command>
+												<CommandInput placeholder="Search institution..." />
+												<CommandList>
+													<CommandEmpty>No institution found.</CommandEmpty>
+													<CommandGroup>
+														{institutions.map(i => (
+															<CommandItem
+																key={i.id}
+																value={`${i.institution_code} ${i.institution_name}`}
+																onSelect={() => {
+																	setSelectedInstitutionId(i.id)
+																	setInstitutionOpen(false)
+																}}
+															>
+																<Check className={cn("mr-2 h-4 w-4", selectedInstitutionId === i.id ? "opacity-100" : "opacity-0")} />
+																{i.institution_code} - {i.institution_name}
+															</CommandItem>
+														))}
+													</CommandGroup>
+												</CommandList>
+											</Command>
+										</PopoverContent>
+									</Popover>
+								</div>
+
 								{/* Examination Session */}
 								<div className="space-y-2">
 									<Label>Examination Session <span className="text-red-500">*</span></Label>
 									<Popover open={sessionOpen} onOpenChange={setSessionOpen}>
 										<PopoverTrigger asChild>
-											<Button variant="outline" role="combobox" className="w-full justify-between" disabled={loadingSessions}>
+											<Button
+												variant="outline"
+												role="combobox"
+												className="w-full justify-between"
+												disabled={!selectedInstitutionId || loadingSessions}
+											>
 												<span className="truncate">
 													{selectedSessionId
 														? sessions.find(s => s.id === selectedSessionId)?.session_name
-														: loadingSessions ? "Loading..." : "Select session"}
+														: !selectedInstitutionId ? "Select institution first" : loadingSessions ? "Loading..." : "Select session"}
 												</span>
 												<ChevronsUpDown className="h-3 w-3 opacity-50" />
 											</Button>
@@ -534,7 +638,7 @@ export default function NADReportPage() {
 					)}
 
 					{/* Download buttons */}
-					{canAccessNAD && !mustSelectInstitution && (
+					{canAccessNAD && (
 						<Card>
 							<CardHeader>
 								<CardTitle className="text-base">Download</CardTitle>
