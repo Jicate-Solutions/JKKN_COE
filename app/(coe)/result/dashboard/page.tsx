@@ -1,6 +1,8 @@
 "use client"
 
 import { useEffect, useState, useCallback, useMemo } from "react"
+import Link from "next/link"
+import { useRouter, useSearchParams } from "next/navigation"
 import { useSessionSync } from '@/hooks/use-session-sync'
 import { useAuth } from "@/lib/auth/auth-context-parent"
 import { SidebarProvider, SidebarInset } from "@/components/ui/sidebar"
@@ -116,10 +118,7 @@ import type {
 	SubjectAnalysisDashboardData,
 	ResultAnalyticsFilters,
 	NAACCriterion26Data,
-	NAACCriterion27Data,
-	NAADComplianceSummary,
-	NAADStudentRecord,
-	NAADUploadBatch
+	NAACCriterion27Data
 } from "@/types/result-analytics"
 
 // Data Analysis Components
@@ -198,11 +197,19 @@ interface Semester {
 
 export default function ResultAnalyticsDashboard() {
 	const { toast } = useToast()
-	const { hasAnyRole, hasPermission } = useAuth()
+	// NAD access checks removed — NAD report now lives at /reports/nad.
+	// Kept the hook call so other role-aware UI (if any) still works.
+	useAuth()
 
-	// NAD access: nad_coordinator role OR nad.view/nad.export permission OR admin roles
-	const canAccessNAD = hasAnyRole(['super_admin', 'coe', 'deputy_coe', 'nad_coordinator']) || hasPermission('nad.view')
-	const canExportNAD = hasAnyRole(['super_admin', 'coe', 'deputy_coe', 'nad_coordinator']) || hasPermission('nad.export')
+	// Legacy-URL redirect: /result/dashboard?tab=nad → /reports/nad
+	// Keep for one release cycle so bookmarked URLs don't silently break.
+	const router = useRouter()
+	const searchParams = useSearchParams()
+	useEffect(() => {
+		if (searchParams?.get('tab') === 'nad') {
+			router.replace('/reports/nad')
+		}
+	}, [router, searchParams])
 
 	// Global institution filter
 	const {
@@ -245,11 +252,6 @@ export default function ResultAnalyticsDashboard() {
 	const [programData, setProgramData] = useState<ProgramAnalysisDashboardData | null>(null)
 	const [subjectData, setSubjectData] = useState<SubjectAnalysisDashboardData | null>(null)
 	const [naacData, setNaacData] = useState<NAACCriterion26Data | null>(null)
-	const [naadData, setNaadData] = useState<{
-		compliance_summary: NAADComplianceSummary
-		student_records: NAADStudentRecord[]
-		upload_batches: NAADUploadBatch[]
-	} | null>(null)
 
 	// Loading states
 	const [loadingFilters, setLoadingFilters] = useState(true)
@@ -257,7 +259,6 @@ export default function ResultAnalyticsDashboard() {
 	const [loadingProgram, setLoadingProgram] = useState(false)
 	const [loadingSubject, setLoadingSubject] = useState(false)
 	const [loadingNaac, setLoadingNaac] = useState(false)
-	const [loadingNaad, setLoadingNaad] = useState(false)
 
 	// State for data analysis features
 	const [showAdvancedAnalysis, setShowAdvancedAnalysis] = useState(false)
@@ -485,32 +486,6 @@ export default function ResultAnalyticsDashboard() {
 		}
 	}, [selectedFilters, toast])
 
-	// Fetch NAAD compliance data
-	const fetchNaadData = useCallback(async () => {
-		try {
-			setLoadingNaad(true)
-			const params = new URLSearchParams()
-			Object.entries(selectedFilters).forEach(([key, value]) => {
-				if (value) params.set(key, value.toString())
-			})
-
-			const response = await fetch(`/api/result-analytics/naad-reports?${params.toString()}`)
-			if (!response.ok) throw new Error('Failed to fetch NAAD data')
-
-			const result = await response.json()
-			setNaadData(result.data)
-		} catch (error) {
-			console.error('Error fetching NAAD data:', error)
-			toast({
-				title: "Error",
-				description: "Failed to load NAAD compliance data",
-				variant: "destructive"
-			})
-		} finally {
-			setLoadingNaad(false)
-		}
-	}, [selectedFilters, toast])
-
 	// Use global institution from header - institution is always based on global filter
 	useEffect(() => {
 		if (isInstitutionReady && globalInstitutionId) {
@@ -620,10 +595,8 @@ export default function ResultAnalyticsDashboard() {
 			fetchSubjectStats()
 		} else if (activeTab === "naac") {
 			fetchNaacData()
-		} else if (activeTab === "nad") {
-			fetchNaadData()
 		}
-	}, [activeTab, selectedFilters, fetchCollegeStats, fetchProgramStats, fetchSubjectStats, fetchNaacData, fetchNaadData])
+	}, [activeTab, selectedFilters, fetchCollegeStats, fetchProgramStats, fetchSubjectStats, fetchNaacData])
 
 	// Handler for multi-select semester toggle
 	const handleSemesterToggle = (semester: number) => {
@@ -663,7 +636,6 @@ export default function ResultAnalyticsDashboard() {
 		else if (activeTab === "program") fetchProgramStats()
 		else if (activeTab === "subject") fetchSubjectStats()
 		else if (activeTab === "naac") fetchNaacData()
-		else if (activeTab === "nad") fetchNaadData()
 	}
 
 	// Export handlers
@@ -732,130 +704,6 @@ export default function ResultAnalyticsDashboard() {
 		// For PDF export, we'll use browser print
 		// In a production app, you'd use a library like jsPDF or react-pdf
 	}, [toast])
-
-	// NAD ABC CSV Export handler (Official Upload Format - one row per subject)
-	const handleExportNADCSV = useCallback(async () => {
-		toast({
-			title: "Generating NAD CSV",
-			description: "Preparing NAD/ABC compliant export file...",
-			className: "bg-blue-50 border-blue-200 text-blue-800 dark:bg-blue-900/20 dark:border-blue-800 dark:text-blue-200"
-		})
-
-		try {
-			// Build query params from selectedFilters
-			const params = new URLSearchParams()
-			if (selectedFilters.institution_id) params.set('institution_id', selectedFilters.institution_id)
-			if (selectedFilters.examination_session_id) params.set('examination_session_id', selectedFilters.examination_session_id)
-			if (selectedFilters.program_id) params.set('program_id', selectedFilters.program_id)
-			// Use selectedSemesters directly (supports single & multi-select)
-			if (selectedSemesters.length === 1) params.set('semester', String(selectedSemesters[0]))
-
-			const response = await fetch(`/api/result-analytics/nad-csv-export?${params.toString()}`)
-
-			if (!response.ok) {
-				const errorData = await response.json()
-				throw new Error(errorData.error || 'Failed to generate NAD CSV export')
-			}
-
-			// Check if response is CSV or JSON (empty result)
-			const contentType = response.headers.get('content-type')
-			if (contentType?.includes('application/json')) {
-				const data = await response.json()
-				toast({
-					title: "No Data Found",
-					description: data.message || "No published results found for the selected filters",
-					variant: "destructive"
-				})
-				return
-			}
-
-			// Download the CSV file
-			const blob = await response.blob()
-			const url = URL.createObjectURL(blob)
-			const link = document.createElement('a')
-			link.href = url
-			link.download = `nad_abc_export_${new Date().toISOString().split('T')[0]}.csv`
-			document.body.appendChild(link)
-			link.click()
-			document.body.removeChild(link)
-			URL.revokeObjectURL(url)
-
-			toast({
-				title: "✅ Export Complete",
-				description: "NAD/ABC CSV file has been downloaded successfully.",
-				className: "bg-green-50 border-green-200 text-green-800 dark:bg-green-900/20 dark:border-green-800 dark:text-green-200"
-			})
-		} catch (error) {
-			console.error('NAD CSV export error:', error)
-			toast({
-				title: "❌ Export Failed",
-				description: error instanceof Error ? error.message : "Failed to generate NAD CSV export",
-				variant: "destructive"
-			})
-		}
-	}, [selectedFilters, selectedSemesters, toast])
-
-	// NAAD Pivot CSV Export handler (Consolidated Format - one row per student with SUB1-SUB40 columns)
-	const handleExportNAADPivotCSV = useCallback(async () => {
-		toast({
-			title: "Generating NAD Pivot CSV",
-			description: "Preparing pivot export (one row per learner with SUB columns)...",
-			className: "bg-blue-50 border-blue-200 text-blue-800 dark:bg-blue-900/20 dark:border-blue-800 dark:text-blue-200"
-		})
-
-		try {
-			// Build query params from selectedFilters
-			const params = new URLSearchParams()
-			if (selectedFilters.institution_id) params.set('institution_id', selectedFilters.institution_id)
-			if (selectedFilters.examination_session_id) params.set('examination_session_id', selectedFilters.examination_session_id)
-			if (selectedFilters.program_id) params.set('program_id', selectedFilters.program_id)
-			// Use selectedSemesters directly (supports single & multi-select)
-			if (selectedSemesters.length === 1) params.set('semester', String(selectedSemesters[0]))
-
-			const response = await fetch(`/api/result-analytics/nad-pivot-export?${params.toString()}`)
-
-			if (!response.ok) {
-				const errorData = await response.json()
-				throw new Error(errorData.error || 'Failed to generate NAAD Pivot CSV export')
-			}
-
-			// Check if response is CSV or JSON (empty result)
-			const contentType = response.headers.get('content-type')
-			if (contentType?.includes('application/json')) {
-				const data = await response.json()
-				toast({
-					title: "No Data Found",
-					description: data.message || "No published results found for the selected filters",
-					variant: "destructive"
-				})
-				return
-			}
-
-			// Download the CSV file
-			const blob = await response.blob()
-			const url = URL.createObjectURL(blob)
-			const link = document.createElement('a')
-			link.href = url
-			link.download = `nad_pivot_export_${new Date().toISOString().split('T')[0]}.csv`
-			document.body.appendChild(link)
-			link.click()
-			document.body.removeChild(link)
-			URL.revokeObjectURL(url)
-
-			toast({
-				title: "✅ Export Complete",
-				description: "NAD Pivot CSV (one row per learner with SUB1-SUBn columns) downloaded.",
-				className: "bg-green-50 border-green-200 text-green-800 dark:bg-green-900/20 dark:border-green-800 dark:text-green-200"
-			})
-		} catch (error) {
-			console.error('NAD Pivot CSV export error:', error)
-			toast({
-				title: "❌ Export Failed",
-				description: error instanceof Error ? error.message : "Failed to generate NAD Pivot CSV export",
-				variant: "destructive"
-			})
-		}
-	}, [selectedFilters, selectedSemesters, toast])
 
 	const handlePrint = useCallback(() => {
 		window.print()
@@ -968,7 +816,7 @@ export default function ResultAnalyticsDashboard() {
 										</h1>
 										<p className="text-sm text-white/80 mt-1 flex items-center gap-2">
 											<Brain className="h-4 w-4" />
-											Comprehensive learner performance insights with NAAC & NAAD compliance
+											Comprehensive learner performance insights with NAAC compliance
 										</p>
 									</div>
 								</div>
@@ -980,10 +828,10 @@ export default function ResultAnalyticsDashboard() {
 													variant="secondary"
 													size="sm"
 													onClick={refreshData}
-													disabled={loadingCollege || loadingProgram || loadingSubject || loadingNaac || loadingNaad}
+													disabled={loadingCollege || loadingProgram || loadingSubject || loadingNaac}
 													className="bg-white/20 hover:bg-white/30 text-white border-white/30"
 												>
-													<RefreshCw className={`h-4 w-4 mr-2 ${(loadingCollege || loadingProgram || loadingSubject || loadingNaac || loadingNaad) ? 'animate-spin' : ''}`} />
+													<RefreshCw className={`h-4 w-4 mr-2 ${(loadingCollege || loadingProgram || loadingSubject || loadingNaac) ? 'animate-spin' : ''}`} />
 													Refresh
 												</Button>
 											</TooltipTrigger>
@@ -1000,27 +848,6 @@ export default function ResultAnalyticsDashboard() {
 											<FileText className="h-4 w-4 mr-1.5" />
 											PDF
 										</Button>
-										{canExportNAD && (
-											<>
-												<Separator orientation="vertical" className="h-6 bg-white/20" />
-												<Button variant="ghost" size="sm" onClick={handleExportNADCSV} className="text-white hover:bg-white/20">
-													<Download className="h-4 w-4 mr-1.5" />
-													NAD
-												</Button>
-												<Separator orientation="vertical" className="h-6 bg-white/20" />
-												<TooltipProvider>
-													<UITooltip>
-														<TooltipTrigger asChild>
-															<Button variant="ghost" size="sm" onClick={handleExportNAADPivotCSV} className="text-white hover:bg-white/20">
-																<LayoutGrid className="h-4 w-4 mr-1.5" />
-																NAD CSV
-															</Button>
-														</TooltipTrigger>
-														<TooltipContent>Download NAD CSV (one row per learner with SUB1-SUBn x 25 fields)</TooltipContent>
-													</UITooltip>
-												</TooltipProvider>
-											</>
-										)}
 										<Separator orientation="vertical" className="h-6 bg-white/20" />
 										<Button variant="ghost" size="sm" onClick={handlePrint} className="text-white hover:bg-white/20">
 											<Printer className="h-4 w-4 mr-1.5" />
@@ -1249,7 +1076,7 @@ export default function ResultAnalyticsDashboard() {
 
 						{/* Main Dashboard Tabs */}
 						<Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
-							<TabsList className={`grid ${canAccessNAD ? 'grid-cols-6' : 'grid-cols-5'} h-auto p-1.5 bg-slate-100/80 dark:bg-slate-800/80 rounded-xl backdrop-blur-sm border border-slate-200/50 dark:border-slate-700/50`}>
+							<TabsList className="grid grid-cols-5 h-auto p-1.5 bg-slate-100/80 dark:bg-slate-800/80 rounded-xl backdrop-blur-sm border border-slate-200/50 dark:border-slate-700/50">
 								<TabsTrigger
 									value="college"
 									className="text-xs py-2.5 rounded-lg transition-all duration-200 data-[state=active]:bg-gradient-to-r data-[state=active]:from-emerald-500 data-[state=active]:to-teal-500 data-[state=active]:text-white data-[state=active]:shadow-md data-[state=active]:shadow-emerald-200 dark:data-[state=active]:shadow-emerald-900/30"
@@ -1285,15 +1112,6 @@ export default function ResultAnalyticsDashboard() {
 									<Award className="h-3.5 w-3.5 mr-1.5" />
 									NAAC
 								</TabsTrigger>
-								{canAccessNAD && (
-									<TabsTrigger
-										value="nad"
-										className="text-xs py-2.5 rounded-lg transition-all duration-200 data-[state=active]:bg-gradient-to-r data-[state=active]:from-violet-500 data-[state=active]:to-purple-500 data-[state=active]:text-white data-[state=active]:shadow-md data-[state=active]:shadow-violet-200 dark:data-[state=active]:shadow-violet-900/30"
-									>
-										<Target className="h-3.5 w-3.5 mr-1.5" />
-										NAD
-									</TabsTrigger>
-								)}
 							</TabsList>
 
 							{/* College-wise Tab */}
@@ -2405,9 +2223,11 @@ export default function ResultAnalyticsDashboard() {
 												<Award className="h-5 w-5 text-blue-500" />
 												<span className="text-xs">Generate NAAC Report</span>
 											</Button>
-											<Button variant="outline" className="h-auto py-4 flex flex-col items-center gap-2" onClick={() => setActiveTab('nad')}>
-												<Target className="h-5 w-5 text-purple-500" />
-												<span className="text-xs">NAD Compliance</span>
+											<Button variant="outline" className="h-auto py-4 flex flex-col items-center gap-2" asChild>
+												<Link href="/reports/nad">
+													<Target className="h-5 w-5 text-purple-500" />
+													<span className="text-xs">NAD Report</span>
+												</Link>
 											</Button>
 											<Button variant="outline" className="h-auto py-4 flex flex-col items-center gap-2" onClick={handleExportExcel}>
 												<FileSpreadsheet className="h-5 w-5 text-emerald-500" />
@@ -2676,344 +2496,6 @@ export default function ResultAnalyticsDashboard() {
 								)}
 							</TabsContent>
 
-							{/* NAD Tab - Premium Design */}
-							<TabsContent value="nad" className="space-y-4">
-								{loadingNaad ? (
-									<ComplianceDashboardSkeleton />
-								) : naadData ? (
-									<>
-										{/* NAD Premium Header Card */}
-										<Card className="relative overflow-hidden bg-gradient-to-r from-purple-600 via-violet-600 to-indigo-600 text-white shadow-xl">
-											<div className="absolute inset-0 bg-grid-white/10 [mask-image:linear-gradient(0deg,transparent,white)]" />
-											<div className="absolute -top-24 -right-24 w-64 h-64 bg-white/10 rounded-full blur-3xl" />
-											<div className="absolute -bottom-24 -left-24 w-64 h-64 bg-purple-400/20 rounded-full blur-3xl" />
-											<CardContent className="relative p-6">
-												<div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
-													<div className="flex items-center gap-4">
-														<div className="h-16 w-16 rounded-2xl bg-white/20 backdrop-blur-sm flex items-center justify-center shadow-inner">
-															<Target className="h-8 w-8 text-white" />
-														</div>
-														<div>
-															<div className="flex items-center gap-2 mb-1">
-																<Badge className="bg-white/20 text-white border-white/30 text-xs">
-																	NAD/ABC
-																</Badge>
-																<Badge className={`text-xs border-0 ${
-																	naadData.compliance_summary.sync_status === 'synced'
-																		? 'bg-green-500/30 text-white'
-																		: 'bg-amber-500/30 text-white'
-																}`}>
-																	{naadData.compliance_summary.sync_status === 'synced' ? (
-																		<><CheckCircle2 className="h-3 w-3 mr-1" />Synced</>
-																	) : (
-																		<><Clock className="h-3 w-3 mr-1" />Pending</>
-																	)}
-																</Badge>
-															</div>
-															<h3 className="text-2xl font-bold">National Academic Depository</h3>
-															<p className="text-sm text-white/80 mt-1">Academic Bank of Credits (ABC) Integration & Compliance</p>
-														</div>
-													</div>
-													<div className="text-left md:text-right bg-white/10 backdrop-blur-sm rounded-xl p-4 min-w-[180px]">
-														<p className="text-xs text-white/70 uppercase tracking-wider mb-1">Overall Compliance</p>
-														<div className="text-4xl font-bold tabular-nums">{naadData.compliance_summary.compliance_percentage}%</div>
-														<Progress
-															value={naadData.compliance_summary.compliance_percentage}
-															className="h-2 mt-2 bg-white/20"
-														/>
-													</div>
-												</div>
-											</CardContent>
-										</Card>
-
-										{/* Compliance Metrics - Premium Cards with JKKN Terminology */}
-										<div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
-											<Card className="group relative overflow-hidden bg-gradient-to-br from-slate-50 to-slate-100 dark:from-slate-800/50 dark:to-slate-700/50 border-slate-200/50 dark:border-slate-600/50 hover:shadow-lg transition-all duration-300">
-												<div className="absolute top-0 right-0 w-16 h-16 bg-slate-200/30 dark:bg-slate-600/20 rounded-full -mr-6 -mt-6 group-hover:scale-110 transition-transform" />
-												<CardContent className="p-4 relative">
-													<p className="text-[10px] uppercase tracking-wider text-slate-600 dark:text-slate-400 font-semibold">Total Learners</p>
-													<p className="text-2xl font-bold text-slate-900 dark:text-slate-100 mt-1 tabular-nums">
-														{naadData.compliance_summary.total_students.toLocaleString()}
-													</p>
-													<div className="flex items-center gap-1 mt-1">
-														<Users className="h-3 w-3 text-slate-400" />
-														<span className="text-[10px] text-slate-500">Registered</span>
-													</div>
-												</CardContent>
-											</Card>
-
-											<Card className="group relative overflow-hidden bg-gradient-to-br from-green-50 via-green-100 to-emerald-100 dark:from-green-900/30 dark:via-green-800/20 dark:to-emerald-900/20 border-green-200/50 dark:border-green-700/50 hover:shadow-lg transition-all duration-300">
-												<div className="absolute top-0 right-0 w-16 h-16 bg-green-200/30 dark:bg-green-700/20 rounded-full -mr-6 -mt-6 group-hover:scale-110 transition-transform" />
-												<CardContent className="p-4 relative">
-													<p className="text-[10px] uppercase tracking-wider text-green-600 dark:text-green-400 font-semibold">ABC Linked</p>
-													<p className="text-2xl font-bold text-green-700 dark:text-green-300 mt-1 tabular-nums">
-														{naadData.compliance_summary.abc_linked_students.toLocaleString()}
-													</p>
-													<Progress value={naadData.compliance_summary.abc_compliance} className="h-1.5 mt-2 bg-green-200/50" />
-													<span className="text-[10px] text-green-600 dark:text-green-400">{naadData.compliance_summary.abc_compliance}%</span>
-												</CardContent>
-											</Card>
-
-											<Card className="group relative overflow-hidden bg-gradient-to-br from-blue-50 via-blue-100 to-indigo-100 dark:from-blue-900/30 dark:via-blue-800/20 dark:to-indigo-900/20 border-blue-200/50 dark:border-blue-700/50 hover:shadow-lg transition-all duration-300">
-												<div className="absolute top-0 right-0 w-16 h-16 bg-blue-200/30 dark:bg-blue-700/20 rounded-full -mr-6 -mt-6 group-hover:scale-110 transition-transform" />
-												<CardContent className="p-4 relative">
-													<p className="text-[10px] uppercase tracking-wider text-blue-600 dark:text-blue-400 font-semibold">Aadhaar Verified</p>
-													<p className="text-2xl font-bold text-blue-700 dark:text-blue-300 mt-1 tabular-nums">
-														{naadData.compliance_summary.aadhaar_verified_students.toLocaleString()}
-													</p>
-													<Progress value={naadData.compliance_summary.aadhaar_compliance} className="h-1.5 mt-2 bg-blue-200/50" />
-													<span className="text-[10px] text-blue-600 dark:text-blue-400">{naadData.compliance_summary.aadhaar_compliance}%</span>
-												</CardContent>
-											</Card>
-
-											<Card className="group relative overflow-hidden bg-gradient-to-br from-emerald-50 via-emerald-100 to-teal-100 dark:from-emerald-900/30 dark:via-emerald-800/20 dark:to-teal-900/20 border-emerald-200/50 dark:border-emerald-700/50 hover:shadow-lg transition-all duration-300">
-												<div className="absolute top-0 right-0 w-16 h-16 bg-emerald-200/30 dark:bg-emerald-700/20 rounded-full -mr-6 -mt-6 group-hover:scale-110 transition-transform" />
-												<CardContent className="p-4 relative">
-													<p className="text-[10px] uppercase tracking-wider text-emerald-600 dark:text-emerald-400 font-semibold">Results Uploaded</p>
-													<p className="text-2xl font-bold text-emerald-700 dark:text-emerald-300 mt-1 tabular-nums">
-														{naadData.compliance_summary.results_uploaded.toLocaleString()}
-													</p>
-													<div className="flex items-center gap-1 mt-1">
-														<CheckCircle2 className="h-3 w-3 text-emerald-500" />
-														<span className="text-[10px] text-emerald-600 dark:text-emerald-400">Synced</span>
-													</div>
-												</CardContent>
-											</Card>
-
-											<Card className="group relative overflow-hidden bg-gradient-to-br from-amber-50 via-amber-100 to-orange-100 dark:from-amber-900/30 dark:via-amber-800/20 dark:to-orange-900/20 border-amber-200/50 dark:border-amber-700/50 hover:shadow-lg transition-all duration-300">
-												<div className="absolute top-0 right-0 w-16 h-16 bg-amber-200/30 dark:bg-amber-700/20 rounded-full -mr-6 -mt-6 group-hover:scale-110 transition-transform" />
-												<CardContent className="p-4 relative">
-													<p className="text-[10px] uppercase tracking-wider text-amber-600 dark:text-amber-400 font-semibold">Pending Uploads</p>
-													<p className="text-2xl font-bold text-amber-700 dark:text-amber-300 mt-1 tabular-nums">
-														{naadData.compliance_summary.pending_uploads.toLocaleString()}
-													</p>
-													<div className="flex items-center gap-1 mt-1">
-														<Clock className="h-3 w-3 text-amber-500" />
-														<span className="text-[10px] text-amber-600 dark:text-amber-400">Awaiting</span>
-													</div>
-												</CardContent>
-											</Card>
-
-											<Card className="group relative overflow-hidden bg-gradient-to-br from-purple-50 via-purple-100 to-violet-100 dark:from-purple-900/30 dark:via-purple-800/20 dark:to-violet-900/20 border-purple-200/50 dark:border-purple-700/50 hover:shadow-lg transition-all duration-300">
-												<div className="absolute top-0 right-0 w-16 h-16 bg-purple-200/30 dark:bg-purple-700/20 rounded-full -mr-6 -mt-6 group-hover:scale-110 transition-transform" />
-												<CardContent className="p-4 relative">
-													<p className="text-[10px] uppercase tracking-wider text-purple-600 dark:text-purple-400 font-semibold">Recent Uploads</p>
-													<p className="text-2xl font-bold text-purple-700 dark:text-purple-300 mt-1 tabular-nums">
-														{naadData.compliance_summary.recently_uploaded.toLocaleString()}
-													</p>
-													<div className="flex items-center gap-1 mt-1">
-														<ArrowUpRight className="h-3 w-3 text-purple-500" />
-														<span className="text-[10px] text-purple-600 dark:text-purple-400">This Week</span>
-													</div>
-												</CardContent>
-											</Card>
-										</div>
-
-										{/* Compliance Progress Bars */}
-										<Card>
-											<CardHeader className="pb-2">
-												<CardTitle className="text-sm font-semibold">Compliance Breakdown</CardTitle>
-											</CardHeader>
-											<CardContent className="space-y-4">
-												<div>
-													<div className="flex justify-between text-sm mb-1">
-														<span>Aadhaar Compliance</span>
-														<span className="font-semibold">{naadData.compliance_summary.aadhaar_compliance}%</span>
-													</div>
-													<Progress
-														value={naadData.compliance_summary.aadhaar_compliance}
-														className={`h-2 ${naadData.compliance_summary.aadhaar_compliance >= 80 ? '' : naadData.compliance_summary.aadhaar_compliance >= 50 ? '[&>div]:bg-amber-500' : '[&>div]:bg-red-500'}`}
-													/>
-												</div>
-												<div>
-													<div className="flex justify-between text-sm mb-1">
-														<span>ABC ID Compliance</span>
-														<span className="font-semibold">{naadData.compliance_summary.abc_compliance}%</span>
-													</div>
-													<Progress
-														value={naadData.compliance_summary.abc_compliance}
-														className={`h-2 ${naadData.compliance_summary.abc_compliance >= 80 ? '' : naadData.compliance_summary.abc_compliance >= 50 ? '[&>div]:bg-amber-500' : '[&>div]:bg-red-500'}`}
-													/>
-												</div>
-												<div>
-													<div className="flex justify-between text-sm mb-1">
-														<span>Result Upload Compliance</span>
-														<span className="font-semibold">{naadData.compliance_summary.result_compliance}%</span>
-													</div>
-													<Progress
-														value={naadData.compliance_summary.result_compliance}
-														className={`h-2 ${naadData.compliance_summary.result_compliance >= 80 ? '' : naadData.compliance_summary.result_compliance >= 50 ? '[&>div]:bg-amber-500' : '[&>div]:bg-red-500'}`}
-													/>
-												</div>
-											</CardContent>
-										</Card>
-
-										{/* Data Quality Issues */}
-										{naadData.compliance_summary.data_quality_issues.length > 0 && (
-											<Card className="border-red-200 dark:border-red-800 bg-red-50/50 dark:bg-red-900/10">
-												<CardHeader className="pb-2">
-													<CardTitle className="text-sm font-semibold flex items-center gap-2 text-red-700 dark:text-red-400">
-														<AlertTriangle className="h-4 w-4" />
-														Data Quality Issues ({naadData.compliance_summary.data_quality_issues.length})
-													</CardTitle>
-												</CardHeader>
-												<CardContent>
-													<div className="space-y-3">
-														{naadData.compliance_summary.data_quality_issues.map((issue, index) => (
-															<div key={index} className="flex items-start gap-3 p-3 bg-white dark:bg-slate-800 rounded-lg border border-red-200 dark:border-red-800">
-																<div className={`w-2 h-2 rounded-full mt-1.5 flex-shrink-0 ${
-																	issue.severity === 'high' ? 'bg-red-500' :
-																	issue.severity === 'medium' ? 'bg-amber-500' : 'bg-green-500'
-																}`} />
-																<div className="flex-1">
-																	<div className="flex items-center justify-between">
-																		<p className="text-sm font-semibold">{issue.field}</p>
-																		<Badge
-																			variant="outline"
-																			className={`text-xs ${
-																				issue.severity === 'high' ? 'border-red-300 text-red-700 dark:border-red-700 dark:text-red-400' :
-																				issue.severity === 'medium' ? 'border-amber-300 text-amber-700 dark:border-amber-700 dark:text-amber-400' :
-																				'border-green-300 text-green-700 dark:border-green-700 dark:text-green-400'
-																			}`}
-																		>
-																			{issue.severity.toUpperCase()}
-																		</Badge>
-																	</div>
-																	<p className="text-xs text-slate-600 dark:text-slate-400 mt-1">{issue.issue}</p>
-																	<p className="text-xs text-red-600 dark:text-red-400 mt-1">
-																		Affected: {issue.affected_count.toLocaleString()} records
-																	</p>
-																</div>
-															</div>
-														))}
-													</div>
-												</CardContent>
-											</Card>
-										)}
-
-										{/* Upload Batches */}
-										<Card>
-											<CardHeader className="pb-2">
-												<CardTitle className="text-sm font-semibold flex items-center gap-2">
-													<FileSpreadsheet className="h-4 w-4 text-slate-500" />
-													Upload Batches by Program
-												</CardTitle>
-											</CardHeader>
-											<CardContent>
-												<ScrollArea className="h-[300px]">
-													<Table>
-														<TableHeader>
-															<TableRow>
-																<TableHead>Program</TableHead>
-																<TableHead>Batch</TableHead>
-																<TableHead className="text-center">Total</TableHead>
-																<TableHead className="text-center">Ready</TableHead>
-																<TableHead className="text-center">Pending</TableHead>
-																<TableHead className="text-center">Status</TableHead>
-															</TableRow>
-														</TableHeader>
-														<TableBody>
-															{naadData.upload_batches.map((batch, index) => (
-																<TableRow key={index}>
-																	<TableCell className="font-medium max-w-[150px] truncate">{batch.program_name}</TableCell>
-																	<TableCell>{batch.batch_name}</TableCell>
-																	<TableCell className="text-center">{batch.total_students}</TableCell>
-																	<TableCell className="text-center text-green-600 dark:text-green-400">{batch.ready_for_upload}</TableCell>
-																	<TableCell className="text-center text-amber-600 dark:text-amber-400">{batch.pending_data}</TableCell>
-																	<TableCell className="text-center">
-																		<Badge
-																			variant="secondary"
-																			className={`text-xs ${
-																				batch.upload_status === 'ready' ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' :
-																				batch.upload_status === 'incomplete' ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400' :
-																				'bg-slate-100 text-slate-700 dark:bg-slate-900/30 dark:text-slate-400'
-																			}`}
-																		>
-																			{batch.upload_status.toUpperCase()}
-																		</Badge>
-																	</TableCell>
-																</TableRow>
-															))}
-														</TableBody>
-													</Table>
-												</ScrollArea>
-											</CardContent>
-										</Card>
-
-										{/* Student Records Preview */}
-										<Card>
-											<CardHeader className="pb-2">
-												<CardTitle className="text-sm font-semibold flex items-center gap-2">
-													<Users className="h-4 w-4 text-slate-500" />
-													Learner Records (Preview)
-												</CardTitle>
-												<CardDescription className="text-xs">
-													Showing first 20 records. Export to Excel for complete data.
-												</CardDescription>
-											</CardHeader>
-											<CardContent>
-												<ScrollArea className="h-[350px]">
-													<Table>
-														<TableHeader>
-															<TableRow>
-																<TableHead>Learner ID</TableHead>
-																<TableHead>Name</TableHead>
-																<TableHead>Program</TableHead>
-																<TableHead className="text-center">Aadhaar</TableHead>
-																<TableHead className="text-center">ABC ID</TableHead>
-																<TableHead className="text-center">CGPA</TableHead>
-																<TableHead className="text-center">Status</TableHead>
-															</TableRow>
-														</TableHeader>
-														<TableBody>
-															{naadData.student_records.slice(0, 20).map((record, index) => (
-																<TableRow key={index}>
-																	<TableCell className="font-mono text-xs">{record.register_number}</TableCell>
-																	<TableCell className="max-w-[150px] truncate">{record.name}</TableCell>
-																	<TableCell className="max-w-[150px] truncate text-xs">{record.program_name}</TableCell>
-																	<TableCell className="text-center">
-																		{record.data_completeness.aadhaar ? (
-																			<CheckCircle2 className="h-4 w-4 text-green-500 mx-auto" />
-																		) : (
-																			<XCircle className="h-4 w-4 text-red-500 mx-auto" />
-																		)}
-																	</TableCell>
-																	<TableCell className="text-center">
-																		{record.data_completeness.abc_id ? (
-																			<CheckCircle2 className="h-4 w-4 text-green-500 mx-auto" />
-																		) : (
-																			<XCircle className="h-4 w-4 text-red-500 mx-auto" />
-																		)}
-																	</TableCell>
-																	<TableCell className="text-center font-semibold">{record.cgpa.toFixed(2)}</TableCell>
-																	<TableCell className="text-center">
-																		<Badge
-																			variant="secondary"
-																			className={`text-xs ${
-																				record.naad_status === 'ready' || record.naad_status === 'uploaded' ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' :
-																				record.naad_status === 'error' ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400' :
-																				'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400'
-																			}`}
-																		>
-																			{record.naad_status.toUpperCase()}
-																		</Badge>
-																	</TableCell>
-																</TableRow>
-															))}
-														</TableBody>
-													</Table>
-												</ScrollArea>
-											</CardContent>
-										</Card>
-									</>
-								) : (
-									<div className="flex flex-col items-center justify-center h-64 text-slate-500">
-										<Target className="h-12 w-12 mb-4 opacity-50" />
-										<p className="text-lg font-medium">NAD Compliance</p>
-										<p className="text-sm">No data available. Please apply filters and try again.</p>
-									</div>
-								)}
-							</TabsContent>
 						</Tabs>
 					</div>
 				</PageTransition>
