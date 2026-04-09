@@ -722,7 +722,8 @@ export async function GET(req: NextRequest) {
 			// Derive COURSE_NAME and STREAM from view fields (degree_code + department_name)
 			// Fall back to parseProgramName if the view fields are not populated
 			const { shortForm, stream } = parseProgramName(student.program_name)
-			const courseName = student.degree_code || shortForm
+			// Strip any trailing period so e.g. "B.SC." → "B.SC" (NAD portal rejects trailing dots)
+			const courseName = (student.degree_code || shortForm).replace(/\.+$/, '')
 			const streamName = student.stream_name || stream
 
 			// Fixed columns - matching FIXED_COLUMNS order
