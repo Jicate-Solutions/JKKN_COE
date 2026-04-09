@@ -13,6 +13,7 @@ import { Badge } from "@/components/ui/badge"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem } from "@/components/ui/command"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { useToast } from "@/hooks/common/use-toast"
 import { useAuth } from "@/lib/auth/auth-context-parent"
 import { useInstitutionFilter } from "@/hooks/use-institution-filter"
@@ -123,17 +124,7 @@ export default function InternalMarkReportPage() {
 		}
 	}, [selectedProgram])
 
-	// Semester → Courses
-	useEffect(() => {
-		setCourseOfferings([]); setSelectedCourses([])
-		if (isReady && effectiveInstitutionId && effectiveSession && selectedProgram && selectedSemester) {
-			const prog = programs.find(p => p.id === selectedProgram)
-			if (prog?.program_code) {
-				const cats: string[] = Array.isArray(activeAssessment?.setting?.course_type) ? activeAssessment.setting.course_type : []
-				fetchCourses(prog.program_code, selectedSemester, cats)
-			}
-		}
-	}, [selectedSemester])
+	// Note: Course fetching is now handled by the multi-semester effect below (after handleConsolidatedPDF)
 
 	// ===== Fetch Functions =====
 
@@ -208,6 +199,47 @@ export default function InternalMarkReportPage() {
 		} catch (e) { setCourseOfferings([]) }
 	}
 
+	// Fetch courses from multiple semesters in parallel, merge + dedupe
+	const fetchCoursesForSemesters = async (programCode: string, semesters: number[], categories: string[] = []) => {
+		try {
+			const sortedSems = [...semesters].sort((a, b) => a - b)
+			const results = await Promise.all(sortedSems.map(async (sem) => {
+				const res = await fetch(`${cascadeBaseUrl(effectiveInstitutionId, effectiveSession)}&step=courses&program_code=${programCode}&semester=${sem}`)
+				if (!res.ok) return []
+				let data = await res.json()
+				if (categories.length > 0) {
+					const lowerCats = categories.map(c => c.toLowerCase())
+					data = data.filter((co: any) => {
+						const cat = (co.course_category || '').toLowerCase()
+						return cat && lowerCats.includes(cat)
+					})
+				}
+				// Ensure semester is set on each course
+				return data.map((co: any) => ({ ...co, semester: co.semester ?? sem }))
+			}))
+
+			// Merge + dedupe by course_offering_id, sorted by semester then course_order
+			const seen = new Set<string>()
+			const merged: any[] = []
+			for (const arr of results) {
+				for (const co of arr) {
+					if (!seen.has(co.course_offering_id)) {
+						seen.add(co.course_offering_id)
+						merged.push(co)
+					}
+				}
+			}
+			merged.sort((a, b) => {
+				if (a.semester !== b.semester) return a.semester - b.semester
+				return (a.course_order ?? 999) - (b.course_order ?? 999)
+			})
+			setCourseOfferings(merged)
+		} catch (e) {
+			console.error('Failed to fetch courses for semesters:', e)
+			setCourseOfferings([])
+		}
+	}
+
 	// ===== Generate PDF =====
 
 	const handleGeneratePDF = async () => {
@@ -268,7 +300,7 @@ export default function InternalMarkReportPage() {
 				return {
 					institution_name: institution?.name || 'J.K.K.NATARAJA COLLEGE OF ARTS & SCIENCE (AUTONOMOUS)',
 					program_code: prog?.program_code || '', program_name: prog?.program_name || '',
-					semester: selectedSemester, course_code: co.course_code, course_name: co.course_name,
+					semester: co.semester || '', course_code: co.course_code, course_name: co.course_name,
 					internal_max_mark: co.internal_max_mark, exam_session: sessionName,
 					assessment_name: activeAssessment.setting.setting_name, cia_round_name: activeAssessment.round.round_name,
 					components: pdfComponents, learners: pdfLearners, logoImage: leftLogo, rightLogoImage: rightLogo,
@@ -298,6 +330,96 @@ export default function InternalMarkReportPage() {
 			})
 		} catch (error) {
 			console.error('PDF generation error:', error)
+			toast({ title: '❌ Failed to generate PDF', variant: 'destructive' })
+		} finally {
+			setGenerating(false)
+		}
+	}
+
+	// ===== Consolidated PDF =====
+	const [activeTab, setActiveTab] = useState('course-wise')
+	// Multi-semester selection (shared with main Semester dropdown)
+	const [multiSemesters, setMultiSemesters] = useState<number[]>([])
+	const [semesterPopoverOpen, setSemesterPopoverOpen] = useState(false)
+
+	// Reset multi-semester when program changes
+	useEffect(() => {
+		setMultiSemesters([])
+		setCourseOfferings([])
+		setSelectedCourses([])
+	}, [selectedProgram])
+
+	// Fetch courses from all selected semesters (for Course-Wise tab)
+	useEffect(() => {
+		if (isReady && effectiveInstitutionId && effectiveSession && selectedProgram && multiSemesters.length > 0) {
+			const prog = programs.find(p => p.id === selectedProgram)
+			if (prog?.program_code) {
+				const cats: string[] = Array.isArray(activeAssessment?.setting?.course_type) ? activeAssessment.setting.course_type : []
+				fetchCoursesForSemesters(prog.program_code, multiSemesters, cats)
+			}
+		} else {
+			setCourseOfferings([])
+			setSelectedCourses([])
+		}
+	}, [multiSemesters, selectedProgram])
+
+	const handleConsolidatedPDF = async () => {
+		if (!activeAssessment || !effectiveSession || !selectedProgram || multiSemesters.length === 0) {
+			toast({ title: '❌ Select Assessment, Program, and at least one Semester', variant: 'destructive' }); return
+		}
+		try {
+			setGenerating(true)
+			const prog = programs.find(p => p.id === selectedProgram)
+			if (!prog) return
+
+			// Fetch data for each selected semester in parallel
+			const semesterResults = await Promise.all(
+				multiSemesters.sort((a, b) => a - b).map(async (sem) => {
+					const res = await fetch(`/api/pre-exam/internal-mark-report?action=consolidated&institutions_id=${effectiveInstitutionId}&examination_session_id=${effectiveSession}&program_code=${prog.program_code}&semester=${sem}&cia_round=${activeAssessment.round.round}`)
+					if (!res.ok) return null
+					const data = await res.json()
+					return {
+						semester: sem,
+						courses: data.courses || [],
+						learners: data.learners || [],
+					}
+				})
+			)
+
+			// Filter out empty semesters
+			const validSemesters = semesterResults.filter(s => s && s.learners.length > 0) as { semester: number, courses: any[], learners: any[] }[]
+
+			if (validSemesters.length === 0) {
+				toast({ title: '❌ No data found for selected semesters', variant: 'destructive' }); return
+			}
+
+			const loadImage = async (url: string): Promise<string> => {
+				try { const r = await fetch(url); const blob = await r.blob(); return new Promise((res, rej) => { const reader = new FileReader(); reader.onloadend = () => res(reader.result as string); reader.onerror = rej; reader.readAsDataURL(blob) }) } catch { return '' }
+			}
+			const [leftLogo, rightLogo] = await Promise.all([loadImage('/jkkncas_logo.png'), loadImage('/jkkn_logo.png')])
+			const institution = institutions.find(i => i.id === effectiveInstitutionId)
+
+			const { generateConsolidatedInternalMarksPDF } = await import('@/lib/utils/generate-consolidated-internal-marks-pdf')
+			generateConsolidatedInternalMarksPDF({
+				institution_name: institution?.name || '',
+				program_code: prog.program_code,
+				program_name: prog.program_name,
+				exam_session: sessions.find(s => s.id === effectiveSession)?.session_name || '',
+				assessment_name: activeAssessment.setting.setting_name,
+				cia_round_name: activeAssessment.round.round_name,
+				semesters: validSemesters,
+				logoImage: leftLogo,
+				rightLogoImage: rightLogo,
+			})
+
+			const skipped = multiSemesters.length - validSemesters.length
+			toast({
+				title: '✅ Consolidated Report Generated',
+				description: `${validSemesters.length} semester(s) included${skipped > 0 ? `, ${skipped} skipped (no data)` : ''}`,
+				className: 'bg-green-50 border-green-200 text-green-800'
+			})
+		} catch (error) {
+			console.error('Consolidated PDF error:', error)
 			toast({ title: '❌ Failed to generate PDF', variant: 'destructive' })
 		} finally {
 			setGenerating(false)
@@ -412,83 +534,207 @@ export default function InternalMarkReportPage() {
 									</Popover>
 								</div>
 
-								{/* Semester */}
+								{/* Semester — multi-select */}
 								<div className="space-y-1 min-w-[150px] flex-1">
-									<label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Semester <span className="text-red-500">*</span></label>
-									<Select value={selectedSemester} onValueChange={setSelectedSemester} disabled={availableSemesters.length === 0}>
-										<SelectTrigger className="h-10"><SelectValue placeholder={availableSemesters.length === 0 ? 'Select Program first' : 'Select Semester'} /></SelectTrigger>
-										<SelectContent>
-											{availableSemesters.map(sem => <SelectItem key={sem} value={String(sem)}>Semester {sem}</SelectItem>)}
-										</SelectContent>
-									</Select>
+									<label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+										Semester <span className="text-red-500">*</span>
+										{activeTab === 'consolidated' && <span className="ml-1 text-[10px] font-normal normal-case text-indigo-600">(multi)</span>}
+									</label>
+									<Popover open={semesterPopoverOpen} onOpenChange={setSemesterPopoverOpen}>
+										<PopoverTrigger asChild>
+											<Button
+												variant="outline"
+												role="combobox"
+												className="w-full justify-between h-10 text-sm font-normal"
+												disabled={availableSemesters.length === 0}
+											>
+												<span className="truncate">
+													{availableSemesters.length === 0
+														? 'Select Program first'
+														: multiSemesters.length === 0
+															? 'Select Semester'
+															: multiSemesters.length === 1
+																? `Semester ${multiSemesters[0]}`
+																: `${multiSemesters.length} semesters`}
+												</span>
+												<ChevronsUpDown className="h-3.5 w-3.5 shrink-0 opacity-50" />
+											</Button>
+										</PopoverTrigger>
+										<PopoverContent className="w-[240px] p-0" align="start">
+											<div className="p-2 border-b flex items-center justify-between">
+												<span className="text-xs font-medium">{multiSemesters.length} selected</span>
+												<div className="flex gap-2">
+													<Button variant="link" size="sm" className="h-auto p-0 text-xs" onClick={() => setMultiSemesters([...availableSemesters])}>All</Button>
+													<span className="text-xs text-muted-foreground">|</span>
+													<Button variant="link" size="sm" className="h-auto p-0 text-xs" onClick={() => setMultiSemesters([])}>Clear</Button>
+												</div>
+											</div>
+											<div className="p-2 max-h-60 overflow-auto space-y-1">
+												{availableSemesters.map(sem => (
+													<label key={sem} className={cn(
+														"flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer transition-colors text-sm",
+														multiSemesters.includes(sem) ? "bg-indigo-50" : "hover:bg-muted"
+													)}>
+														<Checkbox
+															checked={multiSemesters.includes(sem)}
+															onCheckedChange={(checked) => {
+																setMultiSemesters(prev => checked
+																	? [...prev, sem].sort((a, b) => a - b)
+																	: prev.filter(s => s !== sem)
+																)
+															}}
+														/>
+														<span>Semester {sem}</span>
+													</label>
+												))}
+											</div>
+										</PopoverContent>
+									</Popover>
 								</div>
 
 							</div>
 						</CardContent>
 					</Card>
 
-					{/* Course multi-select */}
-					{courseOfferings.length > 0 && (
-						<Card>
-							<CardHeader className="pb-2">
-								<div className="flex items-center justify-between">
-									<div>
-										<CardTitle className="text-sm">Select Courses</CardTitle>
-										<p className="text-xs text-muted-foreground">{selectedCourses.length} of {courseOfferings.length} selected</p>
-									</div>
-									<div className="flex gap-2">
-										<Button variant="link" size="sm" className="h-auto p-0 text-xs" onClick={() => setSelectedCourses(courseOfferings.map(co => co.course_offering_id))}>Select All</Button>
-										<span className="text-xs text-muted-foreground">|</span>
-										<Button variant="link" size="sm" className="h-auto p-0 text-xs" onClick={() => setSelectedCourses([])}>Clear</Button>
-									</div>
-								</div>
-							</CardHeader>
-							<CardContent className="pt-0">
-								<div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-									{courseOfferings.map(co => (
-										<label key={co.course_offering_id} className={cn(
-											"flex items-center gap-2 p-2 rounded-md border cursor-pointer transition-colors text-sm",
-											selectedCourses.includes(co.course_offering_id) ? "bg-purple-50 border-purple-300" : "hover:bg-muted/50"
-										)}>
-											<Checkbox
-												checked={selectedCourses.includes(co.course_offering_id)}
-												onCheckedChange={(checked) => {
-													setSelectedCourses(prev => checked
-														? [...prev, co.course_offering_id]
-														: prev.filter(id => id !== co.course_offering_id)
-													)
-												}}
-											/>
-											<span className="font-mono text-xs text-muted-foreground">{co.course_code}</span>
-											<span className="text-xs truncate">{co.course_name}</span>
-										</label>
-									))}
-								</div>
-							</CardContent>
-						</Card>
-					)}
+					{/* Report Type Tabs — always visible once assessment selected */}
+					{activeAssessment && (
+						<Tabs value={activeTab} onValueChange={setActiveTab}>
+							<TabsList>
+								<TabsTrigger value="course-wise">Course Wise</TabsTrigger>
+								<TabsTrigger value="consolidated">Consolidated</TabsTrigger>
+							</TabsList>
 
-					{/* Download bar */}
-					{selectedCourses.length > 0 && activeAssessment && (
-						<Card className="border-l-4 border-l-purple-500">
-							<CardContent className="py-3 px-4">
-								<div className="flex items-center gap-3 flex-wrap">
-									<FileText className="h-5 w-5 text-purple-500" />
-									<span className="text-sm font-semibold">{selectedCourses.length} course{selectedCourses.length > 1 ? 's' : ''} selected</span>
-									<Badge className="bg-purple-100 text-purple-700 hover:bg-purple-100 text-xs">{activeAssessment.round.round_name}</Badge>
-									<div className="flex-1" />
-									<Button
-										onClick={handleGeneratePDF}
-										disabled={generating}
-										size="sm"
-										className="bg-purple-600 hover:bg-purple-700"
-									>
-										{generating ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Download className="h-4 w-4 mr-2" />}
-										{generating ? 'Generating...' : 'Download PDF'}
-									</Button>
-								</div>
-							</CardContent>
-						</Card>
+							{/* ─── Course Wise Tab ─── */}
+							<TabsContent value="course-wise" className="space-y-4 mt-4">
+								{courseOfferings.length > 0 && (
+									<Card>
+										<CardHeader className="pb-2">
+											<div className="flex items-center justify-between">
+												<div>
+													<CardTitle className="text-sm">Select Courses</CardTitle>
+													<p className="text-xs text-muted-foreground">{selectedCourses.length} of {courseOfferings.length} selected</p>
+												</div>
+												<div className="flex gap-2">
+													<Button variant="link" size="sm" className="h-auto p-0 text-xs" onClick={() => setSelectedCourses(courseOfferings.map(co => co.course_offering_id))}>Select All</Button>
+													<span className="text-xs text-muted-foreground">|</span>
+													<Button variant="link" size="sm" className="h-auto p-0 text-xs" onClick={() => setSelectedCourses([])}>Clear</Button>
+												</div>
+											</div>
+										</CardHeader>
+										<CardContent className="pt-0 space-y-4">
+											{(() => {
+												// Group courses by semester
+												const bySem = new Map<number, typeof courseOfferings>()
+												for (const co of courseOfferings) {
+													const sem = (co as any).semester || 0
+													if (!bySem.has(sem)) bySem.set(sem, [])
+													bySem.get(sem)!.push(co)
+												}
+												const sortedSems = [...bySem.keys()].sort((a, b) => a - b)
+
+												return sortedSems.map(sem => {
+													const semCourses = bySem.get(sem) || []
+													const semCourseIds = semCourses.map(c => c.course_offering_id)
+													const allSelected = semCourseIds.every(id => selectedCourses.includes(id))
+													return (
+														<div key={sem} className="space-y-2">
+															<div className="flex items-center justify-between border-b pb-1">
+																<div className="flex items-center gap-2">
+																	<Badge variant="secondary" className="text-xs">Semester {sem}</Badge>
+																	<span className="text-xs text-muted-foreground">{semCourses.length} courses</span>
+																</div>
+																<Button variant="link" size="sm" className="h-auto p-0 text-xs" onClick={() => {
+																	setSelectedCourses(prev => {
+																		const set = new Set(prev)
+																		if (allSelected) semCourseIds.forEach(id => set.delete(id))
+																		else semCourseIds.forEach(id => set.add(id))
+																		return [...set]
+																	})
+																}}>
+																	{allSelected ? 'Deselect' : 'Select'} Sem {sem}
+																</Button>
+															</div>
+															<div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+																{semCourses.map(co => (
+																	<label key={co.course_offering_id} className={cn(
+																		"flex items-center gap-2 p-2 rounded-md border cursor-pointer transition-colors text-sm",
+																		selectedCourses.includes(co.course_offering_id) ? "bg-purple-50 border-purple-300" : "hover:bg-muted/50"
+																	)}>
+																		<Checkbox
+																			checked={selectedCourses.includes(co.course_offering_id)}
+																			onCheckedChange={(checked) => {
+																				setSelectedCourses(prev => checked
+																					? [...prev, co.course_offering_id]
+																					: prev.filter(id => id !== co.course_offering_id)
+																				)
+																			}}
+																		/>
+																		<span className="font-mono text-xs text-muted-foreground">{co.course_code}</span>
+																		<span className="text-xs truncate">{co.course_name}</span>
+																	</label>
+																))}
+															</div>
+														</div>
+													)
+												})
+											})()}
+										</CardContent>
+									</Card>
+								)}
+								{selectedCourses.length > 0 && activeAssessment && (
+									<Card className="border-l-4 border-l-purple-500">
+										<CardContent className="py-3 px-4">
+											<div className="flex items-center gap-3 flex-wrap">
+												<FileText className="h-5 w-5 text-purple-500" />
+												<span className="text-sm font-semibold">{selectedCourses.length} course{selectedCourses.length > 1 ? 's' : ''} selected</span>
+												<Badge className="bg-purple-100 text-purple-700 hover:bg-purple-100 text-xs">{activeAssessment.round.round_name}</Badge>
+												<div className="flex-1" />
+												<Button onClick={handleGeneratePDF} disabled={generating} size="sm" className="bg-purple-600 hover:bg-purple-700">
+													{generating ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Download className="h-4 w-4 mr-2" />}
+													{generating ? 'Generating...' : 'Download PDF'}
+												</Button>
+											</div>
+										</CardContent>
+									</Card>
+								)}
+							</TabsContent>
+
+							{/* ─── Consolidated Tab ─── */}
+							<TabsContent value="consolidated" className="mt-4">
+								<Card className="border-l-4 border-l-indigo-500">
+									<CardContent className="py-4 px-4">
+										<div className="flex items-center gap-3 flex-wrap">
+											<FileText className="h-5 w-5 text-indigo-500" />
+											<div className="flex-1 min-w-0">
+												<span className="text-sm font-semibold block">Consolidated Report</span>
+												<span className="text-xs text-muted-foreground">
+													{!selectedProgram
+														? 'Select Program to continue'
+														: multiSemesters.length === 0
+															? 'Select at least one Semester from the Semester dropdown above'
+															: (() => {
+																const p = programs.find(p => p.id === selectedProgram)
+																return `${p?.program_code || ''} - ${p?.program_name || ''} | Semesters: ${multiSemesters.sort((a, b) => a - b).join(', ')} | ${activeAssessment.round.round_name} — each semester prints on a new page`
+															})()}
+												</span>
+											</div>
+											<Badge className="bg-indigo-100 text-indigo-700 hover:bg-indigo-100 text-xs shrink-0">
+												{multiSemesters.length} sem{multiSemesters.length !== 1 ? 's' : ''}
+											</Badge>
+											<Button
+												onClick={handleConsolidatedPDF}
+												disabled={generating || !selectedProgram || multiSemesters.length === 0}
+												size="sm"
+												className="bg-indigo-600 hover:bg-indigo-700 shrink-0"
+											>
+												{generating ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Download className="h-4 w-4 mr-2" />}
+												{generating ? 'Generating...' : 'Download PDF'}
+											</Button>
+										</div>
+									</CardContent>
+								</Card>
+							</TabsContent>
+						</Tabs>
 					)}
 				</div>
 

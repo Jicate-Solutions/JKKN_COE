@@ -114,6 +114,7 @@ const MODULE_LABELS: Record<ApiModule, string> = {
 	learners: 'Learners',
 	timetables: 'Timetables',
 	courses: 'Courses',
+	'course-mapping': 'Course Mapping',
 }
 
 const OPERATION_LABELS: Record<ApiOperation, string> = {

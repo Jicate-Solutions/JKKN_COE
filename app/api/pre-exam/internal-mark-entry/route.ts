@@ -1,4 +1,4 @@
-import { NextResponse } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
 
 export async function GET(request: Request) {
@@ -445,6 +445,58 @@ export async function POST(request: Request) {
 		const supabase = getSupabaseServer()
 		const body = await request.json()
 
+		// ── Resolve audit user from MyJKKN parent app session ──
+		// Users live in MyJKKN's Supabase, not COE. The OAuth login flow set an
+		// `access_token` cookie containing a JWT issued by MyJKKN. We decode it
+		// locally (no network call) to extract the user UUID, falling back to
+		// MyJKKN's /api/auth/validate endpoint if the token isn't a JWT.
+		// cia_marks.created_by and updated_by are NOT NULL, so we MUST have a user.
+		let currentUserId: string | null = null
+		const accessToken = (request as NextRequest).cookies.get('access_token')?.value
+
+		if (!accessToken) {
+			return NextResponse.json({ error: 'Authentication required — no session cookie found' }, { status: 401 })
+		}
+
+		// Primary: decode the JWT payload to read the user ID directly
+		try {
+			const parts = accessToken.split('.')
+			if (parts.length === 3) {
+				const payloadB64 = parts[1].replace(/-/g, '+').replace(/_/g, '/')
+				const padded = payloadB64 + '='.repeat((4 - payloadB64.length % 4) % 4)
+				const payload = JSON.parse(Buffer.from(padded, 'base64').toString('utf-8'))
+				// JWT standard "sub" claim, or MyJKKN-specific user_id/id
+				currentUserId = payload.sub || payload.user_id || payload.id || null
+			}
+		} catch {
+			// JWT decode failed — fall through to validate endpoint
+		}
+
+		// Fallback: validate with parent app if JWT decode didn't yield a user
+		if (!currentUserId) {
+			try {
+				const validateRes = await fetch(`${process.env.NEXT_PUBLIC_PARENT_APP_URL}/api/auth/validate`, {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({
+						access_token: accessToken,
+						child_app_id: process.env.NEXT_PUBLIC_APP_ID,
+					}),
+				})
+				if (validateRes.ok) {
+					const data = await validateRes.json()
+					if (data?.user?.id) currentUserId = data.user.id
+				}
+			} catch (e) {
+				console.warn('[pre-exam/internal-mark-entry] Validate fallback failed:', e)
+			}
+		}
+
+		// Hard requirement: cia_marks.created_by + updated_by are NOT NULL
+		if (!currentUserId) {
+			return NextResponse.json({ error: 'No authenticated user available for audit trail' }, { status: 401 })
+		}
+
 		const {
 			institutions_id,
 			examination_session_id,
@@ -516,6 +568,10 @@ export async function POST(request: Request) {
 				is_active: true,
 				submission_date: new Date().toISOString().split('T')[0],
 				max_internal_marks: totalMaxMarks,
+				// Audit: stamped from session-resolved COE user
+				created_by: currentUserId,
+				submitted_by: currentUserId,
+				updated_by: currentUserId,
 			}
 
 			// Set component marks and max marks
