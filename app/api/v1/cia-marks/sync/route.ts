@@ -46,10 +46,10 @@ const ALLOWED_FIELDS = new Set([
 	// Grade
 	'grade',
 	// Submission
-	'submission_date', 'submitted_by',
+	'submission_date',
 	// Status
 	'marks_status', 'remarks',
-	// Audit (auto-set by server, but allowed if caller sends)
+	// Audit (UUID FK → users.id; normalized in handler, never trust raw input)
 	'created_by', 'submitted_by', 'updated_by',
 ])
 
@@ -60,6 +60,32 @@ const REQUIRED_FIELDS = [
 	'course_offering_id',
 	'student_id',
 ]
+
+// Component mark field names — used to check if a record actually contains marks
+const COMPONENT_MARK_FIELDS = [
+	'assignment_marks', 'quiz_marks', 'mid_term_marks', 'presentation_marks',
+	'attendance_marks', 'lab_marks', 'project_marks', 'seminar_marks',
+	'viva_marks', 'other_marks',
+	'test_1_mark', 'test_2_mark', 'test_3_mark',
+] as const
+
+/**
+ * Checks if a record contains at least one actual mark > 0.
+ * Used by Layer 4 validation to reject empty mark submissions.
+ * A record is considered "empty" if:
+ *   - All 13 component mark fields are null/undefined/0
+ *   - AND total_internal_marks is also null/undefined/0
+ * We accept total-only records (e.g., attendance aggregations) to stay flexible.
+ */
+function hasAnyMark(record: SyncRecord): boolean {
+	for (const field of COMPONENT_MARK_FIELDS) {
+		const val = record[field]
+		if (val !== undefined && val !== null && Number(val) > 0) return true
+	}
+	// Allow total-only submissions (caller computed aggregate externally)
+	const total = Number(record.total_internal_marks)
+	return !isNaN(total) && total > 0
+}
 
 interface SyncRecord { [key: string]: unknown }
 interface SyncResult {
@@ -83,6 +109,16 @@ export const POST = withExternalAuth(async (request: Request, ctx: ExternalApiCo
 	}
 
 	const supabase = getSupabaseServer()
+
+	// ── Audit identity ──
+	// MyJKKN must pass the logged-in user's UUID (from their session) in the request
+	// body for each record: created_by / submitted_by / updated_by.
+	// COE preserves the value if it's a valid UUID, otherwise writes NULL.
+	// We deliberately do NOT fall back to a system user — that would mis-attribute
+	// every action to one person. NULL is honest; a wrong UUID is not.
+	const resolveAuditUser = (callerValue: unknown): string | null => {
+		return isUuid(callerValue) ? callerValue : null
+	}
 
 	// ── Resolve program_id + course_id from course_offerings (batch) ──
 	const uniqueCOIds = [...new Set(records.map(r => String(r.course_offering_id)).filter(Boolean))]
@@ -134,6 +170,19 @@ export const POST = withExternalAuth(async (request: Request, ctx: ExternalApiCo
 			}
 		}
 
+		// Layer 4: Reject records with no actual marks — prevents empty submissions
+		// leaking through when client-side guards (button disabled, dialog handler) fail.
+		if (!hasAnyMark(raw)) {
+			results.push({
+				index: i,
+				student_id: String(raw.student_id),
+				course_offering_id: coId,
+				status: 'error',
+				error: 'No marks provided — record must contain at least one component mark > 0 or a non-zero total_internal_marks',
+			})
+			continue
+		}
+
 		// Sanitize: only allow known fields
 		const sanitized: SyncRecord = {}
 		for (const key of ALLOWED_FIELDS) {
@@ -153,10 +202,26 @@ export const POST = withExternalAuth(async (request: Request, ctx: ExternalApiCo
 		// Default marks_status
 		if (!sanitized.marks_status) sanitized.marks_status = 'Submitted'
 
-		// Audit: set created_by / submitted_by from API key context
-		const apiIdentity = `api:${ctx.appName}` // e.g. "api:MyJKKN Internal Marks"
-		sanitized.created_by = apiIdentity
-		sanitized.submitted_by = raw.submitted_by || apiIdentity
+		// Audit columns: cia_marks.created_by and updated_by are NOT NULL.
+		// MyJKKN MUST send the logged-in user's UUID in each record.
+		const resolvedCreatedBy = resolveAuditUser(raw.created_by)
+		const resolvedUpdatedBy = resolveAuditUser(raw.updated_by) ?? resolvedCreatedBy
+		const resolvedSubmittedBy = resolveAuditUser(raw.submitted_by) ?? resolvedCreatedBy
+
+		if (!resolvedCreatedBy || !resolvedUpdatedBy) {
+			results.push({
+				index: i,
+				student_id: String(raw.student_id),
+				course_offering_id: coId,
+				status: 'error',
+				error: 'Missing audit user UUID — record must include "created_by" (logged-in user UUID from MyJKKN session)',
+			})
+			continue
+		}
+
+		sanitized.created_by = resolvedCreatedBy
+		sanitized.updated_by = resolvedUpdatedBy
+		sanitized.submitted_by = resolvedSubmittedBy
 
 		// Ensure is_active
 		sanitized.is_active = true
@@ -237,10 +302,10 @@ export const POST = withExternalAuth(async (request: Request, ctx: ExternalApiCo
 	}
 
 	// Update existing records
-	const apiIdentityForUpdate = `api:${ctx.appName}`
 	for (const { record } of toUpdate) {
 		const { student_id, course_offering_id, examination_session_id, cia_round, institutions_id, exam_registration_id, is_active, created_by, ...updateFields } = record as any
-		updateFields.updated_by = apiIdentityForUpdate
+		// Re-resolve updated_by from caller's UUID; created_by destructured out so original is preserved.
+		updateFields.updated_by = resolveAuditUser(updateFields.updated_by)
 		const { error } = await supabase
 			.from('cia_marks')
 			.update(updateFields)
@@ -262,17 +327,29 @@ export const POST = withExternalAuth(async (request: Request, ctx: ExternalApiCo
 	const synced = insertCount + updateCount
 	const failed = results.filter(r => r.status === 'error').length
 
+	// First error message (if any) for top-level error field
+	const firstError = results.find(r => r.status === 'error')?.error
+
+	// Status code: 200 if everything synced, 207 if partial, 500 if all failed
+	const httpStatus = synced === 0 ? 500 : failed > 0 ? 207 : 200
+
 	return NextResponse.json({
-		success: synced > 0,
+		success: failed === 0 && synced > 0,
 		synced,
 		inserted: insertCount,
 		updated: updateCount,
 		failed,
 		total: records.length,
+		...(firstError ? { error: firstError } : {}),
 		results,
 		request_id: ctx.requestId,
-	})
+	}, { status: httpStatus })
 })
+
+function isUuid(v: unknown): v is string {
+	if (typeof v !== 'string') return false
+	return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v)
+}
 
 function mapPgError(code: string, message: string): string {
 	switch (code) {

@@ -165,6 +165,8 @@ export default function InternalMarkEntryPage() {
 	const [loading, setLoading] = useState(false)
 	const [saving, setSaving] = useState(false)
 	const [hasSaved, setHasSaved] = useState(false)
+	// Mode: 'entry' (strict, all-mandatory), 'view' (read-only), 'edit' (partial updates)
+	const [viewMode, setViewMode] = useState<'entry' | 'view' | 'edit'>('entry')
 	const [searchTerm, setSearchTerm] = useState("")
 	const [learnersLoading, setLearnersLoading] = useState(false)
 	const [programOpen, setProgramOpen] = useState(false)
@@ -259,6 +261,13 @@ export default function InternalMarkEntryPage() {
 				}
 		}
 	}, [selectedSemester])
+
+	// Reset "hasSaved" + viewMode whenever the user changes any context.
+	// Prevents stale state (Download PDF button + tab selection) across course switches.
+	useEffect(() => {
+		setHasSaved(false)
+		setViewMode('entry')
+	}, [selectedSession, selectedAssessment, selectedProgram, selectedSemester, selectedCourseOffering, effectiveInstitutionId])
 
 	// 6. When course selected → load components from assessment round + fetch learners
 	useEffect(() => {
@@ -597,6 +606,24 @@ export default function InternalMarkEntryPage() {
 		).length
 	}, [learnerMarks])
 
+	// Strict check: every learner must have a mark for every active component.
+	// Used to gate the Save button AND the Confirm dialog — empty marks are blocked.
+	const allLearnersHaveMarks = useMemo(() => {
+		if (learners.length === 0) return false
+		const activeComponents = components.filter(c => (maxMarks[c.component_code] || 0) > 0)
+		if (activeComponents.length === 0) return false
+		for (const learner of learners) {
+			const marks = learnerMarks[learner.id] || {}
+			for (const comp of activeComponents) {
+				const v = marks[comp.component_code]
+				if (v === undefined || v === null || isNaN(Number(v))) return false
+			}
+		}
+		return true
+	}, [learners, learnerMarks, components, maxMarks])
+
+	const missingMarkCount = useMemo(() => learners.length - marksToSaveCount, [learners.length, marksToSaveCount])
+
 	const handleSaveClick = () => {
 		// Pre-validate before showing confirmation
 		const activeComponents = components.filter(c => (maxMarks[c.component_code] || 0) > 0)
@@ -608,6 +635,16 @@ export default function InternalMarkEntryPage() {
 		}
 		if (!hasAnyMarks) {
 			toast({ title: '❌ No Marks Entered', description: 'Please enter marks for at least one learner.', variant: 'destructive' }); return
+		}
+		// Strict "all learners mandatory" check applies ONLY in entry mode.
+		// Edit mode allows partial updates (the user is correcting one or two students).
+		if (viewMode === 'entry' && !allLearnersHaveMarks) {
+			toast({
+				title: `❌ Cannot save: ${missingMarkCount} of ${learners.length} students have missing marks`,
+				description: 'Every student must have marks entered for every component. Enter 0 if the student scored zero.',
+				variant: 'destructive',
+			})
+			return
 		}
 		setConfirmOpen(true)
 	}
@@ -698,12 +735,16 @@ export default function InternalMarkEntryPage() {
 
 			if (res.ok) {
 				toast({
-					title: '✅ Marks Saved',
-					description: result.message || `Saved marks for ${marksToSave.length} learners.`,
+					title: viewMode === 'edit' ? '✅ Marks Updated' : '✅ Marks Saved',
+					description: result.message || (viewMode === 'edit'
+						? `Updated marks for ${marksToSave.length} learner(s).`
+						: `Saved marks for ${marksToSave.length} learners.`),
 					className: 'bg-green-50 border-green-200 text-green-800'
 				})
 				setHasSaved(true)
-				// Refresh learners list
+				// Auto-switch to View mode after both initial save AND edit save
+				setViewMode('view')
+				// Refresh learners list to show the latest persisted state
 				fetchLearners(co.course_offering_id, selectedSession!, Number(selectedCiaRound) || undefined)
 			} else {
 				toast({
@@ -1090,16 +1131,63 @@ export default function InternalMarkEntryPage() {
 						</Card>
 					)}
 
+					{/* Mode Tabs — Entry / View / Edit */}
+					{selectedCourseOffering && (
+						<div className="flex items-center gap-1 border-b">
+							{(['entry', 'view', 'edit'] as const).map(mode => (
+								<button
+									key={mode}
+									type="button"
+									onClick={() => {
+										setViewMode(mode)
+										// When switching to Edit mode, refresh marks from DB
+										if (mode === 'edit' && selectedCourseOffering && selectedSession) {
+											const co = courseOfferings.find(c => c.course_offering_id === selectedCourseOffering)
+											if (co) fetchLearners(co.course_offering_id, selectedSession, Number(selectedCiaRound) || undefined)
+										}
+									}}
+									className={cn(
+										"px-4 py-2 text-sm font-medium border-b-2 transition-colors -mb-px",
+										viewMode === mode
+											? "border-emerald-600 text-emerald-700 dark:text-emerald-400"
+											: "border-transparent text-muted-foreground hover:text-foreground hover:border-slate-300"
+									)}
+								>
+									{mode === 'entry' && '📝 Entry'}
+									{mode === 'view' && '👁️ View'}
+									{mode === 'edit' && '✏️ Edit'}
+								</button>
+							))}
+						</div>
+					)}
+
 					{/* Learners Mark Entry Table */}
 					{selectedCourseOffering && (
-						<Card className="border-l-4 border-l-emerald-500">
-							<CardHeader className="pb-3 bg-gradient-to-r from-emerald-50/50 to-transparent dark:from-emerald-950/20">
+						<Card className={cn(
+							"border-l-4",
+							viewMode === 'entry' && "border-l-emerald-500",
+							viewMode === 'view' && "border-l-blue-500",
+							viewMode === 'edit' && "border-l-amber-500"
+						)}>
+							<CardHeader className={cn(
+								"pb-3 bg-gradient-to-r to-transparent",
+								viewMode === 'entry' && "from-emerald-50/50 dark:from-emerald-950/20",
+								viewMode === 'view' && "from-blue-50/50 dark:from-blue-950/20",
+								viewMode === 'edit' && "from-amber-50/50 dark:from-amber-950/20"
+							)}>
 								<div className="flex items-center justify-between">
 									<div>
 										<CardTitle className="text-base flex items-center gap-2">
-											Learner Marks Entry
+											{viewMode === 'entry' && 'Learner Marks Entry'}
+											{viewMode === 'view' && 'Learner Marks (Read Only)'}
+											{viewMode === 'edit' && 'Edit Learner Marks'}
 											{activeAssessment && (
-												<Badge className="bg-emerald-100 text-emerald-700 hover:bg-emerald-100 text-xs">
+												<Badge className={cn(
+													"text-xs",
+													viewMode === 'entry' && "bg-emerald-100 text-emerald-700 hover:bg-emerald-100",
+													viewMode === 'view' && "bg-blue-100 text-blue-700 hover:bg-blue-100",
+													viewMode === 'edit' && "bg-amber-100 text-amber-700 hover:bg-amber-100"
+												)}>
 													{activeAssessment?.round?.round_name || 'CIA'}
 												</Badge>
 											)}
@@ -1166,21 +1254,31 @@ export default function InternalMarkEntryPage() {
 																const error = errors[learner.id]?.[comp.component_code]
 																return (
 																	<TableCell key={comp.component_code} className="text-center p-1.5">
-																		<Input
-																			type="number"
-																			min={0}
-																			max={maxMarks[comp.component_code] || 999}
-																			value={learnerMarks[learner.id]?.[comp.component_code] ?? ''}
-																			onChange={(e) => handleMarkChange(learner.id, comp.component_code, e.target.value)}
-																			onKeyDown={(e) => handleMarkKeyDown(e, idx, colIdx)}
-																			data-mark-row={idx}
-																			data-mark-col={colIdx}
-																			className={cn(
-																				"h-9 w-18 text-center text-sm mx-auto rounded-lg border-2 border-emerald-200 bg-emerald-50/40 font-medium focus:border-emerald-500 focus:ring-emerald-500 focus:bg-white transition-colors",
-																				error && "!border-red-400 !bg-red-50 text-red-700"
-																			)}
-																			placeholder="-"
-																		/>
+																		{viewMode === 'view' ? (
+																			// Read-only display — no input, just the value as bold text
+																			<div className="h-9 w-18 mx-auto flex items-center justify-center text-sm font-bold text-blue-700">
+																				{learnerMarks[learner.id]?.[comp.component_code] ?? '-'}
+																			</div>
+																		) : (
+																			<Input
+																				type="number"
+																				min={0}
+																				max={maxMarks[comp.component_code] || 999}
+																				value={learnerMarks[learner.id]?.[comp.component_code] ?? ''}
+																				onChange={(e) => handleMarkChange(learner.id, comp.component_code, e.target.value)}
+																				onKeyDown={(e) => handleMarkKeyDown(e, idx, colIdx)}
+																				data-mark-row={idx}
+																				data-mark-col={colIdx}
+																				className={cn(
+																					"h-9 w-18 text-center text-sm mx-auto rounded-lg border-2 font-medium focus:ring-emerald-500 focus:bg-white transition-colors",
+																					viewMode === 'edit'
+																						? "border-amber-200 bg-amber-50/40 focus:border-amber-500"
+																						: "border-emerald-200 bg-emerald-50/40 focus:border-emerald-500",
+																					error && "!border-red-400 !bg-red-50 text-red-700"
+																				)}
+																				placeholder="-"
+																			/>
+																		)}
 																		{error && <p className="text-[10px] text-red-500 mt-0.5">{error}</p>}
 																	</TableCell>
 																)
@@ -1203,27 +1301,84 @@ export default function InternalMarkEntryPage() {
 										</Table>
 									</div>
 								)}
-								{/* Save button at bottom */}
+								{/* Save section — warning + buttons (mode-aware) */}
 								{filteredLearners.length > 0 && (
-									<div className="flex justify-end gap-3 pt-4 border-t mt-4">
-										<Button
-											onClick={handleSaveClick}
-											disabled={saving || !hasAnyMarks || hasValidationErrors}
-											size="sm"
-											className="bg-emerald-600 hover:bg-emerald-700"
-										>
-											{saving ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Save className="h-4 w-4 mr-2" />}
-											{saving ? 'Saving...' : 'Save Marks'}
-										</Button>
-										{hasSaved && (
-											<Button
-												onClick={handleDownloadPDF}
-												size="sm"
-												variant="outline"
-											>
-												<Download className="h-4 w-4 mr-2" />
-												Download PDF
-											</Button>
+									<div className="pt-4 border-t mt-4 space-y-3">
+										{/* View mode: read-only banner, no save buttons */}
+										{viewMode === 'view' && (
+											<div className="flex items-center justify-between gap-3 rounded-md border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800 dark:border-blue-900 dark:bg-blue-950/40 dark:text-blue-200">
+												<div className="flex items-start gap-3">
+													<AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
+													<div>
+														<div className="font-semibold">Read-only view</div>
+														<div className="text-xs mt-0.5 opacity-90">
+															Marks are saved. Switch to the Edit tab to make changes.
+														</div>
+													</div>
+												</div>
+												{hasSaved && (
+													<Button onClick={handleDownloadPDF} size="sm" variant="outline">
+														<Download className="h-4 w-4 mr-2" />
+														Download PDF
+													</Button>
+												)}
+											</div>
+										)}
+
+										{/* Entry mode: strict validation + save button */}
+										{viewMode === 'entry' && (
+											<>
+												{!allLearnersHaveMarks && learners.length > 0 && (
+													<div className="flex items-start gap-3 rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-900 dark:bg-red-950/40 dark:text-red-200">
+														<AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
+														<div>
+															<div className="font-semibold">
+																Cannot save: {missingMarkCount} of {learners.length} students have missing marks
+															</div>
+															<div className="text-xs mt-0.5 opacity-90">
+																Every student must have marks entered for every component before saving is allowed. Enter 0 if the student scored zero.
+															</div>
+														</div>
+													</div>
+												)}
+												<div className="flex justify-end gap-3">
+													<Button
+														onClick={handleSaveClick}
+														disabled={saving || !hasAnyMarks || hasValidationErrors || !allLearnersHaveMarks}
+														size="sm"
+														className="bg-emerald-600 hover:bg-emerald-700"
+													>
+														{saving ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Save className="h-4 w-4 mr-2" />}
+														{saving ? 'Saving...' : 'Save Marks'}
+													</Button>
+												</div>
+											</>
+										)}
+
+										{/* Edit mode: relaxed validation + update button */}
+										{viewMode === 'edit' && (
+											<>
+												<div className="flex items-start gap-3 rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
+													<AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
+													<div>
+														<div className="font-semibold">Edit mode</div>
+														<div className="text-xs mt-0.5 opacity-90">
+															You can update marks for individual students. Partial updates are allowed — students you don't change will keep their existing marks.
+														</div>
+													</div>
+												</div>
+												<div className="flex justify-end gap-3">
+													<Button
+														onClick={handleSaveClick}
+														disabled={saving || hasValidationErrors}
+														size="sm"
+														className="bg-amber-600 hover:bg-amber-700"
+													>
+														{saving ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Save className="h-4 w-4 mr-2" />}
+														{saving ? 'Updating...' : 'Update Marks'}
+													</Button>
+												</div>
+											</>
 										)}
 									</div>
 								)}
@@ -1236,31 +1391,73 @@ export default function InternalMarkEntryPage() {
 				<Dialog open={confirmOpen} onOpenChange={setConfirmOpen}>
 					<DialogContent className="sm:max-w-md">
 						<DialogHeader>
-							<DialogTitle>Confirm Save Marks</DialogTitle>
+							<DialogTitle>{viewMode === 'edit' ? 'Confirm Update Marks' : 'Confirm Save Marks'}</DialogTitle>
 						</DialogHeader>
-						<div className="space-y-3 py-4">
-							<div className="grid grid-cols-2 gap-y-2 text-sm">
+						<div className="py-4">
+							<div className="grid grid-cols-[110px_1fr] gap-y-3 text-sm">
+								{/* Program */}
 								<div className="text-muted-foreground">Program</div>
-								<div className="font-medium">{(() => { const p = programs.find(p => p.id === selectedProgram); return p ? `${p.program_code} - ${p.program_name}` : '-' })()}</div>
-								<div className="text-muted-foreground">Semester</div>
-								<div className="font-medium">Semester {selectedSemester}</div>
+								<div className="font-medium whitespace-normal">
+									{(() => {
+										const p = programs.find(p => p.id === selectedProgram)
+										return p ? `${p.program_code} - ${p.program_name}` : '-'
+									})()}
+								</div>
+
+								{/* Course */}
 								<div className="text-muted-foreground">Course</div>
-								<div className="font-medium">{selectedCourse ? `${selectedCourse.course_code} - ${selectedCourse.course_name}` : '-'}</div>
+								<div className="font-medium whitespace-normal">
+									{selectedCourse ? `${selectedCourse.course_code} - ${selectedCourse.course_name}` : '-'}
+								</div>
+
+								{/* Assessment */}
 								{activeAssessment && (
 									<>
 										<div className="text-muted-foreground">Assessment</div>
-										<div className="font-medium">{activeAssessment.label}</div>
+										<div className="font-medium whitespace-normal">{activeAssessment.label}</div>
 									</>
 								)}
-								<div className="text-muted-foreground">Learners with marks</div>
-								<div className="font-semibold text-emerald-700">{marksToSaveCount} of {learners.length}</div>
+
+								{/* Exam Session — conditional */}
+								{selectedSession && (
+									<>
+										<div className="text-muted-foreground">Exam Session</div>
+										<div className="font-medium whitespace-normal">
+											{sessions.find(s => s.id === selectedSession)?.session_name || '-'}
+										</div>
+									</>
+								)}
+
+								{/* Learners with marks — two-line label, green count */}
+								<div className="text-muted-foreground">
+									Learners<br />with marks
+								</div>
+								<div className={cn("font-semibold self-center", allLearnersHaveMarks ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400")}>
+									{marksToSaveCount} of {learners.length}
+									{!allLearnersHaveMarks && (
+										<span className="ml-2 text-xs font-normal">({missingMarkCount} missing)</span>
+									)}
+								</div>
 							</div>
 						</div>
 						<DialogFooter className="gap-2">
 							<Button variant="outline" onClick={() => setConfirmOpen(false)}>Cancel</Button>
-							<Button onClick={handleSave} className="bg-emerald-600 hover:bg-emerald-700">
+							<Button
+								onClick={handleSave}
+								// Strict "all mandatory" check applies only in entry mode.
+								// Edit mode allows partial updates.
+								disabled={viewMode === 'entry' && !allLearnersHaveMarks}
+								className={cn(
+									"disabled:bg-red-200 disabled:text-red-700 disabled:cursor-not-allowed",
+									viewMode === 'edit'
+										? "bg-amber-600 hover:bg-amber-700"
+										: "bg-emerald-600 hover:bg-emerald-700"
+								)}
+							>
 								<Save className="h-4 w-4 mr-2" />
-								Confirm Save
+								{viewMode === 'edit'
+									? 'Confirm Update'
+									: allLearnersHaveMarks ? 'Confirm Save' : 'Cannot Save'}
 							</Button>
 						</DialogFooter>
 					</DialogContent>

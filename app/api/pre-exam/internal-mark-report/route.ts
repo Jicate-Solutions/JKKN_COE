@@ -114,6 +114,150 @@ export async function GET(request: Request) {
 			return NextResponse.json(result)
 		}
 
+		// Consolidated report: all courses for a program + semester + CIA round
+		if (action === 'consolidated') {
+			const institutionsId = searchParams.get('institutions_id')
+			const sessionId = searchParams.get('examination_session_id')
+			const programCode = searchParams.get('program_code')
+			const semester = searchParams.get('semester')
+			const ciaRound = searchParams.get('cia_round') || '1'
+
+			if (!institutionsId || !sessionId || !programCode || !semester) {
+				return NextResponse.json({ error: 'institutions_id, examination_session_id, program_code, and semester are required' }, { status: 400 })
+			}
+
+			// 1. Get all registrations for this program
+			const { data: regs } = await supabase
+				.from('exam_registrations')
+				.select('id, student_id, stu_register_no, student_name, course_offering_id, course_code')
+				.eq('institutions_id', institutionsId)
+				.eq('examination_session_id', sessionId)
+				.eq('program_code', programCode)
+				.eq('is_regular', true)
+				.range(0, 49999)
+
+			if (!regs || regs.length === 0) return NextResponse.json({ courses: [], learners: [] })
+
+			// 2. Extract all unique course_offering_ids + course_codes
+			const courseCodeSet = new Set<string>()
+			const coIdSet = new Set<string>()
+			for (const r of regs) {
+				if (r.course_code) courseCodeSet.add(r.course_code)
+				if (r.course_offering_id) coIdSet.add(r.course_offering_id)
+			}
+
+			// 3. Get course details (name, max mark) + course_mapping for order
+			const uniqueCourseCodes = [...courseCodeSet]
+			const [coursesRes, cmRes] = await Promise.all([
+				supabase.from('courses')
+					.select('course_code, course_name, internal_max_mark, evaluation_type, course_category')
+					.eq('institutions_id', institutionsId)
+					.in('course_code', uniqueCourseCodes),
+				supabase.from('course_mapping')
+					.select('course_code, course_order')
+					.eq('program_code', programCode)
+					.in('course_code', uniqueCourseCodes),
+			])
+
+			const courseByCode = new Map((coursesRes.data || []).map(c => [c.course_code, c]))
+			const cmByCode = new Map((cmRes.data || []).map(cm => [cm.course_code, cm]))
+
+			// 4. Filter course_offerings to ONLY those matching the target semester
+			const allCoIds = [...coIdSet]
+			const { data: offerings } = await supabase
+				.from('course_offerings')
+				.select('id, course_code, semester')
+				.in('id', allCoIds)
+				.eq('semester', Number(semester))
+
+			const validCourseCodes = new Set<string>()
+			const coIdsBySemester = new Set<string>()
+			for (const o of (offerings || [])) {
+				const course = courseByCode.get(o.course_code)
+				const evalType = course?.evaluation_type || ''
+				if (evalType === 'CIA' || evalType === 'CIA + ESE') {
+					validCourseCodes.add(o.course_code)
+					coIdsBySemester.add(o.id)
+				}
+			}
+
+			// 5. Build learner map from registrations that match semester course_offering_ids
+			// This ensures only students registered in THIS semester appear
+			const learnerMap = new Map<string, { register_number: string, student_name: string }>()
+			for (const r of regs) {
+				if (r.course_offering_id && coIdsBySemester.has(r.course_offering_id)) {
+					if (r.stu_register_no && !learnerMap.has(r.stu_register_no)) {
+						learnerMap.set(r.stu_register_no, { register_number: r.stu_register_no, student_name: r.student_name })
+					}
+				}
+			}
+
+			// Build sorted course list
+			const courses = [...validCourseCodes]
+				.map(code => {
+					const course = courseByCode.get(code)
+					const cm = cmByCode.get(code)
+					return {
+						course_code: code,
+						course_name: course?.course_name || code,
+						internal_max_mark: course?.internal_max_mark || 0,
+						course_category: course?.course_category || null,
+						course_order: cm?.course_order ?? 999,
+					}
+				})
+				.sort((a, b) => a.course_order - b.course_order)
+
+			// 4. Fetch all CIA marks for this semester's courses + round
+			const validCoIds = [...coIdsBySemester]
+			const { data: allMarks } = validCoIds.length > 0
+				? await supabase.from('cia_marks')
+					.select('student_id, course_offering_id, total_internal_marks')
+					.in('course_offering_id', validCoIds)
+					.eq('examination_session_id', sessionId)
+					.eq('cia_round', Number(ciaRound))
+					.eq('is_active', true)
+				: { data: [] }
+
+			// Build marks lookup: student_id → course_code → total
+			// Need to map course_offering_id → course_code
+			const coIdToCode = new Map<string, string>()
+			for (const o of (offerings || [])) coIdToCode.set(o.id, o.course_code)
+
+			const marksMatrix = new Map<string, Map<string, number>>()
+			for (const m of (allMarks || [])) {
+				const code = coIdToCode.get(m.course_offering_id)
+				if (!code) continue
+				// Find register number from student_id
+				const reg = regs.find(r => r.student_id === m.student_id)
+				if (!reg) continue
+				const regNo = reg.stu_register_no
+				if (!marksMatrix.has(regNo)) marksMatrix.set(regNo, new Map())
+				marksMatrix.get(regNo)!.set(code, m.total_internal_marks || 0)
+			}
+
+			// 5. Build learner rows sorted by register number
+			const sortedLearners = [...learnerMap.entries()]
+				.sort((a, b) => a[0].localeCompare(b[0]))
+				.map(([regNo, info], idx) => {
+					const courseMarks: Record<string, number | null> = {}
+					let total = 0
+					for (const c of courses) {
+						const mark = marksMatrix.get(regNo)?.get(c.course_code) ?? null
+						courseMarks[c.course_code] = mark
+						if (mark != null && mark > 0) total += mark
+					}
+					return {
+						serial_number: idx + 1,
+						register_number: regNo,
+						student_name: info.student_name,
+						course_marks: courseMarks,
+						total,
+					}
+				})
+
+			return NextResponse.json({ courses, learners: sortedLearners })
+		}
+
 		return NextResponse.json({ error: 'Invalid action' }, { status: 400 })
 	} catch (error) {
 		console.error('Internal mark report error:', error)

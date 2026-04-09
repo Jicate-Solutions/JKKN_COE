@@ -242,7 +242,7 @@ export function generateInternalMarksPDF(data: InternalMarksPDFData): string {
 	// ========== SIGNATURE SECTION ==========
 	const sigWidth = tableWidth / 3
 	const sigLabels = [
-		'Signature of the Class In-Charge',
+		'Signature of the Subject In-Charge',
 		'Signature of the HOD',
 		'Signature of the Principal',
 	]
@@ -392,7 +392,7 @@ export function generateMultiCourseInternalMarksPDF(courses: InternalMarksPDFDat
 		currentY += 14
 
 		const sigWidth = tableWidth / 3
-		const sigLabels = ['Signature of the Class In-Charge', 'Signature of the HOD', 'Signature of the Principal']
+		const sigLabels = ['Signature of the Subject In-Charge', 'Signature of the HOD', 'Signature of the Principal']
 		doc.setFont('times', 'normal'); doc.setFontSize(9)
 		sigLabels.forEach((label, i) => {
 			const cx = MARGIN + (i * sigWidth) + sigWidth / 2
