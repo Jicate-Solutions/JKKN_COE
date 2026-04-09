@@ -7,8 +7,10 @@
  *      RLS blocks the cookie client).
  *   3. super_admin users are allowed everything.
  *   4. Regular users: check the cached `users.permissions` JSONB first
- *      (same cache the UI's hasPermission() reads from). If missing, compute
- *      live from user_roles → role_permissions → permissions.
+ *      (same cache the UI's hasPermission() reads from), but only when the
+ *      cache is fresher than CACHE_TTL. Otherwise, compute live from
+ *      user_roles → role_permissions → permissions, filtering out
+ *      deactivated roles so revoked access is honored immediately.
  *
  * Returns { ok: true, userId } when the permission is held; otherwise
  * { ok: false, status, error } with a suggested HTTP status code.
@@ -16,6 +18,10 @@
 
 import { createRouteHandlerSupabaseClient } from '@/lib/supabase-route-handler'
 import { getSupabaseServer } from '@/lib/supabase-server'
+
+// Must match the TTL used by /api/auth/permissions/current so that
+// server-side API checks and the UI's hasPermission() never diverge.
+const CACHE_TTL = 5 * 60 * 1000 // 5 minutes
 
 export type PermissionCheckSuccess = {
 	ok: true
@@ -50,12 +56,13 @@ export async function requireUserPermission(
 			id: string
 			is_super_admin: boolean | null
 			permissions: Record<string, boolean> | null
+			updated_at: string | null
 		} | null = null
 
 		{
 			const { data } = await routeClient
 				.from('users')
-				.select('id, is_super_admin, permissions')
+				.select('id, is_super_admin, permissions, updated_at')
 				.eq('email', email)
 				.maybeSingle()
 			userRow = data
@@ -65,7 +72,7 @@ export async function requireUserPermission(
 			const svc = getSupabaseServer()
 			const { data } = await svc
 				.from('users')
-				.select('id, is_super_admin, permissions')
+				.select('id, is_super_admin, permissions, updated_at')
 				.eq('email', email)
 				.maybeSingle()
 			userRow = data
@@ -85,9 +92,17 @@ export async function requireUserPermission(
 			}
 		}
 
-		// Prefer the cached JSONB permissions map
+		// Prefer the cached JSONB permissions map, but only when it's fresh
+		// enough. A stale cache would let revoked grants linger forever, so
+		// mirror the 5-minute TTL used by /api/auth/permissions/current.
 		const cached = userRow.permissions || {}
-		if (cached[permissionName] === true) {
+		const cacheAge = userRow.updated_at
+			? Date.now() - new Date(userRow.updated_at).getTime()
+			: Infinity
+		const cacheIsFresh =
+			cacheAge < CACHE_TTL && Object.keys(cached).length > 0
+
+		if (cacheIsFresh && cached[permissionName] === true) {
 			return {
 				ok: true,
 				userId: userRow.id,
@@ -96,16 +111,31 @@ export async function requireUserPermission(
 			}
 		}
 
-		// Cache miss (or stale/empty) — compute live from normalized RBAC
+		// Cache miss (or stale/empty) — compute live from normalized RBAC.
+		// Join in `roles` and filter out deactivated roles so a user whose
+		// role was turned off cannot pass this check via stale user_roles.
 		const svc = getSupabaseServer()
 		const { data: userRoles } = await svc
 			.from('user_roles')
-			.select('role_id')
+			.select('role_id, roles ( id, is_active )')
 			.eq('user_id', userRow.id)
 			.eq('is_active', true)
 			.or('expires_at.is.null,expires_at.gt.now()')
 
-		const roleIds = (userRoles ?? []).map(r => r.role_id)
+		const roleIds = (userRoles ?? [])
+			.filter(ur => {
+				const role = (ur as { roles?: { is_active?: boolean | null } | { is_active?: boolean | null }[] | null }).roles
+				// Supabase may return the joined row as a single object or an array
+				// depending on the relationship shape. Treat missing/undefined as active
+				// (matches the reference's `!== false` check).
+				if (!role) return true
+				if (Array.isArray(role)) {
+					return role.every(r => r?.is_active !== false)
+				}
+				return role.is_active !== false
+			})
+			.map(ur => (ur as { role_id: string }).role_id)
+
 		if (roleIds.length === 0) {
 			return {
 				ok: false,
