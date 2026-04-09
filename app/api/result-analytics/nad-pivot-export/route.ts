@@ -224,6 +224,7 @@ interface SubjectData {
 
 interface StudentData {
 	student_id: string
+	examination_session_id: string  // Needed for direct semester_results lookup (bypasses view's is_published filter)
 	register_number: string
 	roll_number: string
 	student_name: string
@@ -246,7 +247,10 @@ interface StudentData {
 	sgpa: number
 	cgpa: number
 	total_credits: number
+	total_credits_earned: number | null         // From semester_results.total_credits_earned (source of truth for TOT_CREDIT)
+	semester_result_id: string | null           // For bulk lookup of semester_results row
 	total_credit_points: number
+	total_credit_points_earned: number | null   // From semester_results.total_credit_points (source of truth for TOT_CREDIT_POINTS)
 	overall_grade: string
 	overall_result: string
 	percentage: number
@@ -335,6 +339,7 @@ export async function GET(req: NextRequest) {
 				// Initialize student record
 				studentMap.set(studentKey, {
 					student_id: row.student_id,
+					examination_session_id: row.examination_session_id,
 					register_number: row.ENROLLMENT_NUMBER || '',
 					roll_number: row.ROLL_NUMBER || '',
 					student_name: row.STUDENT_NAME || '',
@@ -357,7 +362,10 @@ export async function GET(req: NextRequest) {
 					sgpa: parseFloat(row.SGPA) || 0,
 					cgpa: parseFloat(row.CGPA) || 0,
 					total_credits: 0,
+					total_credits_earned: null,                       // Populated after view query via bulk fetch
+					semester_result_id: row.semester_result_id || null,
 					total_credit_points: 0,
+					total_credit_points_earned: null,                 // Populated after view query via bulk fetch
 					overall_grade: '',
 					overall_result: 'PASS',
 					percentage: 0,
@@ -439,6 +447,66 @@ export async function GET(req: NextRequest) {
 				csv: '',
 				row_count: 0
 			})
+		}
+
+		// ── Bulk-fetch TOT_CREDIT / TOT_CREDIT_POINTS from semester_results ──────
+		// Both columns must come from semester_results (the authoritative values,
+		// trigger-maintained via calculate_semester_result). Summing subject-level
+		// credits client-side would include RA/failed attempts and drift from the
+		// earned-credit count.
+		//
+		// IMPORTANT: We query semester_results DIRECTLY by (student_id, exam_session_id)
+		// instead of relying on view.semester_result_id. The view's LEFT JOIN filters
+		// on `is_active = true AND is_published = true`, so draft/unpublished rows get
+		// silently dropped — which caused TOT_CREDIT to fall back to the subject-sum
+		// (i.e. "credits registered") for any student whose semester result hasn't
+		// been published yet. Direct lookup with only `is_active = true` fixes that.
+		const studentIdSet = new Set<string>()
+		const examSessionIdSet = new Set<string>()
+		for (const student of Array.from(studentMap.values())) {
+			if (student.student_id) studentIdSet.add(student.student_id)
+			if (student.examination_session_id) examSessionIdSet.add(student.examination_session_id)
+		}
+
+		if (studentIdSet.size > 0 && examSessionIdSet.size > 0) {
+			const { data: srRows, error: srError } = await supabase
+				.from('semester_results')
+				.select('student_id, examination_session_id, total_credits_earned, total_credit_points, is_published')
+				.in('student_id', Array.from(studentIdSet))
+				.in('examination_session_id', Array.from(examSessionIdSet))
+				.eq('is_active', true)  // Only current active version — NOT gated on is_published
+
+			if (srError) {
+				console.error('[NAD Export] Failed to fetch semester_results credits:', srError)
+				// Non-fatal — route will fall back to sum of subject credits below.
+			} else if (srRows) {
+				// Composite key: student_id + examination_session_id → credit values
+				const srMap = new Map<string, { credits: number; points: number; published: boolean }>()
+				for (const r of srRows) {
+					const key = `${r.student_id}-${r.examination_session_id}`
+					srMap.set(key, {
+						credits: Number(r.total_credits_earned) || 0,
+						points: Number(r.total_credit_points) || 0,
+						published: !!r.is_published,
+					})
+				}
+				let resolvedCount = 0
+				let unpublishedCount = 0
+				for (const student of Array.from(studentMap.values())) {
+					const key = `${student.student_id}-${student.examination_session_id}`
+					const sr = srMap.get(key)
+					if (sr) {
+						student.total_credits_earned = sr.credits
+						student.total_credit_points_earned = sr.points
+						resolvedCount++
+						if (!sr.published) unpublishedCount++
+					}
+				}
+				console.log(
+					`[NAD Export] Resolved semester_results credits for ${resolvedCount}/${studentMap.size} students ` +
+					`(${unpublishedCount} from unpublished/draft rows)`
+				)
+			}
 		}
 
 		// Calculate percentage and grade for each student
@@ -680,8 +748,16 @@ export async function GET(req: NextRequest) {
 			row.push('')                                          // CERT_NO - empty (not fetched)
 			row.push(toRomanNumeral(student.semester))            // SEM - Roman numerals (I, II, III, etc.)
 			row.push('REGULAR')                                   // EXAM_TYPE
-			row.push(student.total_credits.toString())            // TOT_CREDIT
-			row.push(student.total_credit_points.toString())      // TOT_CREDIT_POINTS
+			// TOT_CREDIT — prefer semester_results.total_credits_earned (authoritative),
+			// fall back to subject-credit sum only if the semester_results row is missing.
+			row.push(
+				(student.total_credits_earned ?? student.total_credits).toString()
+			)                                                     // TOT_CREDIT
+			// TOT_CREDIT_POINTS — prefer semester_results.total_credit_points (authoritative,
+			// decimal), fall back to subject-credit-points sum if the semester result row is missing.
+			row.push(
+				(student.total_credit_points_earned ?? student.total_credit_points).toString()
+			)                                                     // TOT_CREDIT_POINTS
 			row.push('')                                          // CGPA - empty (not fetched)
 			row.push(student.aadhar_number)                       // ABC_ACCOUNT_ID
 			row.push('SEMESTER')                                  // TERM_TYPE
