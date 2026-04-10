@@ -16,7 +16,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { useToast } from "@/hooks/common/use-toast"
 import { useAuth } from "@/lib/auth/auth-context-parent"
 import { useInstitutionFilter } from "@/hooks/use-institution-filter"
-import { Check, ChevronsUpDown, Download, FileText, LayoutGrid, Shield, AlertCircle } from "lucide-react"
+import { Check, ChevronsUpDown, Download, FileText, LayoutGrid, Shield, AlertCircle, Loader2 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import Link from "next/link"
 
@@ -51,7 +51,7 @@ interface Semester {
 // =====================================================
 
 export default function NADReportPage() {
-	useSessionSync()
+	const { selectedSessionId: globalSessionId, setSelectedSessionId: setGlobalSessionId } = useSessionSync()
 	const { toast } = useToast()
 	const { hasAnyRole, hasPermission } = useAuth()
 	const { isReady, appendToUrl, institutionId: contextInstitutionId, shouldFilter, mustSelectInstitution } = useInstitutionFilter()
@@ -72,15 +72,30 @@ export default function NADReportPage() {
 
 	// Selected filter values
 	const [selectedInstitutionId, setSelectedInstitutionId] = useState<string>("")
-	const [selectedSessionId, setSelectedSessionId] = useState<string>("")
+	// Session is mirrored from useSessionSync so it stays in sync with the
+	// global session selector (when present). Writes still flow through
+	// setGlobalSessionId so selecting a session here also updates the global.
+	const selectedSessionId = globalSessionId || ""
+	const setSelectedSessionId = setGlobalSessionId
 	const [selectedProgramId, setSelectedProgramId] = useState<string>("")
 	const [selectedSemesters, setSelectedSemesters] = useState<number[]>([])
+
+	// Hide-when-global flags: if the institution or session was already
+	// determined at a global level (header filter / session sync), hide
+	// the corresponding in-page dropdown. Normal users with a locked-in
+	// institution see just Program + Semester.
+	const institutionIsGlobal = !mustSelectInstitution && !!contextInstitutionId
+	const sessionIsGlobal = !!globalSessionId
 
 	// Combobox open state
 	const [institutionOpen, setInstitutionOpen] = useState(false)
 	const [sessionOpen, setSessionOpen] = useState(false)
 	const [programOpen, setProgramOpen] = useState(false)
 	const [semesterOpen, setSemesterOpen] = useState(false)
+
+	// Download-in-progress state (one per button so they can be clicked independently)
+	const [downloadingOfficial, setDownloadingOfficial] = useState(false)
+	const [downloadingPivot, setDownloadingPivot] = useState(false)
 
 	const selectedInstitution = institutions.find(i => i.id === selectedInstitutionId)
 	const selectedProgram = programs.find(p => p.id === selectedProgramId)
@@ -135,19 +150,22 @@ export default function NADReportPage() {
 	}, [isReady, appendToUrl, shouldFilter, contextInstitutionId, mustSelectInstitution, toast])
 
 	// Institution → Sessions
+	// Only clears the session when it's NOT globally-sourced (otherwise
+	// picking a new institution on this page would nuke the header's
+	// session sync for every other page).
 	useEffect(() => {
 		if (!selectedInstitutionId) {
 			setSessions([])
 			setPrograms([])
 			setSemesters([])
-			setSelectedSessionId("")
+			if (!sessionIsGlobal) setSelectedSessionId("")
 			setSelectedProgramId("")
 			setSelectedSemesters([])
 			return
 		}
 
 		// Clear downstream state when institution changes
-		setSelectedSessionId("")
+		if (!sessionIsGlobal) setSelectedSessionId("")
 		setSelectedProgramId("")
 		setSelectedSemesters([])
 		setSessions([])
@@ -171,6 +189,7 @@ export default function NADReportPage() {
 		}
 		fetchSessions()
 		return () => { cancelled = true }
+	// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [selectedInstitutionId])
 
 	// Session → Programs
@@ -267,6 +286,7 @@ export default function NADReportPage() {
 
 	// NAD ABC CSV Export (Official Upload Format - one row per subject)
 	const handleExportNADCSV = useCallback(async () => {
+		setDownloadingOfficial(true)
 		toast({
 			title: "Generating NAD CSV",
 			description: "Preparing NAD/ABC compliant export file...",
@@ -314,11 +334,14 @@ export default function NADReportPage() {
 				description: error instanceof Error ? error.message : "Failed to generate NAD CSV export",
 				variant: "destructive"
 			})
+		} finally {
+			setDownloadingOfficial(false)
 		}
 	}, [buildParams, toast])
 
 	// NAD Pivot CSV Export (Consolidated Format - one row per learner with SUB1-SUBn columns)
 	const handleExportNADPivotCSV = useCallback(async () => {
+		setDownloadingPivot(true)
 		toast({
 			title: "Generating NAD Pivot CSV",
 			description: "Preparing pivot export (one row per learner with SUB columns)...",
@@ -366,6 +389,8 @@ export default function NADReportPage() {
 				description: error instanceof Error ? error.message : "Failed to generate NAD Pivot CSV export",
 				variant: "destructive"
 			})
+		} finally {
+			setDownloadingPivot(false)
 		}
 	}, [buildParams, toast])
 
@@ -431,91 +456,103 @@ export default function NADReportPage() {
 								<CardTitle className="text-base">Report Filters</CardTitle>
 								<CardDescription>Pick an institution, examination session, and program to enable downloads.</CardDescription>
 							</CardHeader>
-							<CardContent className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-								{/* Institution */}
-								<div className="space-y-2">
-									<Label>Institution <span className="text-red-500">*</span></Label>
-									<Popover open={institutionOpen} onOpenChange={setInstitutionOpen}>
-										<PopoverTrigger asChild>
-											<Button variant="outline" role="combobox" className="w-full justify-between" disabled={loadingInstitutions}>
-												<span className="truncate">
-													{selectedInstitution
-														? `${selectedInstitution.institution_code} - ${selectedInstitution.institution_name}`
-														: loadingInstitutions ? "Loading..." : "Select institution"}
-												</span>
-												<ChevronsUpDown className="h-3 w-3 opacity-50" />
-											</Button>
-										</PopoverTrigger>
-										<PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0" align="start">
-											<Command>
-												<CommandInput placeholder="Search institution..." />
-												<CommandList>
-													<CommandEmpty>No institution found.</CommandEmpty>
-													<CommandGroup>
-														{institutions.map(i => (
-															<CommandItem
-																key={i.id}
-																value={`${i.institution_code} ${i.institution_name}`}
-																onSelect={() => {
-																	setSelectedInstitutionId(i.id)
-																	setInstitutionOpen(false)
-																}}
-															>
-																<Check className={cn("mr-2 h-4 w-4", selectedInstitutionId === i.id ? "opacity-100" : "opacity-0")} />
-																{i.institution_code} - {i.institution_name}
-															</CommandItem>
-														))}
-													</CommandGroup>
-												</CommandList>
-											</Command>
-										</PopoverContent>
-									</Popover>
-								</div>
+							<CardContent className={cn(
+								"grid grid-cols-1 gap-4",
+								// Column count adapts to how many filters are visible
+								institutionIsGlobal && sessionIsGlobal
+									? "md:grid-cols-2"  // Program + Semester only
+									: (institutionIsGlobal || sessionIsGlobal)
+										? "md:grid-cols-3"  // Three visible filters
+										: "md:grid-cols-2 lg:grid-cols-4"  // All four
+							)}>
+								{/* Institution — hidden when it's already determined globally */}
+								{!institutionIsGlobal && (
+									<div className="space-y-2">
+										<Label>Institution <span className="text-red-500">*</span></Label>
+										<Popover open={institutionOpen} onOpenChange={setInstitutionOpen}>
+											<PopoverTrigger asChild>
+												<Button variant="outline" role="combobox" className="w-full justify-between" disabled={loadingInstitutions}>
+													<span className="truncate">
+														{selectedInstitution
+															? `${selectedInstitution.institution_code} - ${selectedInstitution.institution_name}`
+															: loadingInstitutions ? "Loading..." : "Select institution"}
+													</span>
+													<ChevronsUpDown className="h-3 w-3 opacity-50" />
+												</Button>
+											</PopoverTrigger>
+											<PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0" align="start">
+												<Command>
+													<CommandInput placeholder="Search institution..." />
+													<CommandList>
+														<CommandEmpty>No institution found.</CommandEmpty>
+														<CommandGroup>
+															{institutions.map(i => (
+																<CommandItem
+																	key={i.id}
+																	value={`${i.institution_code} ${i.institution_name}`}
+																	onSelect={() => {
+																		setSelectedInstitutionId(i.id)
+																		setInstitutionOpen(false)
+																	}}
+																>
+																	<Check className={cn("mr-2 h-4 w-4", selectedInstitutionId === i.id ? "opacity-100" : "opacity-0")} />
+																	{i.institution_code} - {i.institution_name}
+																</CommandItem>
+															))}
+														</CommandGroup>
+													</CommandList>
+												</Command>
+											</PopoverContent>
+										</Popover>
+									</div>
+								)}
 
-								{/* Examination Session */}
-								<div className="space-y-2">
-									<Label>Examination Session <span className="text-red-500">*</span></Label>
-									<Popover open={sessionOpen} onOpenChange={setSessionOpen}>
-										<PopoverTrigger asChild>
-											<Button
-												variant="outline"
-												role="combobox"
-												className="w-full justify-between"
-												disabled={!selectedInstitutionId || loadingSessions}
-											>
-												<span className="truncate">
-													{selectedSessionId
-														? sessions.find(s => s.id === selectedSessionId)?.session_name
-														: !selectedInstitutionId ? "Select institution first" : loadingSessions ? "Loading..." : "Select session"}
-												</span>
-												<ChevronsUpDown className="h-3 w-3 opacity-50" />
-											</Button>
-										</PopoverTrigger>
-										<PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0" align="start">
-											<Command>
-												<CommandInput placeholder="Search session..." />
-												<CommandList>
-													<CommandEmpty>No session found.</CommandEmpty>
-													<CommandGroup>
-														{sessions.map(s => (
-															<CommandItem
-																key={s.id}
-																value={s.session_name}
-																onSelect={() => {
-																	setSelectedSessionId(s.id)
-																	setSessionOpen(false)
-																}}
-															>
-																<Check className={cn("mr-2 h-4 w-4", selectedSessionId === s.id ? "opacity-100" : "opacity-0")} />
-																{s.session_name}
-															</CommandItem>
-														))}
-													</CommandGroup>
-												</CommandList>
-											</Command>
-										</PopoverContent>
-									</Popover>
-								</div>
+								{/* Examination Session — hidden when it's already set globally via useSessionSync */}
+								{!sessionIsGlobal && (
+									<div className="space-y-2">
+										<Label>Examination Session <span className="text-red-500">*</span></Label>
+										<Popover open={sessionOpen} onOpenChange={setSessionOpen}>
+											<PopoverTrigger asChild>
+												<Button
+													variant="outline"
+													role="combobox"
+													className="w-full justify-between"
+													disabled={!selectedInstitutionId || loadingSessions}
+												>
+													<span className="truncate">
+														{selectedSessionId
+															? sessions.find(s => s.id === selectedSessionId)?.session_name
+															: !selectedInstitutionId ? "Select institution first" : loadingSessions ? "Loading..." : "Select session"}
+													</span>
+													<ChevronsUpDown className="h-3 w-3 opacity-50" />
+												</Button>
+											</PopoverTrigger>
+											<PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0" align="start">
+												<Command>
+													<CommandInput placeholder="Search session..." />
+													<CommandList>
+														<CommandEmpty>No session found.</CommandEmpty>
+														<CommandGroup>
+															{sessions.map(s => (
+																<CommandItem
+																	key={s.id}
+																	value={s.session_name}
+																	onSelect={() => {
+																		setSelectedSessionId(s.id)
+																		setSessionOpen(false)
+																	}}
+																>
+																	<Check className={cn("mr-2 h-4 w-4", selectedSessionId === s.id ? "opacity-100" : "opacity-0")} />
+																	{s.session_name}
+																</CommandItem>
+															))}
+														</CommandGroup>
+													</CommandList>
+												</Command>
+											</PopoverContent>
+										</Popover>
+									</div>
+								)}
 
 								{/* Program */}
 								<div className="space-y-2">
@@ -660,12 +697,15 @@ export default function NADReportPage() {
 									</p>
 									<Button
 										onClick={handleExportNADCSV}
-										disabled={!canDownload}
+										disabled={!canDownload || downloadingOfficial}
 										className="w-full"
 										variant="outline"
 									>
-										<Download className="h-4 w-4 mr-2" />
-										Download NAD CSV
+										{downloadingOfficial ? (
+											<><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Generating…</>
+										) : (
+											<><Download className="h-4 w-4 mr-2" /> Download NAD CSV</>
+										)}
 									</Button>
 								</div>
 
@@ -680,11 +720,14 @@ export default function NADReportPage() {
 									</p>
 									<Button
 										onClick={handleExportNADPivotCSV}
-										disabled={!canDownload}
+										disabled={!canDownload || downloadingPivot}
 										className="w-full"
 									>
-										<Download className="h-4 w-4 mr-2" />
-										Download NAD Pivot CSV
+										{downloadingPivot ? (
+											<><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Generating…</>
+										) : (
+											<><Download className="h-4 w-4 mr-2" /> Download NAD Pivot CSV</>
+										)}
 									</Button>
 								</div>
 							</CardContent>
