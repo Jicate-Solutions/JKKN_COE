@@ -1,20 +1,11 @@
 ---
 name: data-validation
-description: Complete data validation patterns for JKKN COE Next.js application. This skill should be used when implementing form validation, import validation, or API-level validation. Automatically triggers when user mentions 'validation', 'validate', 'required fields', 'error messages', 'form errors', 'input validation', or 'data quality'.
+description: Complete data validation patterns for JKKN COE Next.js application. Use when implementing form validation, import validation, or API-level validation. Triggers on 'validation', 'validate', 'required fields', 'error messages', 'form errors', 'input validation', 'data quality', 'Zod schema', 'field validation'.
 ---
 
 # Data Validation Skill
 
 This skill provides comprehensive validation patterns for the JKKN COE application, covering client-side form validation, import data validation, and server-side API validation.
-
-## When to Use This Skill
-
-Use this skill when:
-- Implementing form validation for CRUD operations
-- Validating imported Excel/CSV/JSON data
-- Creating API-level validation in route handlers
-- Standardizing error messages across the application
-- Handling foreign key validation
 
 ## File Locations (Following project-structure)
 

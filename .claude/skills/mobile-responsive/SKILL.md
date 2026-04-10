@@ -1,6 +1,6 @@
 ---
 name: mobile-responsive
-description: Comprehensive mobile-first responsive design skill for converting desktop pages to mobile-friendly layouts. Use when implementing mobile views, fixing responsive issues, or batch-converting multiple pages to mobile-responsive. Automates the mobile-view workflow for Next.js/React applications with Tailwind CSS. (project)
+description: Comprehensive mobile-first responsive design skill for converting desktop pages to mobile-friendly layouts. Use when implementing mobile views, fixing responsive issues, or batch-converting multiple pages to mobile-responsive. Automates the mobile-view workflow for Next.js/React applications with Tailwind CSS. Triggers on 'mobile responsive', 'mobile view', 'responsive design', 'mobile-friendly', 'breakpoint', 'mobile layout', 'Tailwind breakpoints'.
 ---
 
 # Mobile Responsive Skill
@@ -8,16 +8,6 @@ description: Comprehensive mobile-first responsive design skill for converting d
 ## Purpose
 
 This skill provides a systematic, automated approach to implementing mobile-responsive designs across entire applications. Instead of converting pages one-by-one manually, this skill provides batch processing workflows, reusable patterns, and automated checks to rapidly make all pages mobile-friendly.
-
-## When to Use This Skill
-
-Use this skill when:
-- **Converting multiple pages to mobile-responsive** - Batch process entire applications
-- **Fixing responsive issues** - Debug and fix mobile layout problems
-- **Creating new mobile-first pages** - Build pages with mobile-first approach
-- **Auditing mobile responsiveness** - Check all pages for mobile issues
-- **Implementing bottom navigation** - Add mobile navigation patterns
-- **Optimizing touch interactions** - Improve mobile UX
 
 ## Quick Start - Batch Mobile Conversion
 

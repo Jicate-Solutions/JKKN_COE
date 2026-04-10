@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
+import { handleDeleteWithDependencyCheck } from '@/lib/delete-helpers'
 
 // GET: list exam registrations
 export async function GET(request: Request) {
@@ -470,21 +471,9 @@ export async function DELETE(request: Request) {
 			return NextResponse.json({ error: 'Exam registration ID is required' }, { status: 400 })
 		}
 
-		const supabase = getSupabaseServer()
-
-		const { error } = await supabase
-			.from('exam_registrations')
-			.delete()
-			.eq('id', id)
-
-		if (error) {
-			console.error('Error deleting exam registration:', error)
-			return NextResponse.json({ error: 'Failed to delete exam registration' }, { status: 500 })
-		}
-
-		return NextResponse.json({ success: true })
+		return handleDeleteWithDependencyCheck('exam_registrations', id, request)
 	} catch (e) {
-		console.error('Exam registration deletion error:', e)
+		console.error('Delete error:', e)
 		return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
 	}
 }

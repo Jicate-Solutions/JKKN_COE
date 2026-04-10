@@ -1,6 +1,6 @@
 ---
 name: saas-ui-patterns
-description: Premium SaaS UI/UX patterns for JKKN COE Next.js CRUD pages. Use when creating new pages, redesigning existing pages, or ensuring UI consistency across the application. Triggers on "create page", "new module", "redesign", "UI pattern", "CRUD page", "table page", "SaaS design", "page layout", "scorecard", "pagination", "action menu", or when building any entity management page. Reference implementation is app/(coe)/grading/grades/page.tsx.
+description: Premium SaaS UI/UX patterns for JKKN COE Next.js CRUD pages. Use when creating new pages, redesigning existing pages, ensuring UI consistency, implementing scorecards, table layouts, toolbars, form sheets, pagination, action menus, or loading/empty states. Covers typography rules, anti-patterns to avoid, and institution filter integration. Triggers on 'create page', 'new module', 'redesign', 'UI pattern', 'CRUD page', 'table page', 'SaaS design', 'page layout', 'scorecard', 'pagination', 'action menu', 'form sheet', 'toolbar', 'delete dialog'.
 ---
 
 # SaaS UI Patterns

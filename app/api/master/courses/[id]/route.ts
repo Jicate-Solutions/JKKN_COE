@@ -364,10 +364,48 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
   }
 }
 
-export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
     const supabase = getSupabaseServer()
     const { id } = await params
+    const { searchParams } = new URL(req.url)
+    const checkOnly = searchParams.get('check') === 'true'
+
+    // Check which tables reference this course
+    const dependencyChecks = [
+      { table: 'course_mapping', label: 'Course Mappings' },
+      { table: 'internal_marks', label: 'Internal Marks' },
+      { table: 'final_marks', label: 'Final Marks' },
+      { table: 'cia_marks', label: 'CIA Marks' },
+      { table: 'marks_entry', label: 'Marks Entries' },
+      { table: 'exam_registrations', label: 'Exam Registrations' },
+      { table: 'examiner_assignments', label: 'Examiner Assignments' },
+      { table: 'answer_sheets', label: 'Answer Sheets' },
+      { table: 'answer_sheet_packets', label: 'Answer Sheet Packets' },
+      { table: 'marks_upload_batches', label: 'Marks Upload Batches' },
+      { table: 'marks_correction_log', label: 'Marks Corrections' },
+      { table: 'student_backlogs', label: 'Learner Backlogs' },
+    ]
+
+    const dependencies: { table: string; label: string; count: number }[] = []
+
+    await Promise.all(
+      dependencyChecks.map(async ({ table, label }) => {
+        const { count } = await supabase
+          .from(table)
+          .select('id', { count: 'exact', head: true })
+          .eq('course_id', id)
+
+        if (count && count > 0) {
+          dependencies.push({ table, label, count })
+        }
+      })
+    )
+
+    // If check-only mode, return dependencies without deleting
+    if (checkOnly) {
+      return NextResponse.json({ id, dependencies })
+    }
 
     // Fetch old values BEFORE deletion for audit trail
     const oldRecord = await fetchOldValues('courses', id)
@@ -375,7 +413,7 @@ export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ 
     const { error } = await supabase.from('courses').delete().eq('id', id)
     if (error) {
       const errorMsg = error.code === '23503'
-        ? 'Cannot delete - this course has related records (e.g. course offerings, registrations)'
+        ? 'Cannot delete - this course still has related records. Run the cascade migration first.'
         : error.message || 'Failed to delete course'
 
       await logTransaction({
@@ -389,21 +427,26 @@ export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ 
       })
 
       if (error.code === '23503') {
-        return NextResponse.json({ error: errorMsg }, { status: 400 })
+        return NextResponse.json({ error: errorMsg, dependencies }, { status: 400 })
       }
       console.error('Delete course error:', error)
       return NextResponse.json({ error: errorMsg }, { status: 500 })
     }
+
+    const cascadedCount = dependencies.reduce((sum, d) => sum + d.count, 0)
 
     await logTransaction({
       action: 'delete',
       resource_type: 'course',
       resource_id: '/master/courses',
       old_values: oldRecord,
-      metadata: { record_id: id },
+      metadata: { record_id: id, cascaded_records: cascadedCount, dependencies },
     })
 
-    return NextResponse.json({ message: 'Course deleted successfully' })
+    return NextResponse.json({
+      message: 'Course deleted successfully',
+      cascaded: dependencies,
+    })
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown error'
     return NextResponse.json({ error: 'Failed to delete course', details: message }, { status: 500 })

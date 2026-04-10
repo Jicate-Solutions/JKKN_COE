@@ -81,7 +81,7 @@ function padBoardGroupHeights(doc: jsPDF, rows: any[], boardGroups: { board_code
 	doc.setFontSize(savedSize)
 }
 
-/** Draw text with wrapping, vertically centered in cell. Caller must set font on doc first. */
+/** Draw text with wrapping, vertically centered in cell. Clips lines that exceed cell boundary. */
 function drawWrappedCell(doc: jsPDF, text: string, x: number, y: number, cellWidth: number, cellHeight: number, align: 'left' | 'center' = 'left') {
 	if (!text) return
 	const maxW = cellWidth - 2
@@ -89,8 +89,11 @@ function drawWrappedCell(doc: jsPDF, text: string, x: number, y: number, cellWid
 	const lineH = doc.getFontSize() * LINE_HEIGHT_FACTOR
 	const textX = align === 'left' ? x + 1 : x + cellWidth / 2
 	const startY = y + cellHeight / 2 + 1.5 - (lines.length - 1) * lineH / 2
+	const cellBottom = y + cellHeight
 	for (let i = 0; i < lines.length; i++) {
-		doc.text(lines[i], textX, startY + i * lineH, { align })
+		const lineY = startY + i * lineH
+		if (lineY < y + 1 || lineY > cellBottom - 0.5) continue
+		doc.text(lines[i], textX, lineY, { align })
 	}
 }
 
@@ -493,7 +496,7 @@ function generateCourseCountRegularArrearPdf(opts: ReportPdfOptions): string {
 	}
 
 	// A4 portrait usable = 210 - 2*6.35 = 197.3mm
-	const colWidths = [8, 30, 10, 22, 57, 24, 24, 20]  // Total = 195mm
+	const colWidths = [8, 40, 10, 22, 47, 24, 24, 20]  // Total = 195mm
 	const headers = ['S.No', 'Board', 'Sem', 'Course\nCode', 'Course Name', 'Regular\nStudents', 'Arrear\nStudents', 'Total']
 	const headerHeight = 14
 	const rowHeight = 7
@@ -562,6 +565,22 @@ function generateCourseCountRegularArrearPdf(opts: ReportPdfOptions): string {
 		const row = rows[idx]
 		const rh = rowHeights[idx]
 
+		const bg = boardGroups[boardGroupIdx]
+
+		// When starting a new board group, check if the board label fits on this page
+		if (boardGroupRowOffset === 0 && rowsOnPage > 0) {
+			const boardRow = rows[bg.startIdx]
+			const boardLabel = formatBoardDisplay(bg.board_code, boardRow?.board_name)
+			const labelHeight = calcWrappedRowHeight(doc, boardLabel, colWidths[1] - 2, rh)
+			if (tableY + labelHeight > pageHeight - margin - footerSpace) {
+				doc.addPage()
+				currentPage++
+				tableY = margin + 2
+				tableY = drawSpanningHeader(tableY)
+				rowsOnPage = 0
+			}
+		}
+
 		// Page break check
 		if (tableY + rh > pageHeight - margin - footerSpace) {
 			doc.addPage()
@@ -570,8 +589,6 @@ function generateCourseCountRegularArrearPdf(opts: ReportPdfOptions): string {
 			tableY = drawSpanningHeader(tableY)
 			rowsOnPage = 0
 		}
-
-		const bg = boardGroups[boardGroupIdx]
 
 		doc.setFont('times', 'normal')
 		doc.setFontSize(9)
@@ -706,7 +723,7 @@ function generateCourseCountYearWisePdf(opts: ReportPdfOptions): string {
 	}
 
 	// Dynamic columns: fixed cols + year cols + total col (portrait A4 = ~197mm usable)
-	const fixedColWidths = [8, 30, 10, 22, 57]
+	const fixedColWidths = [8, 40, 10, 22, 47]
 	const fixedTotal = fixedColWidths.reduce((a, b) => a + b, 0)
 	const totalColWidth = 18
 	const yearColWidth = Math.min(25, (pageWidth - margin * 2 - fixedTotal - totalColWidth) / Math.max(sortedYears.length, 1))
@@ -777,6 +794,22 @@ function generateCourseCountYearWisePdf(opts: ReportPdfOptions): string {
 		const row = rows[idx]
 		const rh = rowHeights[idx]
 
+		const bg = boardGroups[boardGroupIdx]
+
+		// When starting a new board group, check if the board label fits on this page
+		if (boardGroupRowOffset === 0 && rowsOnPage > 0) {
+			const boardRow = rows[bg.startIdx]
+			const boardLabel = formatBoardDisplay(bg.board_code, boardRow?.board_name)
+			const labelHeight = calcWrappedRowHeight(doc, boardLabel, fixedColWidths[1] - 2, rh)
+			if (tableY + labelHeight > pageHeight - margin - footerSpace) {
+				doc.addPage()
+				currentPage++
+				tableY = margin + 2
+				tableY = drawYearHeader(tableY)
+				rowsOnPage = 0
+			}
+		}
+
 		if (tableY + rh > pageHeight - margin - footerSpace) {
 			doc.addPage()
 			currentPage++
@@ -784,8 +817,6 @@ function generateCourseCountYearWisePdf(opts: ReportPdfOptions): string {
 			tableY = drawYearHeader(tableY)
 			rowsOnPage = 0
 		}
-
-		const bg = boardGroups[boardGroupIdx]
 
 		doc.setFont('times', 'normal')
 		doc.setFontSize(9)
@@ -944,7 +975,7 @@ function generateCourseCountProgramYearWisePdf(opts: ReportPdfOptions): string {
 	})
 
 	// Dynamic columns with total (portrait A4 = ~197mm usable)
-	const fixedColWidths = [8, 27, 18, 10, 20, 47]
+	const fixedColWidths = [8, 37, 18, 10, 20, 37]
 	const fixedTotal2c = fixedColWidths.reduce((a, b) => a + b, 0)
 	const totalColWidth = 18
 	const yearColWidth = Math.min(25, (pageWidth - margin * 2 - fixedTotal2c - totalColWidth) / Math.max(sortedYears.length, 1))
@@ -1012,6 +1043,27 @@ function generateCourseCountProgramYearWisePdf(opts: ReportPdfOptions): string {
 		const row = rows[idx]
 		const rh = rowHeights[idx]
 
+		const bgi = rowToBoardGroup.get(idx)!
+		const pgi = rowToProgramGroup.get(idx)!
+		const bg = boardGroups[bgi]
+		const pg = programGroups[pgi]
+		const boardRowOffset = idx - bg.startIdx
+		const programRowOffset = idx - pg.startIdx
+
+		// When starting a new board group, check if the board label fits on this page
+		if (boardRowOffset === 0 && rowsOnPage > 0) {
+			const boardRow = rows[bg.startIdx]
+			const boardLabel = formatBoardDisplay(bg.board_code, boardRow?.board_name)
+			const labelHeight = calcWrappedRowHeight(doc, boardLabel, fixedColWidths[1] - 2, rh)
+			if (tableY + labelHeight > pageHeight - margin - footerSpace) {
+				doc.addPage()
+				currentPage++
+				tableY = margin + 2
+				tableY = drawProgramHeader(tableY)
+				rowsOnPage = 0
+			}
+		}
+
 		if (tableY + rh > pageHeight - margin - footerSpace) {
 			doc.addPage()
 			currentPage++
@@ -1019,13 +1071,6 @@ function generateCourseCountProgramYearWisePdf(opts: ReportPdfOptions): string {
 			tableY = drawProgramHeader(tableY)
 			rowsOnPage = 0
 		}
-
-		const bgi = rowToBoardGroup.get(idx)!
-		const pgi = rowToProgramGroup.get(idx)!
-		const bg = boardGroups[bgi]
-		const pg = programGroups[pgi]
-		const boardRowOffset = idx - bg.startIdx
-		const programRowOffset = idx - pg.startIdx
 
 		doc.setFont('times', 'normal')
 		doc.setFontSize(9)
@@ -1748,7 +1793,7 @@ function generateBoardWiseExamTimetablePdf(opts: ReportPdfOptions): string {
 	}
 
 	// Portrait A4 = ~197mm usable
-	const colWidths = [8, 30, 22, 12, 10, 22, 93]  // Total = 197
+	const colWidths = [8, 40, 22, 12, 10, 22, 83]  // Total = 197
 	const headers = ['S.No', 'Board', 'Exam Date', 'Session', 'Sem', 'Course\nCode', 'Course Name']
 	const headerHeight = 10
 	const rowHeight = 7
@@ -1799,6 +1844,22 @@ function generateBoardWiseExamTimetablePdf(opts: ReportPdfOptions): string {
 		const row = rows[idx]
 		const rh = rowHeights[idx]
 
+		const bg = boardGroups[boardGroupIdx]
+
+		// When starting a new board group, check if the board label + first row fits on this page
+		if (boardGroupRowOffset === 0 && rowsOnPage > 0) {
+			const boardRow = rows[bg.startIdx]
+			const boardLabel = formatBoardDisplay(bg.board_code, boardRow?.board_name)
+			const labelHeight = calcWrappedRowHeight(doc, boardLabel, colWidths[1] - 2, rh)
+			if (tableY + labelHeight > pageHeight - margin - footerSpace) {
+				doc.addPage()
+				currentPage++
+				tableY = margin + 2
+				tableY = drawTimetableHeader(tableY)
+				rowsOnPage = 0
+			}
+		}
+
 		if (tableY + rh > pageHeight - margin - footerSpace) {
 			doc.addPage()
 			currentPage++
@@ -1806,8 +1867,6 @@ function generateBoardWiseExamTimetablePdf(opts: ReportPdfOptions): string {
 			tableY = drawTimetableHeader(tableY)
 			rowsOnPage = 0
 		}
-
-		const bg = boardGroups[boardGroupIdx]
 
 		doc.setFont('times', 'normal')
 		doc.setFontSize(9)

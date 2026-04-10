@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
+import { handleDeleteWithDependencyCheck } from '@/lib/delete-helpers'
 
 // GET - Fetch all examination sessions
 export async function GET(request: Request) {
@@ -492,21 +493,9 @@ export async function DELETE(request: Request) {
 			return NextResponse.json({ error: 'Examination session ID is required' }, { status: 400 })
 		}
 
-		const supabase = getSupabaseServer()
-
-		const { error } = await supabase
-			.from('examination_sessions')
-			.delete()
-			.eq('id', id)
-
-		if (error) {
-			console.error('Error deleting examination session:', error)
-			return NextResponse.json({ error: 'Failed to delete examination session' }, { status: 500 })
-		}
-
-		return NextResponse.json({ success: true })
+		return handleDeleteWithDependencyCheck('examination_sessions', id, request)
 	} catch (e) {
-		console.error('Examination session deletion error:', e)
+		console.error('Delete error:', e)
 		return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
 	}
 }

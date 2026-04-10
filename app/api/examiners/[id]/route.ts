@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
+import { handleDeleteWithDependencyCheck } from '@/lib/delete-helpers'
 
 export async function GET(
 	request: Request,
@@ -108,21 +109,12 @@ export async function DELETE(
 ) {
 	try {
 		const { id } = await params
-		const supabase = getSupabaseServer()
-
-		const { error } = await supabase
-			.from('examiners')
-			.delete()
-			.eq('id', id)
-
-		if (error) {
-			console.error('Error deleting examiner:', error)
-			return NextResponse.json({ error: 'Failed to delete examiner' }, { status: 500 })
+		if (!id) {
+			return NextResponse.json({ error: 'ID is required' }, { status: 400 })
 		}
-
-		return NextResponse.json({ success: true })
+		return handleDeleteWithDependencyCheck('examiners', id, request)
 	} catch (e) {
-		console.error('Examiner deletion error:', e)
+		console.error('Delete error:', e)
 		return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
 	}
 }

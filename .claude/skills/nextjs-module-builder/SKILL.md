@@ -1,6 +1,6 @@
 ---
 name: nextjs-module-builder
-description: Complete workflow for building new modules in Next.js 15 (App Router) with Supabase backend. Use when creating CRUD features, data management modules, or any new feature module following the 5-layer architecture (Types → Services → Hooks → Components → Pages). Covers TypeScript types, Supabase services, React hooks, Shadcn/UI components, and permission-based routing.
+description: Complete workflow for building new modules in Next.js 15 (App Router) with Supabase backend. Use when creating CRUD features, data management modules, or any new feature module following the 5-layer architecture (Types → Services → Hooks → Components → Pages). Covers TypeScript types, Supabase services, React hooks, Shadcn/UI components, and permission-based routing. Triggers on 'new module', 'build feature', 'create CRUD', '5-layer architecture', 'module builder', 'Supabase CRUD', 'new feature module'.
 ---
 
 # Next.js Module Builder

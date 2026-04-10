@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
+import { handleDeleteWithDependencyCheck } from '@/lib/delete-helpers'
 
 export async function GET(
   req: NextRequest,
@@ -175,35 +176,12 @@ export async function DELETE(
 ) {
   try {
     const { id } = await params
-    const supabase = getSupabaseServer()
-
-    const { error } = await supabase
-      .from('programs')
-      .delete()
-      .eq('id', id)
-
-    if (error) {
-      console.error('Program delete error:', error)
-
-      // Handle foreign key constraint (program is referenced elsewhere)
-      if (error.code === '23503') {
-        return NextResponse.json({
-          error: 'Cannot delete program. It is being referenced by other records (students, courses, etc.).'
-        }, { status: 409 })
-      }
-
-      return NextResponse.json(
-        { error: 'Failed to delete program' },
-        { status: 500 }
-      )
+    if (!id) {
+      return NextResponse.json({ error: 'ID is required' }, { status: 400 })
     }
-
-    return NextResponse.json({ success: true }, { status: 200 })
-  } catch (err) {
-    console.error('Program DELETE error:', err)
-    return NextResponse.json(
-      { error: 'Failed to delete program' },
-      { status: 500 }
-    )
+    return handleDeleteWithDependencyCheck('programs', id, req)
+  } catch (e) {
+    console.error('Delete error:', e)
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   }
 }

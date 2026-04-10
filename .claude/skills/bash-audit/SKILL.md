@@ -1,6 +1,6 @@
 ---
 name: bash-audit
-description: Audit Claude setup for bash-native redundancy. Identifies MCPs and skills that wrap what bash can do natively. Use when wanting to "audit setup", "check redundancy", "substrate audit", "bash audit", or optimize tool stack. Follows substrate-first philosophy - before asking "what tool does X?", ask "what is X made of?"
+description: Audit Claude setup for bash-native redundancy. Identifies MCPs and skills that wrap what bash can do natively. Follows substrate-first philosophy. Triggers on 'audit setup', 'check redundancy', 'substrate audit', 'bash audit', 'optimize tool stack', 'tool redundancy', 'MCP audit'.
 ---
 
 <objective>

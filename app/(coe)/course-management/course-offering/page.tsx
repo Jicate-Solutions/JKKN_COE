@@ -232,7 +232,12 @@ export default function CourseOfferingPage() {
 		try {
 			setLoading(true)
 			// Use appendToUrl to apply institution filter when active
-			const url = appendToUrl('/api/course-management/course-offering')
+			let url = appendToUrl('/api/course-management/course-offering')
+			// Apply global exam session filter
+			if (syncedSessionId) {
+				const separator = url.includes('?') ? '&' : '?'
+				url = `${url}${separator}examination_session_id=${syncedSessionId}`
+			}
 			const response = await fetch(url)
 			if (!response.ok) throw new Error('Failed to fetch course offerings')
 			const data = await response.json()
@@ -595,11 +600,11 @@ export default function CourseOfferingPage() {
 		loadData()
 	}, [])
 
-	// Fetch course offerings when institution context is ready or changes
+	// Fetch course offerings when institution context is ready or changes, or global session changes
 	useEffect(() => {
 		if (!institutionContextReady) return
 		fetchCourseOfferings()
-	}, [institutionContextReady, contextInstitutionCode])
+	}, [institutionContextReady, contextInstitutionCode, syncedSessionId])
 
 	// Load program names from MyJKKN for all course offerings (for index display)
 	useEffect(() => {
@@ -1508,10 +1513,12 @@ export default function CourseOfferingPage() {
 											</Button>
 										</Link>
 
-										<Button size="sm" onClick={openAdd} disabled={loading} className="h-8 text-sm px-4">
-											<PlusCircle className="h-4 w-4 mr-1" />
-											Add Offer
-										</Button>
+										<Link href="/course-management/course-offering/create">
+											<Button size="sm" disabled={loading} className="h-8 text-sm px-4">
+												<PlusCircle className="h-4 w-4 mr-1" />
+												Add Offer
+											</Button>
+										</Link>
 									</div>
 								</div>
 

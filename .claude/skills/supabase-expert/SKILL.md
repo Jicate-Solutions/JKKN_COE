@@ -1,6 +1,6 @@
 ---
 name: supabase-expert
-description: This skill should be used when working with Supabase database operations in the MyJKKN project, including creating modules, updating schemas, writing RLS policies, creating database functions, implementing Auth SSR, or developing Edge Functions. Automatically triggers when user mentions 'database', 'table', 'SQL', 'Supabase', 'migration', 'RLS', 'policy', or 'Edge Function'.
+description: Comprehensive Supabase database operations guide for the MyJKKN project. Use when creating modules, updating schemas, writing RLS policies, creating database functions, implementing Auth SSR, or developing Edge Functions. Triggers on 'database', 'table', 'SQL', 'Supabase', 'migration', 'RLS', 'policy', 'Edge Function', 'database function', 'Auth SSR'.
 ---
 
 # Supabase Expert

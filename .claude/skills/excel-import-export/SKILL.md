@@ -1,21 +1,11 @@
 ---
 name: excel-import-export
-description: Complete workflow for implementing Excel/JSON import and export functionality in JKKN COE Next.js application. This skill should be used when adding file import, export, or template generation features to entity pages. Automatically triggers when user mentions 'import', 'export', 'upload', 'download', 'template', 'Excel', 'XLSX', 'CSV', or 'JSON file handling'.
+description: Complete workflow for implementing Excel/JSON import and export functionality in JKKN COE Next.js application. Use when adding file import, export, template generation, bulk upload with validation, or download features to entity pages. Triggers on 'import', 'export', 'upload', 'download', 'template', 'Excel', 'XLSX', 'CSV', 'JSON file handling', 'bulk upload', 'file parsing'.
 ---
 
 # Excel Import/Export Skill
 
 This skill provides comprehensive patterns for implementing import/export functionality in the JKKN COE application, following project standards.
-
-## When to Use This Skill
-
-Use this skill when:
-- Adding import/export functionality to entity pages
-- Creating Excel/CSV/JSON file parsing logic
-- Generating downloadable templates with sample data
-- Implementing bulk upload with validation
-- Creating export functionality for filtered data
-- Building upload error tracking and display
 
 ## File Locations (Following project-structure)
 

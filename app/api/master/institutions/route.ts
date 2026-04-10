@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
 import { fetchAllMyJKKNInstitutions, MyJKKNApiError } from '@/lib/myjkkn-api'
+import { handleDeleteWithDependencyCheck } from '@/lib/delete-helpers'
 
 // Interface for merged institution data
 interface MergedInstitution {
@@ -193,24 +194,12 @@ export async function DELETE(request: Request) {
   try {
     const { searchParams } = new URL(request.url)
     const id = searchParams.get('id')
-    
+
     if (!id) {
       return NextResponse.json({ error: 'Institution ID is required' }, { status: 400 })
     }
 
-    const supabase = getSupabaseServer()
-    
-    const { error } = await supabase
-      .from('institutions')
-      .delete()
-      .eq('id', id)
-
-    if (error) {
-      console.error('Error deleting institution:', error)
-      return NextResponse.json({ error: 'Failed to delete institution' }, { status: 500 })
-    }
-
-    return NextResponse.json({ success: true })
+    return handleDeleteWithDependencyCheck('institutions', id, request)
   } catch (e) {
     console.error('Institution deletion error:', e)
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })

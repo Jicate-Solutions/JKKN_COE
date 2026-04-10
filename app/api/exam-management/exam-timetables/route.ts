@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
+import { handleDeleteWithDependencyCheck } from '@/lib/delete-helpers'
 
 
 
@@ -473,21 +474,9 @@ export async function DELETE(request: Request) {
       return NextResponse.json({ error: 'Exam timetable ID is required' }, { status: 400 })
     }
 
-    const supabase = getSupabaseServer()
-
-    const { error } = await supabase
-      .from('exam_timetables')
-      .delete()
-      .eq('id', id)
-
-    if (error) {
-      console.error('Error deleting exam timetable:', error)
-      return NextResponse.json({ error: 'Failed to delete exam timetable' }, { status: 500 })
-    }
-
-    return NextResponse.json({ success: true })
+    return handleDeleteWithDependencyCheck('exam_timetables', id, request)
   } catch (e) {
-    console.error('Exam timetable deletion error:', e)
+    console.error('Delete error:', e)
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   }
 }

@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
+import { handleDeleteWithDependencyCheck } from '@/lib/delete-helpers'
 
 // GET: list degrees
 export async function GET(request: Request) {
@@ -245,24 +246,12 @@ export async function DELETE(request: Request) {
   try {
     const { searchParams } = new URL(request.url)
     const id = searchParams.get('id')
-    
+
     if (!id) {
       return NextResponse.json({ error: 'Degree ID is required' }, { status: 400 })
     }
 
-    const supabase = getSupabaseServer()
-    
-    const { error } = await supabase
-      .from('degrees')
-      .delete()
-      .eq('id', id)
-
-    if (error) {
-      console.error('Error deleting degree:', error)
-      return NextResponse.json({ error: 'Failed to delete degree' }, { status: 500 })
-    }
-
-    return NextResponse.json({ success: true })
+    return handleDeleteWithDependencyCheck('degrees', id, request)
   } catch (e) {
     console.error('Degree deletion error:', e)
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })

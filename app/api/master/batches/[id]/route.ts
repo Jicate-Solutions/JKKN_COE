@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
 import { createRouteHandlerSupabaseClient } from '@/lib/supabase-route-handler'
+import { handleDeleteWithDependencyCheck } from '@/lib/delete-helpers'
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
@@ -133,29 +134,23 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
   }
 }
 
-export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
     // RBAC: require batches.delete
     const supa = await createRouteHandlerSupabaseClient()
     const { data: userData } = await supa.auth.getUser()
     if (!userData?.user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    const permsRes = await fetch(`${process.env.NEXT_PUBLIC_BASE_URL || ''}/api/auth/permissions/current`, { headers: { cookie: (await _req.headers).get('cookie') || '' } as any })
+    const permsRes = await fetch(`${process.env.NEXT_PUBLIC_BASE_URL || ''}/api/auth/permissions/current`, { headers: { cookie: req.headers.get('cookie') || '' } as any })
     const perms = permsRes.ok ? await permsRes.json() : { permissions: [] }
     if (!perms.permissions?.includes('batches.delete')) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
-    const supabase = getSupabaseServer()
-    const { id } = await params
-    const { error } = await supabase.from('batch').delete().eq('id', id)
-    
-    if (error) {
-      if (error.code === 'PGRST116') { // No rows found
-        return NextResponse.json({ error: 'Batch not found' }, { status: 404 })
-      }
-      throw error
-    }
 
-    return NextResponse.json({ message: 'Batch deleted successfully' })
-  } catch (err) {
-    console.error('Error deleting batch:', err)
-    return NextResponse.json({ error: 'Failed to delete batch' }, { status: 500 })
+    const { id } = await params
+    if (!id) {
+      return NextResponse.json({ error: 'ID is required' }, { status: 400 })
+    }
+    return handleDeleteWithDependencyCheck('batch', id, req)
+  } catch (e) {
+    console.error('Delete error:', e)
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   }
 }

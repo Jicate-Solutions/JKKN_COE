@@ -1,7 +1,6 @@
 ---
 name: data-analysis
-description: Perform data analysis tasks including data cleaning, statistical analysis, visualization, and insight generation. Use when the user asks to analyze data, perform statistical analysis, create visualizations, or extract insights from datasets.
-allowed-tools: read_file, write_file, list_directory
+description: Perform data analysis tasks including data cleaning, statistical analysis, visualization, and insight generation. Use when the user asks to analyze data, perform statistical analysis, create visualizations, or extract insights from datasets. Triggers on 'analyze data', 'statistics', 'visualization', 'data cleaning', 'insight', 'chart', 'graph', 'dataset'.
 ---
 
 # Data Analysis Skill

@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
+import { handleDeleteWithDependencyCheck } from '@/lib/delete-helpers'
 
 export async function GET(request: Request) {
 	try {
@@ -214,19 +215,7 @@ export async function DELETE(request: Request) {
 			return NextResponse.json({ error: 'Board ID is required' }, { status: 400 })
 		}
 
-		const supabase = getSupabaseServer()
-
-		const { error } = await supabase
-			.from('board')
-			.delete()
-			.eq('id', id)
-
-		if (error) {
-			console.error('Error deleting board:', error)
-			return NextResponse.json({ error: 'Failed to delete board' }, { status: 500 })
-		}
-
-		return NextResponse.json({ success: true })
+		return handleDeleteWithDependencyCheck('board', id, request)
 	} catch (e) {
 		console.error('Board deletion error:', e)
 		return NextResponse.json({ error: 'Internal server error' }, { status: 500 })

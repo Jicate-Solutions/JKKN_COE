@@ -1,6 +1,6 @@
 ---
 name: project-structure
-description: This skill should be used when working with the JKKN COE Next.js project folder structure, including understanding where to place files, creating new modules, navigating the codebase, or following architectural patterns. Automatically triggers when user mentions 'project structure', 'folder structure', 'where should I put', 'create module', or asks about file organization.
+description: Guide for the JKKN COE Next.js project folder structure. Use when understanding where to place files, creating new modules, navigating the codebase, or following architectural patterns. Triggers on 'project structure', 'folder structure', 'where should I put', 'create module', 'file organization', 'directory layout', 'app router structure'.
 ---
 
 # Project Structure Guide

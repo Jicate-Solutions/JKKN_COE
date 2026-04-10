@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
+import { handleDeleteWithDependencyCheck } from '@/lib/delete-helpers'
 
 export async function PUT(
 	req: NextRequest,
@@ -127,36 +128,12 @@ export async function DELETE(
 ) {
 	try {
 		const { id } = await context.params
-		const supabase = getSupabaseServer()
-
-		const { error } = await supabase
-			.from('semesters')
-			.delete()
-			.eq('id', id)
-
-		if (error) {
-			console.error('Semester delete error:', error)
-
-			// Handle foreign key constraint errors (if semester is referenced elsewhere)
-			if (error.code === '23503') {
-				return NextResponse.json({
-					error: 'Cannot delete semester. It is referenced by other records (courses, students, etc.).'
-				}, { status: 400 })
-			}
-
-			// Handle record not found
-			if (error.code === 'PGRST116') {
-				return NextResponse.json({
-					error: 'Semester not found'
-				}, { status: 404 })
-			}
-
-			throw error
+		if (!id) {
+			return NextResponse.json({ error: 'ID is required' }, { status: 400 })
 		}
-
-		return NextResponse.json({ success: true }, { status: 200 })
-	} catch (err) {
-		console.error('Semester DELETE error:', err)
-		return NextResponse.json({ error: 'Failed to delete semester' }, { status: 500 })
+		return handleDeleteWithDependencyCheck('semesters', id, req)
+	} catch (e) {
+		console.error('Delete error:', e)
+		return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
 	}
 }

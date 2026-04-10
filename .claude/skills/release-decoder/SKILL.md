@@ -1,6 +1,6 @@
 ---
 name: release-decoder
-description: This skill should be used when the user wants to decode Claude Code release notes, compare versions, check what's new in a release, or understand changes between versions. Automatically triggers when user mentions "release notes", "what's new", "changelog", "version comparison", "decode release", or asks about Claude Code updates.
+description: Decode and analyze Claude Code release notes to understand what changed between versions. Use when the user wants to compare versions, check what's new, or understand release changes. Triggers on 'release notes', 'what\'s new', 'changelog', 'version comparison', 'decode release', 'Claude Code updates'.
 ---
 
 # Release Decoder

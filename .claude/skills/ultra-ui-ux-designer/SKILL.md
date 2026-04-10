@@ -1,12 +1,9 @@
-# Ultra UI/UX Designer Skill
-
 ---
 name: ultra-ui-ux-designer
-description: Advanced UI/UX designer that generates NEW designs from scratch by understanding the application's core purpose. Creates comprehensive wireframes, mockups, and design specifications using web search for inspiration and best practices. Use when redesigning applications or creating new UI/UX from the ground up, not just updating existing code.
-tags: [ui, ux, design, wireframes, mockups, redesign, research]
-version: 1.0.0
-author: Claude
+description: Advanced UI/UX designer that generates NEW designs from scratch by understanding the application's core purpose. Creates comprehensive wireframes, mockups, and design specifications using web search for inspiration and best practices. Use when redesigning applications or creating new UI/UX from the ground up, not just updating existing code. Triggers on 'redesign', 'new UI', 'UI/UX design', 'wireframe', 'mockup', 'design from scratch', 'design specification'.
 ---
+
+# Ultra UI/UX Designer Skill
 
 ## Purpose
 

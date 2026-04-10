@@ -1,6 +1,6 @@
 ---
 name: orchestration-skill-creator
-description: Creates multi-phase orchestration skills that spawn subagents. Use when you want to build a new workflow that chains multiple phases together, with each phase running in its own context and passing reports to the next. Triggers on "create an orchestration skill", "build a multi-phase workflow", "make a skill that uses subagents", or "orchestration skill for [workflow]".
+description: Creates multi-phase orchestration skills that spawn subagents. Use when building a new workflow that chains multiple phases together, with each phase running in its own context and passing reports to the next. Triggers on 'create orchestration skill', 'multi-phase workflow', 'subagent workflow', 'orchestration skill', 'chain phases', 'spawn subagents'.
 ---
 
 # Orchestration Skill Creator

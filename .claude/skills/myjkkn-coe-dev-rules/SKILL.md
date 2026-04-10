@@ -1,6 +1,6 @@
 ---
 name: myjkkn-coe-dev-rules
-description: Complete reference for MyJKKN API integration, institution filtering, role-based access control, and field mappings between MyJKKN and COE local database. This skill should be used when implementing MyJKKN data fetching, institution-based filtering, handling super_admin vs normal user access, or mapping field names between systems. Automatically triggers when user mentions 'MyJKKN mapping', 'field mapping', 'institution filter', 'super_admin access', 'global select', 'myjkkn_institution_ids', 'counselling_code', or asks about column name differences.
+description: Complete reference for MyJKKN API integration, institution filtering, role-based access control, CRUD operations, and field mappings between MyJKKN and COE local database. Use when implementing MyJKKN data fetching, institution-based filtering, handling super_admin vs normal user access, mapping field names between systems, building upload/download with institution context, or implementing dependent dropdown cascades. Triggers on 'MyJKKN mapping', 'field mapping', 'institution filter', 'super_admin access', 'global select', 'myjkkn_institution_ids', 'counselling_code', 'useInstitutionFilter', 'mustSelectInstitution', 'course_name vs course_title', 'program_id vs program_code'.
 ---
 
 # MyJKKN-COE Dev Rules

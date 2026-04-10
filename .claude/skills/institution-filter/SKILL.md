@@ -1,6 +1,6 @@
 ---
 name: institution-filter
-description: Complete guide for implementing institution-based data filtering in JKKN COE pages. This skill should be used when creating or updating pages that need to filter data by institution, implementing institution dropdowns in forms, or integrating with MyJKKN API with institution context. Automatically triggers when user mentions 'institution filter', 'filter by institution', 'institution dropdown', 'multi-tenant', or asks about institution-scoped data.
+description: Complete guide for implementing institution-based data filtering in JKKN COE pages. Use when creating or updating pages that need to filter data by institution, implementing institution dropdowns in forms, or integrating with MyJKKN API with institution context. Triggers on 'institution filter', 'filter by institution', 'institution dropdown', 'multi-tenant', 'institution-scoped data', 'useInstitutionFilter', 'appendToUrl', 'getInstitutionIdForCreate'.
 ---
 
 # Institution Filter Skill

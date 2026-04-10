@@ -34,7 +34,8 @@
       "Bash(npx patch-package:*)",
       "Bash(find \"/d/JKKN/Development/Application/JKKN_COE/app/\\(coe\\)/utilities\" -name \"page.tsx\" -o -name \"layout.tsx\")",
       "Bash(npx next:*)",
-      "Edit(/.claude/skills/search-and-favorites/**)"
+      "Edit(/.claude/skills/search-and-favorites/**)",
+      "Edit(/.claude/skills/excel-import-export/**)"
     ],
     "deny": [
       "Bash(rm -rf:*)",

@@ -1031,7 +1031,7 @@ export default function ExamRegistrationReportsPage() {
 													paginatedData.map((row: any, idx: number) => (
 														<TableRow key={idx}>
 															<TableCell className="text-center text-xs">{(currentPage - 1) * pageSize + idx + 1}</TableCell>
-															<TableCell className="text-center text-xs whitespace-nowrap">{row.board_code ? `${row.board_code}${row.board_name ? ` - ${row.board_name}` : ''}` : '-'}</TableCell>
+															<TableCell className="text-center text-xs max-w-[150px] break-words">{row.board_code ? `${row.board_code}${row.board_name ? ` - ${row.board_name}` : ''}` : '-'}</TableCell>
 															<TableCell className="text-center text-xs">{row.semester ? toRoman(row.semester) : '-'}</TableCell>
 															<TableCell className="text-center text-xs font-medium">{row.course_code}</TableCell>
 															<TableCell className="text-xs max-w-[200px] break-words">{row.course_name || '-'}</TableCell>
@@ -1071,7 +1071,7 @@ export default function ExamRegistrationReportsPage() {
 														return (
 															<TableRow key={idx}>
 																<TableCell className="text-center text-xs">{(currentPage - 1) * pageSize + idx + 1}</TableCell>
-																<TableCell className="text-center text-xs whitespace-nowrap">{row.board_code ? `${row.board_code}${row.board_name ? ` - ${row.board_name}` : ''}` : '-'}</TableCell>
+																<TableCell className="text-center text-xs max-w-[150px] break-words">{row.board_code ? `${row.board_code}${row.board_name ? ` - ${row.board_name}` : ''}` : '-'}</TableCell>
 																<TableCell className="text-center text-xs">{row.semester ? toRoman(row.semester) : '-'}</TableCell>
 																<TableCell className="text-center text-xs font-medium">{row.course_code}</TableCell>
 																<TableCell className="text-xs max-w-[200px] break-words">{row.course_name || '-'}</TableCell>
@@ -1114,7 +1114,7 @@ export default function ExamRegistrationReportsPage() {
 														return (
 															<TableRow key={idx}>
 																<TableCell className="text-center text-xs">{(currentPage - 1) * pageSize + idx + 1}</TableCell>
-																<TableCell className="text-center text-xs whitespace-nowrap">{row.board_code ? `${row.board_code}${row.board_name ? ` - ${row.board_name}` : ''}` : '-'}</TableCell>
+																<TableCell className="text-center text-xs max-w-[150px] break-words">{row.board_code ? `${row.board_code}${row.board_name ? ` - ${row.board_name}` : ''}` : '-'}</TableCell>
 																<TableCell className="text-center text-xs">{row.program_code || '-'}</TableCell>
 																<TableCell className="text-center text-xs">{row.semester ? toRoman(row.semester) : '-'}</TableCell>
 																<TableCell className="text-center text-xs font-medium">{row.course_code}</TableCell>
@@ -1202,7 +1202,7 @@ export default function ExamRegistrationReportsPage() {
 													paginatedData.map((row: any, idx: number) => (
 														<TableRow key={idx}>
 															<TableCell className="text-center text-xs">{(currentPage - 1) * pageSize + idx + 1}</TableCell>
-															<TableCell className="text-center text-xs whitespace-nowrap">{row.board_code ? `${row.board_code}${row.board_name ? ` - ${row.board_name}` : ''}` : '-'}</TableCell>
+															<TableCell className="text-center text-xs max-w-[150px] break-words">{row.board_code ? `${row.board_code}${row.board_name ? ` - ${row.board_name}` : ''}` : '-'}</TableCell>
 															<TableCell className="text-center text-xs">{row.exam_date || '-'}</TableCell>
 															<TableCell className="text-center text-xs">{row.exam_session || '-'}</TableCell>
 															<TableCell className="text-center text-xs">{row.semester ? toRoman(row.semester) : '-'}</TableCell>

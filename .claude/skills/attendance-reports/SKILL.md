@@ -1,6 +1,6 @@
 ---
 name: attendance-reports
-description: Exam Attendance Reports implementation reference for Student Sheets, Summary Reports, and Bundle Covers. Uses MyJKKN API for programs and exam_registrations for student details.
+description: Exam Attendance Reports implementation reference for Student Sheets, Summary Reports, and Bundle Covers. Uses MyJKKN API for programs and exam_registrations for student details. Triggers on 'attendance report', 'student sheet', 'summary report', 'bundle cover', 'exam attendance', 'attendance PDF'.
 ---
 
 # Attendance Reports Skill

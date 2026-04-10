@@ -1,6 +1,6 @@
 ---
 name: writing-plans
-description: Use when design is complete and you need detailed implementation tasks for engineers with zero codebase context - creates comprehensive implementation plans with exact file paths, complete code examples, and verification steps assuming engineer has minimal domain knowledge
+description: Use when design is complete and you need detailed implementation tasks for engineers with zero codebase context. Creates comprehensive implementation plans with exact file paths, complete code examples, and verification steps assuming engineer has minimal domain knowledge. Triggers on 'write plan', 'implementation plan', 'task breakdown', 'engineer handoff', 'step-by-step plan'.
 ---
 
 # Writing Plans

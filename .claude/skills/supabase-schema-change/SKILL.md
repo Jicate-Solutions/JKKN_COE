@@ -1,6 +1,6 @@
 ---
 name: supabase-schema-change
-description: Complete workflow for Supabase schema changes. This skill should be used when modifying database schema including tables, columns, functions, views, triggers, indexes, or RLS policies. Automatically triggers when user mentions 'add column', 'drop column', 'add field', 'remove field', 'schema change', 'alter table', 'create function', 'create view', 'create trigger', 'add index', 'RLS policy', or 'database migration'. Enforces a comprehensive workflow to ensure complete migration with type safety across any Supabase + Next.js project.
+description: Complete workflow for Supabase schema changes including tables, columns, functions, views, triggers, indexes, and RLS policies. Enforces a comprehensive migration workflow with type safety across Supabase + Next.js projects. Triggers on 'add column', 'drop column', 'schema change', 'alter table', 'create function', 'create view', 'create trigger', 'add index', 'RLS policy', 'database migration', 'add field', 'remove field'.
 ---
 
 # Supabase Schema Change Workflow

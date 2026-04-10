@@ -1,7 +1,8 @@
 import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
+import { handleDeleteWithDependencyCheck } from '@/lib/delete-helpers'
 
-// Helper function to filter out mark fields that belong to courses table, not course_mapping
+// Helper function to filter out fields that don't belong to course_mapping table
 function filterCourseMappingFields(data: any) {
 	const {
 		internal_max_mark,
@@ -12,6 +13,7 @@ function filterCourseMappingFields(data: any) {
 		external_converted_mark,
 		total_pass_mark,
 		total_max_mark,
+		courses,
 		...courseMappingData
 	} = data
 	return courseMappingData
@@ -542,7 +544,6 @@ export async function PUT(request: Request) {
 
 export async function DELETE(request: Request) {
 	try {
-		const supabase = getSupabaseServer()
 		const { searchParams } = new URL(request.url)
 		const id = searchParams.get('id')
 
@@ -553,17 +554,7 @@ export async function DELETE(request: Request) {
 			)
 		}
 
-		const { error } = await supabase
-			.from('course_mapping')
-			.delete()
-			.eq('id', id)
-
-		if (error) {
-			console.error('Error deleting course mapping:', error)
-			return NextResponse.json({ error: error.message }, { status: 500 })
-		}
-
-		return NextResponse.json({ success: true })
+		return handleDeleteWithDependencyCheck('course_mapping', id, request)
 	} catch (err) {
 		console.error('Unexpected error in DELETE /api/course-mapping:', err)
 		return NextResponse.json({ error: 'Internal server error' }, { status: 500 })

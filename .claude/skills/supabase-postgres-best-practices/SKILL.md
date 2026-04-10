@@ -1,25 +1,11 @@
 ---
 name: supabase-postgres-best-practices
-description: Postgres performance optimization and best practices from Supabase. Use this skill when writing, reviewing, or optimizing Postgres queries, schema designs, or database configurations.
-license: MIT
-metadata:
-  author: supabase
-  version: "1.0.0"
+description: Postgres performance optimization and best practices from Supabase. Use when writing, reviewing, or optimizing Postgres queries, schema designs, database configurations, indexes, connection pooling, scaling, or Row-Level Security (RLS). Triggers on 'optimize query', 'slow query', 'index strategy', 'RLS policy', 'connection pooling', 'schema design', 'database performance'.
 ---
 
 # Supabase Postgres Best Practices
 
-Comprehensive performance optimization guide for Postgres, maintained by Supabase. Contains rules across 8 categories, prioritized by impact to guide automated query optimization and schema design.
-
-## When to Apply
-
-Reference these guidelines when:
-- Writing SQL queries or designing schemas
-- Implementing indexes or query optimization
-- Reviewing database performance issues
-- Configuring connection pooling or scaling
-- Optimizing for Postgres-specific features
-- Working with Row-Level Security (RLS)
+Comprehensive performance optimization guide for Postgres, maintained by Supabase. Contains rules across 8 categories, prioritized by impact.
 
 ## Rule Categories by Priority
 
@@ -36,7 +22,7 @@ Reference these guidelines when:
 
 ## How to Use
 
-Read individual rule files for detailed explanations and SQL examples:
+Read individual rule files in `rules/` for detailed explanations and SQL examples:
 
 ```
 rules/query-missing-indexes.md
@@ -45,13 +31,8 @@ rules/_sections.md
 ```
 
 Each rule file contains:
-- Brief explanation of why it matters
-- Incorrect SQL example with explanation
-- Correct SQL example with explanation
+- Why it matters
+- Incorrect SQL example
+- Correct SQL example
 - Optional EXPLAIN output or metrics
-- Additional context and references
-- Supabase-specific notes (when applicable)
-
-## Full Compiled Document
-
-For the complete guide with all rules expanded: `AGENTS.md`
+- Supabase-specific notes

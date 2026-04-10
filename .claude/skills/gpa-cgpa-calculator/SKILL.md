@@ -1,6 +1,6 @@
 ---
 name: gpa-cgpa-calculator
-description: GPA and CGPA calculation formulas and logic for JKKN COE grading system. This skill should be used when implementing GPA calculation, CGPA calculation, grade point lookup, pass status determination, or semester results processing. Automatically triggers when user mentions 'GPA', 'CGPA', 'grade point', 'semester results', 'cumulative grade', or 'grade calculation'.
+description: GPA and CGPA calculation formulas and logic for JKKN COE grading system. Use when implementing GPA calculation, CGPA calculation, grade point lookup, pass status determination, or semester results processing. Triggers on 'GPA', 'CGPA', 'grade point', 'semester results', 'cumulative grade', 'grade calculation', 'pass/fail logic', 'grading formula'.
 ---
 
 # GPA & CGPA Calculator

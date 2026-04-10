@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
+import { handleDeleteWithDependencyCheck } from '@/lib/delete-helpers'
 
 // GET - Fetch all grade systems
 export async function GET(request: Request) {
@@ -405,19 +406,7 @@ export async function DELETE(request: Request) {
 			return NextResponse.json({ error: 'Grade system ID is required' }, { status: 400 })
 		}
 
-		const supabase = getSupabaseServer()
-
-		const { error } = await supabase
-			.from('grade_system')
-			.delete()
-			.eq('id', id)
-
-		if (error) {
-			console.error('Error deleting grade system:', error)
-			return NextResponse.json({ error: 'Failed to delete grade system' }, { status: 500 })
-		}
-
-		return NextResponse.json({ success: true })
+		return handleDeleteWithDependencyCheck('grade_system', id, request)
 	} catch (e) {
 		console.error('Grade system deletion error:', e)
 		return NextResponse.json({ error: 'Internal server error' }, { status: 500 })

@@ -35,11 +35,13 @@ const HeaderClock = memo(function HeaderClock() {
 interface AppHeaderProps {
   title?: string
   className?: string
+  hideSessionSelector?: boolean
 }
 
 export function AppHeader({
   title = "JKKN Controller of Examination Portal",
-  className = ""
+  className = "",
+  hideSessionSelector = false
 }: AppHeaderProps) {
   const { selectedInstitution, canSwitchInstitution, currentInstitution } = useInstitution()
 
@@ -90,7 +92,7 @@ export function AppHeader({
         {/* Institution Selector */}
         <InstitutionSelector variant="compact" />
         {/* Examination Session Selector */}
-        <SessionSelector variant="compact" />
+        {!hideSessionSelector && <SessionSelector variant="compact" />}
         <HeaderClock />
         <Badge variant="secondary" className="bg-white/20 text-white border-0 hover:bg-white/30 transition-all duration-300 shadow-sm p-2 cursor-pointer backdrop-blur-sm">
           <BellRing className="h-4 w-4" />

@@ -172,10 +172,16 @@ export default function ExaminersPage() {
 		fetchExaminers()
 	}, [isReady, filter, currentPage, itemsPerPage, debouncedSearch, statusFilter, typeFilter, boardFilter, formTypeFilter, sortColumn, sortDirection])
 
-	// Fetch boards & institutions once on mount
+	// Fetch boards when institution filter changes (boards are institution-specific)
 	useEffect(() => {
 		if (!isReady) return
 		fetchBoards()
+		setBoardFilter('all')
+	}, [isReady, filter])
+
+	// Fetch institutions once on mount
+	useEffect(() => {
+		if (!isReady) return
 		fetchInstitutions()
 	}, [isReady])
 
@@ -211,7 +217,7 @@ export default function ExaminersPage() {
 
 	const fetchBoards = async () => {
 		try {
-			const res = await fetch('/api/master/boards')
+			const res = await fetch(appendToUrl('/api/master/boards'))
 			if (res.ok) {
 				const data = await res.json()
 				setBoards(data)

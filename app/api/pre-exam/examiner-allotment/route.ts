@@ -143,7 +143,7 @@ export async function GET(request: Request) {
 					.eq('examination_session_id', sessionId)
 					.eq('exam_type', 'Practical')
 					.eq('is_published', true)
-					.range(0, 9999)
+					.range(0, 49999)
 
 				if (ttError) {
 					console.error('Error fetching timetables:', ttError)
@@ -193,26 +193,74 @@ export async function GET(request: Request) {
 					(row as any).batch_no = num
 				}
 
-				// Student counts + register ranges + examiner assignments (parallel)
+				// Student counts + register ranges + examiner assignments
 				const timetableIds = sorted.map((t: any) => t.id)
-				const [{ data: batchStudents, error: batchErr }, { data: examinerAssignments }] = await Promise.all([
-					supabase
-						.from('practical_batch_students')
-						.select('exam_timetable_id, exam_registration_id')
-						.in('exam_timetable_id', timetableIds)
-						.range(0, 9999),
+
+				// Group timetable IDs by board_code — fetch batch students per board
+				// (per-board fetch works reliably; "all at once" hits server limits)
+				const boardTimetableMap = new Map<string, string[]>()
+				for (const t of sorted) {
+					const bc = courseMap.get(t.course_id)?.board_code || 'UNKNOWN'
+					if (!boardTimetableMap.has(bc)) boardTimetableMap.set(bc, [])
+					boardTimetableMap.get(bc)!.push(t.id)
+				}
+
+				// Fetch batch students per board in parallel
+				const batchStudentPromises = [...boardTimetableMap.values()].map(async (ids) => {
+					const all: any[] = []
+					let offset = 0
+					const PAGE = 1000
+					while (true) {
+						const { data, error } = await supabase
+							.from('practical_batch_students')
+							.select('exam_timetable_id, exam_registration_id')
+							.in('exam_timetable_id', ids)
+							.range(offset, offset + PAGE - 1)
+						if (error) { console.error('Error fetching batch students:', error); break }
+						if (!data || data.length === 0) break
+						all.push(...data)
+						if (data.length < PAGE) break
+						offset += PAGE
+					}
+					return all
+				})
+
+				// Paginated fetch helper for registrations
+				async function fetchAllPages(table: string, selectCols: string, filterCol: string, filterValues: string[], pageSize = 1000): Promise<any[]> {
+					const all: any[] = []
+					const ID_BATCH = 100
+					for (let i = 0; i < filterValues.length; i += ID_BATCH) {
+						const idChunk = filterValues.slice(i, i + ID_BATCH)
+						let offset = 0
+						while (true) {
+							const { data, error } = await supabase
+								.from(table)
+								.select(selectCols)
+								.in(filterCol, idChunk)
+								.range(offset, offset + pageSize - 1)
+							if (error) { console.error(`Error fetching ${table}:`, error); break }
+							if (!data || data.length === 0) break
+							all.push(...data)
+							if (data.length < pageSize) break
+							offset += pageSize
+						}
+					}
+					return all
+				}
+
+				const [batchStudentResults, { data: examinerAssignments }] = await Promise.all([
+					Promise.all(batchStudentPromises),
 					supabase
 						.from('exam_timetable_examiners')
 						.select('exam_timetable_id, examiner_type, staff_id, staff_name, staff_mobile, staff_designation, examiner_id')
-						.in('exam_timetable_id', timetableIds),
+						.in('exam_timetable_id', timetableIds)
+						.range(0, 49999),
 				])
 
-				if (batchErr) {
-					console.error('Error fetching batch students:', batchErr)
-				}
+				const batchStudents = batchStudentResults.flat()
 
 				const studentCountMap = new Map<string, number>()
-				for (const a of batchStudents || []) {
+				for (const a of batchStudents) {
 					studentCountMap.set(a.exam_timetable_id, (studentCountMap.get(a.exam_timetable_id) || 0) + 1)
 				}
 
@@ -274,21 +322,13 @@ export async function GET(request: Request) {
 					const regIds = [...new Set(batchStudents.map((bs: any) => bs.exam_registration_id).filter(Boolean))]
 
 					if (regIds.length > 0) {
-						// Batch the .in() query to avoid URL length limits (max ~300 IDs per batch)
-						const BATCH_SIZE = 300
-						const allRegistrations: any[] = []
-						for (let i = 0; i < regIds.length; i += BATCH_SIZE) {
-							const batch = regIds.slice(i, i + BATCH_SIZE)
-							const { data: regs, error: regErr } = await supabase
-								.from('exam_registrations')
-								.select('id, stu_register_no')
-								.in('id', batch)
-								.range(0, 9999)
-							if (regErr) {
-								console.error('Error fetching registrations batch:', regErr)
-							}
-							if (regs) allRegistrations.push(...regs)
-						}
+						// Use paginated fetch for registrations
+						const allRegistrations = await fetchAllPages(
+							'exam_registrations',
+							'id, stu_register_no',
+							'id',
+							regIds
+						)
 
 						const regMap = new Map<string, string>()
 						for (const r of allRegistrations) {
@@ -451,24 +491,47 @@ export async function GET(request: Request) {
 				const timetableIds = timetableIdsParam.split(',').filter(Boolean)
 				if (timetableIds.length === 0) return NextResponse.json({})
 
-				// Fetch batch assignments with registration IDs
-				const { data: batchAssignments } = await supabase
-					.from('practical_batch_students')
-					.select('exam_timetable_id, exam_registration_id')
-					.in('exam_timetable_id', timetableIds)
-					.range(0, 9999)
+				// Paginated fetch helper (same as timetable-rows action)
+				async function fetchAllPagesRR(table: string, selectCols: string, filterCol: string, filterValues: string[], pageSize = 1000): Promise<any[]> {
+					const all: any[] = []
+					const ID_BATCH = 100
+					for (let i = 0; i < filterValues.length; i += ID_BATCH) {
+						const idChunk = filterValues.slice(i, i + ID_BATCH)
+						let offset = 0
+						while (true) {
+							const { data, error } = await supabase
+								.from(table)
+								.select(selectCols)
+								.in(filterCol, idChunk)
+								.range(offset, offset + pageSize - 1)
+							if (error) { console.error(`Error fetching ${table}:`, error); break }
+							if (!data || data.length === 0) break
+							all.push(...data)
+							if (data.length < pageSize) break
+							offset += pageSize
+						}
+					}
+					return all
+				}
 
-				if (!batchAssignments || batchAssignments.length === 0) return NextResponse.json({})
+				const batchAssignments = await fetchAllPagesRR(
+					'practical_batch_students',
+					'exam_timetable_id, exam_registration_id',
+					'exam_timetable_id',
+					timetableIds
+				)
+
+				if (batchAssignments.length === 0) return NextResponse.json({})
 
 				// Get unique registration IDs
 				const regIds = [...new Set(batchAssignments.map((ba: any) => ba.exam_registration_id))]
 
-				// Fetch register numbers
-				const { data: registrations } = await supabase
-					.from('exam_registrations')
-					.select('id, stu_register_no')
-					.in('id', regIds)
-					.range(0, 9999)
+				const registrations = await fetchAllPagesRR(
+					'exam_registrations',
+					'id, stu_register_no',
+					'id',
+					regIds
+				)
 
 				// Build registration lookup
 				const regMap = new Map<string, string>()

@@ -61,6 +61,7 @@ interface ExamType {
 	id: string
 	examination_code: string
 	examination_name: string
+	institutions_id: string
 }
 
 interface AcademicYear {
@@ -91,13 +92,13 @@ export default function ExaminationSessionsPage() {
 	const [sortColumn, setSortColumn] = useState<string | null>(null)
 	const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc")
 	const [currentPage, setCurrentPage] = useState(1)
-	const [itemsPerPage, setItemsPerPage] = useState(10)
 	const [deleteTarget, setDeleteTarget] = useState<ExaminationSession | null>(null)
 
 	// Form state
 	const [sheetOpen, setSheetOpen] = useState(false)
 	const [editing, setEditing] = useState<ExaminationSession | null>(null)
 	const [statusFilter, setStatusFilter] = useState("all")
+	const [examTypeFilter, setExamTypeFilter] = useState("all")
 
 	// Error tracking state
 	const [errorPopupOpen, setErrorPopupOpen] = useState(false)
@@ -214,7 +215,8 @@ export default function ExaminationSessionsPage() {
 					? data.filter((i: any) => i?.examination_code).map((i: any) => ({
 						id: i.id,
 						examination_code: i.examination_code,
-						examination_name: i.examination_name
+						examination_name: i.examination_name,
+						institutions_id: i.institutions_id
 					}))
 					: []
 				setExamTypes(mapped)
@@ -245,7 +247,7 @@ export default function ExaminationSessionsPage() {
 		}
 	}, [])
 
-	// Load data when institution filter is ready (run once when ready)
+	// Load data when institution filter is ready or institution changes
 	useEffect(() => {
 		if (!isInstitutionReady) return
 
@@ -253,8 +255,8 @@ export default function ExaminationSessionsPage() {
 		fetchInstitutions()
 		fetchExamTypes()
 		fetchAcademicYears()
-		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [isInstitutionReady])
+		setExamTypeFilter("all")
+	}, [isInstitutionReady, currentInstitutionId, fetchSessions, fetchInstitutions, fetchExamTypes, fetchAcademicYears])
 
 	// Auto-set institution when filter changes (for non-super_admin users)
 	useEffect(() => {
@@ -514,6 +516,13 @@ export default function ExaminationSessionsPage() {
 		setSheetOpen(true)
 	}
 
+	// Exam types filtered by form's selected institution
+	const formExamTypes = useMemo(() => {
+		const instId = formData.institutions_id || currentInstitutionId
+		if (!instId) return examTypes
+		return examTypes.filter((et) => et.institutions_id === instId)
+	}, [examTypes, formData.institutions_id, currentInstitutionId])
+
 	// Filtering and sorting
 	const filtered = useMemo(() => {
 		let result = sessions
@@ -534,6 +543,11 @@ export default function ExaminationSessionsPage() {
 			result = result.filter((item) => item.session_status === statusFilter)
 		}
 
+		// Exam type filter
+		if (examTypeFilter !== "all") {
+			result = result.filter((item) => item.exam_type_id === examTypeFilter)
+		}
+
 		// Sorting
 		if (sortColumn) {
 			result.sort((a, b) => {
@@ -546,20 +560,18 @@ export default function ExaminationSessionsPage() {
 		}
 
 		return result
-	}, [sessions, searchTerm, statusFilter, sortColumn, sortDirection])
+	}, [sessions, searchTerm, statusFilter, examTypeFilter, sortColumn, sortDirection])
 
 	// Pagination
-	const pageSizeOptions = useMemo(() => [10, 20, 50, 100], [])
-	const isShowAll = itemsPerPage === -1
-	const effectivePerPage = isShowAll ? filtered.length : itemsPerPage
+	const itemsPerPage = 10
+	const effectivePerPage = itemsPerPage
 
 	const paginated = useMemo(() => {
-		if (isShowAll) return filtered
 		const startIndex = (currentPage - 1) * effectivePerPage
 		return filtered.slice(startIndex, startIndex + effectivePerPage)
-	}, [filtered, currentPage, isShowAll, effectivePerPage])
+	}, [filtered, currentPage, effectivePerPage])
 
-	const totalPages = isShowAll ? 1 : Math.ceil(filtered.length / effectivePerPage)
+	const totalPages = Math.ceil(filtered.length / effectivePerPage)
 
 	// Sort handler
 	const handleSort = (column: string) => {
@@ -682,7 +694,7 @@ export default function ExaminationSessionsPage() {
 		<SidebarProvider>
 			<AppSidebar />
 			<SidebarInset>
-				<AppHeader />
+				<AppHeader hideSessionSelector />
 				<div className="flex flex-1 flex-col gap-4 p-4 pt-0 overflow-auto">
 					{/* Breadcrumb */}
 					<Breadcrumb>
@@ -786,6 +798,20 @@ export default function ExaminationSessionsPage() {
 											<SelectItem value="Completed">Completed</SelectItem>
 											<SelectItem value="Results Declared">Results Declared</SelectItem>
 											<SelectItem value="Cancelled">Cancelled</SelectItem>
+										</SelectContent>
+									</Select>
+
+									<Select value={examTypeFilter} onValueChange={setExamTypeFilter}>
+										<SelectTrigger className="w-[160px] h-8">
+											<SelectValue placeholder="All Exam Types" />
+										</SelectTrigger>
+										<SelectContent>
+											<SelectItem value="all">All Exam Types</SelectItem>
+											{examTypes.map((et) => (
+												<SelectItem key={et.id} value={et.id}>
+													{et.examination_name}
+												</SelectItem>
+											))}
 										</SelectContent>
 									</Select>
 
@@ -905,15 +931,14 @@ export default function ExaminationSessionsPage() {
 
 							<div className="flex items-center justify-between space-x-2 py-2 mt-2">
 								<div className="text-xs text-muted-foreground">
-									<span>Showing {filtered.length === 0 ? 0 : (currentPage - 1) * effectivePerPage + 1}-{Math.min(currentPage * effectivePerPage, filtered.length)} of {filtered.length}</span>
-								<Select value={String(itemsPerPage)} onValueChange={(v) => { setItemsPerPage(v === '-1' ? -1 : Number(v)); setCurrentPage(1) }}><SelectTrigger className="h-7 w-[80px] text-xs"><SelectValue /></SelectTrigger><SelectContent>{pageSizeOptions.map(size => (<SelectItem key={size} value={String(size)}>{size} / page</SelectItem>))}<SelectItem value="-1">All</SelectItem></SelectContent></Select>
+									Showing {filtered.length === 0 ? 0 : (currentPage - 1) * effectivePerPage + 1}-{Math.min(currentPage * effectivePerPage, filtered.length)} of {filtered.length}
 								</div>
 								<div className="flex items-center gap-2">
-									<Button variant="outline" size="sm" onClick={() => setCurrentPage((p) => Math.max(1, p - 1))} disabled={currentPage === 1 || isShowAll} className="h-7 px-2 text-xs">
+									<Button variant="outline" size="sm" onClick={() => setCurrentPage((p) => Math.max(1, p - 1))} disabled={currentPage === 1} className="h-7 px-2 text-xs">
 										<ChevronLeft className="h-3 w-3 mr-1" /> Previous
 									</Button>
 									<div className="text-xs text-muted-foreground px-2">Page {currentPage} of {totalPages}</div>
-									<Button variant="outline" size="sm" onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))} disabled={currentPage >= totalPages || isShowAll} className="h-7 px-2 text-xs">
+									<Button variant="outline" size="sm" onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))} disabled={currentPage >= totalPages} className="h-7 px-2 text-xs">
 										Next <ChevronRight className="h-3 w-3 ml-1" />
 									</Button>
 								</div>
@@ -945,7 +970,7 @@ export default function ExaminationSessionsPage() {
 										</Label>
 										<Select
 											value={formData.institutions_id}
-											onValueChange={(v) => setFormData({ ...formData, institutions_id: v, programs_included: [] })}
+											onValueChange={(v) => setFormData({ ...formData, institutions_id: v, exam_type_id: '', programs_included: [] })}
 										>
 											<SelectTrigger id="institutions_id" className={`h-10 ${errors.institutions_id ? 'border-destructive' : ''}`}>
 												<SelectValue placeholder="Select institution" />
@@ -1044,7 +1069,7 @@ export default function ExaminationSessionsPage() {
 											<SelectValue placeholder="Select exam type" />
 										</SelectTrigger>
 										<SelectContent>
-											{examTypes.map((et) => (
+											{formExamTypes.map((et) => (
 												<SelectItem key={et.id} value={et.id}>
 													{et.examination_name}
 												</SelectItem>

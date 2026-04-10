@@ -1,6 +1,6 @@
 ---
 name: myjkkn-learner-profile
-description: Pattern for fetching learner profiles from MyJKKN API with pagination support. Use when needing to retrieve learner photo URLs, DOB, or other profile data from MyJKKN. Handles the 200-record-per-page API limitation through pagination and uses myjkkn_institution_ids from COE institution table for filtering.
+description: Pattern for fetching learner profiles from MyJKKN API with pagination support. Use when needing to retrieve learner photo URLs, DOB, or other profile data from MyJKKN. Handles the 200-record-per-page API limitation through pagination and uses myjkkn_institution_ids from COE institution table for filtering. Includes both single-learner lookup and batch fetching patterns. Triggers on 'learner profile', 'learner photo', 'student_photo_url', 'photo_url', 'date_of_birth', 'DOB from MyJKKN', 'profile photo', 'register_number lookup', 'batch profile fetch'.
 ---
 
 # MyJKKN Learner Profile Fetching

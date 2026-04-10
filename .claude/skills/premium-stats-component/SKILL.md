@@ -1,20 +1,11 @@
 ---
 name: premium-stats-component
-description: Pattern for creating premium statistics card components in JKKN COE Next.js application. This skill should be used when adding dashboard statistics, scorecards, metrics display, or summary cards to entity pages. Automatically triggers when user mentions 'stats', 'statistics', 'scorecard', 'metrics', 'dashboard cards', 'summary cards', or 'counts display'.
+description: Pattern for creating premium statistics card components in JKKN COE Next.js application. Use when adding dashboard statistics, scorecards, metrics display, summary cards, or count-based information to entity pages. Triggers on 'stats', 'statistics', 'scorecard', 'metrics', 'dashboard cards', 'summary cards', 'counts display', 'KPI cards', 'loading states for stats'.
 ---
 
 # Premium Stats Component Skill
 
 This skill provides patterns for creating consistent, visually appealing statistics card components in the JKKN COE application.
-
-## When to Use This Skill
-
-Use this skill when:
-- Adding summary statistics to entity listing pages
-- Creating dashboard metric cards
-- Displaying count-based information (Total, Active, Inactive, New)
-- Building scorecards for data overview
-- Implementing loading states for statistics
 
 ## File Locations (Following project-structure)
 

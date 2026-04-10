@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
+import { handleDeleteWithDependencyCheck } from '@/lib/delete-helpers'
 
 // Force this route to be dynamic (not prerendered)
 export const dynamic = 'force-dynamic'
@@ -253,19 +254,7 @@ export async function DELETE(request: Request) {
 			return NextResponse.json({ error: 'Grade ID is required' }, { status: 400 })
 		}
 
-		const supabase = getSupabaseServer()
-
-		const { error } = await supabase
-			.from('grades')
-			.delete()
-			.eq('id', id)
-
-		if (error) {
-			console.error('Error deleting grade:', error)
-			return NextResponse.json({ error: 'Failed to delete grade' }, { status: 500 })
-		}
-
-		return NextResponse.json({ success: true })
+		return handleDeleteWithDependencyCheck('grades', id, request)
 	} catch (e) {
 		console.error('Grade deletion error:', e)
 		return NextResponse.json({ error: 'Internal server error' }, { status: 500 })

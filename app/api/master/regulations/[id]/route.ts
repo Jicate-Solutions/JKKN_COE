@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
+import { handleDeleteWithDependencyCheck } from '@/lib/delete-helpers'
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
@@ -70,14 +71,15 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
   }
 }
 
-export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
-    const supabase = getSupabaseServer()
     const { id } = await params
-    const { error } = await supabase.from('regulations').delete().eq('id', id)
-    if (error) throw error
-    return NextResponse.json({ message: 'Regulation deleted successfully' })
-  } catch (err) {
-    return NextResponse.json({ error: 'Failed to delete regulation' }, { status: 500 })
+    if (!id) {
+      return NextResponse.json({ error: 'ID is required' }, { status: 400 })
+    }
+    return handleDeleteWithDependencyCheck('regulations', id, req)
+  } catch (e) {
+    console.error('Delete error:', e)
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   }
 }

@@ -1,14 +1,6 @@
 ---
 name: jkkn-terminologies
-description: >
-  JKKN Framework Terminology standardization skill for enforcing institution-specific
-  terminology across all applications, documentation, UI/UX, code, and communications.
-  This skill should be used when: (1) Writing any code, documentation, or content for
-  JKKN projects, (2) Reviewing code or content for terminology compliance, (3) Creating
-  database schemas, API endpoints, or UI labels, (4) Writing user-facing messages or
-  communications, (5) Generating reports or documentation, (6) Creating dashboard analytics
-  or reports. Automatically triggers when working on JKKN projects or when terminology
-  standardization is mentioned.
+description: JKKN Framework Terminology standardization for enforcing institution-specific terminology across all applications, documentation, UI/UX, code, and communications. Use when writing code for JKKN projects, reviewing terminology compliance, creating database schemas, API endpoints, UI labels, or user-facing messages. Triggers on 'terminology', 'student vs learner', 'JKKN terms', 'naming convention', 'positive language', 'failed vs needs improvement'.
 ---
 
 # JKKN Framework Terminology Skill

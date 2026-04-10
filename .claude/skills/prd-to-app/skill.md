@@ -1,8 +1,9 @@
-# PRD to Application Development Skill
-
-Autonomous PRD-driven development that reads, understands, and implements applications with minimal user input. Use when user shares a PRD document, mentions "PRD", "product requirements", "spec document", or wants to build an application from requirements. This skill proactively extracts context, makes intelligent decisions, and drives development forward without requiring constant guidance.
-
 ---
+name: prd-to-app
+description: Autonomous PRD-driven development that reads, understands, and implements applications with minimal user input. Use when user shares a PRD document, wants to build an application from requirements, or needs to translate specifications into working code. Triggers on 'PRD', 'product requirements', 'spec document', 'build from requirements', 'implement PRD', 'requirements document'.
+---
+
+# PRD to Application Development Skill
 
 ## Core Philosophy
 

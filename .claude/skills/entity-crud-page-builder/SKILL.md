@@ -1,6 +1,6 @@
 ---
 name: entity-crud-page-builder
-description: Complete workflow for building standardized entity CRUD pages in the JKKN COE Next.js application. This skill should be used when creating or updating entity management pages (like courses, degrees, departments, programs, students, etc.) that require full CRUD operations, data tables, import/export functionality, and comprehensive validation. Automatically triggers when user mentions creating entity pages, CRUD operations, or standardizing existing pages.
+description: Complete workflow for building standardized entity CRUD pages in the JKKN COE Next.js application. Use when creating or updating entity management pages (courses, degrees, departments, programs, learners) that require full CRUD operations, data tables, import/export, and validation. Triggers on 'create entity page', 'CRUD page', 'new master page', 'entity management', 'data table page', 'standardize page', 'add import/export', 'bulk upload'.
 ---
 
 # Entity CRUD Page Builder
@@ -17,15 +17,6 @@ Entity CRUD pages in JKKN COE follow a standardized pattern that includes:
 - **Upload Summary**: Visual feedback with success/failure tracking
 - **Toast Notifications**: Context-aware success/error messages
 - **Foreign Key Handling**: Automatic ID resolution from codes
-
-## When to Use This Skill
-
-Use this skill when:
-- Creating a new entity management page (e.g., courses, students, departments)
-- Standardizing an existing CRUD page to match project patterns
-- Adding import/export functionality to an entity page
-- Implementing comprehensive validation and error handling
-- Building data tables with sorting, filtering, and pagination
 
 ## Page Structure Overview
 

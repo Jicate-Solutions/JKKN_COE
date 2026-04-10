@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
+import { handleDeleteWithDependencyCheck } from '@/lib/delete-helpers'
 
 // GET /api/exam-rooms - Fetch all exam rooms
 export async function GET(request: NextRequest) {
@@ -315,7 +316,6 @@ export async function PUT(request: NextRequest) {
 // DELETE /api/exam-rooms - Delete an exam room
 export async function DELETE(request: NextRequest) {
 	try {
-		const supabase = getSupabaseServer()
 		const { searchParams } = new URL(request.url)
 		const id = searchParams.get('id')
 
@@ -323,16 +323,9 @@ export async function DELETE(request: NextRequest) {
 			return NextResponse.json({ error: 'Exam room ID is required' }, { status: 400 })
 		}
 
-		const { error } = await supabase.from('exam_rooms').delete().eq('id', id)
-
-		if (error) {
-			console.error('Error deleting exam room:', error)
-			return NextResponse.json({ error: 'Failed to delete exam room' }, { status: 500 })
-		}
-
-		return NextResponse.json({ message: 'Exam room deleted successfully' })
-	} catch (error) {
-		console.error('Unexpected error in DELETE /api/exam-rooms:', error)
+		return handleDeleteWithDependencyCheck('exam_rooms', id, request)
+	} catch (e) {
+		console.error('Delete error:', e)
 		return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
 	}
 }

@@ -1,6 +1,6 @@
 ---
 name: brand-styling
-description: Comprehensive brand styling system for standardizing design across all projects. Implements brand colors, typography, spacing, responsive design, and dark mode using Tailwind CSS and Next.js themes. Use when creating new projects, implementing UI components, or ensuring design consistency across web applications. (project)
+description: Comprehensive brand styling system for standardizing design across all JKKN projects. Implements brand colors, typography, spacing, responsive design, and dark mode using Tailwind CSS and Next.js themes. Use when creating new projects, implementing UI components, or ensuring design consistency. Triggers on 'brand colors', 'typography', 'design system', 'dark mode', 'theme', 'Tailwind config', 'brand styling', 'color palette'.
 ---
 
 # Brand Styling Skill

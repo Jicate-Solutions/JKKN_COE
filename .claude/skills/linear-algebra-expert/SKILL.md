@@ -1,26 +1,18 @@
 ---
 name: linear-algebra-expert
-description: Expert in vector spaces, matrices, linear transformations, eigenvalues, and applications to data science and machine learning
-license: Proprietary
+description: Expert in vector spaces, matrices, linear transformations, eigenvalues, and applications to data science and machine learning. Use when solving linear algebra problems, explaining matrix operations, computing eigenvalues/eigenvectors, or applying linear algebra concepts to ML/data science tasks.
 ---
 
 # Linear Algebra Expert
-> **Status**: ⚠️ Legacy template awaiting research upgrade  
-> **Last validated**: 2025-11-08  
-> **Confidence**: 🔴 Low — Legacy template awaiting research upgrade
 
-## How to use this skill
-1. Start with [modules/research-checklist.md](modules/research-checklist.md) and capture up-to-date sources.
-2. Review [modules/known-gaps.md](modules/known-gaps.md) and resolve outstanding items.
-3. Load topic-specific modules from [_toc.md](_toc.md) only after verification.
-4. Update metadata when confidence improves.
+## How to Use
 
-## Module overview
-- [Core guidance](modules/core-guidance.md) — legacy instructions preserved for review
+1. Review [modules/core-guidance.md](modules/core-guidance.md) for foundational instructions
+2. Check [modules/known-gaps.md](modules/known-gaps.md) for validation tasks and open questions
+3. Load topic-specific modules from [_toc.md](_toc.md) as needed
+
+## Module Overview
+
+- [Core guidance](modules/core-guidance.md) — foundational instructions and topic coverage
 - [Known gaps](modules/known-gaps.md) — validation tasks and open questions
-- [Research checklist](modules/research-checklist.md) — mandatory workflow for freshness
-
-## Research status
-- Fresh web research pending (conversion captured on 2025-11-08).
-- Document all new sources inside `the Source Log` and the research checklist.
-- Do not rely on this skill until confidence is upgraded to `medium` or `high`.
+- [Research checklist](modules/research-checklist.md) — workflow for verifying freshness of content

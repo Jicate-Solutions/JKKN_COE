@@ -16,6 +16,7 @@ import { Badge } from "@/components/ui/badge"
 import { Label } from "@/components/ui/label"
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog"
+import { DeleteConfirmDialog } from "@/components/delete-confirm-dialog"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { useToast } from "@/hooks/common/use-toast"
@@ -312,39 +313,8 @@ export default function DegreePage() {
     }
   }
 
-  const remove = async (id: string) => {
-    try {
-      setLoading(true)
-      const degreeName = items.find(i => i.id === id)?.degree_name || 'Degree'
-
-      const response = await fetch(`/api/master/degrees?id=${id}`, {
-        method: 'DELETE',
-      })
-
-      if (!response.ok) {
-        const errorData = await response.json()
-        throw new Error(errorData.error || 'Failed to delete degree')
-      }
-
-      setItems((prev) => prev.filter((p) => p.id !== id))
-
-      toast({
-        title: "Degree Deleted",
-        description: `${degreeName} has been successfully deleted.`,
-        className: "bg-orange-50 border-orange-200 text-orange-800 dark:bg-orange-900/20 dark:border-orange-800 dark:text-orange-200",
-      })
-    } catch (error) {
-      console.error('Error deleting degree:', error)
-      const errorMessage = error instanceof Error ? error.message : 'Failed to delete degree. Please try again.'
-      toast({
-        title: "Delete Failed",
-        description: errorMessage,
-        variant: "destructive",
-        className: "bg-red-50 border-red-200 text-red-800 dark:bg-red-900/20 dark:border-red-800 dark:text-red-200",
-      })
-    } finally {
-      setLoading(false)
-    }
+  const handleDeleted = (id: string) => {
+    setItems((prev) => prev.filter((p) => p.id !== id))
   }
 
 
@@ -1183,21 +1153,14 @@ export default function DegreePage() {
         </SheetContent>
       </Sheet>
 
-      {/* Standalone Delete AlertDialog */}
-      <AlertDialog open={!!deleteTarget} onOpenChange={(open) => { if (!open) setDeleteTarget(null) }}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Delete Degree</AlertDialogTitle>
-            <AlertDialogDescription>
-              Are you sure you want to delete <strong>{deleteTarget?.degree_name || deleteTarget?.degree_code}</strong>? This action cannot be undone.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={() => { if (deleteTarget) remove(deleteTarget.id); setDeleteTarget(null) }} className="bg-red-600 hover:bg-red-700">Delete</AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      {/* Delete Confirmation with Dependency Check */}
+      <DeleteConfirmDialog
+        target={deleteTarget ? { id: deleteTarget.id, name: deleteTarget.degree_name || deleteTarget.degree_code } : null}
+        title="Delete Degree"
+        apiUrl="/api/master/degrees?id={id}"
+        onDeleted={handleDeleted}
+        onClose={() => setDeleteTarget(null)}
+      />
 
       {/* Error Popup Dialog */}
       <AlertDialog open={errorPopupOpen} onOpenChange={setErrorPopupOpen}>

@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
 import { fetchAllMyJKKNPrograms } from '@/services/myjkkn-service'
+import { handleDeleteWithDependencyCheck } from '@/lib/delete-helpers'
 
 // Module-level cache for MyJKKN programs with 5-minute TTL
 let programsCache: { data: any[]; timestamp: number } | null = null
@@ -29,44 +30,54 @@ export async function GET(request: Request) {
 		const semester = searchParams.get('semester')
 		const isActive = searchParams.get('is_active')
 
-		// First fetch course_offerings
-		// Step 1: fetch course_offerings
-		let query = supabase
-			.from('course_offerings')
-			.select('*', { count: 'exact' })
-			.order('created_at', { ascending: false })
-			.range(0, 9999)
+		// Step 1: fetch course_offerings in paginated batches (PostgREST caps at 1000 per request)
+		const PAGE_SIZE = 1000
+		const MAX_ROWS = 100000
+		let offerings: any[] = []
 
-		if (examinationSessionId) {
-			query = query.eq('examination_session_id', examinationSessionId)
-		}
-		if (courseId) {
-			query = query.eq('course_id', courseId)
-		}
-		if (institutionId) {
-			query = query.eq('institutions_id', institutionId)
-		}
-		if (institutionCode) {
-			query = query.eq('institution_code', institutionCode)
-		}
-		if (programId) {
-			query = query.eq('program_id', programId)
-		}
-		if (programCode) {
-			query = query.eq('program_code', programCode)
-		}
-		if (semester) {
-			query = query.eq('semester', parseInt(semester))
-		}
-		if (isActive !== null && isActive !== undefined) {
-			query = query.eq('is_active', isActive === 'true')
-		}
+		for (let offset = 0; offset < MAX_ROWS; offset += PAGE_SIZE) {
+			let query = supabase
+				.from('course_offerings')
+				.select('*')
+				.order('created_at', { ascending: false })
+				.range(offset, offset + PAGE_SIZE - 1)
 
-		const { data: offerings, error: offeringsError } = await query
+			if (examinationSessionId) {
+				query = query.eq('examination_session_id', examinationSessionId)
+			}
+			if (courseId) {
+				query = query.eq('course_id', courseId)
+			}
+			if (institutionId) {
+				query = query.eq('institutions_id', institutionId)
+			}
+			if (institutionCode) {
+				query = query.eq('institution_code', institutionCode)
+			}
+			if (programId) {
+				query = query.eq('program_id', programId)
+			}
+			if (programCode) {
+				query = query.eq('program_code', programCode)
+			}
+			if (semester) {
+				query = query.eq('semester', parseInt(semester))
+			}
+			if (isActive !== null && isActive !== undefined) {
+				query = query.eq('is_active', isActive === 'true')
+			}
 
-		if (offeringsError) {
-			console.error('Course offer table error:', offeringsError)
-			return NextResponse.json({ error: 'Failed to fetch course offer' }, { status: 500 })
+			const { data: batch, error: batchError } = await query
+
+			if (batchError) {
+				console.error('Course offer table error:', batchError)
+				return NextResponse.json({ error: 'Failed to fetch course offer' }, { status: 500 })
+			}
+
+			offerings = offerings.concat(batch || [])
+
+			// Stop if we got fewer rows than the page size (no more data)
+			if (!batch || batch.length < PAGE_SIZE) break
 		}
 
 		// Step 2: look up course details from courses table by course_code (denormalized key)
@@ -778,19 +789,7 @@ export async function DELETE(request: Request) {
 			return NextResponse.json({ error: 'Course offer ID is required' }, { status: 400 })
 		}
 
-		const supabase = getSupabaseServer()
-
-		const { error } = await supabase
-			.from('course_offerings')
-			.delete()
-			.eq('id', id)
-
-		if (error) {
-			console.error('Error deleting course offer:', error)
-			return NextResponse.json({ error: 'Failed to delete course offer' }, { status: 500 })
-		}
-
-		return NextResponse.json({ success: true })
+		return handleDeleteWithDependencyCheck('course_offerings', id, request)
 	} catch (e) {
 		console.error('Course offer deletion error:', e)
 		return NextResponse.json({ error: 'Internal server error' }, { status: 500 })

@@ -18,7 +18,7 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { useToast } from "@/hooks/common/use-toast"
 import Link from "next/link"
-import { ArrowLeft, Save, RefreshCw, Calendar, Plus, Trash2, FileText, Upload, Download, Loader2, XCircle, AlertTriangle, Link2, X } from "lucide-react"
+import { ArrowLeft, Save, RefreshCw, Calendar, Plus, Trash2, FileText, FileSpreadsheet, Upload, Download, Loader2, XCircle, AlertTriangle, Link2, X } from "lucide-react"
 import XLSX from "@/lib/utils/excel-compat"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"

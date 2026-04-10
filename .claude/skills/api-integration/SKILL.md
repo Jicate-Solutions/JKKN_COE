@@ -1,10 +1,9 @@
-# API Integration Skill
-
 ---
 name: api-integration
-description: Advanced skill for integrating child applications with MyJKKN parent app API. Use when developers need to generate API keys, fetch data from endpoints (students, staff, organizations), build UI components with API data, implement authentication, or set up data integration for child applications. Provides templates, working examples, and automated client generation.
-tags: api, integration, authentication, child-app, data-fetching
+description: Advanced skill for integrating child applications with MyJKKN parent app API. Use when developers need to generate API keys, fetch data from endpoints (students, staff, organizations), build UI components with API data, implement authentication, or set up data integration for child applications. Triggers on 'API integration', 'API key', 'child app', 'MyJKKN API', 'data fetching', 'endpoint integration'.
 ---
+
+# API Integration Skill
 
 ## Overview
 

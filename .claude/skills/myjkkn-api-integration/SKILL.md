@@ -1,19 +1,11 @@
 ---
 name: myjkkn-api-integration
-description: Complete guide for integrating with MyJKKN external API. This skill should be used when creating API routes to fetch data from the MyJKKN platform (jkkn.ai), building API explorer/test pages, or implementing external API integrations following the 5-layer architecture pattern (Types → Services → API Routes → Pages). Automatically triggers when user mentions 'MyJKKN', 'external API', 'API integration', 'fetch from jkkn.ai', or 'API explorer page'.
+description: Complete guide for integrating with MyJKKN external API following the 5-layer architecture (Types → Services → Lib → API Routes → Pages). Use when creating API routes to fetch data from the MyJKKN platform (jkkn.ai), building API explorer/test pages, implementing external API integrations, setting up environment configuration for API keys, or creating service layers for external data fetching. Triggers on 'MyJKKN', 'external API', 'API integration', 'fetch from jkkn.ai', 'API explorer page', '5-layer architecture', 'MYJKKN_API_KEY', 'myjkkn-service'.
 ---
 
 # MyJKKN API Integration Skill
 
 This skill provides comprehensive guidance for integrating with the MyJKKN external API system. Use this as a reference pattern for any external API integration in the JKKN COE application.
-
-## When to Use This Skill
-
-- Creating new API routes that fetch data from external APIs
-- Building API explorer or test pages for debugging/testing
-- Implementing the 5-layer architecture for external integrations
-- Setting up environment configuration for API keys
-- Creating service layers for external data fetching
 
 ## Architecture Overview
 
