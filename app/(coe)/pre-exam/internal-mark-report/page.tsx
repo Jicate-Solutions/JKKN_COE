@@ -340,233 +340,6 @@ export default function InternalMarkReportPage() {
 		}
 	}
 
-	// ===== Consolidated PDF =====
-	const [activeTab, setActiveTab] = useState('course-wise')
-	// Multi-semester selection (shared with main Semester dropdown)
-	const [multiSemesters, setMultiSemesters] = useState<number[]>([])
-	const [semesterPopoverOpen, setSemesterPopoverOpen] = useState(false)
-
-	// ===== Pending Mark Entry Tab =====
-	const [pendingData, setPendingData] = useState<PendingProgram[]>([])
-	const [pendingLoading, setPendingLoading] = useState(false)
-	const [expandedPrograms, setExpandedPrograms] = useState<Set<string>>(new Set())
-	const [generatingPending, setGeneratingPending] = useState(false)
-
-	const toggleProgram = (code: string) => {
-		setExpandedPrograms(prev => {
-			const next = new Set(prev)
-			if (next.has(code)) next.delete(code)
-			else next.add(code)
-			return next
-		})
-	}
-
-	const fetchPendingData = async () => {
-		if (!effectiveInstitutionId || !effectiveSession || !activeAssessment) return
-		try {
-			setPendingLoading(true)
-			setPendingData([])
-			const programCodes = (activeAssessment.setting.program_codes || []).join(',')
-			const courseTypes = Array.isArray(activeAssessment.setting.course_type) ? activeAssessment.setting.course_type.join(',') : ''
-			const ciaRound = activeAssessment.round.round
-
-			let url = `/api/pre-exam/internal-mark-report?action=pending-mark-entry&institutions_id=${effectiveInstitutionId}&examination_session_id=${effectiveSession}&cia_round=${ciaRound}`
-			if (programCodes) url += `&program_codes=${programCodes}`
-			if (courseTypes) url += `&course_types=${courseTypes}`
-
-			const res = await fetch(url)
-			if (res.ok) {
-				const data: PendingProgram[] = await res.json()
-				// Enrich with MyJKKN program names
-				const myjkknProgs = await getMyJKKNPrograms().catch(() => [])
-				for (const prog of data) {
-					const match = myjkknProgs.find((p: any) => (p.program_code || p.program_id) === prog.program_code)
-					if (match) (prog as any).program_name = match.program_name || match.name
-				}
-				setPendingData(data)
-				// Expand all programs by default
-				setExpandedPrograms(new Set(data.map(p => p.program_code)))
-			}
-		} catch (e) {
-			console.error('Failed to fetch pending data:', e)
-		} finally {
-			setPendingLoading(false)
-		}
-	}
-
-	// Auto-fetch when switching to pending tab with assessment selected
-	useEffect(() => {
-		if (activeTab === 'pending' && activeAssessment && effectiveInstitutionId && effectiveSession) {
-			fetchPendingData()
-		}
-	}, [activeTab, selectedAssessment, effectiveInstitutionId, effectiveSession])
-
-	const handlePendingPDF = async () => {
-		if (pendingData.length === 0) {
-			toast({ title: '❌ No pending data', variant: 'destructive' }); return
-		}
-		try {
-			setGeneratingPending(true)
-
-			// Fetch learner details for each pending course
-			const ciaRound = activeAssessment!.round.round
-			const learnerDetails: any[] = []
-
-			for (const prog of pendingData) {
-				for (const sem of prog.semesters) {
-					for (const course of sem.courses) {
-						const res = await fetch(`/api/pre-exam/internal-mark-report?action=pending-learner-detail&course_offering_id=${course.course_offering_id}&examination_session_id=${effectiveSession}&program_code=${prog.program_code}&cia_round=${ciaRound}`)
-						if (res.ok) {
-							const learners = await res.json()
-							if (learners.length > 0) {
-								learnerDetails.push({
-									program_code: (prog as any).program_name || prog.program_code,
-									semester: sem.semester,
-									course_code: course.course_code,
-									course_name: course.course_name,
-									learners,
-								})
-							}
-						}
-					}
-				}
-			}
-
-			const loadImage = async (url: string): Promise<string> => {
-				try { const r = await fetch(url); const blob = await r.blob(); return new Promise((res, rej) => { const reader = new FileReader(); reader.onloadend = () => res(reader.result as string); reader.onerror = rej; reader.readAsDataURL(blob) }) } catch { return '' }
-			}
-			const [leftLogo, rightLogo] = await Promise.all([loadImage('/jkkncas_logo.png'), loadImage('/jkkn_logo.png')])
-			const institution = institutions.find(i => i.id === effectiveInstitutionId)
-
-			const { generatePendingMarksPDF } = await import('@/lib/utils/generate-pending-marks-pdf')
-			generatePendingMarksPDF({
-				institution_name: institution?.name || '',
-				exam_session: sessions.find(s => s.id === effectiveSession)?.session_name || '',
-				assessment_name: activeAssessment!.setting.setting_name,
-				cia_round_name: activeAssessment!.round.round_name,
-				programs: pendingData.map(p => ({
-					program_code: p.program_code,
-					program_name: (p as any).program_name || p.program_code,
-					semesters: p.semesters,
-				})),
-				learner_details: learnerDetails,
-				logoImage: leftLogo,
-				rightLogoImage: rightLogo,
-			})
-
-			toast({
-				title: '✅ Pending Mark Entry Report Generated',
-				description: `${learnerDetails.length} course detail pages included`,
-				className: 'bg-green-50 border-green-200 text-green-800',
-			})
-		} catch (error) {
-			console.error('Pending PDF error:', error)
-			toast({ title: '❌ Failed to generate PDF', variant: 'destructive' })
-		} finally {
-			setGeneratingPending(false)
-		}
-	}
-
-	// Computed stats for pending tab
-	const pendingStats = useMemo(() => {
-		let totalCourses = 0, notStarted = 0, partial = 0, totalPending = 0
-		for (const prog of pendingData) {
-			for (const sem of prog.semesters) {
-				for (const course of sem.courses) {
-					totalCourses++
-					if (course.status === 'not_started') notStarted++
-					else partial++
-					totalPending += course.pending_count
-				}
-			}
-		}
-		return { totalCourses, notStarted, partial, totalPending }
-	}, [pendingData])
-
-	// Reset multi-semester when program changes
-	useEffect(() => {
-		setMultiSemesters([])
-		setCourseOfferings([])
-		setSelectedCourses([])
-	}, [selectedProgram])
-
-	// Fetch courses from all selected semesters (for Course-Wise tab)
-	useEffect(() => {
-		if (isReady && effectiveInstitutionId && effectiveSession && selectedProgram && multiSemesters.length > 0) {
-			const prog = programs.find(p => p.id === selectedProgram)
-			if (prog?.program_code) {
-				const cats: string[] = Array.isArray(activeAssessment?.setting?.course_type) ? activeAssessment.setting.course_type : []
-				fetchCoursesForSemesters(prog.program_code, multiSemesters, cats)
-			}
-		} else {
-			setCourseOfferings([])
-			setSelectedCourses([])
-		}
-	}, [multiSemesters, selectedProgram])
-
-	const handleConsolidatedPDF = async () => {
-		if (!activeAssessment || !effectiveSession || !selectedProgram || multiSemesters.length === 0) {
-			toast({ title: '❌ Select Assessment, Program, and at least one Semester', variant: 'destructive' }); return
-		}
-		try {
-			setGenerating(true)
-			const prog = programs.find(p => p.id === selectedProgram)
-			if (!prog) return
-
-			// Fetch data for each selected semester in parallel
-			const semesterResults = await Promise.all(
-				multiSemesters.sort((a, b) => a - b).map(async (sem) => {
-					const res = await fetch(`/api/pre-exam/internal-mark-report?action=consolidated&institutions_id=${effectiveInstitutionId}&examination_session_id=${effectiveSession}&program_code=${prog.program_code}&semester=${sem}&cia_round=${activeAssessment.round.round}`)
-					if (!res.ok) return null
-					const data = await res.json()
-					return {
-						semester: sem,
-						courses: data.courses || [],
-						learners: data.learners || [],
-					}
-				})
-			)
-
-			// Filter out empty semesters
-			const validSemesters = semesterResults.filter(s => s && s.learners.length > 0) as { semester: number, courses: any[], learners: any[] }[]
-
-			if (validSemesters.length === 0) {
-				toast({ title: '❌ No data found for selected semesters', variant: 'destructive' }); return
-			}
-
-			const loadImage = async (url: string): Promise<string> => {
-				try { const r = await fetch(url); const blob = await r.blob(); return new Promise((res, rej) => { const reader = new FileReader(); reader.onloadend = () => res(reader.result as string); reader.onerror = rej; reader.readAsDataURL(blob) }) } catch { return '' }
-			}
-			const [leftLogo, rightLogo] = await Promise.all([loadImage('/jkkncas_logo.png'), loadImage('/jkkn_logo.png')])
-			const institution = institutions.find(i => i.id === effectiveInstitutionId)
-
-			const { generateConsolidatedInternalMarksPDF } = await import('@/lib/utils/generate-consolidated-internal-marks-pdf')
-			generateConsolidatedInternalMarksPDF({
-				institution_name: institution?.name || '',
-				program_code: prog.program_code,
-				program_name: prog.program_name,
-				exam_session: sessions.find(s => s.id === effectiveSession)?.session_name || '',
-				assessment_name: activeAssessment.setting.setting_name,
-				cia_round_name: activeAssessment.round.round_name,
-				semesters: validSemesters,
-				logoImage: leftLogo,
-				rightLogoImage: rightLogo,
-			})
-
-			const skipped = multiSemesters.length - validSemesters.length
-			toast({
-				title: '✅ Consolidated Report Generated',
-				description: `${validSemesters.length} semester(s) included${skipped > 0 ? `, ${skipped} skipped (no data)` : ''}`,
-				className: 'bg-green-50 border-green-200 text-green-800'
-			})
-		} catch (error) {
-			console.error('Consolidated PDF error:', error)
-			toast({ title: '❌ Failed to generate PDF', variant: 'destructive' })
-		} finally {
-			setGenerating(false)
-		}
-	}
-
 	return (
 		<SidebarProvider>
 			<AppSidebar />
@@ -725,372 +498,82 @@ export default function InternalMarkReportPage() {
 										</Popover>
 									</div>
 
-									{/* Semester — multi-select */}
-									<div className="space-y-1 min-w-[180px] flex-1">
-										<label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-											Semester <span className="text-red-500">*</span>
-											{activeTab === 'consolidated' && <span className="ml-1 text-[10px] font-normal normal-case text-indigo-600">(multi)</span>}
-										</label>
-										<Popover open={semesterPopoverOpen} onOpenChange={setSemesterPopoverOpen}>
-											<PopoverTrigger asChild>
-												<Button
-													variant="outline"
-													role="combobox"
-													className="w-full justify-between h-10 text-sm font-normal"
-													disabled={availableSemesters.length === 0}
-												>
-													<span className="truncate">
-														{availableSemesters.length === 0
-															? 'Select Program first'
-															: multiSemesters.length === 0
-																? 'Select Semester'
-																: multiSemesters.length === 1
-																	? `Semester ${multiSemesters[0]}`
-																	: `${multiSemesters.length} semesters`}
-													</span>
-													<ChevronsUpDown className="h-3.5 w-3.5 shrink-0 opacity-50" />
-												</Button>
-											</PopoverTrigger>
-											<PopoverContent className="w-[240px] p-0" align="start">
-												<div className="p-2 border-b flex items-center justify-between">
-													<span className="text-xs font-medium">{multiSemesters.length} selected</span>
-													<div className="flex gap-2">
-														<Button variant="link" size="sm" className="h-auto p-0 text-xs" onClick={() => setMultiSemesters([...availableSemesters])}>All</Button>
-														<span className="text-xs text-muted-foreground">|</span>
-														<Button variant="link" size="sm" className="h-auto p-0 text-xs" onClick={() => setMultiSemesters([])}>Clear</Button>
-													</div>
-												</div>
-												<div className="p-2 max-h-60 overflow-auto space-y-1">
-													{availableSemesters.map(sem => (
-														<label key={sem} className={cn(
-															"flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer transition-colors text-sm",
-															multiSemesters.includes(sem) ? "bg-indigo-50" : "hover:bg-muted"
-														)}>
-															<Checkbox
-																checked={multiSemesters.includes(sem)}
-																onCheckedChange={(checked) => {
-																	setMultiSemesters(prev => checked
-																		? [...prev, sem].sort((a, b) => a - b)
-																		: prev.filter(s => s !== sem)
-																	)
-																}}
-															/>
-															<span>Semester {sem}</span>
-														</label>
-													))}
-												</div>
-											</PopoverContent>
-										</Popover>
-									</div>
+								{/* Semester */}
+								<div className="space-y-1 min-w-[150px] flex-1">
+									<label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Semester <span className="text-red-500">*</span></label>
+									<Select value={selectedSemester} onValueChange={setSelectedSemester} disabled={availableSemesters.length === 0}>
+										<SelectTrigger className="h-10"><SelectValue placeholder={availableSemesters.length === 0 ? 'Select Program first' : 'Select Semester'} /></SelectTrigger>
+										<SelectContent>
+											{availableSemesters.map(sem => <SelectItem key={sem} value={String(sem)}>Semester {sem}</SelectItem>)}
+										</SelectContent>
+									</Select>
 								</div>
 							)}
 						</CardContent>
 					</Card>
 
-					{/* ─── Tab Content ─── */}
-					{activeAssessment && (
-						<>
-							{/* ─── Course Wise Tab ─── */}
-							{activeTab === 'course-wise' && (
-								<div className="space-y-4">
-									{courseOfferings.length > 0 && (
-										<Card>
-											<CardHeader className="pb-2">
-												<div className="flex items-center justify-between">
-													<div>
-														<CardTitle className="text-sm">Select Courses</CardTitle>
-														<p className="text-xs text-muted-foreground">{selectedCourses.length} of {courseOfferings.length} selected</p>
-													</div>
-													<div className="flex gap-2">
-														<Button variant="link" size="sm" className="h-auto p-0 text-xs" onClick={() => setSelectedCourses(courseOfferings.map(co => co.course_offering_id))}>Select All</Button>
-														<span className="text-xs text-muted-foreground">|</span>
-														<Button variant="link" size="sm" className="h-auto p-0 text-xs" onClick={() => setSelectedCourses([])}>Clear</Button>
-													</div>
-												</div>
-											</CardHeader>
-											<CardContent className="pt-0 space-y-4">
-												{(() => {
-													const bySem = new Map<number, typeof courseOfferings>()
-													for (const co of courseOfferings) {
-														const sem = (co as any).semester || 0
-														if (!bySem.has(sem)) bySem.set(sem, [])
-														bySem.get(sem)!.push(co)
-													}
-													const sortedSems = [...bySem.keys()].sort((a, b) => a - b)
-
-													return sortedSems.map(sem => {
-														const semCourses = bySem.get(sem) || []
-														const semCourseIds = semCourses.map(c => c.course_offering_id)
-														const allSelected = semCourseIds.every(id => selectedCourses.includes(id))
-														return (
-															<div key={sem} className="space-y-2">
-																<div className="flex items-center justify-between border-b pb-1">
-																	<div className="flex items-center gap-2">
-																		<Badge variant="secondary" className="text-xs">Semester {sem}</Badge>
-																		<span className="text-xs text-muted-foreground">{semCourses.length} courses</span>
-																	</div>
-																	<Button variant="link" size="sm" className="h-auto p-0 text-xs" onClick={() => {
-																		setSelectedCourses(prev => {
-																			const set = new Set(prev)
-																			if (allSelected) semCourseIds.forEach(id => set.delete(id))
-																			else semCourseIds.forEach(id => set.add(id))
-																			return [...set]
-																		})
-																	}}>
-																		{allSelected ? 'Deselect' : 'Select'} Sem {sem}
-																	</Button>
-																</div>
-																<div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-																	{semCourses.map(co => (
-																		<label key={co.course_offering_id} className={cn(
-																			"flex items-center gap-2 p-2 rounded-md border cursor-pointer transition-colors text-sm",
-																			selectedCourses.includes(co.course_offering_id) ? "bg-purple-50 border-purple-300" : "hover:bg-muted/50"
-																		)}>
-																			<Checkbox
-																				checked={selectedCourses.includes(co.course_offering_id)}
-																				onCheckedChange={(checked) => {
-																					setSelectedCourses(prev => checked
-																						? [...prev, co.course_offering_id]
-																						: prev.filter(id => id !== co.course_offering_id)
-																					)
-																				}}
-																			/>
-																			<span className="font-mono text-xs text-muted-foreground">{co.course_code}</span>
-																			<span className="text-xs truncate">{co.course_name}</span>
-																		</label>
-																	))}
-																</div>
-															</div>
-														)
-													})
-												})()}
-											</CardContent>
-										</Card>
-									)}
-									{selectedCourses.length > 0 && activeAssessment && (
-										<Card className="border-l-4 border-l-purple-500">
-											<CardContent className="py-3 px-4">
-												<div className="flex items-center gap-3 flex-wrap">
-													<FileText className="h-5 w-5 text-purple-500" />
-													<span className="text-sm font-semibold">{selectedCourses.length} course{selectedCourses.length > 1 ? 's' : ''} selected</span>
-													<Badge className="bg-purple-100 text-purple-700 hover:bg-purple-100 text-xs">{activeAssessment.round.round_name}</Badge>
-													<div className="flex-1" />
-													<Button onClick={handleGeneratePDF} disabled={generating} size="sm" className="bg-purple-600 hover:bg-purple-700">
-														{generating ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Download className="h-4 w-4 mr-2" />}
-														{generating ? 'Generating...' : 'Download PDF'}
-													</Button>
-												</div>
-											</CardContent>
-										</Card>
-									)}
+					{/* Course multi-select */}
+					{courseOfferings.length > 0 && (
+						<Card>
+							<CardHeader className="pb-2">
+								<div className="flex items-center justify-between">
+									<div>
+										<CardTitle className="text-sm">Select Courses</CardTitle>
+										<p className="text-xs text-muted-foreground">{selectedCourses.length} of {courseOfferings.length} selected</p>
+									</div>
+									<div className="flex gap-2">
+										<Button variant="link" size="sm" className="h-auto p-0 text-xs" onClick={() => setSelectedCourses(courseOfferings.map(co => co.course_offering_id))}>Select All</Button>
+										<span className="text-xs text-muted-foreground">|</span>
+										<Button variant="link" size="sm" className="h-auto p-0 text-xs" onClick={() => setSelectedCourses([])}>Clear</Button>
+									</div>
 								</div>
-							)}
-
-							{/* ─── Consolidated Tab ─── */}
-							{activeTab === 'consolidated' && (
-								<Card className="border-l-4 border-l-indigo-500">
-									<CardContent className="py-4 px-4">
-										<div className="flex items-center gap-3 flex-wrap">
-											<FileText className="h-5 w-5 text-indigo-500" />
-											<div className="flex-1 min-w-0">
-												<span className="text-sm font-semibold block">Consolidated Report</span>
-												<span className="text-xs text-muted-foreground">
-													{!selectedProgram
-														? 'Select Program to continue'
-														: multiSemesters.length === 0
-															? 'Select at least one Semester above'
-															: (() => {
-																const p = programs.find(p => p.id === selectedProgram)
-																return `${p?.program_code || ''} - ${p?.program_name || ''} | Semesters: ${multiSemesters.sort((a, b) => a - b).join(', ')} | ${activeAssessment.round.round_name} — each semester prints on a new page`
-															})()}
-												</span>
-											</div>
-											<Badge className="bg-indigo-100 text-indigo-700 hover:bg-indigo-100 text-xs shrink-0">
-												{multiSemesters.length} sem{multiSemesters.length !== 1 ? 's' : ''}
-											</Badge>
-											<Button
-												onClick={handleConsolidatedPDF}
-												disabled={generating || !selectedProgram || multiSemesters.length === 0}
-												size="sm"
-												className="bg-indigo-600 hover:bg-indigo-700 shrink-0"
-											>
-												{generating ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Download className="h-4 w-4 mr-2" />}
-												{generating ? 'Generating...' : 'Download PDF'}
-											</Button>
-										</div>
-									</CardContent>
-								</Card>
-							)}
-
-							{/* ─── Pending Mark Entry Tab ─── */}
-							{activeTab === 'pending' && (
-								<div className="space-y-4">
-									{pendingLoading ? (
-										<Card>
-											<CardContent className="py-12 text-center">
-												<Loader2 className="h-6 w-6 animate-spin mx-auto mb-2 text-muted-foreground" />
-												<p className="text-sm text-muted-foreground">Loading pending mark entry data...</p>
-											</CardContent>
-										</Card>
-									) : pendingData.length === 0 ? (
-										<Card>
-											<CardContent className="py-12 text-center">
-												<Check className="h-8 w-8 mx-auto mb-2 text-green-500" />
-												<p className="text-sm font-medium text-green-700">All marks entered!</p>
-												<p className="text-xs text-muted-foreground mt-1">No pending courses found for this assessment.</p>
-											</CardContent>
-										</Card>
-									) : (
-										<>
-											{/* Summary stats */}
-											<div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-												<Card className="border-l-4 border-l-slate-400">
-													<CardContent className="py-3 px-4">
-														<p className="text-xs text-muted-foreground">Pending Courses</p>
-														<p className="text-2xl font-bold">{pendingStats.totalCourses}</p>
-													</CardContent>
-												</Card>
-												<Card className="border-l-4 border-l-red-500">
-													<CardContent className="py-3 px-4">
-														<p className="text-xs text-muted-foreground">Not Started</p>
-														<p className="text-2xl font-bold text-red-600">{pendingStats.notStarted}</p>
-													</CardContent>
-												</Card>
-												<Card className="border-l-4 border-l-amber-500">
-													<CardContent className="py-3 px-4">
-														<p className="text-xs text-muted-foreground">Partial Entry</p>
-														<p className="text-2xl font-bold text-amber-600">{pendingStats.partial}</p>
-													</CardContent>
-												</Card>
-												<Card className="border-l-4 border-l-blue-500">
-													<CardContent className="py-3 px-4">
-														<p className="text-xs text-muted-foreground">Total Pending Learners</p>
-														<p className="text-2xl font-bold text-blue-600">{pendingStats.totalPending}</p>
-													</CardContent>
-												</Card>
-											</div>
-
-											{/* Program accordion groups */}
-											{pendingData.map(prog => {
-												const isExpanded = expandedPrograms.has(prog.program_code)
-												const progName = (prog as any).program_name || prog.program_code
-												const progCourseCount = prog.semesters.reduce((sum, s) => sum + s.courses.length, 0)
-												const progNotStarted = prog.semesters.reduce((sum, s) => sum + s.courses.filter(c => c.status === 'not_started').length, 0)
-
-												return (
-													<Card key={prog.program_code}>
-														<button
-															type="button"
-															onClick={() => toggleProgram(prog.program_code)}
-															className="w-full flex items-center gap-3 px-4 py-3 hover:bg-muted/50 transition-colors text-left"
-														>
-															{isExpanded ? <ChevronDown className="h-4 w-4 shrink-0" /> : <ChevronRight className="h-4 w-4 shrink-0" />}
-															<div className="flex-1 min-w-0">
-																<span className="font-semibold text-sm">{prog.program_code}</span>
-																<span className="text-sm text-muted-foreground ml-2">{progName !== prog.program_code ? progName : ''}</span>
-															</div>
-															<div className="flex items-center gap-2 shrink-0">
-																{progNotStarted > 0 && (
-																	<Badge variant="destructive" className="text-xs">{progNotStarted} not started</Badge>
-																)}
-																<Badge variant="secondary" className="text-xs">{progCourseCount} course{progCourseCount !== 1 ? 's' : ''}</Badge>
-															</div>
-														</button>
-														{isExpanded && (
-															<CardContent className="pt-0 pb-3 px-4">
-																{prog.semesters.map(sem => (
-																	<div key={sem.semester} className="mb-4 last:mb-0">
-																		<div className="flex items-center gap-2 mb-2">
-																			<Badge className="bg-indigo-100 text-indigo-700 hover:bg-indigo-100 text-xs">Semester {sem.semester}</Badge>
-																			<span className="text-xs text-muted-foreground">{sem.courses.length} pending course{sem.courses.length !== 1 ? 's' : ''}</span>
-																		</div>
-																		<div className="rounded-md border">
-																			<Table>
-																				<TableHeader>
-																					<TableRow>
-																						<TableHead className="w-[100px]">Code</TableHead>
-																						<TableHead>Course Name</TableHead>
-																						<TableHead className="w-[80px] text-center">Total</TableHead>
-																						<TableHead className="w-[80px] text-center">Entered</TableHead>
-																						<TableHead className="w-[80px] text-center">Pending</TableHead>
-																						<TableHead className="w-[70px] text-center">%</TableHead>
-																						<TableHead className="w-[100px] text-center">Status</TableHead>
-																					</TableRow>
-																				</TableHeader>
-																				<TableBody>
-																					{sem.courses.map(course => {
-																						const pct = course.total_learners > 0 ? Math.round((course.entered_count / course.total_learners) * 100) : 0
-																						return (
-																							<TableRow key={course.course_offering_id}>
-																								<TableCell className="font-mono text-xs">{course.course_code}</TableCell>
-																								<TableCell className="text-sm">{course.course_name}</TableCell>
-																								<TableCell className="text-center text-sm">{course.total_learners}</TableCell>
-																								<TableCell className="text-center text-sm">{course.entered_count}</TableCell>
-																								<TableCell className="text-center text-sm font-medium">{course.pending_count}</TableCell>
-																								<TableCell className="text-center text-sm">
-																									<div className="flex items-center gap-1 justify-center">
-																										<div className="w-12 h-1.5 bg-gray-200 rounded-full overflow-hidden">
-																											<div
-																												className={cn("h-full rounded-full", pct === 0 ? "bg-red-500" : "bg-amber-500")}
-																												style={{ width: `${pct}%` }}
-																											/>
-																										</div>
-																										<span className="text-xs text-muted-foreground">{pct}%</span>
-																									</div>
-																								</TableCell>
-																								<TableCell className="text-center">
-																									{course.status === 'not_started' ? (
-																										<Badge variant="destructive" className="text-[10px] px-1.5 py-0">
-																											<AlertTriangle className="h-3 w-3 mr-0.5" />Not Started
-																										</Badge>
-																									) : (
-																										<Badge className="bg-amber-100 text-amber-700 hover:bg-amber-100 text-[10px] px-1.5 py-0">
-																											<Clock className="h-3 w-3 mr-0.5" />Partial
-																										</Badge>
-																									)}
-																								</TableCell>
-																							</TableRow>
-																						)
-																					})}
-																				</TableBody>
-																			</Table>
-																		</div>
-																	</div>
-																))}
-															</CardContent>
-														)}
-													</Card>
-												)
-											})}
-
-											{/* Download PDF button */}
-											<Card className="border-l-4 border-l-orange-500">
-												<CardContent className="py-3 px-4">
-													<div className="flex items-center gap-3 flex-wrap">
-														<FileText className="h-5 w-5 text-orange-500" />
-														<div className="flex-1 min-w-0">
-															<span className="text-sm font-semibold block">Pending Mark Entry Report</span>
-															<span className="text-xs text-muted-foreground">
-																{pendingStats.totalCourses} courses | {pendingStats.notStarted} not started, {pendingStats.partial} partial | {pendingStats.totalPending} learners pending
-															</span>
-														</div>
-														<Button
-															onClick={handlePendingPDF}
-															disabled={generatingPending}
-															size="sm"
-															className="bg-orange-600 hover:bg-orange-700 shrink-0"
-														>
-															{generatingPending ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Download className="h-4 w-4 mr-2" />}
-															{generatingPending ? 'Generating...' : 'Download PDF'}
-														</Button>
-													</div>
-												</CardContent>
-											</Card>
-										</>
-									)}
+							</CardHeader>
+							<CardContent className="pt-0">
+								<div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+									{courseOfferings.map(co => (
+										<label key={co.course_offering_id} className={cn(
+											"flex items-center gap-2 p-2 rounded-md border cursor-pointer transition-colors text-sm",
+											selectedCourses.includes(co.course_offering_id) ? "bg-purple-50 border-purple-300" : "hover:bg-muted/50"
+										)}>
+											<Checkbox
+												checked={selectedCourses.includes(co.course_offering_id)}
+												onCheckedChange={(checked) => {
+													setSelectedCourses(prev => checked
+														? [...prev, co.course_offering_id]
+														: prev.filter(id => id !== co.course_offering_id)
+													)
+												}}
+											/>
+											<span className="font-mono text-xs text-muted-foreground">{co.course_code}</span>
+											<span className="text-xs truncate">{co.course_name}</span>
+										</label>
+									))}
 								</div>
-							)}
-						</>
+							</CardContent>
+						</Card>
+					)}
+
+					{/* Download bar */}
+					{selectedCourses.length > 0 && activeAssessment && (
+						<Card className="border-l-4 border-l-purple-500">
+							<CardContent className="py-3 px-4">
+								<div className="flex items-center gap-3 flex-wrap">
+									<FileText className="h-5 w-5 text-purple-500" />
+									<span className="text-sm font-semibold">{selectedCourses.length} course{selectedCourses.length > 1 ? 's' : ''} selected</span>
+									<Badge className="bg-purple-100 text-purple-700 hover:bg-purple-100 text-xs">{activeAssessment.round.round_name}</Badge>
+									<div className="flex-1" />
+									<Button
+										onClick={handleGeneratePDF}
+										disabled={generating}
+										size="sm"
+										className="bg-purple-600 hover:bg-purple-700"
+									>
+										{generating ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Download className="h-4 w-4 mr-2" />}
+										{generating ? 'Generating...' : 'Download PDF'}
+									</Button>
+								</div>
+							</CardContent>
+						</Card>
 					)}
 				</div>
 
