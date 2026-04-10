@@ -12,7 +12,7 @@ import {
 	AlertDialogAction,
 } from '@/components/ui/alert-dialog'
 import { AlertTriangle, Loader2 } from 'lucide-react'
-import { useToast } from '@/hooks/use-toast'
+import { useToast } from '@/hooks/common/use-toast'
 
 /** Human-readable names for database tables */
 const TABLE_LABELS: Record<string, string> = {

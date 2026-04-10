@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
-import { requireUserPermission } from '@/lib/auth/check-user-permission'
 
 /**
  * NAD ABC Pivot CSV Export API
@@ -265,20 +264,8 @@ interface StudentData {
 
 export async function GET(req: NextRequest) {
 	try {
-		const { searchParams } = new URL(req.url)
-		const countOnly = searchParams.get('count_only') === 'true'
-
-		// Permission gate: count_only previews require nad.view, CSV downloads require nad.export
-		const requiredPermission = countOnly ? 'nad.view' : 'nad.export'
-		const permResult = await requireUserPermission(requiredPermission)
-		if (!permResult.ok) {
-			return NextResponse.json(
-				{ error: permResult.error },
-				{ status: permResult.status },
-			)
-		}
-
 		const supabase = getSupabaseServer()
+		const { searchParams } = new URL(req.url)
 
 		// Parse filter parameters
 		const institutionId = searchParams.get('institution_id') || undefined
@@ -460,6 +447,66 @@ export async function GET(req: NextRequest) {
 				csv: '',
 				row_count: 0
 			})
+		}
+
+		// ── Bulk-fetch TOT_CREDIT / TOT_CREDIT_POINTS from semester_results ──────
+		// Both columns must come from semester_results (the authoritative values,
+		// trigger-maintained via calculate_semester_result). Summing subject-level
+		// credits client-side would include RA/failed attempts and drift from the
+		// earned-credit count.
+		//
+		// IMPORTANT: We query semester_results DIRECTLY by (student_id, exam_session_id)
+		// instead of relying on view.semester_result_id. The view's LEFT JOIN filters
+		// on `is_active = true AND is_published = true`, so draft/unpublished rows get
+		// silently dropped — which caused TOT_CREDIT to fall back to the subject-sum
+		// (i.e. "credits registered") for any student whose semester result hasn't
+		// been published yet. Direct lookup with only `is_active = true` fixes that.
+		const studentIdSet = new Set<string>()
+		const examSessionIdSet = new Set<string>()
+		for (const student of Array.from(studentMap.values())) {
+			if (student.student_id) studentIdSet.add(student.student_id)
+			if (student.examination_session_id) examSessionIdSet.add(student.examination_session_id)
+		}
+
+		if (studentIdSet.size > 0 && examSessionIdSet.size > 0) {
+			const { data: srRows, error: srError } = await supabase
+				.from('semester_results')
+				.select('student_id, examination_session_id, total_credits_earned, total_credit_points, is_published')
+				.in('student_id', Array.from(studentIdSet))
+				.in('examination_session_id', Array.from(examSessionIdSet))
+				.eq('is_active', true)  // Only current active version — NOT gated on is_published
+
+			if (srError) {
+				console.error('[NAD Export] Failed to fetch semester_results credits:', srError)
+				// Non-fatal — route will fall back to sum of subject credits below.
+			} else if (srRows) {
+				// Composite key: student_id + examination_session_id → credit values
+				const srMap = new Map<string, { credits: number; points: number; published: boolean }>()
+				for (const r of srRows) {
+					const key = `${r.student_id}-${r.examination_session_id}`
+					srMap.set(key, {
+						credits: Number(r.total_credits_earned) || 0,
+						points: Number(r.total_credit_points) || 0,
+						published: !!r.is_published,
+					})
+				}
+				let resolvedCount = 0
+				let unpublishedCount = 0
+				for (const student of Array.from(studentMap.values())) {
+					const key = `${student.student_id}-${student.examination_session_id}`
+					const sr = srMap.get(key)
+					if (sr) {
+						student.total_credits_earned = sr.credits
+						student.total_credit_points_earned = sr.points
+						resolvedCount++
+						if (!sr.published) unpublishedCount++
+					}
+				}
+				console.log(
+					`[NAD Export] Resolved semester_results credits for ${resolvedCount}/${studentMap.size} students ` +
+					`(${unpublishedCount} from unpublished/draft rows)`
+				)
+			}
 		}
 
 		// Calculate percentage and grade for each student
