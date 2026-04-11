@@ -180,7 +180,12 @@ export function useExamRegistrations(programId?: string, sessionId?: string) {
 			}
 			const response = await fetch(url)
 			if (!response.ok) {
-				throw new Error('Failed to fetch exam registrations')
+				if (response.status === 401) {
+					window.location.href = `/login?redirect=${encodeURIComponent(window.location.pathname)}`
+					return
+				}
+				const errorData = await response.json().catch(() => ({}))
+				throw new Error(errorData.error || `HTTP ${response.status}: Failed to fetch exam registrations`)
 			}
 			const result = await response.json()
 			let data = Array.isArray(result) ? result : result.data || []
@@ -195,7 +200,7 @@ export function useExamRegistrations(programId?: string, sessionId?: string) {
 			console.error('Error fetching exam registrations:', error)
 			toast({
 				title: '❌ Fetch Failed',
-				description: 'Failed to load exam registrations.',
+				description: error instanceof Error ? error.message : 'Failed to load exam registrations.',
 				variant: 'destructive'
 			})
 		} finally {
@@ -218,7 +223,12 @@ export function useExamRegistrations(programId?: string, sessionId?: string) {
 			}
 			const response = await fetch(url)
 			if (!response.ok) {
-				throw new Error('Failed to fetch exam registrations')
+				if (response.status === 401) {
+					window.location.href = `/login?redirect=${encodeURIComponent(window.location.pathname)}`
+					return
+				}
+				const errorData = await response.json().catch(() => ({}))
+				throw new Error(errorData.error || `HTTP ${response.status}: Failed to fetch exam registrations`)
 			}
 			const result = await response.json()
 			let data = Array.isArray(result) ? result : result.data || []
@@ -238,7 +248,7 @@ export function useExamRegistrations(programId?: string, sessionId?: string) {
 			console.error('Error refreshing exam registrations:', error)
 			toast({
 				title: '❌ Refresh Failed',
-				description: 'Failed to load exam registrations.',
+				description: error instanceof Error ? error.message : 'Failed to load exam registrations.',
 				variant: 'destructive'
 			})
 		} finally {

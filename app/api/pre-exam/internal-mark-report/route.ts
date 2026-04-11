@@ -88,6 +88,7 @@ export async function GET(request: Request) {
 				.eq('examination_session_id', sessionId)
 				.eq('cia_round', Number(ciaRound))
 				.eq('is_active', true)
+				.range(0, 9999)
 
 			const marksMap = new Map<string, any>()
 			for (const m of (marks || [])) marksMap.set(m.student_id, m)
@@ -216,6 +217,7 @@ export async function GET(request: Request) {
 					.eq('examination_session_id', sessionId)
 					.eq('cia_round', Number(ciaRound))
 					.eq('is_active', true)
+					.range(0, 49999)
 				: { data: [] }
 
 			// Build marks lookup: student_id → course_code → total
@@ -259,6 +261,7 @@ export async function GET(request: Request) {
 		}
 
 		// Pending Mark Entry: all programs > semesters > courses with entry status
+		// Scalable: fetches distinct programs first, then processes per-program
 		if (action === 'pending-mark-entry') {
 			const institutionsId = searchParams.get('institutions_id')
 			const sessionId = searchParams.get('examination_session_id')
@@ -270,114 +273,111 @@ export async function GET(request: Request) {
 				return NextResponse.json({ error: 'institutions_id and examination_session_id required' }, { status: 400 })
 			}
 
-			// 1. Get all regular registrations for this institution + session
-			let regQuery = supabase
-				.from('exam_registrations')
-				.select('id, student_id, stu_register_no, student_name, course_offering_id, course_code, program_code')
+			const allowedCourseTypes = courseTypesParam ? courseTypesParam.split(',').map(c => c.trim().toLowerCase()).filter(Boolean) : null
+
+			// 1. Get distinct program_codes from course_offerings (small table, not exam_registrations)
+			const { data: coRows, error: coError } = await supabase
+				.from('course_offerings')
+				.select('program_code')
 				.eq('institutions_id', institutionsId)
 				.eq('examination_session_id', sessionId)
-				.eq('is_regular', true)
-				.range(0, 49999)
+				.eq('is_active', true)
 
-			const { data: allRegs, error: regError } = await regQuery
-			if (regError) return NextResponse.json({ error: 'Failed to fetch registrations' }, { status: 500 })
-			if (!allRegs || allRegs.length === 0) return NextResponse.json([])
+			if (coError) return NextResponse.json({ error: 'Failed to fetch programs' }, { status: 500 })
+			if (!coRows || coRows.length === 0) return NextResponse.json([])
+
+			const allProgramCodes = [...new Set(coRows.map(r => r.program_code).filter(Boolean))]
 
 			// Filter by assessment's program_codes if provided
 			const allowedPrograms = programCodesParam ? programCodesParam.split(',').map(c => c.trim()).filter(Boolean) : null
-			const filteredRegs = allowedPrograms
-				? allRegs.filter(r => r.program_code && allowedPrograms.includes(r.program_code))
-				: allRegs
+			const programCodes = allowedPrograms
+				? allProgramCodes.filter(c => allowedPrograms.includes(c))
+				: allProgramCodes
 
-			// 2. Collect unique program_codes, course_offering_ids, course_codes
-			const programSet = new Set<string>()
-			const coIdSet = new Set<string>()
-			const courseCodeSet = new Set<string>()
-			for (const r of filteredRegs) {
-				if (r.program_code) programSet.add(r.program_code)
-				if (r.course_offering_id) coIdSet.add(r.course_offering_id)
-				if (r.course_code) courseCodeSet.add(r.course_code)
-			}
+			if (programCodes.length === 0) return NextResponse.json([])
 
-			// 3. Get course_offerings to know semester for each offering
-			const allCoIds = [...coIdSet]
-			const { data: offerings } = await supabase
-				.from('course_offerings')
-				.select('id, course_code, semester')
-				.in('id', allCoIds)
-				.eq('is_active', true)
+			// 2. Process each program independently — keeps queries small & scalable
+			const result: any[] = []
 
-			const coIdToSemester = new Map<string, number>()
-			const coIdToCode = new Map<string, string>()
-			for (const o of (offerings || [])) {
-				coIdToSemester.set(o.id, o.semester)
-				coIdToCode.set(o.id, o.course_code)
-			}
+			for (const progCode of programCodes.sort()) {
+				// 2a. Get registrations for THIS program only
+				const { data: progRegs } = await supabase
+					.from('exam_registrations')
+					.select('id, student_id, course_offering_id, course_code')
+					.eq('institutions_id', institutionsId)
+					.eq('examination_session_id', sessionId)
+					.eq('program_code', progCode)
+					.eq('is_regular', true)
+					.range(0, 49999)
 
-			// 4. Get course details
-			const uniqueCourseCodes = [...courseCodeSet]
-			const { data: coursesData } = await supabase
-				.from('courses')
-				.select('course_code, course_name, internal_max_mark, evaluation_type, course_category')
-				.eq('institutions_id', institutionsId)
-				.in('course_code', uniqueCourseCodes)
+				if (!progRegs || progRegs.length === 0) continue
 
-			const courseByCode = new Map((coursesData || []).map(c => [c.course_code, c]))
+				const progCoIds = [...new Set(progRegs.map(r => r.course_offering_id).filter(Boolean))]
+				const progCourseCodes = [...new Set(progRegs.map(r => r.course_code).filter(Boolean))]
+				if (progCoIds.length === 0) continue
 
-			// Filter by course_types from assessment setting
-			const allowedCourseTypes = courseTypesParam ? courseTypesParam.split(',').map(c => c.trim().toLowerCase()).filter(Boolean) : null
+				// 2b. Get course_offerings for semester info
+				const { data: offerings } = await supabase
+					.from('course_offerings')
+					.select('id, course_code, semester')
+					.in('id', progCoIds)
+					.eq('is_active', true)
 
-			// 5. Get course_mapping for ordering
-			const { data: cmData } = await supabase
-				.from('course_mapping')
-				.select('course_code, course_order, program_code')
-				.in('course_code', uniqueCourseCodes)
+				const coIdToSemester = new Map<string, number>()
+				const coIdToCode = new Map<string, string>()
+				for (const o of (offerings || [])) {
+					coIdToSemester.set(o.id, o.semester)
+					coIdToCode.set(o.id, o.course_code)
+				}
 
-			const cmByProgramCourse = new Map<string, number>()
-			for (const cm of (cmData || [])) {
-				cmByProgramCourse.set(`${cm.program_code}__${cm.course_code}`, cm.course_order ?? 999)
-			}
+				// 2c. Get course details
+				const { data: coursesData } = await supabase
+					.from('courses')
+					.select('course_code, course_name, internal_max_mark, evaluation_type, course_category')
+					.eq('institutions_id', institutionsId)
+					.in('course_code', progCourseCodes)
 
-			// 6. Get ALL cia_marks for these course_offerings + round
-			const { data: allMarks } = allCoIds.length > 0
-				? await supabase
+				const courseByCode = new Map((coursesData || []).map(c => [c.course_code, c]))
+
+				// 2d. Get course_mapping for ordering
+				const { data: cmData } = await supabase
+					.from('course_mapping')
+					.select('course_code, course_order')
+					.eq('program_code', progCode)
+					.in('course_code', progCourseCodes)
+
+				const cmByCourse = new Map<string, number>()
+				for (const cm of (cmData || [])) {
+					cmByCourse.set(cm.course_code, cm.course_order ?? 999)
+				}
+
+				// 2e. Get cia_marks for this program's course_offerings
+				const { data: progMarks } = await supabase
 					.from('cia_marks')
 					.select('student_id, course_offering_id')
-					.in('course_offering_id', allCoIds)
+					.in('course_offering_id', progCoIds)
 					.eq('examination_session_id', sessionId)
 					.eq('cia_round', Number(ciaRound))
 					.eq('is_active', true)
-				: { data: [] }
+					.range(0, 49999)
 
-			// Build marks set: course_offering_id → Set of student_ids with marks
-			const marksPerCO = new Map<string, Set<string>>()
-			for (const m of (allMarks || [])) {
-				if (!marksPerCO.has(m.course_offering_id)) marksPerCO.set(m.course_offering_id, new Set())
-				marksPerCO.get(m.course_offering_id)!.add(m.student_id)
-			}
+				const marksPerCO = new Map<string, Set<string>>()
+				for (const m of (progMarks || [])) {
+					if (!marksPerCO.has(m.course_offering_id)) marksPerCO.set(m.course_offering_id, new Set())
+					marksPerCO.get(m.course_offering_id)!.add(m.student_id)
+				}
 
-			// 7. Build program → semester → course structure
-			// Group registrations by program_code → course_offering_id → list of student_ids
-			const regByProgCO = new Map<string, Map<string, Set<string>>>()
-			for (const r of filteredRegs) {
-				if (!r.program_code || !r.course_offering_id) continue
-				if (!regByProgCO.has(r.program_code)) regByProgCO.set(r.program_code, new Map())
-				const coMap = regByProgCO.get(r.program_code)!
-				if (!coMap.has(r.course_offering_id)) coMap.set(r.course_offering_id, new Set())
-				coMap.get(r.course_offering_id)!.add(r.student_id)
-			}
+				// 2f. Group registrations by course_offering_id → student_ids
+				const coStudents = new Map<string, Set<string>>()
+				for (const r of progRegs) {
+					if (!r.course_offering_id) continue
+					if (!coStudents.has(r.course_offering_id)) coStudents.set(r.course_offering_id, new Set())
+					coStudents.get(r.course_offering_id)!.add(r.student_id)
+				}
 
-			// Build result grouped by program → semester → courses
-			const result: any[] = []
-			const sortedPrograms = [...programSet].sort()
-
-			for (const progCode of sortedPrograms) {
-				const coMap = regByProgCO.get(progCode)
-				if (!coMap) continue
-
-				// Group by semester
+				// 2g. Build semester → courses
 				const semMap = new Map<number, any[]>()
-				for (const [coId, studentIds] of coMap.entries()) {
+				for (const [coId, studentIds] of coStudents.entries()) {
 					const semester = coIdToSemester.get(coId)
 					if (semester === undefined) continue
 
@@ -387,11 +387,9 @@ export async function GET(request: Request) {
 					const course = courseByCode.get(courseCode)
 					if (!course) continue
 
-					// Filter by evaluation_type — only CIA-related courses
 					const evalType = course.evaluation_type || ''
 					if (evalType !== 'CIA' && evalType !== 'CIA + ESE') continue
 
-					// Filter by course_types if specified
 					if (allowedCourseTypes && allowedCourseTypes.length > 0) {
 						const cat = (course.course_category || '').toLowerCase()
 						if (!cat || !allowedCourseTypes.includes(cat)) continue
@@ -401,11 +399,9 @@ export async function GET(request: Request) {
 					const marksSet = marksPerCO.get(coId) || new Set()
 					const enteredCount = [...studentIds].filter(sid => marksSet.has(sid)).length
 
-					// Skip fully completed courses
 					if (enteredCount >= totalLearners) continue
 
 					const status = enteredCount === 0 ? 'not_started' : 'partial'
-					const courseOrder = cmByProgramCourse.get(`${progCode}__${courseCode}`) ?? 999
 
 					if (!semMap.has(semester)) semMap.set(semester, [])
 					semMap.get(semester)!.push({
@@ -418,11 +414,10 @@ export async function GET(request: Request) {
 						entered_count: enteredCount,
 						pending_count: totalLearners - enteredCount,
 						status,
-						course_order: courseOrder,
+						course_order: cmByCourse.get(courseCode) ?? 999,
 					})
 				}
 
-				// Sort courses within each semester
 				for (const courses of semMap.values()) {
 					courses.sort((a, b) => a.course_order - b.course_order)
 				}
@@ -432,10 +427,7 @@ export async function GET(request: Request) {
 					.map(([sem, courses]) => ({ semester: sem, courses }))
 
 				if (semesters.length > 0) {
-					result.push({
-						program_code: progCode,
-						semesters,
-					})
+					result.push({ program_code: progCode, semesters })
 				}
 			}
 
@@ -488,6 +480,7 @@ export async function GET(request: Request) {
 				.eq('examination_session_id', sessionId)
 				.eq('cia_round', Number(ciaRound))
 				.eq('is_active', true)
+				.range(0, 49999)
 
 			const markedStudents = new Set((marks || []).map(m => m.student_id))
 

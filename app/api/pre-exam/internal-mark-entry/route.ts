@@ -9,7 +9,7 @@ export async function GET(request: Request) {
 
 		switch (action) {
 			// ─── Cascading filter: programs → semesters → courses ───
-			// Each step queries exam_registrations directly (no row-limit issues)
+			// All steps query course_offerings (small table) — never scans exam_registrations
 			case 'filter-cascade': {
 				const step = searchParams.get('step')
 				const institutionsId = searchParams.get('institutions_id')
@@ -19,18 +19,17 @@ export async function GET(request: Request) {
 					return NextResponse.json({ error: 'institutions_id and examination_session_id are required' }, { status: 400 })
 				}
 
-				// STEP 1: Get distinct program_codes that have regular registrations
+				// STEP 1: Get distinct program_codes from course_offerings (never scan exam_registrations)
 				if (step === 'programs') {
 					const { data, error } = await supabase
-						.from('exam_registrations')
+						.from('course_offerings')
 						.select('program_code')
 						.eq('institutions_id', institutionsId)
 						.eq('examination_session_id', sessionId)
-						.eq('is_regular', true)
-						.range(0, 49999)
+						.eq('is_active', true)
 
 					if (error) {
-						console.error('Error fetching registered programs:', error)
+						console.error('Error fetching programs from course_offerings:', error)
 						return NextResponse.json({ error: 'Failed to fetch programs' }, { status: 500 })
 					}
 
@@ -38,7 +37,7 @@ export async function GET(request: Request) {
 					return NextResponse.json(uniqueCodes.sort())
 				}
 
-				// STEP 2: Get distinct semesters for a program (via course_offerings join)
+				// STEP 2: Get distinct semesters for a program from course_offerings
 				if (step === 'semesters') {
 					const programCode = searchParams.get('program_code')
 					if (!programCode) {
@@ -46,38 +45,23 @@ export async function GET(request: Request) {
 					}
 
 					const { data, error } = await supabase
-						.from('exam_registrations')
-						.select('course_offering_id')
+						.from('course_offerings')
+						.select('semester')
 						.eq('institutions_id', institutionsId)
 						.eq('examination_session_id', sessionId)
 						.eq('program_code', programCode)
-						.eq('is_regular', true)
-						.range(0, 49999)
-
-					if (error) {
-						console.error('Error fetching registrations for semesters:', error)
-						return NextResponse.json({ error: 'Failed to fetch semesters' }, { status: 500 })
-					}
-
-					const coIds = [...new Set((data || []).map(r => r.course_offering_id).filter(Boolean))]
-					if (coIds.length === 0) return NextResponse.json([])
-
-					const { data: offerings, error: coError } = await supabase
-						.from('course_offerings')
-						.select('semester')
-						.in('id', coIds)
 						.eq('is_active', true)
 
-					if (coError) {
-						console.error('Error fetching semesters from course_offerings:', coError)
+					if (error) {
+						console.error('Error fetching semesters from course_offerings:', error)
 						return NextResponse.json({ error: 'Failed to fetch semesters' }, { status: 500 })
 					}
 
-					const semesters = [...new Set((offerings || []).map(o => o.semester).filter(Boolean))].sort((a, b) => a - b)
+					const semesters = [...new Set((data || []).map(o => o.semester).filter(Boolean))].sort((a, b) => a - b)
 					return NextResponse.json(semesters)
 				}
 
-				// STEP 3: Get courses for a program + semester
+				// STEP 3: Get courses for a program + semester from course_offerings
 				if (step === 'courses') {
 					const programCode = searchParams.get('program_code')
 					const semester = searchParams.get('semester')
@@ -86,29 +70,12 @@ export async function GET(request: Request) {
 						return NextResponse.json({ error: 'program_code and semester are required' }, { status: 400 })
 					}
 
-					// Get course_offering_ids from exam_registrations for this program
-					const { data: regs, error: regError } = await supabase
-						.from('exam_registrations')
-						.select('course_offering_id, course_code')
-						.eq('institutions_id', institutionsId)
-						.eq('examination_session_id', sessionId)
-						.eq('program_code', programCode)
-						.eq('is_regular', true)
-						.range(0, 49999)
-
-					if (regError) {
-						console.error('Error fetching registrations for courses:', regError)
-						return NextResponse.json({ error: 'Failed to fetch courses' }, { status: 500 })
-					}
-
-					const coIds = [...new Set((regs || []).map(r => r.course_offering_id).filter(Boolean))]
-					if (coIds.length === 0) return NextResponse.json([])
-
-					// Fetch course_offerings filtered by semester
 					const { data: offerings, error: coError } = await supabase
 						.from('course_offerings')
 						.select('id, course_id, program_id, semester, course_code, program_code')
-						.in('id', coIds)
+						.eq('institutions_id', institutionsId)
+						.eq('examination_session_id', sessionId)
+						.eq('program_code', programCode)
 						.eq('semester', Number(semester))
 						.eq('is_active', true)
 						.order('course_code')
@@ -122,7 +89,6 @@ export async function GET(request: Request) {
 
 					// Enrich with course_name, internal_max_mark, course_order
 					const uniqueCourseCodes = [...new Set(offerings.map(o => o.course_code).filter(Boolean))]
-					const cmIds = [...new Set(offerings.map(o => o.course_id).filter(Boolean))]
 
 					const [coursesRes, cmRes] = await Promise.all([
 						supabase
@@ -138,7 +104,6 @@ export async function GET(request: Request) {
 					])
 
 					const courseByCode = new Map((coursesRes.data || []).map(c => [c.course_code, c]))
-					// Key by course_code for lookup (since program_code is already filtered)
 					const cmByCode = new Map((cmRes.data || []).map(cm => [cm.course_code, cm]))
 
 					// Deduplicate by course_offering_id, filter to CIA/CIA+ESE only, sort by course_order
@@ -147,7 +112,6 @@ export async function GET(request: Request) {
 						.filter(co => {
 							if (seen.has(co.id)) return false
 							seen.add(co.id)
-							// Only include courses with CIA or CIA + ESE evaluation type
 							const course = courseByCode.get(co.course_code)
 							const evalType = course?.evaluation_type || ''
 							return evalType === 'CIA' || evalType === 'CIA + ESE'
