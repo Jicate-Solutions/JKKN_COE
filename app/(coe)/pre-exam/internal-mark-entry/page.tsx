@@ -13,7 +13,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Badge } from "@/components/ui/badge"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog"
-import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem } from "@/components/ui/command"
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { useToast } from "@/hooks/common/use-toast"
 import { useAuth } from "@/lib/auth/auth-context-parent"
@@ -400,7 +400,7 @@ export default function InternalMarkEntryPage() {
 			if (validCodes.length === 0) { setPrograms([]); return }
 
 			if (myjkknProgs.length > 0) {
-				setPrograms(myjkknProgs
+				const matched = myjkknProgs
 					.filter((p: any) => validCodes.includes(p.program_code || p.program_id))
 					.map((p: any) => ({
 						id: p.id,
@@ -408,7 +408,13 @@ export default function InternalMarkEntryPage() {
 						program_name: p.program_name || p.name,
 						program_type: p.program_type || null,
 						program_order: p.program_order ?? null,
-					})))
+					}))
+				// Add any valid codes not found in MyJKKN as plain entries
+				const matchedCodes = new Set(matched.map((p: any) => p.program_code))
+				const unmatched = validCodes
+					.filter((code: string) => !matchedCodes.has(code))
+					.map((code: string) => ({ id: code, program_code: code, program_name: code, program_type: null, program_order: null }))
+				setPrograms([...matched, ...unmatched])
 			} else {
 				setPrograms(validCodes.map((code: string) => ({ id: code, program_code: code, program_name: code, program_type: null, program_order: null })))
 			}
@@ -982,43 +988,45 @@ export default function InternalMarkEntryPage() {
 										<PopoverContent className="w-[350px] p-0" align="start">
 											<Command>
 												<CommandInput placeholder="Search program..." className="h-8 text-xs" />
-												<CommandEmpty className="text-xs py-4">No program found.</CommandEmpty>
-												{ugPrograms.length > 0 && (
-													<CommandGroup heading="UG Programs" className="max-h-60 overflow-auto">
-														{ugPrograms.map(p => (
-															<CommandItem
-																key={p.id}
-																value={`${p.program_code} ${p.program_name}`}
-																onSelect={() => {
-																	setSelectedProgram(p.id)
-																	setProgramOpen(false)
-																}}
-																className="py-2 text-xs"
-															>
-																<Check className={cn("mr-2 h-3.5 w-3.5 shrink-0", selectedProgram === p.id ? "opacity-100" : "opacity-0")} />
-																<span className="flex-1 whitespace-normal">{p.program_code} - {p.program_name}</span>
-															</CommandItem>
-														))}
-													</CommandGroup>
-												)}
-												{pgPrograms.length > 0 && (
-													<CommandGroup heading="PG Programs" className="max-h-60 overflow-auto">
-														{pgPrograms.map(p => (
-															<CommandItem
-																key={p.id}
-																value={`${p.program_code} ${p.program_name}`}
-																onSelect={() => {
-																	setSelectedProgram(p.id)
-																	setProgramOpen(false)
-																}}
-																className="py-2 text-xs"
-															>
-																<Check className={cn("mr-2 h-3.5 w-3.5 shrink-0", selectedProgram === p.id ? "opacity-100" : "opacity-0")} />
-																<span className="flex-1 whitespace-normal">{p.program_code} - {p.program_name}</span>
-															</CommandItem>
-														))}
-													</CommandGroup>
-												)}
+												<CommandList>
+													<CommandEmpty className="text-xs py-4">No program found.</CommandEmpty>
+													{ugPrograms.length > 0 && (
+														<CommandGroup heading="UG Programs">
+															{ugPrograms.map(p => (
+																<CommandItem
+																	key={p.id}
+																	value={`${p.program_code} ${p.program_name}`}
+																	onSelect={() => {
+																		setSelectedProgram(p.id)
+																		setProgramOpen(false)
+																	}}
+																	className="py-2 text-xs"
+																>
+																	<Check className={cn("mr-2 h-3.5 w-3.5 shrink-0", selectedProgram === p.id ? "opacity-100" : "opacity-0")} />
+																	<span className="flex-1 whitespace-normal">{p.program_code} - {p.program_name}</span>
+																</CommandItem>
+															))}
+														</CommandGroup>
+													)}
+													{pgPrograms.length > 0 && (
+														<CommandGroup heading="PG Programs">
+															{pgPrograms.map(p => (
+																<CommandItem
+																	key={p.id}
+																	value={`${p.program_code} ${p.program_name}`}
+																	onSelect={() => {
+																		setSelectedProgram(p.id)
+																		setProgramOpen(false)
+																	}}
+																	className="py-2 text-xs"
+																>
+																	<Check className={cn("mr-2 h-3.5 w-3.5 shrink-0", selectedProgram === p.id ? "opacity-100" : "opacity-0")} />
+																	<span className="flex-1 whitespace-normal">{p.program_code} - {p.program_name}</span>
+																</CommandItem>
+															))}
+														</CommandGroup>
+													)}
+												</CommandList>
 											</Command>
 										</PopoverContent>
 									</Popover>

@@ -37,13 +37,23 @@ export async function GET(request: Request) {
 					return NextResponse.json(uniqueCodes.sort())
 				}
 
-				// STEP 2: Get distinct semesters for a program from course_offerings
+				// STEP 2: Get distinct semesters for a program, filtered by session's semester_type (ODD/EVEN)
 				if (step === 'semesters') {
 					const programCode = searchParams.get('program_code')
 					if (!programCode) {
 						return NextResponse.json({ error: 'program_code is required' }, { status: 400 })
 					}
 
+					// Get session's semester_type (ODD or EVEN)
+					const { data: sessionData } = await supabase
+						.from('examination_sessions')
+						.select('semester_type')
+						.eq('id', sessionId)
+						.single()
+
+					const semesterType = sessionData?.semester_type // 'ODD' or 'EVEN'
+
+					// Get all semesters from course_offerings for this program + session
 					const { data, error } = await supabase
 						.from('course_offerings')
 						.select('semester')
@@ -57,7 +67,15 @@ export async function GET(request: Request) {
 						return NextResponse.json({ error: 'Failed to fetch semesters' }, { status: 500 })
 					}
 
-					const semesters = [...new Set((data || []).map(o => o.semester).filter(Boolean))].sort((a, b) => a - b)
+					let semesters = [...new Set((data || []).map(o => o.semester).filter(Boolean))].sort((a, b) => a - b)
+
+					// Filter by semester_type: ODD = 1,3,5,7  EVEN = 2,4,6,8
+					if (semesterType === 'ODD') {
+						semesters = semesters.filter(s => s % 2 !== 0)
+					} else if (semesterType === 'EVEN') {
+						semesters = semesters.filter(s => s % 2 === 0)
+					}
+
 					return NextResponse.json(semesters)
 				}
 

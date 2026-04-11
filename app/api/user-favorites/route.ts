@@ -1,13 +1,12 @@
 import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
 
-const supabase = getSupabaseServer()
-
 /**
  * GET /api/user-favorites?user_id=<uuid>
  * Fetch all favorites for a user, sorted by sort_order
  */
 export async function GET(request: Request) {
+	const supabase = getSupabaseServer()
 	const { searchParams } = new URL(request.url)
 	const userId = searchParams.get('user_id')
 
@@ -36,6 +35,7 @@ export async function GET(request: Request) {
  * Add a page to favorites
  */
 export async function POST(request: Request) {
+	const supabase = getSupabaseServer()
 	const body = await request.json()
 
 	if (!body.user_id || !body.page_url) {
@@ -84,6 +84,7 @@ export async function POST(request: Request) {
  * Reorder favorites (batch update sort_order)
  */
 export async function PUT(request: Request) {
+	const supabase = getSupabaseServer()
 	const body = await request.json()
 
 	if (!body.user_id || !Array.isArray(body.items)) {
@@ -115,6 +116,7 @@ export async function PUT(request: Request) {
  * Remove a page from favorites
  */
 export async function DELETE(request: Request) {
+	const supabase = getSupabaseServer()
 	const { searchParams } = new URL(request.url)
 	const userId = searchParams.get('user_id')
 	const pageUrl = searchParams.get('page_url')

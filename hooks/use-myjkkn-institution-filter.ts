@@ -96,6 +96,7 @@ export interface ProgramOption {
 	id: string
 	program_code: string // The CODE (e.g., "BCA")
 	program_name: string
+	program_type?: string | null
 	program_order?: number
 	department_id?: string
 	degree_id?: string
@@ -428,6 +429,7 @@ export function useMyJKKNInstitutionFilter() {
 									id: p.id,
 									program_code: programCode,
 									program_name: p.program_name || p.name || programCode,
+									program_type: p.program_type || null,
 									program_order: (p as any).program_order ?? (p as any).sort_order ?? 999,
 									department_id: p.department_id,
 									degree_id: p.degree_id
@@ -479,6 +481,7 @@ export function useMyJKKNInstitutionFilter() {
 									id: p.id,
 									program_code: programCode,
 									program_name: p.program_name || p.name || programCode,
+									program_type: (p as any).program_type || null,
 									program_order: (p as any).program_order ?? (p as any).sort_order ?? 999,
 									department_id: p.department_id,
 									degree_id: p.degree_id
