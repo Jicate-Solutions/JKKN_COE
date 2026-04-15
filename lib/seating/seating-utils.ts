@@ -106,24 +106,58 @@ export function flattenGrid(grid: (SeatAssignment | null)[][]): SeatAssignment[]
 
 /**
  * Suggest rooms and seat counts for a given number of students.
- * Fills rooms in order until all students are accounted for.
+ * Uses preferred_exam_capacity for normal allocation.
+ * The last room can overflow up to max_exam_capacity if students exceed.
+ * Falls back to exam_capacity when preferred/max are not set.
  */
 export function suggestRooms(
-	rooms: { id: string; room_code: string; room_name: string; building: string | null; floor: string | null; room_order: number; exam_capacity: number; rows: number; columns: number }[],
+	rooms: { id: string; room_code: string; room_name: string; building: string | null; floor: string | null; room_order: number; exam_capacity: number; preferred_exam_capacity?: number | null; max_exam_capacity?: number | null; rows: number; columns: number }[],
 	totalStudents: number
 ): { room: typeof rooms[number]; suggested_seats: number; is_selected: boolean }[] {
 	const sorted = [...rooms].sort((a, b) => a.room_order - b.room_order)
 	const suggestions: { room: typeof rooms[number]; suggested_seats: number; is_selected: boolean }[] = []
 	let remaining = totalStudents
 
+	// First pass: fill rooms using preferred capacity
 	for (const room of sorted) {
 		if (remaining <= 0) {
 			suggestions.push({ room, suggested_seats: 0, is_selected: false })
 		} else {
-			const seats = Math.min(remaining, room.exam_capacity)
+			const preferred = room.preferred_exam_capacity || room.exam_capacity
+			const seats = Math.min(remaining, preferred)
 			suggestions.push({ room, suggested_seats: seats, is_selected: true })
 			remaining -= seats
 		}
 	}
+
+	// Second pass: if students remain, overflow the last selected room up to max_exam_capacity
+	if (remaining > 0) {
+		for (let i = suggestions.length - 1; i >= 0; i--) {
+			if (suggestions[i].is_selected) {
+				const room = suggestions[i].room
+				const maxCap = room.max_exam_capacity || room.exam_capacity
+				const extraAvailable = maxCap - suggestions[i].suggested_seats
+				const extra = Math.min(remaining, extraAvailable)
+				suggestions[i].suggested_seats += extra
+				remaining -= extra
+				break
+			}
+		}
+	}
+
+	// Third pass: if still remaining, assign to unselected rooms using preferred capacity
+	if (remaining > 0) {
+		for (const suggestion of suggestions) {
+			if (remaining <= 0) break
+			if (!suggestion.is_selected) {
+				const preferred = suggestion.room.preferred_exam_capacity || suggestion.room.exam_capacity
+				const seats = Math.min(remaining, preferred)
+				suggestion.suggested_seats = seats
+				suggestion.is_selected = true
+				remaining -= seats
+			}
+		}
+	}
+
 	return suggestions
 }

@@ -9,6 +9,8 @@ export interface StudentConflict {
 		course_code: string
 		course_title: string
 		qp_code: string
+		// Composite identity: `{register}-{code}-{DD-MM-YYYY}-{session}`
+		exam_key: string
 	}[]
 }
 
@@ -19,6 +21,8 @@ export interface UnscheduledCourse {
 	course_title: string
 	qp_code: string
 	course_offering_id: string
+	// Composite identity: `{register}-{code}--` (no date/session since unscheduled)
+	exam_key: string
 }
 
 export interface QPCodeMismatch {
@@ -36,6 +40,17 @@ export interface IncompleteTimetable {
 	course_title: string
 	course_offering_id: string
 	missing_fields: string[]
+}
+
+export interface DuplicateExamEntry {
+	exam_key: string // `{register}-{code}-{DD-MM-YYYY}-{session}`
+	stu_register_no: string
+	student_name: string
+	course_code: string
+	course_title: string
+	exam_date: string
+	session: string
+	occurrences: number
 }
 
 export interface ValidationSummary {
@@ -60,6 +75,7 @@ export interface ValidationResult {
 	errors: {
 		student_conflicts: StudentConflict[]
 		qp_code_mismatches: QPCodeMismatch[]
+		duplicate_exam_entries: DuplicateExamEntry[]
 	}
 	warnings: {
 		unscheduled_courses: UnscheduledCourse[]

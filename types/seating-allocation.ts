@@ -5,6 +5,12 @@
 /** Seating strategy options */
 export type SeatingStrategy = 'institution-standard' | 'smart-mixing' | 'strict' | 'manual'
 
+/** Program type classification */
+export type ProgramType = 'UG' | 'PG'
+
+/** Course category for column assignment */
+export type CourseCategory = 'ug' | 'pg' | 'common'
+
 /** A student to be seated */
 export interface SeatingStudent {
 	exam_registration_id: string
@@ -15,6 +21,7 @@ export interface SeatingStudent {
 	course_offering_id: string
 	exam_timetable_id: string
 	is_regular: boolean
+	program_type?: ProgramType
 }
 
 /** A room available for seating */
@@ -26,6 +33,8 @@ export interface SeatingRoom {
 	floor: string | null
 	room_order: number
 	exam_capacity: number
+	preferred_exam_capacity: number | null
+	max_exam_capacity: number | null
 	rows: number
 	columns: number
 }
@@ -76,6 +85,33 @@ export interface RoomSuggestion {
 	room: SeatingRoom
 	suggested_seats: number
 	is_selected: boolean
+}
+
+/** A group of students sharing the same program + course */
+export interface CourseGroup {
+	program_code: string
+	course_code: string
+	program_type: ProgramType
+	is_common: boolean
+	count: number
+	students: SeatingStudent[]
+}
+
+/** Column assignment for a specific room column */
+export interface ColumnAssignment {
+	room_id: string
+	column_number: number
+	program_code: string
+	course_code: string
+	count: number
+	course_category: CourseCategory
+}
+
+/** Complete column plan for all rooms */
+export interface RoomColumnPlan {
+	room: SeatingRoom
+	columns: ColumnAssignment[]
+	total_seats: number
 }
 
 /** Data needed for PDF generation */

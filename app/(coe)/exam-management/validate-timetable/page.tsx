@@ -505,6 +505,40 @@ export default function ValidateTimetablePage() {
 													</div>
 												)}
 
+												{result.errors.duplicate_exam_entries && result.errors.duplicate_exam_entries.length > 0 && (
+													<div>
+														<h4 className="text-sm font-semibold mb-2 flex items-center gap-2">
+															<Badge variant="destructive" className="text-[10px]">RULE 4</Badge>
+															Duplicate Exam Entries ({result.errors.duplicate_exam_entries.length})
+														</h4>
+														<p className="text-xs text-muted-foreground mb-2">
+															Same <span className="font-mono">register-course-date-session</span> tuple appears more than once.
+														</p>
+														<div className="rounded-md border max-h-[400px] overflow-auto">
+															<Table>
+																<TableHeader className="sticky top-0 bg-slate-50 dark:bg-slate-900/50">
+																	<TableRow>
+																		<TableHead className="text-xs">Exam Key</TableHead>
+																		<TableHead className="text-xs">Name</TableHead>
+																		<TableHead className="text-xs">Course Title</TableHead>
+																		<TableHead className="text-xs text-right">Occurrences</TableHead>
+																	</TableRow>
+																</TableHeader>
+																<TableBody>
+																	{result.errors.duplicate_exam_entries.map((d, idx) => (
+																		<TableRow key={idx}>
+																			<TableCell className="text-xs font-mono">{d.exam_key}</TableCell>
+																			<TableCell className="text-xs">{d.student_name}</TableCell>
+																			<TableCell className="text-xs">{d.course_title}</TableCell>
+																			<TableCell className="text-xs text-right font-semibold">{d.occurrences}</TableCell>
+																		</TableRow>
+																	))}
+																</TableBody>
+															</Table>
+														</div>
+													</div>
+												)}
+
 												{result.summary.errors_count === 0 && (
 													<div className="text-center py-8 text-muted-foreground">
 														<CheckCircle className="h-10 w-10 mx-auto mb-2 text-green-500" />

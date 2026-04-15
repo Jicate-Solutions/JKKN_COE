@@ -16,14 +16,16 @@ import { useToast } from '@/hooks/common/use-toast'
 import { Loader2, LayoutGrid, Download, Save, Trash2, AlertTriangle, Users, BookOpen, GraduationCap, DoorOpen } from 'lucide-react'
 import { RoomGrid, ProgramLegend } from './room-grid'
 import { RoomSuggestionPanel } from './room-suggestion-panel'
-import { generateSeatingAllocation } from '@/lib/seating/seating-engine'
+import { generateSeatingAllocation, generateFromColumnPlans } from '@/lib/seating/seating-engine'
 import { suggestRooms } from '@/lib/seating/seating-utils'
+import { autoAssignColumns } from '@/lib/seating/column-allocator'
 import { generateSeatingPlanPDF } from '@/lib/utils/generate-seating-plan-pdf'
 import type {
 	SeatingStudent,
 	SeatingRoom,
 	SeatingStrategy,
 	RoomSuggestion,
+	RoomColumnPlan,
 	SeatingAllocationResult,
 } from '@/types/seating-allocation'
 
@@ -63,6 +65,7 @@ export function SeatingArrangementTab({
 	const [step, setStep] = useState<Step>('idle')
 	const [strategy, setStrategy] = useState<SeatingStrategy>('institution-standard')
 	const [roomSuggestions, setRoomSuggestions] = useState<RoomSuggestion[]>([])
+	const [columnPlans, setColumnPlans] = useState<RoomColumnPlan[]>([])
 	const [allocation, setAllocation] = useState<SeatingAllocationResult | null>(null)
 
 	// Computed: program color map
@@ -150,37 +153,17 @@ export function SeatingArrangementTab({
 	}, [institutionId, examinationSessionId, examDate, sessionType, toast])
 
 	const handleProceedToRooms = useCallback(() => {
-		const suggestions = suggestRooms(rooms, students.length)
-		setRoomSuggestions(suggestions)
+		// Auto-assign courses to room columns based on program_type rules
+		const plans = autoAssignColumns(students, rooms)
+		setColumnPlans(plans)
 		setStep('rooms')
-	}, [rooms, students.length])
+	}, [rooms, students])
 
-	const handleGenerate = useCallback(async (confirmedRooms: RoomSuggestion[]) => {
+	const handleGenerate = useCallback(async (confirmedPlans: RoomColumnPlan[]) => {
 		setLoading(true)
 		try {
-			let result: SeatingAllocationResult
-
-			if (students.length > 500) {
-				// Server-side generation for large datasets
-				const response = await fetch('/api/pre-exam/seating/generate', {
-					method: 'POST',
-					headers: { 'Content-Type': 'application/json' },
-					body: JSON.stringify({
-						students,
-						rooms: confirmedRooms,
-						strategy,
-					}),
-				})
-
-				if (!response.ok) {
-					throw new Error('Server generation failed')
-				}
-
-				result = await response.json()
-			} else {
-				// Client-side generation
-				result = generateSeatingAllocation(students, confirmedRooms, strategy)
-			}
+			// Use column-wise allocation from the confirmed plans
+			const result = generateFromColumnPlans(students, confirmedPlans)
 
 			setAllocation(result)
 			setStep('generated')
@@ -214,7 +197,7 @@ export function SeatingArrangementTab({
 		} finally {
 			setLoading(false)
 		}
-	}, [students, strategy, toast])
+	}, [students, toast])
 
 	const handleSave = useCallback(async () => {
 		if (!allocation) return
@@ -447,7 +430,8 @@ export function SeatingArrangementTab({
 	function renderRooms() {
 		return (
 			<RoomSuggestionPanel
-				suggestions={roomSuggestions}
+				columnPlans={columnPlans}
+				students={students}
 				totalStudents={students.length}
 				onConfirm={handleGenerate}
 				onCancel={() => setStep('summary')}

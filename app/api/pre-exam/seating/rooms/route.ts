@@ -13,7 +13,7 @@ export async function GET(request: Request) {
 
 		const { data, error } = await supabase
 			.from('exam_rooms')
-			.select('id, room_code, room_name, building, floor, room_order, exam_capacity, rows, columns')
+			.select('id, room_code, room_name, building, floor, room_order, exam_capacity, preferred_exam_capacity, max_exam_capacity, rows, columns')
 			.eq('institutions_id', institutionId)
 			.eq('is_active', true)
 			.order('room_order', { ascending: true })

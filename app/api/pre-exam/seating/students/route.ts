@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
+import { fetchAllMyJKKNPrograms } from '@/services/myjkkn-service'
 
 export async function GET(request: Request) {
 	try {
@@ -70,19 +71,52 @@ export async function GET(request: Request) {
 			ttLookup.set(tt.course_offering_id, tt)
 		}
 
-		// 5. Map registrations to SeatingStudent format
+		// 5. Fetch program_type from MyJKKN API
+		const { data: institution } = await supabase
+			.from('institutions')
+			.select('myjkkn_institution_ids')
+			.eq('id', institutionId)
+			.single()
+
+		const myjkknIds: string[] = institution?.myjkkn_institution_ids || []
+		const programTypeLookup = new Map<string, 'UG' | 'PG'>()
+
+		for (const myjkknInstId of myjkknIds) {
+			try {
+				const programs = await fetchAllMyJKKNPrograms({
+					institution_id: myjkknInstId,
+					is_active: true,
+					all: true,
+				})
+				for (const p of programs) {
+					const code = (p as any).program_id || p.program_code
+					if (code && p.program_type) {
+						const pt = p.program_type.toUpperCase()
+						if (pt === 'UG' || pt === 'PG') {
+							programTypeLookup.set(code, pt)
+						}
+					}
+				}
+			} catch (err) {
+				console.error(`Failed to fetch programs for MyJKKN inst ${myjkknInstId}:`, err)
+			}
+		}
+
+		// 6. Map registrations to SeatingStudent format with program_type
 		const students = (registrations || []).map(reg => {
 			const tt = ttLookup.get(reg.course_offering_id)
 			const courseCode = tt?.course_id ? (courseLookup.get(tt.course_id) || '') : ''
+			const programCode = reg.program_code || ''
 			return {
 				exam_registration_id: reg.id,
 				stu_register_no: reg.stu_register_no || '',
 				student_name: reg.student_name || '',
-				program_code: reg.program_code || '',
+				program_code: programCode,
 				course_code: courseCode,
 				course_offering_id: reg.course_offering_id,
 				exam_timetable_id: tt?.id || '',
 				is_regular: reg.is_regular,
+				program_type: programTypeLookup.get(programCode) || (programCode.startsWith('P') ? 'PG' : 'UG'),
 			}
 		})
 

@@ -60,6 +60,8 @@ export async function POST(request: NextRequest) {
 			room_order,
 			seating_capacity,
 			exam_capacity,
+			preferred_exam_capacity,
+			max_exam_capacity,
 			room_type,
 			facilities,
 			is_accessible,
@@ -91,6 +93,26 @@ export async function POST(request: NextRequest) {
 			)
 		}
 
+		// Validate preferred/max capacity constraints
+		if (preferred_exam_capacity && Number(preferred_exam_capacity) > Number(exam_capacity)) {
+			return NextResponse.json(
+				{ error: 'Preferred exam capacity cannot exceed exam capacity' },
+				{ status: 400 }
+			)
+		}
+		if (max_exam_capacity && Number(max_exam_capacity) > Number(exam_capacity)) {
+			return NextResponse.json(
+				{ error: 'Max exam capacity cannot exceed exam capacity' },
+				{ status: 400 }
+			)
+		}
+		if (preferred_exam_capacity && max_exam_capacity && Number(preferred_exam_capacity) > Number(max_exam_capacity)) {
+			return NextResponse.json(
+				{ error: 'Preferred exam capacity cannot exceed max exam capacity' },
+				{ status: 400 }
+			)
+		}
+
 		// Auto-map institution_code to institutions_id
 		const { data: institutionData, error: institutionError } = await supabase
 			.from('institutions')
@@ -117,6 +139,8 @@ export async function POST(request: NextRequest) {
 			room_order: Number(room_order),
 			seating_capacity: Number(seating_capacity),
 			exam_capacity: Number(exam_capacity),
+			preferred_exam_capacity: preferred_exam_capacity ? Number(preferred_exam_capacity) : null,
+			max_exam_capacity: max_exam_capacity ? Number(max_exam_capacity) : null,
 			room_type: room_type ? String(room_type).trim() : null,
 			facilities: facilities || null,
 			is_accessible: is_accessible === true || is_accessible === 'true' || is_accessible === 'Accessible',
@@ -191,6 +215,8 @@ export async function PUT(request: NextRequest) {
 			room_order,
 			seating_capacity,
 			exam_capacity,
+			preferred_exam_capacity,
+			max_exam_capacity,
 			room_type,
 			facilities,
 			is_accessible,
@@ -227,6 +253,26 @@ export async function PUT(request: NextRequest) {
 			)
 		}
 
+		// Validate preferred/max capacity constraints
+		if (preferred_exam_capacity && Number(preferred_exam_capacity) > Number(exam_capacity)) {
+			return NextResponse.json(
+				{ error: 'Preferred exam capacity cannot exceed exam capacity' },
+				{ status: 400 }
+			)
+		}
+		if (max_exam_capacity && Number(max_exam_capacity) > Number(exam_capacity)) {
+			return NextResponse.json(
+				{ error: 'Max exam capacity cannot exceed exam capacity' },
+				{ status: 400 }
+			)
+		}
+		if (preferred_exam_capacity && max_exam_capacity && Number(preferred_exam_capacity) > Number(max_exam_capacity)) {
+			return NextResponse.json(
+				{ error: 'Preferred exam capacity cannot exceed max exam capacity' },
+				{ status: 400 }
+			)
+		}
+
 		// Auto-map institution_code to institutions_id
 		const { data: institutionData, error: institutionError } = await supabase
 			.from('institutions')
@@ -253,6 +299,8 @@ export async function PUT(request: NextRequest) {
 			room_order: Number(room_order),
 			seating_capacity: Number(seating_capacity),
 			exam_capacity: Number(exam_capacity),
+			preferred_exam_capacity: preferred_exam_capacity ? Number(preferred_exam_capacity) : null,
+			max_exam_capacity: max_exam_capacity ? Number(max_exam_capacity) : null,
 			room_type: room_type ? String(room_type).trim() : null,
 			facilities: facilities || null,
 			is_accessible: is_accessible === true || is_accessible === 'true' || is_accessible === 'Accessible',

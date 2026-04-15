@@ -18,6 +18,8 @@ export interface ExamRoom {
 	room_order: number
 	seating_capacity: number
 	exam_capacity: number
+	preferred_exam_capacity: number | null
+	max_exam_capacity: number | null
 	room_type: string | null
 	facilities: any
 	is_accessible: boolean
@@ -51,6 +53,8 @@ export interface ExamRoomFormData {
 	room_order: string
 	seating_capacity: string
 	exam_capacity: string
+	preferred_exam_capacity: string
+	max_exam_capacity: string
 	room_type: string
 	facilities: string
 	is_accessible: boolean

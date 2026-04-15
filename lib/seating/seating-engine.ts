@@ -8,6 +8,7 @@ import type {
 	SeatingStrategy,
 	ManualRoomAssignment,
 	RoomSuggestion,
+	RoomColumnPlan,
 } from '@/types/seating-allocation'
 import {
 	getNeighbors,
@@ -305,8 +306,123 @@ export function generateSeatingAllocation(
 		case 'strict':
 			return allocateSmartOrStrict(students, selectedRooms, 'strict')
 		case 'manual':
-			return allocateManual(students, selectedRooms, manualAssignments || [])
+			// If no explicit program-to-room assignments provided,
+			// fall back to institution-standard (ABAB) — the "manual" part
+			// is the room/seat selection in the RoomSuggestionPanel
+			if (!manualAssignments || manualAssignments.length === 0) {
+				return allocateInstitutionStandard(students, selectedRooms)
+			}
+			return allocateManual(students, selectedRooms, manualAssignments)
 		default:
 			return allocateInstitutionStandard(students, selectedRooms)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Column-wise allocation (used with RoomColumnPlan from column-allocator)
+// ---------------------------------------------------------------------------
+
+/**
+ * Generate seating allocation from column plans.
+ * Fills each room column-by-column (C1 rows, then C3 rows, then C2 rows).
+ *
+ * Enforces Rule 2: same program must NOT appear in the same row across columns.
+ * If a conflict would occur, the student is skipped (reported as conflict).
+ */
+export function generateFromColumnPlans(
+	students: SeatingStudent[],
+	columnPlans: RoomColumnPlan[]
+): SeatingAllocationResult {
+	// Group all students by program_code + course_code for easy lookup
+	const studentPool = new Map<string, SeatingStudent[]>()
+	for (const s of students) {
+		const key = `${s.program_code}|${s.course_code}`
+		const list = studentPool.get(key) || []
+		list.push(s)
+		studentPool.set(key, list)
+	}
+	for (const [, list] of studentPool) {
+		list.sort((a, b) => a.stu_register_no.localeCompare(b.stu_register_no))
+	}
+
+	const assignedIds = new Set<string>()
+	const rooms: RoomAllocationResult[] = []
+	const conflicts: SeatingConflict[] = []
+
+	for (const plan of columnPlans) {
+		const { room, columns } = plan
+		const grid = createEmptyGrid(room.rows, room.columns)
+		let seated = 0
+
+		// Track which programs occupy each row (Rule 2 enforcement)
+		const rowPrograms = new Map<number, Set<string>>()
+		for (let r = 0; r < room.rows; r++) {
+			rowPrograms.set(r, new Set())
+		}
+
+		// Sort columns by fill priority: C1 → C3 → C2
+		const sortedColumns = [...columns].sort((a, b) => {
+			const order = [1, 3, 2]
+			return order.indexOf(a.column_number) - order.indexOf(b.column_number)
+		})
+
+		for (const colAssignment of sortedColumns) {
+			const colIdx = colAssignment.column_number - 1
+			if (colIdx >= room.columns) continue
+
+			const poolKey = `${colAssignment.program_code}|${colAssignment.course_code}`
+			const pool = studentPool.get(poolKey) || []
+
+			let placed = 0
+			for (let r = 0; r < room.rows && placed < colAssignment.count; r++) {
+				if (grid[r][colIdx] !== null) continue
+
+				// Rule 2: check if this program already exists in this row
+				const rowProgs = rowPrograms.get(r)!
+				if (rowProgs.has(colAssignment.program_code)) {
+					// Report conflict but skip placement
+					conflicts.push({
+						room_code: room.room_code,
+						row: r + 1,
+						column: colAssignment.column_number,
+						student_reg_no: colAssignment.program_code,
+						conflict_type: 'same_program',
+						neighbor_reg_no: '',
+					})
+					continue
+				}
+
+				const student = pool.find(s => !assignedIds.has(s.exam_registration_id))
+				if (!student) break
+
+				grid[r][colIdx] = {
+					row_number: r + 1,
+					column_number: colAssignment.column_number,
+					student,
+				}
+				assignedIds.add(student.exam_registration_id)
+				rowProgs.add(colAssignment.program_code)
+				seated++
+				placed++
+			}
+		}
+
+		rooms.push({
+			room,
+			seats: flattenGrid(grid),
+			students_seated: seated,
+			total_capacity: plan.total_seats,
+		})
+	}
+
+	const unassigned = students.filter(s => !assignedIds.has(s.exam_registration_id))
+
+	return {
+		strategy: 'institution-standard',
+		rooms,
+		total_students: students.length,
+		total_seated: assignedIds.size,
+		unassigned_students: unassigned,
+		conflicts,
 	}
 }

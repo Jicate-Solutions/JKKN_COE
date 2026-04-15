@@ -131,6 +131,8 @@ export default function ExamRoomsPage() {
 		room_order: '',
 		seating_capacity: '',
 		exam_capacity: '',
+		preferred_exam_capacity: '',
+		max_exam_capacity: '',
 		room_type: '',
 		facilities: '',
 		is_accessible: true,
@@ -254,6 +256,20 @@ export default function ExamRoomsPage() {
 			Number(formData.exam_capacity) > Number(formData.seating_capacity)
 		) {
 			e.exam_capacity = 'Exam capacity cannot exceed seating capacity'
+		}
+
+		// Preferred/Max capacity constraints (optional fields)
+		if (formData.preferred_exam_capacity && formData.exam_capacity &&
+			Number(formData.preferred_exam_capacity) > Number(formData.exam_capacity)) {
+			e.preferred_exam_capacity = 'Cannot exceed exam capacity'
+		}
+		if (formData.max_exam_capacity && formData.exam_capacity &&
+			Number(formData.max_exam_capacity) > Number(formData.exam_capacity)) {
+			e.max_exam_capacity = 'Cannot exceed exam capacity'
+		}
+		if (formData.preferred_exam_capacity && formData.max_exam_capacity &&
+			Number(formData.preferred_exam_capacity) > Number(formData.max_exam_capacity)) {
+			e.preferred_exam_capacity = 'Cannot exceed max exam capacity'
 		}
 
 		setErrors(e)
@@ -418,6 +434,8 @@ export default function ExamRoomsPage() {
 			room_order: item.room_order.toString(),
 			seating_capacity: item.seating_capacity.toString(),
 			exam_capacity: item.exam_capacity.toString(),
+			preferred_exam_capacity: item.preferred_exam_capacity?.toString() || '',
+			max_exam_capacity: item.max_exam_capacity?.toString() || '',
 			room_type: item.room_type || '',
 			facilities: item.facilities ? JSON.stringify(item.facilities, null, 2) : '',
 			is_accessible: item.is_accessible,
@@ -473,6 +491,8 @@ export default function ExamRoomsPage() {
 			room_order: '',
 			seating_capacity: '',
 			exam_capacity: '',
+			preferred_exam_capacity: '',
+			max_exam_capacity: '',
 			room_type: '',
 			facilities: '',
 			is_accessible: true,
@@ -517,6 +537,8 @@ export default function ExamRoomsPage() {
 				'Room Order': room.room_order,
 				'Seating Capacity': room.seating_capacity,
 				'Exam Capacity': room.exam_capacity,
+				'Preferred Exam Capacity': room.preferred_exam_capacity || '',
+				'Max Exam Capacity': room.max_exam_capacity || '',
 				Rows: room.rows,
 				Columns: room.columns,
 				'Room Type': room.room_type || '',
@@ -689,6 +711,8 @@ export default function ExamRoomsPage() {
 				room_order: String(row['Room Order *'] || row['Room Order'] || ''),
 				seating_capacity: String(row['Seating Capacity *'] || row['Seating Capacity'] || ''),
 				exam_capacity: String(row['Exam Capacity *'] || row['Exam Capacity'] || ''),
+				preferred_exam_capacity: String(row['Preferred Exam Capacity'] || ''),
+				max_exam_capacity: String(row['Max Exam Capacity'] || ''),
 				rows: String(row['Rows *'] || row['Rows'] || ''),
 				columns: String(row['Columns *'] || row['Columns'] || ''),
 				room_type: String(row['Room Type'] || ''),
@@ -1555,6 +1579,48 @@ export default function ExamRoomsPage() {
 									{errors.exam_capacity && (
 										<p className="text-xs text-destructive">{errors.exam_capacity}</p>
 									)}
+								</div>
+							</div>
+
+							<div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+								<div className="space-y-2">
+									<Label htmlFor="preferred_exam_capacity" className="text-sm font-semibold">
+										Preferred Exam Capacity
+									</Label>
+									<Input
+										id="preferred_exam_capacity"
+										type="number"
+										value={formData.preferred_exam_capacity}
+										onChange={(e) =>
+											setFormData({ ...formData, preferred_exam_capacity: e.target.value })
+										}
+										placeholder="e.g. 30"
+										className={`h-10 ${errors.preferred_exam_capacity ? 'border-destructive' : ''}`}
+									/>
+									{errors.preferred_exam_capacity && (
+										<p className="text-xs text-destructive">{errors.preferred_exam_capacity}</p>
+									)}
+									<p className="text-xs text-muted-foreground">Normal seating target for auto-allocation</p>
+								</div>
+
+								<div className="space-y-2">
+									<Label htmlFor="max_exam_capacity" className="text-sm font-semibold">
+										Max Exam Capacity
+									</Label>
+									<Input
+										id="max_exam_capacity"
+										type="number"
+										value={formData.max_exam_capacity}
+										onChange={(e) =>
+											setFormData({ ...formData, max_exam_capacity: e.target.value })
+										}
+										placeholder="e.g. 35"
+										className={`h-10 ${errors.max_exam_capacity ? 'border-destructive' : ''}`}
+									/>
+									{errors.max_exam_capacity && (
+										<p className="text-xs text-destructive">{errors.max_exam_capacity}</p>
+									)}
+									<p className="text-xs text-muted-foreground">Overflow limit for last room when learners exceed</p>
 								</div>
 							</div>
 
