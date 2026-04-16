@@ -216,15 +216,24 @@ export default function GenerateFinalMarksPage() {
 		}
 	}, [isReady])
 
-	// Auto-fill institution from context when available
+	// Sync local selectedInstitution with the global institution filter.
+	// CRITICAL: Without re-syncing on every change to `institutionId`, switching
+	// the global institution would leave selectedInstitution stale → grade_system
+	// (and every other institution-scoped query) would target the OLD institution.
 	useEffect(() => {
-		if (isReady && !mustSelectInstitution && institutions.length > 0) {
-			const autoId = getInstitutionIdForCreate()
-			if (autoId && !selectedInstitution) {
-				setSelectedInstitution(autoId)
-			}
+		if (!isReady) return
+
+		// Super-admin "All Institutions" view → user must explicitly pick one
+		if (mustSelectInstitution) {
+			if (selectedInstitution) setSelectedInstitution('')
+			return
 		}
-	}, [isReady, mustSelectInstitution, institutions, getInstitutionIdForCreate, selectedInstitution])
+
+		const autoId = getInstitutionIdForCreate()
+		if (autoId && autoId !== selectedInstitution) {
+			setSelectedInstitution(autoId)
+		}
+	}, [isReady, mustSelectInstitution, institutionId, getInstitutionIdForCreate]) // eslint-disable-line react-hooks/exhaustive-deps
 
 	// Fetch sessions and programs when institution changes
 	// Note: Programs need institutions to be loaded to get myjkkn_institution_ids

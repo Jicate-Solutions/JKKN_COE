@@ -617,10 +617,12 @@ export default function ExamAttendanceSheetPage() {
 							{/* Seating Arrangement Tab */}
 							<TabsContent value="seating-arrangement" className="mt-0">
 								<SeatingArrangementTab
+									key={`${institutionId}|${selectedSessionId}|${selectedExamDate}|${selectedSessionType}`}
 									institutionId={institutionId || ''}
 									examinationSessionId={selectedSessionId}
 									examDate={selectedExamDate}
 									sessionType={selectedSessionType}
+									sessionName={sessions.find(s => s.id === selectedSessionId)?.session_name || ''}
 									isFormComplete={isFormComplete}
 								/>
 							</TabsContent>

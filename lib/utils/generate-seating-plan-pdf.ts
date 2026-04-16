@@ -1,240 +1,340 @@
 import jsPDF from 'jspdf'
-import type { SeatingPlanPdfData, SeatingStrategy } from '@/types/seating-allocation'
+import autoTable from 'jspdf-autotable'
+import type { SeatingPlanPdfData, RoomAllocationResult } from '@/types/seating-allocation'
 
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
-
-const MARGIN = 15
-
-const PROGRAM_COLORS_HEX = [
-	'#DBEAFE', // blue-100
-	'#D1FAE5', // emerald-100
-	'#FEF3C7', // amber-100
-	'#EDE9FE', // purple-100
-	'#FFE4E6', // rose-100
-	'#CFFAFE', // cyan-100
-	'#FFEDD5', // orange-100
-	'#E0E7FF', // indigo-100
-]
-
-const STRATEGY_LABELS: Record<SeatingStrategy, string> = {
-	'institution-standard': 'Institution Standard',
-	'smart-mixing': 'Smart Mixing',
-	'strict': 'Strict Mode',
-	'manual': 'Manual Assignment',
-}
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-function hexToRgb(hex: string): { r: number; g: number; b: number } {
-	const cleaned = hex.replace('#', '')
-	return {
-		r: parseInt(cleaned.substring(0, 2), 16),
-		g: parseInt(cleaned.substring(2, 4), 16),
-		b: parseInt(cleaned.substring(4, 6), 16),
-	}
-}
-
-// ---------------------------------------------------------------------------
-// Main export
-// ---------------------------------------------------------------------------
+const MARGIN = 6.35
 
 export function generateSeatingPlanPDF(data: SeatingPlanPdfData): void {
-	const doc = new jsPDF({
-		orientation: 'landscape',
-		unit: 'mm',
-		format: 'a4',
-	})
-
+	// A5 portrait
+	const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a5' })
 	const pageWidth = doc.internal.pageSize.getWidth()
 	const pageHeight = doc.internal.pageSize.getHeight()
 
-	// Build a program → color index map across all rooms
-	const allPrograms = new Set<string>()
-	for (const room of data.rooms) {
-		for (const seat of room.seats) {
-			if (seat.student) {
-				allPrograms.add(seat.student.program_code)
-			}
+	const assignedRooms = data.rooms.filter(r => r.students_seated > 0)
+	if (assignedRooms.length === 0) return
+
+	let isFirstPage = true
+
+	for (const roomResult of assignedRooms) {
+		if (!isFirstPage) doc.addPage()
+		isFirstPage = false
+
+		// A5 outline border
+		doc.setDrawColor(0, 0, 0)
+		doc.setLineWidth(0.5)
+		doc.rect(MARGIN, MARGIN, pageWidth - 2 * MARGIN, pageHeight - 2 * MARGIN)
+
+		let y = MARGIN + 2
+		y = drawSeatingHeader(doc, data, roomResult, pageWidth, y)
+		y = drawCourseInfo(doc, roomResult, pageWidth, y)
+		drawSeatingTable(doc, roomResult, pageWidth, pageHeight, y)
+		drawSeatingFooter(doc, pageWidth, pageHeight, roomResult)
+	}
+
+	const filename = `Seating_Plan_${data.exam_date || 'unknown'}_${data.session_type || ''}.pdf`
+	doc.save(filename)
+}
+
+// ========================================================================
+// HEADER — logos + institution name + exam session + title
+// ========================================================================
+
+function drawSeatingHeader(
+	doc: jsPDF,
+	data: SeatingPlanPdfData,
+	roomResult: RoomAllocationResult,
+	pageWidth: number,
+	startY: number
+): number {
+	let y = startY
+
+	// College Logo (left) - 12x12mm for A5
+	if (data.logo_image) {
+		try {
+			doc.addImage(data.logo_image, 'PNG', MARGIN + 2, y, 12, 12)
+		} catch (e) {
+			console.warn('Failed to add logo:', e)
 		}
 	}
-	const programList = [...allPrograms].sort()
-	const programColorMap = new Map<string, number>()
-	programList.forEach((code, idx) => {
-		programColorMap.set(code, idx % PROGRAM_COLORS_HEX.length)
-	})
 
-	const strategyLabel = STRATEGY_LABELS[data.strategy] || data.strategy
-
-	// Generate one page per room
-	data.rooms.forEach((roomResult, roomIndex) => {
-		if (roomIndex > 0) {
-			doc.addPage()
+	// College Logo (right) - 12x12mm for A5
+	if (data.right_logo_image) {
+		try {
+			doc.addImage(data.right_logo_image, 'PNG', pageWidth - MARGIN - 14, y, 12, 12)
+		} catch (e) {
+			console.warn('Failed to add right logo:', e)
 		}
+	}
 
-		const room = roomResult.room
-		let y = MARGIN
+	// Institution name
+	doc.setFont('times', 'bold')
+	doc.setFontSize(9)
+	doc.setTextColor(0, 0, 0)
+	doc.text('J.K.K.NATARAJA COLLEGE OF ARTS & SCIENCE (AUTONOMOUS)', pageWidth / 2, y + 3, { align: 'center' })
 
-		// ----- Header -----
-		doc.setFont('helvetica', 'bold')
-		doc.setFontSize(14)
-		doc.text(data.institution_name || 'JKKN Institution', pageWidth / 2, y, { align: 'center' })
-		y += 7
+	// Accreditation
+	doc.setFont('times', 'normal')
+	doc.setFontSize(5.5)
+	doc.text(
+		'(Accredited by NAAC, Approved by AICTE, Recognized by UGC Under Section 2(f) & 12(B), Affiliated to Periyar University)',
+		pageWidth / 2, y + 6.5, { align: 'center' }
+	)
 
-		doc.setFont('helvetica', 'normal')
-		doc.setFontSize(9)
-		const sessionLine = [
-			data.session_name ? `Session: ${data.session_name}` : null,
-			data.exam_date ? `Date: ${data.exam_date}` : null,
-			data.session_type ? `${data.session_type}` : null,
-			`Strategy: ${strategyLabel}`,
-		].filter(Boolean).join('  |  ')
-		doc.text(sessionLine, pageWidth / 2, y, { align: 'center' })
-		y += 8
+	y += 9
 
-		// ----- Room info line -----
-		doc.setFont('helvetica', 'bold')
-		doc.setFontSize(10)
-		const roomTitle = `${room.room_code} - ${room.room_name}`
-		doc.text(roomTitle, MARGIN, y)
+	// Address
+	doc.setFont('times', 'bold')
+	doc.setFontSize(7)
+	doc.text('Komarapalayam - 638 183, Namakkal District, Tamil Nadu', pageWidth / 2, y, { align: 'center' })
+	y += 3.5
 
-		doc.setFont('helvetica', 'normal')
+	// Exam session — matches hall ticket: "SEMESTER EXAMINATION APRIL - MAY 2026"
+	if (data.session_name) {
+		doc.setFont('times', 'normal')
 		doc.setFontSize(8)
-		const roomDetails = [
-			room.building ? `Building: ${room.building}` : null,
-			room.floor ? `Floor: ${room.floor}` : null,
-			`Seated: ${roomResult.students_seated} / ${roomResult.total_capacity}`,
-		].filter(Boolean).join('  |  ')
-		doc.text(roomDetails, pageWidth - MARGIN, y, { align: 'right' })
-		y += 7
+		doc.text(`SEMESTER EXAMINATION ${data.session_name}`, pageWidth / 2, y, { align: 'center' })
+		y += 3.5
+	}
 
-		// ----- Separator line -----
-		doc.setDrawColor(180, 180, 180)
-		doc.setLineWidth(0.3)
-		doc.line(MARGIN, y, pageWidth - MARGIN, y)
-		y += 4
+	// Title
+	doc.setFont('times', 'bold')
+	doc.setFontSize(9)
+	doc.text('SEATING ARRANGEMENT', pageWidth / 2, y, { align: 'center' })
+	y += 4
 
-		// ----- Grid calculations -----
-		const rowLabelWidth = 10 // space for R1, R2, etc.
-		const gridX = MARGIN + rowLabelWidth
-		const availableWidth = pageWidth - 2 * MARGIN - rowLabelWidth
-		const cellWidth = availableWidth / room.columns
+	// Room info + date/session row
+	const room = roomResult.room
+	const leftX = MARGIN + 3
+	const rightX = pageWidth - MARGIN - 3
 
-		// Reserve space for legend at bottom
-		const legendHeight = 12
-		const gridHeight = pageHeight - y - MARGIN - legendHeight
-		const cellHeight = Math.min(gridHeight / (room.rows + 1), 12) // +1 for column header row
+	doc.setFont('times', 'bold')
+	doc.setFontSize(7.5)
 
-		// ----- Column headers (C1, C2, ...) -----
-		doc.setFont('helvetica', 'bold')
-		doc.setFontSize(6)
-		doc.setTextColor(100, 100, 100)
-		for (let col = 0; col < room.columns; col++) {
-			const cx = gridX + col * cellWidth + cellWidth / 2
-			doc.text(`C${col + 1}`, cx, y + cellHeight / 2, { align: 'center' })
-		}
-		y += cellHeight
+	// Left: Exam Room
+	let roomLabel = `Exam Room : ${room.room_code}`
+	if (room.building) {
+		roomLabel += ` (${room.building}${room.floor ? `, Floor ${room.floor}` : ''})`
+	}
+	doc.text(roomLabel, leftX, y)
 
-		// ----- Grid rows -----
-		// Build a lookup map: `row-col` -> seat
-		const seatMap = new Map<string, typeof roomResult.seats[0]>()
-		for (const seat of roomResult.seats) {
-			seatMap.set(`${seat.row_number}-${seat.column_number}`, seat)
-		}
+	// Right: Date + Session
+	doc.text(`Session : ${data.session_type || ''}`, rightX, y, { align: 'right' })
+	const dateText = `Date : ${formatDate(data.exam_date)}`
+	doc.text(dateText, rightX - doc.getTextWidth(`Session : ${data.session_type || ''}`) - 8, y)
 
-		for (let row = 0; row < room.rows; row++) {
-			const rowY = y + row * cellHeight
+	y += 3.5
 
-			// Row label
-			doc.setFont('helvetica', 'bold')
-			doc.setFontSize(6)
-			doc.setTextColor(100, 100, 100)
-			doc.text(`R${row + 1}`, MARGIN + rowLabelWidth / 2, rowY + cellHeight / 2 + 1, { align: 'center' })
+	// Seated count
+	doc.setFont('times', 'normal')
+	doc.setFontSize(7)
+	doc.text(`Seated: ${roomResult.students_seated} / ${roomResult.total_capacity}`, leftX, y)
 
-			for (let col = 0; col < room.columns; col++) {
-				const cellX = gridX + col * cellWidth
-				const seat = seatMap.get(`${row + 1}-${col + 1}`)
+	y += 3
 
-				// Cell border (light gray)
-				doc.setDrawColor(200, 200, 200)
-				doc.setLineWidth(0.2)
-				doc.rect(cellX, rowY, cellWidth, cellHeight)
+	return y
+}
 
-				if (seat?.student) {
-					// Colored background
-					const colorIdx = programColorMap.get(seat.student.program_code) ?? 0
-					const bgColor = hexToRgb(PROGRAM_COLORS_HEX[colorIdx])
-					doc.setFillColor(bgColor.r, bgColor.g, bgColor.b)
-					doc.rect(cellX + 0.3, rowY + 0.3, cellWidth - 0.6, cellHeight - 0.6, 'F')
+// ========================================================================
+// COURSE INFO — C1 - Course Name : UCC-24UGTA03
+// ========================================================================
 
-					// Register number (bold, centered)
-					doc.setFont('helvetica', 'bold')
-					doc.setFontSize(6)
-					doc.setTextColor(30, 30, 30)
-					doc.text(
-						seat.student.stu_register_no || '',
-						cellX + cellWidth / 2,
-						rowY + cellHeight * 0.4,
-						{ align: 'center' }
-					)
+function drawCourseInfo(
+	doc: jsPDF,
+	roomResult: RoomAllocationResult,
+	pageWidth: number,
+	startY: number
+): number {
+	let y = startY
+	const room = roomResult.room
 
-					// Student name (smaller, truncated)
-					doc.setFont('helvetica', 'normal')
-					doc.setFontSize(5)
-					doc.setTextColor(80, 80, 80)
-					const displayName = seat.student.student_name.length > 15
-						? seat.student.student_name.substring(0, 15) + '..'
-						: seat.student.student_name
-					doc.text(
-						displayName,
-						cellX + cellWidth / 2,
-						rowY + cellHeight * 0.75,
-						{ align: 'center' }
-					)
-				}
+	// Build per-column course info from seat data
+	const columnCourses = new Map<number, Set<string>>()
+	for (const seat of roomResult.seats) {
+		if (seat.student) {
+			if (!columnCourses.has(seat.column_number)) {
+				columnCourses.set(seat.column_number, new Set())
 			}
+			columnCourses.get(seat.column_number)!.add(`${seat.student.program_code}-${seat.student.course_code}`)
 		}
+	}
 
-		// ----- Legend -----
-		const legendY = pageHeight - MARGIN - legendHeight + 4
-		doc.setDrawColor(180, 180, 180)
-		doc.setLineWidth(0.3)
-		doc.line(MARGIN, legendY - 2, pageWidth - MARGIN, legendY - 2)
+	doc.setFontSize(7)
+	doc.setTextColor(0, 0, 0)
 
-		doc.setFont('helvetica', 'bold')
-		doc.setFontSize(7)
-		doc.setTextColor(60, 60, 60)
-		doc.text('Legend:', MARGIN, legendY + 3)
-
-		let legendX = MARGIN + 18
-		const swatchSize = 4
-		for (const [program, colorIdx] of programColorMap) {
-			const color = hexToRgb(PROGRAM_COLORS_HEX[colorIdx])
-			doc.setFillColor(color.r, color.g, color.b)
-			doc.setDrawColor(150, 150, 150)
-			doc.setLineWidth(0.2)
-			doc.rect(legendX, legendY, swatchSize, swatchSize, 'FD')
-
-			doc.setFont('helvetica', 'normal')
-			doc.setFontSize(6)
-			doc.setTextColor(60, 60, 60)
-			doc.text(program, legendX + swatchSize + 1.5, legendY + 3)
-
-			legendX += swatchSize + doc.getTextWidth(program) + 6
-
-			// Wrap if too wide
-			if (legendX > pageWidth - MARGIN - 30) {
-				// stop adding more to avoid overflow
-				doc.text('...', legendX, legendY + 3)
-				break
-			}
+	for (let c = 1; c <= room.columns; c++) {
+		const courses = columnCourses.get(c)
+		if (courses && courses.size > 0) {
+			const label = `C${c} - Course Name : `
+			doc.setFont('times', 'bold')
+			doc.text(label, MARGIN + 3, y)
+			doc.setFont('times', 'normal')
+			doc.text([...courses].join(', '), MARGIN + 3 + doc.getTextWidth(label), y)
+			y += 3
 		}
-	})
+	}
 
-	// Save
-	const filename = `seating-plan-${data.exam_date}-${data.session_type}.pdf`
-	doc.save(filename)
+	y += 1.5
+
+	return y
+}
+
+// ========================================================================
+// TWO-PANEL SEATING TABLE — left = floor(rows/2), right = remaining
+// ========================================================================
+
+function drawSeatingTable(
+	doc: jsPDF,
+	roomResult: RoomAllocationResult,
+	pageWidth: number,
+	pageHeight: number,
+	startY: number
+): void {
+	const room = roomResult.room
+	const totalRows = room.rows
+	const numCols = room.columns
+
+	// Build seat lookup
+	const seatLookup = new Map<string, string>()
+	for (const seat of roomResult.seats) {
+		if (seat.student) {
+			seatLookup.set(`${seat.row_number}-${seat.column_number}`, seat.student.stu_register_no)
+		}
+	}
+
+	// Split: left = floor(rows/2), right = rest
+	const leftRows = Math.floor(totalRows / 2)
+
+	// Column headers: SEAT NO., C-1, C-2, C-3
+	const colHeaders = ['SEAT\nNO.']
+	for (let c = 1; c <= numCols; c++) {
+		colHeaders.push(`C-${c}`)
+	}
+
+	// Table widths for A5
+	const innerMargin = MARGIN + 1.5
+	const tableGap = 3
+	const totalAvailable = pageWidth - 2 * innerMargin - tableGap
+	const halfWidth = totalAvailable / 2
+
+	// Build left panel body
+	const leftBody: string[][] = []
+	for (let r = 1; r <= leftRows; r++) {
+		const row: string[] = [r.toString()]
+		for (let c = 1; c <= numCols; c++) {
+			row.push(seatLookup.get(`${r}-${c}`) || '')
+		}
+		leftBody.push(row)
+	}
+
+	// Build right panel body
+	const rightBody: string[][] = []
+	for (let r = leftRows + 1; r <= totalRows; r++) {
+		const row: string[] = [r.toString()]
+		for (let c = 1; c <= numCols; c++) {
+			row.push(seatLookup.get(`${r}-${c}`) || '')
+		}
+		rightBody.push(row)
+	}
+
+	// Column widths
+	const seatNoWidth = 8
+	const colWidth = (halfWidth - seatNoWidth) / numCols
+
+	const columnStyles: Record<number, any> = {
+		0: { halign: 'center' as const, cellWidth: seatNoWidth, fontStyle: 'bold' as const },
+	}
+	for (let c = 1; c <= numCols; c++) {
+		columnStyles[c] = { halign: 'center' as const, cellWidth: colWidth }
+	}
+
+	const commonStyles = {
+		theme: 'grid' as const,
+		styles: {
+			font: 'times' as const,
+			fontSize: 6.5,
+			textColor: [0, 0, 0] as [number, number, number],
+			lineColor: [0, 0, 0] as [number, number, number],
+			lineWidth: 0.15,
+			cellPadding: 0.6,
+			valign: 'middle' as const,
+			minCellHeight: 4.5,
+		},
+		headStyles: {
+			font: 'times' as const,
+			fontStyle: 'bold' as const,
+			fontSize: 6.5,
+			fillColor: [230, 230, 230] as [number, number, number],
+			textColor: [0, 0, 0] as [number, number, number],
+			halign: 'center' as const,
+			valign: 'middle' as const,
+			lineColor: [0, 0, 0] as [number, number, number],
+			lineWidth: 0.2,
+		},
+		columnStyles,
+	}
+
+	// Draw LEFT table
+	if (leftBody.length > 0) {
+		autoTable(doc, {
+			startY: startY,
+			head: [colHeaders],
+			body: leftBody,
+			...commonStyles,
+			margin: { left: innerMargin, right: pageWidth - innerMargin - halfWidth },
+			tableWidth: halfWidth,
+		})
+	}
+
+	// Draw RIGHT table
+	if (rightBody.length > 0) {
+		autoTable(doc, {
+			startY: startY,
+			head: [colHeaders],
+			body: rightBody,
+			...commonStyles,
+			margin: { left: innerMargin + halfWidth + tableGap, right: innerMargin },
+			tableWidth: halfWidth,
+		})
+	}
+}
+
+// ========================================================================
+// FOOTER
+// ========================================================================
+
+function drawSeatingFooter(
+	doc: jsPDF,
+	pageWidth: number,
+	pageHeight: number,
+	roomResult: RoomAllocationResult
+): void {
+	const sigY = pageHeight - MARGIN - 3
+	doc.setFont('times', 'bold')
+	doc.setFontSize(7)
+	doc.setTextColor(0, 0, 0)
+	doc.text('Signature of the Hall Superintendent', MARGIN + 3, sigY)
+	doc.text('Signature of the Chief Superintendent', pageWidth - MARGIN - 3, sigY, { align: 'right' })
+
+	const footerY = pageHeight - MARGIN + 3
+	doc.setFont('times', 'normal')
+	doc.setFontSize(6.5)
+	const now = new Date()
+	const dateStr = `${String(now.getDate()).padStart(2, '0')}-${String(now.getMonth() + 1).padStart(2, '0')}-${now.getFullYear()}`
+	doc.text(dateStr, MARGIN + 3, footerY)
+	doc.text(`Room: ${roomResult.room.room_code}`, pageWidth - MARGIN - 3, footerY, { align: 'right' })
+}
+
+// ========================================================================
+// UTILITY
+// ========================================================================
+
+function formatDate(dateStr: string): string {
+	if (!dateStr) return '-'
+	try {
+		const date = new Date(dateStr)
+		if (isNaN(date.getTime())) return dateStr
+		return `${String(date.getDate()).padStart(2, '0')}-${String(date.getMonth() + 1).padStart(2, '0')}-${date.getFullYear()}`
+	} catch {
+		return dateStr
+	}
 }

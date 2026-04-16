@@ -1842,7 +1842,11 @@ function PermissionsTab({ app }: { app: ApiApplication }) {
 		try {
 			setLoading(true)
 			const res = await fetch(`/api/developer-portal/permissions?app_id=${app.id}`)
-			if (!res.ok) throw new Error('Failed to fetch permissions')
+			if (!res.ok) {
+				const body = await res.json().catch(() => ({}))
+				const detail = body.details || body.error || `HTTP ${res.status}`
+				throw new Error(`Failed to fetch permissions: ${detail}`)
+			}
 			const data = await res.json()
 			const perms: ApiPermission[] = Array.isArray(data) ? data : data.data ?? []
 			const keys = new Set(
@@ -1853,7 +1857,7 @@ function PermissionsTab({ app }: { app: ApiApplication }) {
 			console.error(err)
 			toast({
 				title: 'Error',
-				description: 'Failed to load permissions',
+				description: err instanceof Error ? err.message : 'Failed to load permissions',
 				variant: 'destructive',
 			})
 		} finally {
@@ -1952,7 +1956,13 @@ function PermissionsTab({ app }: { app: ApiApplication }) {
 				className: 'bg-green-50 border-green-200 text-green-800',
 			})
 
-			await fetchPermissions()
+			// Re-fetch to sync UI state. If this fails, the save itself already
+			// succeeded — don't mask success with a fetch-only error.
+			try {
+				await fetchPermissions()
+			} catch (fetchErr) {
+				console.error('Post-save refresh failed:', fetchErr)
+			}
 		} catch (err) {
 			toast({
 				title: 'Save Failed',

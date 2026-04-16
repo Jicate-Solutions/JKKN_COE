@@ -124,4 +124,6 @@ export interface SeatingPlanPdfData {
 	strategy: SeatingStrategy
 	rooms: RoomAllocationResult[]
 	generated_at: string
+	logo_image?: string | null
+	right_logo_image?: string | null
 }

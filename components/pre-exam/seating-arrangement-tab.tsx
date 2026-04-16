@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useMemo, useCallback } from 'react'
+import { useState, useMemo, useCallback, useEffect } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
@@ -34,6 +34,7 @@ interface SeatingArrangementTabProps {
 	examinationSessionId: string
 	examDate: string
 	sessionType: string // FN or AN
+	sessionName: string // e.g. "APRIL - MAY 2026"
 	isFormComplete: boolean
 }
 
@@ -51,6 +52,7 @@ export function SeatingArrangementTab({
 	examinationSessionId,
 	examDate,
 	sessionType,
+	sessionName,
 	isFormComplete,
 }: SeatingArrangementTabProps) {
 	const { toast } = useToast()
@@ -67,6 +69,13 @@ export function SeatingArrangementTab({
 	const [roomSuggestions, setRoomSuggestions] = useState<RoomSuggestion[]>([])
 	const [columnPlans, setColumnPlans] = useState<RoomColumnPlan[]>([])
 	const [allocation, setAllocation] = useState<SeatingAllocationResult | null>(null)
+
+	// Auto-load learners & rooms when all filters are complete (no click needed)
+	useEffect(() => {
+		if (isFormComplete && step === 'idle') {
+			handleFetchData()
+		}
+	}, [isFormComplete]) // eslint-disable-line react-hooks/exhaustive-deps
 
 	// Computed: program color map
 	const programColorMap = useMemo(() => {
@@ -276,24 +285,45 @@ export function SeatingArrangementTab({
 		}
 	}, [institutionId, examDate, sessionType, toast])
 
-	const handleDownloadPDF = useCallback(() => {
+	const handleDownloadPDF = useCallback(async () => {
 		if (!allocation) return
+
+		// Load logos for the PDF header
+		let logoBase64: string | null = null
+		let rightLogoBase64: string | null = null
+		try {
+			const [logoRes, rightLogoRes] = await Promise.all([
+				fetch('/jkkn_logo.png'),
+				fetch('/jkkncas_logo.png'),
+			])
+			if (logoRes.ok) {
+				const blob = await logoRes.blob()
+				logoBase64 = await blobToBase64(blob)
+			}
+			if (rightLogoRes.ok) {
+				const blob = await rightLogoRes.blob()
+				rightLogoBase64 = await blobToBase64(blob)
+			}
+		} catch { /* continue without logos */ }
+
 		generateSeatingPlanPDF({
 			institution_name: 'JKKN Institution',
 			institution_code: '',
-			session_name: '',
+			session_name: sessionName,
 			exam_date: examDate,
 			session_type: sessionType,
 			strategy: allocation.strategy,
 			rooms: allocation.rooms,
 			generated_at: new Date().toISOString(),
+			logo_image: logoBase64,
+			right_logo_image: rightLogoBase64,
 		})
 		toast({
 			title: '✅ Downloaded',
 			description: 'Seating plan PDF saved.',
 			className: 'bg-green-50 border-green-200 text-green-800',
 		})
-	}, [allocation, examDate, sessionType, toast])
+	}, [allocation, examDate, sessionType, sessionName, toast])
 
 	// --- Render helpers ---
 
@@ -594,4 +624,13 @@ export function SeatingArrangementTab({
 			{(step === 'generated' || step === 'saved') && renderGenerated()}
 		</div>
 	)
+}
+
+function blobToBase64(blob: Blob): Promise<string> {
+	return new Promise((resolve, reject) => {
+		const reader = new FileReader()
+		reader.onloadend = () => resolve(reader.result as string)
+		reader.onerror = reject
+		reader.readAsDataURL(blob)
+	})
 }

@@ -19,7 +19,10 @@ export async function GET(request: NextRequest) {
 
 	if (error) {
 		console.error('Fetch permissions error:', error)
-		return NextResponse.json({ error: 'Failed to fetch permissions' }, { status: 500 })
+		return NextResponse.json(
+			{ error: 'Failed to fetch permissions', details: error.message, code: error.code },
+			{ status: 500 }
+		)
 	}
 
 	return NextResponse.json(data || [])
