@@ -1,5 +1,6 @@
 'use client'
 
+import { ReactNode } from 'react'
 import { ProtectedRoute } from '@/components/common/protected-route'
 import { InstitutionProvider } from '@/context/institution-context'
 import { ExaminationSessionProvider } from '@/context/examination-session-context'
@@ -8,9 +9,10 @@ import { useAuth } from '@/lib/auth/auth-context-parent'
 import { ShieldX, Mail, LogOut } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 
-// Portal access is controlled by the 'dashboard.view' permission.
-// To grant a new role access to the COE portal, simply assign
-// the 'dashboard.view' permission to that role via Role Permissions page.
+// Portal access is gated by COE Role Management: any user with at least
+// one active role assigned via the Role Management page may enter the portal.
+// The MyJKKN parent role is intentionally NOT considered. Per-page permissions
+// still control individual modules.
 
 function AccessDenied() {
 	const { user, logout } = useAuth()
@@ -36,11 +38,14 @@ function AccessDenied() {
 						<div className="bg-slate-100 dark:bg-slate-800 rounded-lg p-3">
 							<p className="text-xs text-slate-500 dark:text-slate-400 mb-1">Logged in as</p>
 							<p className="text-sm font-medium text-slate-700 dark:text-slate-300">{user.email}</p>
-							{user.role && (
-								<p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-									Role: <span className="font-medium">{user.role}</span>
-								</p>
-							)}
+							<p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+								COE Roles:{' '}
+								<span className="font-medium">
+									{user.coe_roles && user.coe_roles.length > 0
+										? user.coe_roles.join(', ')
+										: 'None assigned'}
+								</span>
+							</p>
 						</div>
 					)}
 
@@ -74,6 +79,26 @@ function AccessDenied() {
 	)
 }
 
+function CoeAccessGate({ children }: { children: ReactNode }) {
+	const { user, loading } = useAuth()
+
+	if (loading) {
+		return (
+			<div className="flex items-center justify-center min-h-screen">
+				<div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
+			</div>
+		)
+	}
+
+	// has_coe_access is true when the user has any active role in user_roles
+	// (set by /api/auth/sync-session based on COE Role Management assignments).
+	if (!user?.has_coe_access) {
+		return <AccessDenied />
+	}
+
+	return <>{children}</>
+}
+
 export default function AuthenticatedLayout({
 	children,
 }: {
@@ -82,21 +107,21 @@ export default function AuthenticatedLayout({
 	return (
 		<ProtectedRoute
 			redirectTo="/login"
-			requiredPermissions={['dashboard.view']}
-			fallback={<AccessDenied />}
 			loadingComponent={
 				<div className="flex items-center justify-center min-h-screen">
 					<div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
 				</div>
 			}
 		>
-			<CommandMenuProvider>
-				<InstitutionProvider>
-					<ExaminationSessionProvider>
-						{children}
-					</ExaminationSessionProvider>
-				</InstitutionProvider>
-			</CommandMenuProvider>
+			<CoeAccessGate>
+				<CommandMenuProvider>
+					<InstitutionProvider>
+						<ExaminationSessionProvider>
+							{children}
+						</ExaminationSessionProvider>
+					</InstitutionProvider>
+				</CommandMenuProvider>
+			</CoeAccessGate>
 		</ProtectedRoute>
 	)
 }

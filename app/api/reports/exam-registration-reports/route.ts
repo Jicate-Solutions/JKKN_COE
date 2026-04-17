@@ -397,9 +397,11 @@ export async function GET(request: Request) {
 		const isDateWiseReport = report_type === 'exam-date-wise-registration' || report_type === 'exam-date-wise-attendance' || report_type === 'board-wise-exam-timetable' || report_type === 'exam-date-wise-summary' || report_type === 'qp-packing-list'
 
 		if (isDateWiseReport) {
-			// Fetch timetables by offering + attendance in parallel
-			const [timetablesByOffering, timetablesByCourseId, attendanceData] = await Promise.all([
-				// Strategy 1: by course_offering_id
+			const registrationIds = enriched.map(r => r.id)
+
+			// Fetch timetables (3 strategies) + practical batch allotment + attendance in parallel
+			const [timetablesByOffering, timetablesByCourseId, practicalBatchRows, attendanceData] = await Promise.all([
+				// Strategy 2: by course_offering_id
 				fetchBatchedIn(courseOfferingIds, (batch) =>
 					supabase
 						.from('exam_timetables')
@@ -409,7 +411,7 @@ export async function GET(request: Request) {
 						.eq('is_published', true)
 						.in('course_offering_id', batch)
 				),
-				// Strategy 2: by course_id (for shared courses)
+				// Strategy 3: by course_id (for shared courses)
 				fetchBatchedIn(uniqueCourseIds, (batch) =>
 					supabase
 						.from('exam_timetables')
@@ -419,14 +421,32 @@ export async function GET(request: Request) {
 						.eq('is_published', true)
 						.in('course_id', batch)
 				),
+				// Strategy 1 (highest priority): practical batch allotment per learner
+				// Each practical learner is allotted to a specific exam_timetable (date+session)
+				fetchBatchedIn(registrationIds, (batch) =>
+					supabase
+						.from('practical_batch_students')
+						.select('exam_registration_id, exam_timetables:exam_timetable_id(exam_date, session, is_published)')
+						.in('exam_registration_id', batch)
+				),
 				// Attendance (only for attendance report)
 				report_type === 'exam-date-wise-attendance'
 					? fetchBatchedIn(
-						enriched.map(r => r.id),
+						registrationIds,
 						(batch) => supabase.from('exam_attendance').select('exam_registration_id, attendance_status').in('exam_registration_id', batch)
 					)
 					: Promise.resolve([]),
 			])
+
+			// Build practical batch map: registration_id → {exam_date, session}
+			// Highest priority — handles courses with multiple dates/sessions (e.g. practicals)
+			const practicalTimetableMap = new Map<string, { exam_date: string; session: string }>()
+			for (const pb of practicalBatchRows as any[]) {
+				const tt = pb.exam_timetables
+				if (pb.exam_registration_id && tt && tt.is_published && tt.exam_date) {
+					practicalTimetableMap.set(pb.exam_registration_id, { exam_date: tt.exam_date, session: tt.session })
+				}
+			}
 
 			// Build timetable maps
 			const timetableByOfferingMap = new Map<string, { exam_date: string; session: string }>()
@@ -454,24 +474,85 @@ export async function GET(request: Request) {
 				if (att.attendance_status === 'Present') attendancePresentSet.add(att.exam_registration_id)
 			}
 
-			// Attach to enriched rows
+			// Attach to enriched rows — priority: practical batch (per-learner) → offering → course_id
+			// Track which strategy resolved each row (for diagnostics)
+			const unresolvedDiag = new Map<string, {
+				count: number
+				course_name: string | null
+				program_code: string | null
+				course_offering_id: string | null
+				course_id_known: boolean
+				has_practical_batch_unpublished: boolean
+				sample_register_no: string
+			}>()
+
 			for (const row of enriched) {
-				const tt = timetableByOfferingMap.get(row.course_offering_id)
-				if (tt) {
-					row.exam_date = tt.exam_date
-					row.exam_session = tt.session
+				const practicalTt = practicalTimetableMap.get(row.id)
+				if (practicalTt) {
+					row.exam_date = practicalTt.exam_date
+					row.exam_session = practicalTt.session
 				} else {
-					const courseId = offeringToCourseId.get(row.course_offering_id)
-					if (courseId) {
-						const ttFallback = timetableByCourseIdMap.get(courseId)
-						if (ttFallback) {
-							row.exam_date = ttFallback.exam_date
-							row.exam_session = ttFallback.session
+					const tt = timetableByOfferingMap.get(row.course_offering_id)
+					if (tt) {
+						row.exam_date = tt.exam_date
+						row.exam_session = tt.session
+					} else {
+						const courseId = offeringToCourseId.get(row.course_offering_id)
+						if (courseId) {
+							const ttFallback = timetableByCourseIdMap.get(courseId)
+							if (ttFallback) {
+								row.exam_date = ttFallback.exam_date
+								row.exam_session = ttFallback.session
+							}
 						}
 					}
 				}
 				if (report_type === 'exam-date-wise-attendance') {
 					row.is_present = attendancePresentSet.has(row.id)
+				}
+
+				// Diagnostic: track rows that ended up without an exam_date
+				if (!row.exam_date) {
+					const co = row.course_offering
+					const code = co?.course_code || row.course_code || 'UNKNOWN'
+					const courseId = offeringToCourseId.get(row.course_offering_id) || null
+					if (!unresolvedDiag.has(code)) {
+						unresolvedDiag.set(code, {
+							count: 0,
+							course_name: co?.course_name || null,
+							program_code: co?.program_code || row.program_code || null,
+							course_offering_id: row.course_offering_id || null,
+							course_id_known: !!courseId,
+							has_practical_batch_unpublished: false,
+							sample_register_no: row.stu_register_no || '',
+						})
+					}
+					unresolvedDiag.get(code)!.count++
+				}
+			}
+
+			// Diagnostic: detect practical_batch_students rows that exist but reference unpublished timetables
+			const unpublishedPbRegIds = new Set<string>()
+			for (const pb of practicalBatchRows as any[]) {
+				const tt = pb.exam_timetables
+				if (pb.exam_registration_id && tt && !tt.is_published) {
+					unpublishedPbRegIds.add(pb.exam_registration_id)
+				}
+			}
+			if (unpublishedPbRegIds.size > 0) {
+				for (const row of enriched) {
+					if (!row.exam_date && unpublishedPbRegIds.has(row.id)) {
+						const code = row.course_offering?.course_code || row.course_code || 'UNKNOWN'
+						const entry = unresolvedDiag.get(code)
+						if (entry) entry.has_practical_batch_unpublished = true
+					}
+				}
+			}
+
+			if (unresolvedDiag.size > 0) {
+				console.warn(`[ExamReports] ${unresolvedDiag.size} course(s) DROPPED from ${report_type} (no exam_date resolved):`)
+				for (const [code, info] of unresolvedDiag) {
+					console.warn(`  • ${code} (${info.course_name || 'no name'}) | program=${info.program_code} | regs=${info.count} | offering_id=${info.course_offering_id} | course_id_known=${info.course_id_known} | unpublished_practical_batch=${info.has_practical_batch_unpublished} | sample_learner=${info.sample_register_no}`)
 				}
 			}
 		}

@@ -1687,86 +1687,137 @@ export async function POST(request: NextRequest) {
 		}
 
 		// 6. Save to database if requested
+		// Batched upsert with retry + per-record fallback.
+		// Previous implementation was one HTTP call per record, which caused
+		// `TypeError: fetch failed` for transient network errors and was O(N) slow.
 		let savedCount = 0
 		if (save_to_db && results.length > 0) {
-			for (const result of results) {
-				try {
-					// Detect status papers: have status grades and zero marks/percentage
-					const isStatusResult = result.total_marks === 0 && result.percentage === 0 &&
-						['Commended', 'Highly Commended', 'AAA'].includes(result.grade)
+			const SAVE_BATCH_SIZE = 200
+			const MAX_RETRIES = 2
 
-					// Calculate total_grade_points: credit * grade_points (0 if fail/absent or status paper)
-					const totalGradePoints = result.is_pass && !isStatusResult
-						? result.credits * result.grade_point
-						: 0
+			// Build insert payloads up-front so retry/fallback can reuse them
+			const buildInsertData = (result: StudentResultRow) => {
+				const isStatusResult = result.total_marks === 0 && result.percentage === 0 &&
+					['Commended', 'Highly Commended', 'AAA'].includes(result.grade)
+				const totalGradePoints = result.is_pass && !isStatusResult
+					? result.credits * result.grade_point
+					: 0
+				return {
+					institutions_id,
+					examination_session_id,
+					exam_registration_id: result.exam_registration_id,
+					course_offering_id: result.course_offering_id,
+					program_id,
+					program_code: programCode,
+					course_id: result.course_id,
+					student_id: result.student_id,
+					internal_marks_id: result.internal_marks_id,
+					marks_entry_id: result.marks_entry_id,
+					internal_marks_obtained: isStatusResult ? null : result.internal_marks,
+					internal_marks_maximum: isStatusResult ? null : result.internal_max,
+					external_marks_obtained: isStatusResult ? null : result.external_marks,
+					external_marks_maximum: isStatusResult ? null : result.external_max,
+					total_marks_obtained: isStatusResult ? null : result.total_marks,
+					total_marks_maximum: isStatusResult ? null : result.total_max,
+					percentage: isStatusResult ? null : result.percentage,
+					grace_marks: 0,
+					letter_grade: result.grade,
+					grade_points: isStatusResult ? null : result.grade_point,
+					grade_description: result.grade_description,
+					is_pass: result.is_pass,
+					pass_status: result.pass_status,
+					result_status: 'Pending',
+					calculated_by: calculated_by || null,
+					calculated_at: new Date().toISOString(),
+					is_active: true,
+					credit: result.credits,
+					total_grade_points: isStatusResult ? null : totalGradePoints,
+					register_number: result.register_no || null
+				}
+			}
 
-					const insertData = {
-						institutions_id,
-						examination_session_id,
-						exam_registration_id: result.exam_registration_id,
-						course_offering_id: result.course_offering_id,
-						program_id,
-						program_code: programCode, // Required: text code like "BCA" from MyJKKN API
-						course_id: result.course_id,
-						student_id: result.student_id,
-						internal_marks_id: result.internal_marks_id,
-						marks_entry_id: result.marks_entry_id,
-						// For status papers, set marks to NULL instead of 0
-						internal_marks_obtained: isStatusResult ? null : result.internal_marks,
-						internal_marks_maximum: isStatusResult ? null : result.internal_max,
-						external_marks_obtained: isStatusResult ? null : result.external_marks,
-						external_marks_maximum: isStatusResult ? null : result.external_max,
-						total_marks_obtained: isStatusResult ? null : result.total_marks,
-						total_marks_maximum: isStatusResult ? null : result.total_max,
-						percentage: isStatusResult ? null : result.percentage,
-						grace_marks: 0,
-						letter_grade: result.grade, // Will be status grade for status papers
-						grade_points: isStatusResult ? null : result.grade_point,
-						grade_description: result.grade_description,
-						is_pass: result.is_pass,
-						pass_status: result.pass_status,
-						result_status: 'Pending',
-						calculated_by: calculated_by || null,
-						calculated_at: new Date().toISOString(),
-						is_active: true,
-						// New fields for NAAD/ABC export
-						credit: result.credits,
-						total_grade_points: isStatusResult ? null : totalGradePoints,
-						register_number: result.register_no || null
+			// Detect transient network errors worth retrying
+			const isTransientError = (err: any): boolean => {
+				const msg = (err?.message || String(err || '')).toLowerCase()
+				return msg.includes('fetch failed') ||
+					msg.includes('network') ||
+					msg.includes('econnreset') ||
+					msg.includes('etimedout') ||
+					msg.includes('timeout')
+			}
+
+			const sleep = (ms: number) => new Promise(r => setTimeout(r, ms))
+
+			// Try a batched array upsert, with retries for transient errors
+			const tryBatchUpsert = async (payloads: any[]): Promise<{ ok: boolean; error?: any }> => {
+				for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+					try {
+						const { error } = await supabase
+							.from('final_marks')
+							.upsert(payloads, {
+								onConflict: 'institutions_id,exam_registration_id,course_offering_id'
+							})
+						if (!error) return { ok: true }
+						// Non-transient DB errors should not be retried — fall through to fallback
+						if (!isTransientError(error)) return { ok: false, error }
+						if (attempt < MAX_RETRIES) await sleep(500 * (attempt + 1))
+					} catch (err) {
+						if (!isTransientError(err) || attempt === MAX_RETRIES) {
+							return { ok: false, error: err }
+						}
+						await sleep(500 * (attempt + 1))
 					}
+				}
+				return { ok: false, error: new Error('Batch upsert failed after retries') }
+			}
 
-					// Use the primary unique constraint for upsert conflict resolution
-					// The table has two constraints:
-					// 1. unique_final_marks: (institutions_id, exam_registration_id, course_offering_id)
-					// 2. unique_student_course_session: (student_id, course_id, examination_session_id)
-					// Using the first constraint as it's the most specific to the record identity
-					const { error: insertError } = await supabase
-						.from('final_marks')
-						.upsert(insertData, {
-							onConflict: 'institutions_id,exam_registration_id,course_offering_id'
-						})
-
-					if (insertError) {
-						console.error('Error saving final mark:', insertError)
+			// Per-record fallback — isolates which specific records failed
+			const fallbackPerRecord = async (batchResults: StudentResultRow[]) => {
+				for (const result of batchResults) {
+					const payload = buildInsertData(result)
+					let lastErr: any = null
+					for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+						try {
+							const { error } = await supabase
+								.from('final_marks')
+								.upsert(payload, {
+									onConflict: 'institutions_id,exam_registration_id,course_offering_id'
+								})
+							if (!error) { lastErr = null; break }
+							lastErr = error
+							if (!isTransientError(error)) break
+							if (attempt < MAX_RETRIES) await sleep(300 * (attempt + 1))
+						} catch (err) {
+							lastErr = err
+							if (!isTransientError(err) || attempt === MAX_RETRIES) break
+							await sleep(300 * (attempt + 1))
+						}
+					}
+					if (lastErr) {
 						errors.push({
 							student_id: result.student_id,
 							student_name: result.student_name,
 							register_no: result.register_no,
 							course_code: result.course_code,
-							error: insertError.message
+							error: lastErr?.message || 'Unknown error'
 						})
 					} else {
 						savedCount++
 					}
-				} catch (err) {
-					console.error('Error saving final mark:', err)
-					errors.push({
-						student_id: result.student_id,
-						student_name: result.student_name,
-						register_no: result.register_no,
-						course_code: result.course_code,
-						error: err instanceof Error ? err.message : 'Unknown error'
-					})
+				}
+			}
+
+			// Process results in batches
+			for (let i = 0; i < results.length; i += SAVE_BATCH_SIZE) {
+				const batchResults = results.slice(i, i + SAVE_BATCH_SIZE)
+				const payloads = batchResults.map(buildInsertData)
+				const { ok, error } = await tryBatchUpsert(payloads)
+
+				if (ok) {
+					savedCount += batchResults.length
+				} else {
+					console.error(`Batch ${Math.floor(i / SAVE_BATCH_SIZE) + 1} upsert failed, falling back to per-record:`, error)
+					await fallbackPerRecord(batchResults)
 				}
 			}
 		}
