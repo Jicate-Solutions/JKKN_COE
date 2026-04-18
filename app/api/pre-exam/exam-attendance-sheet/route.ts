@@ -184,31 +184,60 @@ export async function GET(request: Request) {
 			}
 		}
 
-		// Step 8: Fetch program names and order from MyJKKN API
+		// Step 8: Fetch program names and order directly from MyJKKN API.
+		// We call MyJKKN directly (same as Step 9 photo fetch below) instead of
+		// going through our own /api/myjkkn/programs route — self-referencing
+		// fetch from a server-side route is unreliable across environments.
 		const myjkknIds = institution.myjkkn_institution_ids || []
 		const programInfoMap = new Map<string, { name: string; order: number }>()
 
 		if (myjkknIds.length > 0) {
-			try {
-				const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'
+			const myjkknApiUrl = process.env.MYJKKN_API_URL || 'https://www.jkkn.ai/api'
+			const myjkknApiKey = process.env.MYJKKN_API_KEY || ''
+
+			if (myjkknApiKey) {
 				for (const myjkknInstId of myjkknIds) {
-					const res = await fetch(`${baseUrl}/api/myjkkn/programs?limit=1000&is_active=true&institution_id=${myjkknInstId}`)
-					if (res.ok) {
+					try {
+						const url = `${myjkknApiUrl}/api-management/organizations/programs?institution_id=${myjkknInstId}&is_active=true&limit=1000`
+						const res = await fetch(url, {
+							method: 'GET',
+							headers: {
+								'Authorization': `Bearer ${myjkknApiKey}`,
+								'Accept': 'application/json',
+								'Content-Type': 'application/json',
+							},
+							cache: 'no-store',
+						})
+
+						if (!res.ok) {
+							console.error('[AttendanceSheet] MyJKKN programs fetch failed:', res.status, res.statusText)
+							continue
+						}
+
 						const response = await res.json()
 						const programs = response.data || response || []
+
 						for (const p of programs) {
+							// MyJKKN `program_id` IS the code (e.g. "PCA"), not a UUID. See CLAUDE.md.
 							const code = p.program_id || p.program_code
-							if (code && !programInfoMap.has(code)) {
+							// Filter client-side by institution_id (server-side filter is unreliable).
+							if (
+								code &&
+								p.institution_id === myjkknInstId &&
+								!programInfoMap.has(code)
+							) {
 								programInfoMap.set(code, {
 									name: p.program_name || p.name || code,
 									order: p.program_order ?? p.sort_order ?? 999
 								})
 							}
 						}
+					} catch (err) {
+						console.error('[AttendanceSheet] Error fetching programs from MyJKKN:', err)
 					}
 				}
-			} catch (err) {
-				console.error('[AttendanceSheet] Error fetching programs from MyJKKN:', err)
+			} else {
+				console.warn('[AttendanceSheet] MYJKKN_API_KEY not configured; program names will fall back to codes')
 			}
 		}
 
