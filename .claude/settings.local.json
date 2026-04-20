@@ -134,7 +134,9 @@
       "Bash(# Let''s try another approach - use the Supabase CLI with db push which is already authenticated # The issue is the CLI can''t connect to the DB because it needs a password # But the db push command uses the Management API to push migrations # Let''s check if there''s a supabase config.toml with auth info cd /d/JKKN/Development/Application/COE/jkkncoe && cat supabase/config.toml)",
       "Bash(# Look at the Supabase Go binary source - it uses keychain package # On Windows it uses the Windows Credential Manager via ''wincred'' # But our list showed empty vault. Let me try cmdkey instead cmdkey /list)",
       "Bash(cmdkey /list)",
-      "Bash(\"/c/Windows/System32/cmdkey.exe\" /list)"
+      "Bash(\"/c/Windows/System32/cmdkey.exe\" /list)",
+      "Bash(claude plugin *)",
+      "Bash(claude plugins *)"
     ],
     "deny": [
       "mcp__filesystem__*"

@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
 
-// GET: Fetch unique course codes from exam_attendance filtered by institution and session
+// GET: Fetch unique course codes from exam_timetables (all scheduled exams - both Theory & Practical)
+// filtered by institution and session. Sourcing from exam_timetables ensures we list every
+// scheduled course, not only those where attendance has already been recorded.
 export async function GET(request: NextRequest) {
 	try {
 		const { searchParams } = new URL(request.url)
@@ -14,95 +16,70 @@ export async function GET(request: NextRequest) {
 
 		const supabase = getSupabaseServer()
 
-		// Get distinct exam_registration_ids, filtered by institution and optionally by session
-		let attendanceQuery = supabase
-			.from('exam_attendance')
-			.select('exam_registration_id')
+		// Get distinct course_ids from exam_timetables (covers both Theory & Practical)
+		let timetableQuery = supabase
+			.from('exam_timetables')
+			.select('course_id')
 			.eq('institutions_id', institutionId)
-			.not('exam_registration_id', 'is', null)
+			.eq('is_published', true)
+			.not('course_id', 'is', null)
+			.range(0, 9999)
 
 		if (sessionId) {
-			attendanceQuery = attendanceQuery.eq('examination_session_id', sessionId)
+			timetableQuery = timetableQuery.eq('examination_session_id', sessionId)
 		}
 
-		const { data: attendanceData, error: attendanceError } = await attendanceQuery
+		const { data: timetableData, error: timetableError } = await timetableQuery
 
-		if (attendanceError) {
-			console.error('Error fetching attendance:', attendanceError)
+		if (timetableError) {
+			console.error('Error fetching exam timetables:', timetableError)
 			return NextResponse.json({
-				error: 'Failed to fetch attendance records',
-				details: attendanceError.message
+				error: 'Failed to fetch exam timetables',
+				details: timetableError.message
 			}, { status: 500 })
 		}
 
-		// Get unique exam_registration_ids
-		const uniqueRegIds = [...new Set(attendanceData?.map(r => r.exam_registration_id) || [])]
+		// Get unique course_ids
+		const uniqueCourseIds = [...new Set(timetableData?.map(r => r.course_id).filter(Boolean) || [])]
 
-		if (uniqueRegIds.length === 0) {
+		if (uniqueCourseIds.length === 0) {
 			return NextResponse.json([])
 		}
 
-		// Fetch course_codes from exam_registrations - in batches if needed
+		// Fetch course details from courses table (in batches)
 		const batchSize = 100
-		let allCourseCodes: string[] = []
+		const coursesMap = new Map<string, { id: string; course_code: string; course_name: string }>()
 
-		for (let i = 0; i < uniqueRegIds.length; i += batchSize) {
-			const batchIds = uniqueRegIds.slice(i, i + batchSize)
-			const { data: regData, error: regError } = await supabase
-				.from('exam_registrations')
-				.select('course_code')
+		for (let i = 0; i < uniqueCourseIds.length; i += batchSize) {
+			const batchIds = uniqueCourseIds.slice(i, i + batchSize)
+			const { data: coursesBatch, error: coursesBatchError } = await supabase
+				.from('courses')
+				.select('id, course_code, course_name')
 				.in('id', batchIds)
 
-			if (regError) {
-				console.error('Error fetching exam_registrations batch:', regError)
+			if (coursesBatchError) {
+				console.error('Error fetching courses batch:', coursesBatchError)
 				continue
 			}
 
-			const courseCodes = regData?.map(r => r.course_code).filter(Boolean) || []
-			allCourseCodes = allCourseCodes.concat(courseCodes)
+			for (const c of coursesBatch || []) {
+				if (c.course_code && !coursesMap.has(c.course_code)) {
+					coursesMap.set(c.course_code, c)
+				}
+			}
 		}
 
-		// Get unique course codes
-		const uniqueCourseCodes = [...new Set(allCourseCodes)]
-
-		if (uniqueCourseCodes.length === 0) {
+		if (coursesMap.size === 0) {
 			return NextResponse.json([])
 		}
 
-		// Fetch course details from courses table
-		const { data: coursesData, error: coursesError } = await supabase
-			.from('courses')
-			.select('id, course_code, course_name')
-			.in('course_code', uniqueCourseCodes)
-			.order('course_code')
-
-		if (coursesError) {
-			console.error('Error fetching courses:', coursesError)
-		}
-
-		// Create a map for found courses
-		const coursesMap = new Map(
-			(coursesData || []).map(c => [c.course_code, c])
-		)
-
-		// Build final courses list - include courses not found in courses table
-		const courses = uniqueCourseCodes
-			.map(code => {
-				const found = coursesMap.get(code)
-				if (found) {
-					return {
-						id: found.id,
-						course_code: found.course_code,
-						course_name: found.course_name
-					}
-				}
-				// Fallback for courses not in courses table
-				return {
-					id: code,
-					course_code: code,
-					course_name: code
-				}
-			})
+		// Build final courses list, sorted by course_code
+		const courses = [...coursesMap.values()]
+			.map(c => ({
+				id: c.id,
+				course_code: c.course_code,
+				course_name: c.course_name
+			}))
 			.sort((a, b) => a.course_code.localeCompare(b.course_code))
 
 		return NextResponse.json(courses)
