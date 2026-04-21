@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { getSupabaseServer } from '@/lib/supabase-server'
 
 export async function POST(request: NextRequest) {
 	try {
@@ -38,7 +39,51 @@ export async function POST(request: NextRequest) {
 			return NextResponse.json(error, { status: response.status })
 		}
 
-		return NextResponse.json(await response.json())
+		const tokenData = await response.json()
+
+		// Sync rotated tokens to sessions table so withAdminAuth stays aligned
+		// with the new access_token cookie. Without this, admin-guarded API routes
+		// return 401 after every token refresh.
+		if (tokenData.access_token) {
+			const supabase = getSupabaseServer()
+			const nowISO = new Date().toISOString()
+			const newRefreshToken = tokenData.refresh_token || refresh_token
+			const expiresAt = new Date(
+				Date.now() + (tokenData.expires_in || 3600) * 1000
+			).toISOString()
+
+			const { data: existing } = await supabase
+				.from('sessions')
+				.select('id, user_id')
+				.eq('refresh_token', refresh_token)
+				.eq('is_active', true)
+				.maybeSingle()
+
+			if (existing) {
+				await supabase
+					.from('sessions')
+					.update({
+						session_token: tokenData.access_token,
+						refresh_token: newRefreshToken,
+						expires_at: expiresAt,
+						updated_at: nowISO,
+					})
+					.eq('id', existing.id)
+
+				if (tokenData.refresh_token && existing.user_id) {
+					await supabase
+						.from('user_sessions')
+						.update({
+							access_token: tokenData.access_token,
+							refresh_token: newRefreshToken,
+							expires_at: expiresAt,
+						})
+						.eq('user_id', existing.user_id)
+				}
+			}
+		}
+
+		return NextResponse.json(tokenData)
 	} catch {
 		return NextResponse.json(
 			{ error: 'server_error', error_description: 'Token refresh failed' },

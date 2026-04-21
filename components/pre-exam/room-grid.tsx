@@ -47,11 +47,11 @@ export function RoomGrid({ roomResult, programColorMap }: RoomGridProps) {
 			<div className="flex items-center justify-between">
 				<div>
 					<h3 className="text-base font-semibold">
-						Room {room.room_code} - {room.room_name}
+						Room {room.room_name}
 					</h3>
 					{(room.building || room.floor) && (
 						<p className="text-sm text-muted-foreground">
-							{[room.building, room.floor].filter(Boolean).join(' / ')}
+							{[room.building, room.floor].filter(Boolean).join(', ')}
 						</p>
 					)}
 				</div>

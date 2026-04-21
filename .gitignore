@@ -54,3 +54,4 @@ automation/output/
 automation/storage/
 automation/.env.automation
 automation/.venv/
+*.png

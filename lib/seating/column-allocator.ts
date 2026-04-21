@@ -6,6 +6,9 @@
  * 2. SAME PROGRAM SEPARATION — students from the same program must NOT be in the same row
  * 3. SHARED COURSE CODES — if 2+ programs share a course_code → C1 and C3 only (NEVER C2)
  * 4. ROOM CONTINUITY — same program stays in continuous rooms (R09→R10→R11)
+ * 5. EQUAL DISTRIBUTION — avoid sparse last rooms; if the last occupied room has
+ *    fewer students than 40% of the target per room, re-run using max_exam_capacity
+ *    as the per-room target so earlier rooms absorb the overflow equally.
  *
  * Column priority: C1 → C3 → C2
  * UG programs prefer C1, C3
@@ -83,10 +86,18 @@ export function buildCourseGroups(students: SeatingStudent[]): CourseGroup[] {
 	}
 
 	for (const group of groupMap.values()) {
-		group.students.sort((a, b) => a.stu_register_no.localeCompare(b.stu_register_no))
+		group.students.sort(sortRegularFirst)
 	}
 
 	return [...groupMap.values()]
+}
+
+// Sort helper — regular students (exam_registrations.is_regular === true) first, then arrears
+function sortRegularFirst(a: SeatingStudent, b: SeatingStudent): number {
+	const aReg = a.is_regular === true ? 1 : 0
+	const bReg = b.is_regular === true ? 1 : 0
+	if (aReg !== bReg) return bReg - aReg
+	return (a.stu_register_no || '').localeCompare(b.stu_register_no || '')
 }
 
 // ─── Queue building ─────────────────────────────────────────────────────────
@@ -116,7 +127,7 @@ function buildProgramQueues(students: SeatingStudent[]): ProgramQueue[] {
 	}
 
 	for (const q of map.values()) {
-		q.students.sort((a, b) => a.stu_register_no.localeCompare(b.stu_register_no))
+		q.students.sort(sortRegularFirst)
 	}
 
 	// Sort: programs with shared courses first (restricted to C1/C3),
@@ -165,30 +176,82 @@ function countAvailableRows(
 // ─── Core algorithm ─────────────────────────────────────────────────────────
 
 /**
- * Auto-assign students to room columns following all 4 rules.
+ * Auto-assign students to room columns following all 5 rules.
  *
  * Algorithm:
  * 1. Build program queues sorted by priority
- * 2. For each room (in order), fill columns C1 → C3 → C2:
+ * 2. Pre-plan minimum rooms needed using max_exam_capacity
+ * 3. For each room (in order), fill columns C1 → C3 → C2:
  *    - For each column, greedily pick the best program that:
  *      a) has remaining students
  *      b) is allowed in this column (Rule 3)
  *      c) doesn't conflict with other columns at this row (Rule 2)
  *    - Fill as many consecutive rows as possible for that program
- *    - When done, pick the next program for remaining rows
- * 3. Pack rooms to exam_capacity to minimize total rooms used (Rule 1)
  * 4. Programs naturally stay in continuous rooms (Rule 4) via greedy filling
+ * 5. After first pass, apply Rule 5: if the last occupied room is sparse
+ *    (< 40% of targetPerRoom), re-run using hardMax as the per-room target
+ *    so earlier rooms absorb the overflow and the last room is eliminated.
  */
 export function autoAssignColumns(
 	students: SeatingStudent[],
 	rooms: SeatingRoom[]
 ): RoomColumnPlan[] {
 	const sortedRooms = [...rooms].sort((a, b) => a.room_order - b.room_order)
-	const queues = buildProgramQueues(students)
 	const totalStudents = students.length
-	let totalAssigned = 0
 
+	// ── Pre-planning: calculate minimum rooms needed and target per room ──
+	const roomMaxCaps = sortedRooms.map(r => r.max_exam_capacity || r.exam_capacity)
+
+	let cumulativeCap = 0
+	let minRoomsNeeded = sortedRooms.length
+	for (let i = 0; i < sortedRooms.length; i++) {
+		cumulativeCap += roomMaxCaps[i]
+		if (cumulativeCap >= totalStudents) {
+			minRoomsNeeded = i + 1
+			break
+		}
+	}
+
+	const targetPerRoom = minRoomsNeeded > 0
+		? Math.ceil(totalStudents / minRoomsNeeded)
+		: totalStudents
+
+	const queues = buildProgramQueues(students)
+	let plans = runAllocationPass(sortedRooms, queues, totalStudents, targetPerRoom)
+
+	// ── Rule 5: Equal distribution — avoid sparse last room ──
+	const usedPlans = plans.filter(p => p.total_seats > 0)
+	if (usedPlans.length >= 2) {
+		const lastUsed = usedPlans[usedPlans.length - 1]
+		const sparseThreshold = Math.max(Math.ceil(targetPerRoom * 0.4), 5)
+		if (lastUsed.total_seats <= sparseThreshold) {
+			// Re-run using hardMax as per-room target so earlier rooms absorb more students
+			const hardMaxTarget = Math.max(...roomMaxCaps)
+			queues.forEach(q => { q.cursor = 0 })
+			plans = runAllocationPass(sortedRooms, queues, totalStudents, hardMaxTarget)
+		}
+	}
+
+	return plans
+}
+
+/**
+ * Inner allocation pass. Fills rooms up to perRoomTarget (capped at hardMax per room).
+ * Modifies queues in place (advances cursors).
+ */
+function runAllocationPass(
+	sortedRooms: SeatingRoom[],
+	queues: ProgramQueue[],
+	totalStudents: number,
+	perRoomTarget: number
+): RoomColumnPlan[] {
+	let totalAssigned = 0
 	const plans: RoomColumnPlan[] = []
+
+	// Rule 4: Room continuity — programs placed in the immediately previous room
+	// get a large score bonus so they continue into the next room before any new
+	// program is introduced (e.g. BA-HIS fills R25 → R26 → ..., not R25 then jump to R32).
+	let prevRoomPrograms = new Set<string>()
 
 	for (const room of sortedRooms) {
 		if (totalAssigned >= totalStudents) {
@@ -197,8 +260,8 @@ export function autoAssignColumns(
 		}
 
 		const { rows: maxRows, columns: maxCols } = room
-		// Rule 1: use full exam_capacity to minimize rooms
-		const maxSeats = room.exam_capacity
+		const hardMax = room.max_exam_capacity || room.exam_capacity
+		const maxSeats = Math.min(perRoomTarget, hardMax)
 
 		// Column fill order: C1 → C3 → C2
 		const colOrder = maxCols >= 3 ? [1, 3, 2] : maxCols === 2 ? [1, 2] : [1]
@@ -210,6 +273,7 @@ export function autoAssignColumns(
 		}
 
 		const columnAssignments: ColumnAssignment[] = []
+		const currentRoomPrograms = new Set<string>()
 		let roomSeated = 0
 
 		for (const colNum of colOrder) {
@@ -218,28 +282,24 @@ export function autoAssignColumns(
 			let rowCursor = 0
 
 			while (rowCursor < maxRows && roomSeated < maxSeats && totalAssigned < totalStudents) {
-				// Find the best program for this position
 				let bestIdx = -1
 				let bestScore = -1
 
 				for (let qi = 0; qi < queues.length; qi++) {
 					const q = queues[qi]
 					if (remaining(q) <= 0) continue
-
-					// Rule 3: column restriction
 					if (!isColumnAllowed(q, colNum)) continue
-
-					// Rule 2: this program must not already be at rowCursor from another column
 					if (rowPrograms.get(rowCursor)!.has(q.program_code)) continue
 
-					// Score: how many consecutive rows can this program fill here?
-					// Prefer programs that fill MORE rows (fewer context switches)
 					const available = countAvailableRows(q.program_code, rowCursor, maxRows, rowPrograms)
 					const canFill = Math.min(remaining(q), available, maxSeats - roomSeated)
 					if (canFill <= 0) continue
 
-					// Score = fill count × 100 + remaining count (pack large programs first)
-					const score = canFill * 100 + remaining(q)
+					// Base score: fill count × 100 + remaining (pack large programs first)
+					let score = canFill * 100 + remaining(q)
+					// Rule 4: huge bonus for programs that were in the previous room —
+					// ensures the program finishes before a new program starts.
+					if (prevRoomPrograms.has(q.program_code)) score += 1_000_000
 					if (score > bestScore) {
 						bestScore = score
 						bestIdx = qi
@@ -247,14 +307,11 @@ export function autoAssignColumns(
 				}
 
 				if (bestIdx === -1) {
-					// No program can fit at this row in this column — skip row
 					rowCursor++
 					continue
 				}
 
-				// Assign this program to consecutive rows in this column
 				const q = queues[bestIdx]
-				const startRow = rowCursor
 				let count = 0
 
 				while (
@@ -262,7 +319,6 @@ export function autoAssignColumns(
 					roomSeated < maxSeats &&
 					q.cursor < q.students.length
 				) {
-					// Rule 2: stop if program already at this row from another column
 					if (rowPrograms.get(rowCursor)!.has(q.program_code)) break
 
 					rowPrograms.get(rowCursor)!.add(q.program_code)
@@ -274,7 +330,7 @@ export function autoAssignColumns(
 				}
 
 				if (count > 0) {
-					// Create ColumnAssignment(s) — split by course_code within this block
+					currentRoomPrograms.add(q.program_code)
 					const blockStudents = q.students.slice(q.cursor - count, q.cursor)
 					const courseCounts = new Map<string, number>()
 					for (const s of blockStudents) {
@@ -300,6 +356,14 @@ export function autoAssignColumns(
 			columns: columnAssignments,
 			total_seats: roomSeated,
 		})
+
+		// Carry forward only programs with students still remaining —
+		// a finished program shouldn't keep "locking" priority in the next room.
+		prevRoomPrograms = new Set<string>()
+		for (const code of currentRoomPrograms) {
+			const q = queues.find(x => x.program_code === code)
+			if (q && remaining(q) > 0) prevRoomPrograms.add(code)
+		}
 	}
 
 	return plans

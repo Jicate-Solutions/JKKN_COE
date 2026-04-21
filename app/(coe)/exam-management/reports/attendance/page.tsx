@@ -14,12 +14,13 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { useToast } from "@/hooks/common/use-toast"
-import { Loader2, FileSpreadsheet, FileText, Calendar, Check, ChevronsUpDown, X, Package } from "lucide-react"
+import { Loader2, FileSpreadsheet, FileText, Calendar, Check, ChevronsUpDown, X, Package, UserX } from "lucide-react"
 import { cn } from "@/lib/utils"
 import Link from "next/link"
 import { generateStudentAttendanceSheetPDF } from "@/lib/utils/generate-student-attendance-sheet-pdf"
 import { generateExamAttendancePDF } from "@/lib/utils/generate-exam-attendance-pdf"
 import { generateBundleCoverPDF } from "@/lib/utils/generate-bundle-cover-pdf"
+import { generateAbsentListPDF } from "@/lib/utils/generate-absent-list-pdf"
 import { useInstitutionFilter } from "@/hooks/use-institution-filter"
 import { useMyJKKNInstitutionFilter } from "@/hooks/use-myjkkn-institution-filter"
 
@@ -94,6 +95,7 @@ export default function AttendanceReportsPage() {
 	const [generatingStudentSheet, setGeneratingStudentSheet] = useState(false)
 	const [generatingSummary, setGeneratingSummary] = useState(false)
 	const [generatingBundle, setGeneratingBundle] = useState(false)
+	const [generatingAbsentList, setGeneratingAbsentList] = useState(false)
 
 	// Popover open states for searchable dropdowns
 	const [institutionOpen, setInstitutionOpen] = useState(false)
@@ -580,6 +582,100 @@ export default function AttendanceReportsPage() {
 		}
 	}
 
+	// Generate Absent List (course-wise)
+	const handleGenerateAbsentList = async () => {
+		if (!selectedInstitutionId || !selectedSessionId || !selectedExamDate || !selectedSessionType) {
+			toast({
+				title: "⚠️ Missing Information",
+				description: "Please select Institution, Session, Exam Date, and Session (FN/AN) to generate absent list.",
+				variant: "destructive",
+			})
+			return
+		}
+
+		try {
+			setGeneratingAbsentList(true)
+
+			const params = new URLSearchParams({
+				institution_id: selectedInstitutionId,
+				session_id: selectedSessionId,
+				exam_date: selectedExamDate,
+				session: selectedSessionType
+			})
+
+			if (selectedProgramCode) params.append('program_code', selectedProgramCode)
+			if (selectedCourseCode) params.append('course_code', selectedCourseCode)
+
+			const response = await fetch(`/api/exam-management/exam-attendance/absent-list?${params.toString()}`)
+
+			if (!response.ok) {
+				const errorData = await response.json()
+				throw new Error(errorData.error || 'Failed to fetch absent list data')
+			}
+
+			const reportData = await response.json()
+
+			if (!reportData.courses || reportData.courses.length === 0) {
+				toast({
+					title: "ℹ️ No Data",
+					description: "No absent learners found for the selected criteria.",
+					className: "bg-blue-50 border-blue-200 text-blue-800",
+				})
+				return
+			}
+
+			// Load logos
+			let logoBase64: string | undefined
+			let rightLogoBase64: string | undefined
+			try {
+				const logoResponse = await fetch('/jkkn_logo.png')
+				if (logoResponse.ok) {
+					const blob = await logoResponse.blob()
+					logoBase64 = await new Promise<string>((resolve) => {
+						const reader = new FileReader()
+						reader.onloadend = () => resolve(reader.result as string)
+						reader.readAsDataURL(blob)
+					})
+				}
+
+				const rightLogoResponse = await fetch('/jkkncas_logo.png')
+				if (rightLogoResponse.ok) {
+					const blob = await rightLogoResponse.blob()
+					rightLogoBase64 = await new Promise<string>((resolve) => {
+						const reader = new FileReader()
+						reader.onloadend = () => resolve(reader.result as string)
+						reader.readAsDataURL(blob)
+					})
+				}
+			} catch (e) {
+				console.warn('Logo not loaded:', e)
+			}
+
+			const fileName = generateAbsentListPDF({
+				...reportData,
+				logoImage: logoBase64,
+				rightLogoImage: rightLogoBase64
+			})
+
+			toast({
+				title: "✅ Absent List Generated",
+				description: `${fileName} has been downloaded successfully (${reportData.total_absent} absent learner${reportData.total_absent !== 1 ? 's' : ''} across ${reportData.courses.length} course${reportData.courses.length !== 1 ? 's' : ''}).`,
+				className: "bg-green-50 border-green-200 text-green-800",
+				duration: 5000,
+			})
+		} catch (error) {
+			console.error('Error generating absent list:', error)
+			const errorMessage = error instanceof Error ? error.message : 'Failed to generate absent list'
+			toast({
+				title: "❌ Generation Failed",
+				description: errorMessage,
+				variant: "destructive",
+			})
+		} finally {
+			setGeneratingAbsentList(false)
+		}
+	}
+
 	// Get display values
 	const selectedInstitution = institutions.find(i => i.id === selectedInstitutionId)
 	const selectedSession = sessions.find(s => s.id === selectedSessionId)
@@ -975,115 +1071,114 @@ export default function AttendanceReportsPage() {
 					)}
 
 					{/* Report Generation Cards */}
-					<div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+					<div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
 						{/* Learner Attendance Sheet */}
-						<Card>
+						<Card className="flex flex-col">
 							<CardHeader className="bg-gradient-to-r from-green-50 to-emerald-50 dark:from-green-950/20 dark:to-emerald-950/20 p-3">
 								<div className="flex items-center gap-2">
-									<div className="h-8 w-8 rounded-full bg-gradient-to-r from-green-500 to-emerald-600 flex items-center justify-center">
-										<FileSpreadsheet className="h-4 w-4 text-white" />
+									<div className="h-7 w-7 rounded-full bg-gradient-to-r from-green-500 to-emerald-600 flex items-center justify-center flex-shrink-0">
+										<FileSpreadsheet className="h-3.5 w-3.5 text-white" />
 									</div>
 									<div>
-										<CardTitle className="text-sm font-semibold">Learner Attendance Sheet</CardTitle>
-										<CardDescription className="text-xs">Individual learner-wise attendance records</CardDescription>
+										<CardTitle className="text-xs font-semibold">Learner Attendance Sheet</CardTitle>
+										<CardDescription className="text-xs">Individual learner-wise records</CardDescription>
 									</div>
 								</div>
 							</CardHeader>
-							<CardContent className="pt-4 p-3">
-								<p className="text-xs text-muted-foreground mb-3">
-									Generate detailed attendance sheets showing individual learner records with their attendance status.
-									Use optional filters to narrow down the results.
-								</p>
+							<CardContent className="p-3 flex-1 flex items-end">
 								<Button
 									onClick={handleGenerateStudentSheet}
 									disabled={generatingStudentSheet || !selectedInstitutionId || !selectedSessionId}
 									className="w-full bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 h-8 text-xs"
 								>
 									{generatingStudentSheet ? (
-										<>
-											<Loader2 className="mr-1 h-3 w-3 animate-spin" />
-											Generating...
-										</>
+										<><Loader2 className="mr-1 h-3 w-3 animate-spin" />Generating...</>
 									) : (
-										<>
-											<FileSpreadsheet className="mr-1 h-3 w-3" />
-											Generate Learner Sheet
-										</>
+										<><FileSpreadsheet className="mr-1 h-3 w-3" />Generate</>
 									)}
 								</Button>
 							</CardContent>
 						</Card>
 
 						{/* Summary Report */}
-						<Card>
+						<Card className="flex flex-col">
 							<CardHeader className="bg-gradient-to-r from-blue-50 to-indigo-50 dark:from-blue-950/20 dark:to-indigo-950/20 p-3">
 								<div className="flex items-center gap-2">
-									<div className="h-8 w-8 rounded-full bg-gradient-to-r from-blue-500 to-indigo-600 flex items-center justify-center">
-										<FileText className="h-4 w-4 text-white" />
+									<div className="h-7 w-7 rounded-full bg-gradient-to-r from-blue-500 to-indigo-600 flex items-center justify-center flex-shrink-0">
+										<FileText className="h-3.5 w-3.5 text-white" />
 									</div>
 									<div>
-										<CardTitle className="text-sm font-semibold">Summary Report</CardTitle>
+										<CardTitle className="text-xs font-semibold">Summary Report</CardTitle>
 										<CardDescription className="text-xs">Aggregated attendance statistics</CardDescription>
 									</div>
 								</div>
 							</CardHeader>
-							<CardContent className="pt-4 p-3">
-								<p className="text-xs text-muted-foreground mb-3">
-									Generate a comprehensive summary report with attendance statistics grouped by date, session, and course.
-								</p>
+							<CardContent className="p-3 flex-1 flex items-end">
 								<Button
 									onClick={handleGenerateSummary}
 									disabled={generatingSummary || !selectedInstitutionId || !selectedSessionId}
 									className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 h-8 text-xs"
 								>
 									{generatingSummary ? (
-										<>
-											<Loader2 className="mr-1 h-3 w-3 animate-spin" />
-											Generating...
-										</>
+										<><Loader2 className="mr-1 h-3 w-3 animate-spin" />Generating...</>
 									) : (
-										<>
-											<FileText className="mr-1 h-3 w-3" />
-											Generate Summary Report
-										</>
+										<><FileText className="mr-1 h-3 w-3" />Generate</>
 									)}
 								</Button>
 							</CardContent>
 						</Card>
 
 						{/* Bundle Cover */}
-						<Card>
+						<Card className="flex flex-col">
 							<CardHeader className="bg-gradient-to-r from-emerald-50 to-teal-50 dark:from-emerald-950/20 dark:to-teal-950/20 p-3">
 								<div className="flex items-center gap-2">
-									<div className="h-8 w-8 rounded-full bg-gradient-to-r from-emerald-500 to-teal-600 flex items-center justify-center">
-										<Package className="h-4 w-4 text-white" />
+									<div className="h-7 w-7 rounded-full bg-gradient-to-r from-emerald-500 to-teal-600 flex items-center justify-center flex-shrink-0">
+										<Package className="h-3.5 w-3.5 text-white" />
 									</div>
 									<div>
-										<CardTitle className="text-sm font-semibold">Bundle Cover</CardTitle>
+										<CardTitle className="text-xs font-semibold">Bundle Cover</CardTitle>
 										<CardDescription className="text-xs">Answer sheet bundle cover sheets</CardDescription>
 									</div>
 								</div>
 							</CardHeader>
-							<CardContent className="pt-4 p-3">
-								<p className="text-xs text-muted-foreground mb-3">
-									Generate bundle cover sheets for answer booklets. Automatically creates bundles of 60 learners.
-									Program and Course filters are optional.
-								</p>
+							<CardContent className="p-3 flex-1 flex items-end">
 								<Button
 									onClick={handleGenerateBundle}
 									disabled={generatingBundle || !selectedInstitutionId || !selectedSessionId || !selectedExamDate || !selectedSessionType}
 									className="w-full bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 h-8 text-xs"
 								>
 									{generatingBundle ? (
-										<>
-											<Loader2 className="mr-1 h-3 w-3 animate-spin" />
-											Generating...
-										</>
+										<><Loader2 className="mr-1 h-3 w-3 animate-spin" />Generating...</>
 									) : (
-										<>
-											<Package className="mr-1 h-3 w-3" />
-											Generate Bundle Cover
-										</>
+										<><Package className="mr-1 h-3 w-3" />Generate</>
+									)}
+								</Button>
+							</CardContent>
+						</Card>
+
+						{/* Absent List (Course-wise) */}
+						<Card className="flex flex-col">
+							<CardHeader className="bg-gradient-to-r from-rose-50 to-red-50 dark:from-rose-950/20 dark:to-red-950/20 p-3">
+								<div className="flex items-center gap-2">
+									<div className="h-7 w-7 rounded-full bg-gradient-to-r from-rose-500 to-red-600 flex items-center justify-center flex-shrink-0">
+										<UserX className="h-3.5 w-3.5 text-white" />
+									</div>
+									<div>
+										<CardTitle className="text-xs font-semibold">Absent List (Course-wise)</CardTitle>
+										<CardDescription className="text-xs">Course-wise list of absent learners</CardDescription>
+									</div>
+								</div>
+							</CardHeader>
+							<CardContent className="p-3 flex-1 flex items-end">
+								<Button
+									onClick={handleGenerateAbsentList}
+									disabled={generatingAbsentList || !selectedInstitutionId || !selectedSessionId || !selectedExamDate || !selectedSessionType}
+									className="w-full bg-gradient-to-r from-rose-600 to-red-600 hover:from-rose-700 hover:to-red-700 h-8 text-xs"
+								>
+									{generatingAbsentList ? (
+										<><Loader2 className="mr-1 h-3 w-3 animate-spin" />Generating...</>
+									) : (
+										<><UserX className="mr-1 h-3 w-3" />Generate</>
 									)}
 								</Button>
 							</CardContent>

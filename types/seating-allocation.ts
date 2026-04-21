@@ -17,6 +17,7 @@ export interface SeatingStudent {
 	stu_register_no: string
 	student_name: string
 	program_code: string
+	program_display_name?: string
 	course_code: string
 	course_offering_id: string
 	exam_timetable_id: string

@@ -42,8 +42,8 @@ type Step = 'idle' | 'summary' | 'rooms' | 'generated' | 'saved'
 
 const STRATEGY_DESCRIPTIONS: Record<SeatingStrategy, string> = {
 	'institution-standard': 'Row-wise ABAB interleaving by program. Students from different programs alternate across each row for simple, consistent separation.',
-	'smart-mixing': 'AI-optimized placement that maximizes diversity among adjacent seats. Considers program, subject, and register number gaps.',
-	'strict': 'Maximum separation with conflict detection. Same as smart mixing but flags any remaining neighbor conflicts for manual review.',
+	'smart-mixing': 'Arts Seating — intelligently places learners so adjacent seats always have different programs and subjects. Ideal for mixed-program halls.',
+	'strict': 'Maximum separation with conflict detection. Same as Arts Seating but flags any remaining neighbour conflicts for manual review.',
 	'manual': 'Manually assign programs to specific rooms. Each room gets students only from the programs you choose.',
 }
 
@@ -65,7 +65,7 @@ export function SeatingArrangementTab({
 	const [loading, setLoading] = useState(false)
 	const [saving, setSaving] = useState(false)
 	const [step, setStep] = useState<Step>('idle')
-	const [strategy, setStrategy] = useState<SeatingStrategy>('institution-standard')
+	const [strategy, setStrategy] = useState<SeatingStrategy>('smart-mixing')
 	const [roomSuggestions, setRoomSuggestions] = useState<RoomSuggestion[]>([])
 	const [columnPlans, setColumnPlans] = useState<RoomColumnPlan[]>([])
 	const [allocation, setAllocation] = useState<SeatingAllocationResult | null>(null)
@@ -328,38 +328,22 @@ export function SeatingArrangementTab({
 	// --- Render helpers ---
 
 	function renderIdle() {
-		return (
-			<div className="flex flex-col items-center justify-center py-16 space-y-4">
-				<LayoutGrid className="h-12 w-12 text-muted-foreground/50" />
-				<div className="text-center space-y-1">
-					<h3 className="text-lg font-semibold">Seating Arrangement</h3>
-					<p className="text-sm text-muted-foreground max-w-md">
-						Generate seating arrangements for the selected exam date and session.
-						Learners will be fetched from approved registrations with published timetables.
-					</p>
+		// Form complete — auto-load is firing, show spinner only
+		if (isFormComplete || loading) {
+			return (
+				<div className="flex flex-col items-center justify-center py-12 gap-3">
+					<Loader2 className="h-8 w-8 animate-spin text-primary" />
+					<p className="text-sm text-muted-foreground">Loading learners and rooms...</p>
 				</div>
-				<Button
-					onClick={handleFetchData}
-					disabled={!isFormComplete || loading}
-					size="lg"
-				>
-					{loading ? (
-						<>
-							<Loader2 className="mr-2 h-4 w-4 animate-spin" />
-							Loading...
-						</>
-					) : (
-						<>
-							<Users className="mr-2 h-4 w-4" />
-							Load Learners &amp; Rooms
-						</>
-					)}
-				</Button>
-				{!isFormComplete && (
-					<p className="text-xs text-muted-foreground">
-						Select institution, session, date, and session type above to continue.
-					</p>
-				)}
+			)
+		}
+		// Form incomplete — guide the user
+		return (
+			<div className="flex flex-col items-center justify-center py-12 gap-2">
+				<LayoutGrid className="h-10 w-10 text-muted-foreground/40" />
+				<p className="text-sm text-muted-foreground">
+					Select session, date, and session type above to generate seating arrangement.
+				</p>
 			</div>
 		)
 	}
@@ -434,8 +418,8 @@ export function SeatingArrangementTab({
 									<SelectValue placeholder="Select strategy" />
 								</SelectTrigger>
 								<SelectContent>
+									<SelectItem value="smart-mixing">Arts Seating ⭐ (Recommended)</SelectItem>
 									<SelectItem value="institution-standard">Institution Standard (ABAB)</SelectItem>
-									<SelectItem value="smart-mixing">Smart Mixing</SelectItem>
 									<SelectItem value="strict">Strict Mode (with Conflicts)</SelectItem>
 									<SelectItem value="manual">Manual Assignment</SelectItem>
 								</SelectContent>
@@ -447,7 +431,7 @@ export function SeatingArrangementTab({
 						</p>
 
 						<div className="flex justify-end">
-							<Button onClick={handleProceedToRooms}>
+							<Button onClick={handleProceedToRooms} className="w-full sm:w-auto">
 								Select Rooms
 							</Button>
 						</div>
@@ -477,10 +461,10 @@ export function SeatingArrangementTab({
 		return (
 			<div className="space-y-6">
 				{/* Action bar */}
-				<div className="flex flex-wrap items-center justify-between gap-4">
+				<div className="flex flex-wrap items-center justify-between gap-3">
 					<ProgramLegend programColorMap={programColorMap} />
 
-					<div className="flex items-center gap-2">
+					<div className="flex flex-wrap items-center gap-2">
 						{isSaved ? (
 							<Badge className="bg-green-100 text-green-800 border-green-300">
 								Saved
@@ -597,9 +581,9 @@ export function SeatingArrangementTab({
 					</Card>
 				)}
 
-				{/* Room grids */}
+				{/* Room grids — skip rooms with no seated students */}
 				<div className="space-y-6">
-					{allocation.rooms.map((roomResult) => (
+					{allocation.rooms.filter(r => r.students_seated > 0).map((roomResult) => (
 						<Card key={roomResult.room.id}>
 							<CardContent className="pt-4 pb-4 px-4">
 								<RoomGrid

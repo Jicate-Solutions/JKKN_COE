@@ -551,15 +551,17 @@ export async function GET(req: NextRequest) {
 					letterGrade = gradeInfo.letterGrade
 				}
 
-				// For special types: isPassing = true (they have their own status logic)
+				// For special types: use DB is_pass; treat AAA grade as absent/failed
 				const isAbsent = !isSpecialType && (
 					(eseMarks === 0 && ciaMarks === 0 && totalMarks === 0) ||
 					(letterGrade === 'AAA')
 				)
 				const passMarks = isSpecialType ? 0 : Math.ceil(totalMax * (passingPercentage / 100))
 
+				// For comment/credit/Status courses: respect is_pass from DB (AAA = absent = not passing)
+				const specialIsPassing = letterGrade === 'AAA' ? false : (fm.is_pass ?? true)
 				const { isPassing, result } = isSpecialType
-					? { isPassing: true, result: fm.pass_status || 'PASS' }
+					? { isPassing: specialIsPassing, result: fm.pass_status || 'PASS' }
 					: checkPassStatus(eseMarks, eseMax, totalMarks, totalMax, passingPercentage)
 
 				// If failed, grade point becomes 0
@@ -903,15 +905,16 @@ export async function GET(req: NextRequest) {
 					letterGrade = gradeInfo.letterGrade
 				}
 
-				// For special types: not absent (they have their own status logic)
+				// For special types: respect is_pass from DB; treat AAA grade as absent/failed
 				const isAbsent = !isSpecialType && (
 					(eseMarks === 0 && ciaMarks === 0 && totalMarks === 0) ||
 					(letterGrade === 'AAA')
 				)
 				const passMarks = isSpecialType ? 0 : Math.ceil(totalMax * (batchPassingPercentage / 100))
 
+				const specialIsPassingBatch = letterGrade === 'AAA' ? false : (fm.is_pass ?? true)
 				const { isPassing, result } = isSpecialType
-					? { isPassing: true, result: fm.pass_status || 'PASS' }
+					? { isPassing: specialIsPassingBatch, result: fm.pass_status || 'PASS' }
 					: checkPassStatus(eseMarks, eseMax || 75, totalMarks, totalMax || 100, batchPassingPercentage)
 
 				const finalGradePoint = isSpecialType ? 0 : ((isPassing && !isAbsent) ? (gradePoint || 0) : 0)

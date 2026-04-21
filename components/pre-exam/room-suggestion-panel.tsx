@@ -232,7 +232,7 @@ export function RoomSuggestionPanel({
 	return (
 		<Card>
 			<CardHeader>
-				<div className="flex items-center justify-between">
+				<div className="flex flex-wrap items-center justify-between gap-2">
 					<CardTitle>Room Allocation</CardTitle>
 					<Badge variant={isValid ? 'default' : 'destructive'}>
 						{totalSeated} / {totalStudents} seats
@@ -259,7 +259,9 @@ export function RoomSuggestionPanel({
 						>
 							{/* Room header */}
 							<div
-								className="flex items-center gap-3 p-3 cursor-pointer relative"
+								className={`flex items-center gap-3 p-3 cursor-pointer relative transition-colors ${
+									hasAssignments ? roomTheme.header : 'bg-muted/30'
+								}`}
 								onClick={() => toggleExpand(roomIdx)}
 							>
 								{/* Vertical color strip on the left edge */}
@@ -336,12 +338,12 @@ export function RoomSuggestionPanel({
 													</Button>
 												</div>
 												{colAssignments.map(({ col, origIdx }) => (
-													<div key={origIdx} className="flex items-center gap-2 pl-4">
+													<div key={origIdx} className="flex flex-wrap sm:flex-nowrap items-center gap-2 pl-4">
 														<Select
 															value={col.program_code && col.course_code ? `${col.program_code}|${col.course_code}` : ''}
 															onValueChange={(v) => updateColumnAssignment(roomIdx, origIdx, 'course', v)}
 														>
-															<SelectTrigger className={`h-7 text-xs flex-1 min-w-0 ${colTheme.input}`}>
+															<SelectTrigger className={`h-7 text-xs flex-1 min-w-[160px] ${colTheme.input}`}>
 																<SelectValue placeholder="Select course..." />
 															</SelectTrigger>
 															<SelectContent>
@@ -499,12 +501,12 @@ export function RoomSuggestionPanel({
 					</div>
 				)}
 
-				<div className="flex justify-end gap-2 pt-2">
-					<Button variant="outline" onClick={onCancel}>
+				<div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-2 pt-2">
+					<Button variant="outline" onClick={onCancel} className="w-full sm:w-auto">
 						Cancel
 					</Button>
-					<Button onClick={handleConfirm} disabled={!isValid || hasHardViolations}>
-						Confirm & Generate
+					<Button onClick={handleConfirm} disabled={!isValid || hasHardViolations} className="w-full sm:w-auto">
+						Confirm &amp; Generate
 					</Button>
 				</div>
 			</CardContent>

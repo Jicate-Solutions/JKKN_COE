@@ -342,7 +342,13 @@ export function generateFromColumnPlans(
 		studentPool.set(key, list)
 	}
 	for (const [, list] of studentPool) {
-		list.sort((a, b) => a.stu_register_no.localeCompare(b.stu_register_no))
+		// Regular students (exam_registrations.is_regular === true) first, then arrears
+		list.sort((a, b) => {
+			const aReg = a.is_regular === true ? 1 : 0
+			const bReg = b.is_regular === true ? 1 : 0
+			if (aReg !== bReg) return bReg - aReg
+			return (a.stu_register_no || '').localeCompare(b.stu_register_no || '')
+		})
 	}
 
 	const assignedIds = new Set<string>()

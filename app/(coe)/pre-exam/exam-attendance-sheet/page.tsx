@@ -15,7 +15,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
 import { useToast } from "@/hooks/common/use-toast"
-import { Loader2, Check, ChevronsUpDown, ClipboardList, Download } from "lucide-react"
+import { Loader2, Check, ChevronsUpDown, ClipboardList, Download, FileText, LayoutGrid } from "lucide-react"
 import { cn } from "@/lib/utils"
 import Link from "next/link"
 import { useInstitutionFilter } from "@/hooks/use-institution-filter"
@@ -348,15 +348,13 @@ export default function ExamAttendanceSheetPage() {
 
 				<div className="flex flex-1 flex-col gap-4 p-4">
 					{/* Page Header */}
-					<div className="flex items-center justify-between">
-						<div className="flex items-center gap-3">
-							<div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10">
-								<ClipboardList className="h-5 w-5 text-primary" />
-							</div>
-							<div>
-								<h1 className="text-2xl font-bold">Exam Preparation</h1>
-								<p className="text-sm text-muted-foreground">Generate attendance sheets and seating arrangements</p>
-							</div>
+					<div className="flex items-center gap-3">
+						<div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10">
+							<ClipboardList className="h-5 w-5 text-primary" />
+						</div>
+						<div className="min-w-0">
+							<h1 className="text-xl sm:text-2xl font-bold leading-tight">Exam Preparation</h1>
+							<p className="text-xs sm:text-sm text-muted-foreground">Generate attendance sheets and seating arrangements</p>
 						</div>
 					</div>
 
@@ -372,9 +370,25 @@ export default function ExamAttendanceSheetPage() {
 					{/* Tabs — only show when institution is selected */}
 					{!needsInstitution && (
 						<Tabs defaultValue="attendance-sheet" className="flex flex-col gap-4">
-							<TabsList className="w-fit">
-								<TabsTrigger value="attendance-sheet">Attendance Sheet</TabsTrigger>
-								<TabsTrigger value="seating-arrangement">Seating Arrangement</TabsTrigger>
+							<TabsList
+								className="w-fit h-11 rounded-xl border border-slate-200/70 bg-gradient-to-r from-indigo-50 via-white to-sky-50 p-1.5 shadow-sm"
+							>
+								<TabsTrigger
+									value="attendance-sheet"
+									className="gap-1.5 rounded-lg px-3 sm:px-4 py-1.5 text-sm font-medium text-slate-600 transition-all data-[state=active]:bg-gradient-to-r data-[state=active]:from-indigo-600 data-[state=active]:to-violet-600 data-[state=active]:text-white data-[state=active]:shadow-md data-[state=active]:shadow-indigo-500/30 hover:text-slate-900"
+								>
+									<FileText className="h-4 w-4 shrink-0" />
+									<span className="hidden xs:inline sm:inline">Attendance</span>
+									<span className="hidden sm:inline"> Sheet</span>
+								</TabsTrigger>
+								<TabsTrigger
+									value="seating-arrangement"
+									className="gap-1.5 rounded-lg px-3 sm:px-4 py-1.5 text-sm font-medium text-slate-600 transition-all data-[state=active]:bg-gradient-to-r data-[state=active]:from-emerald-600 data-[state=active]:to-teal-600 data-[state=active]:text-white data-[state=active]:shadow-md data-[state=active]:shadow-emerald-500/30 hover:text-slate-900"
+								>
+									<LayoutGrid className="h-4 w-4 shrink-0" />
+									<span className="hidden xs:inline sm:inline">Seating</span>
+									<span className="hidden sm:inline"> Arrangement</span>
+								</TabsTrigger>
 							</TabsList>
 
 							{/* Shared Filter Card */}
@@ -586,7 +600,7 @@ export default function ExamAttendanceSheetPage() {
 										<Button
 											onClick={handleGeneratePDF}
 											disabled={!isFormComplete || generating}
-											className="gap-2"
+											className="gap-2 w-full sm:w-auto"
 											size="lg"
 										>
 											{generating ? (

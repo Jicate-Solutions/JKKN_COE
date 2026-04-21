@@ -239,6 +239,11 @@ export async function POST(request: Request) {
 		for (const entry of entries) {
 			const gradeInfo = gradeMap.get(entry.grade)
 
+			// AAA always means absent/not passing regardless of grades table entry
+			const isAAA = entry.grade === 'AAA'
+			const resolvedIsPass = isAAA ? false : (gradeInfo?.qualify ?? true)
+			const resolvedPassStatus = isAAA ? 'Absent' : (gradeInfo?.result_status || 'Pass')
+
 			if (entry.final_marks_id) {
 				// Update existing final_marks row (only grade-related columns)
 				const { error } = await supabase
@@ -247,8 +252,8 @@ export async function POST(request: Request) {
 						letter_grade: entry.grade,
 						grade_description: gradeInfo?.description || entry.grade,
 						grade_points: gradeInfo?.grade_point ?? 0,
-						is_pass: gradeInfo?.qualify ?? true,
-						pass_status: gradeInfo?.result_status || 'Pass',
+						is_pass: resolvedIsPass,
+						pass_status: resolvedPassStatus,
 					})
 					.eq('id', entry.final_marks_id)
 
@@ -283,8 +288,8 @@ export async function POST(request: Request) {
 					letter_grade: entry.grade,
 					grade_description: gradeInfo?.description || entry.grade,
 					grade_points: gradeInfo?.grade_point ?? 0,
-					is_pass: gradeInfo?.qualify ?? true,
-					pass_status: gradeInfo?.result_status || 'Pass',
+					is_pass: resolvedIsPass,
+					pass_status: resolvedPassStatus,
 					result_status: 'Pending',
 					is_active: true,
 				})
@@ -299,8 +304,8 @@ export async function POST(request: Request) {
 								letter_grade: entry.grade,
 								grade_description: gradeInfo?.description || entry.grade,
 								grade_points: gradeInfo?.grade_point ?? 0,
-								is_pass: gradeInfo?.qualify ?? true,
-								pass_status: gradeInfo?.result_status || 'Pass',
+								is_pass: resolvedIsPass,
+								pass_status: resolvedPassStatus,
 							})
 							.eq('exam_registration_id', entry.exam_registration_id)
 							.eq('course_id', course_id)
