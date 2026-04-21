@@ -69,6 +69,8 @@ import {
   Eye,
   FileUp,
   MoreHorizontal,
+  Loader2,
+  CheckCircle,
 } from 'lucide-react'
 import { Switch } from '@/components/ui/switch'
 import { Badge } from '@/components/ui/badge'
@@ -136,6 +138,10 @@ export default function CoursesPage() {
   const [errorPopupOpen, setErrorPopupOpen] = useState(false)
   const [importErrors, setImportErrors] = useState<CourseImportError[]>([])
   const [uploadSummary, setUploadSummary] = useState<UploadSummary>({ total: 0, success: 0, failed: 0 })
+  const [importInProgress, setImportInProgress] = useState(false)
+  const [importProgress, setImportProgress] = useState({ current: 0, total: 0 })
+  const [importPhase, setImportPhase] = useState<'reading' | 'processing' | 'finalizing'>('reading')
+  const [failedRowsData, setFailedRowsData] = useState<Record<string, unknown>[]>([])
 
   // Helper to sanitize null/undefined/"null" string values to empty string
   const s = (val: any): string => (!val || val === 'null') ? '' : String(val)
@@ -891,6 +897,12 @@ export default function CoursesPage() {
     const file = e.target.files?.[0]
     if (!file) return
 
+    setImportInProgress(true)
+    setImportPhase('reading')
+    setImportProgress({ current: 0, total: 0 })
+    setFailedRowsData([])
+    setImportErrors([])
+
     try {
       let jsonData: any[] = []
 
@@ -908,13 +920,29 @@ export default function CoursesPage() {
         jsonData = XLSX.utils.sheet_to_json(worksheet) as any[]
       }
 
+      // Filter out empty rows
+      jsonData = jsonData.filter(row => {
+        const values = Object.values(row || {})
+        return values.some(val => val !== null && val !== undefined && String(val).trim() !== '')
+      })
+
       let successCount = 0
       let errorCount = 0
       const errorDetails: CourseImportError[] = []
+      const failedRows: Record<string, unknown>[] = []
+
+      setImportPhase('processing')
+      setImportProgress({ current: 0, total: jsonData.length })
 
       for (let i = 0; i < jsonData.length; i++) {
         const row = jsonData[i]
         const rowNumber = i + 2 // +2 because row 1 is headers and array is 0-indexed
+
+        // Update progress and yield to UI every 5 rows to prevent freeze
+        setImportProgress({ current: i + 1, total: jsonData.length })
+        if (i % 5 === 0) {
+          await new Promise(resolve => setTimeout(resolve, 0))
+        }
 
         try {
           const payload = {
@@ -1016,6 +1044,7 @@ export default function CoursesPage() {
               course_title: payload.course_title || 'N/A',
               errors: validationErrors
             })
+            failedRows.push(row)
             continue
           }
 
@@ -1051,6 +1080,7 @@ export default function CoursesPage() {
               course_title: payload.course_title || 'N/A',
               errors: [errorMsg]
             })
+            failedRows.push(row)
           }
         } catch (err) {
           errorCount++
@@ -1061,8 +1091,11 @@ export default function CoursesPage() {
             course_title: row['Course Name*'] || row['Course Name'] || row.course_title || 'N/A',
             errors: [errorMsg]
           })
+          failedRows.push(row)
         }
       }
+
+      setImportPhase('finalizing')
 
       // Refresh courses list with institution filter
       const refreshedData = await fetchCoursesService(shouldFilter ? institutionFilter : undefined, shouldFilter)
@@ -1074,6 +1107,7 @@ export default function CoursesPage() {
         success: successCount,
         failed: errorCount
       })
+      setFailedRowsData(failedRows)
 
       // Show detailed results
       if (errorCount === 0) {
@@ -1088,7 +1122,7 @@ export default function CoursesPage() {
         setErrorPopupOpen(true)
         toast({
           title: '⚠️ Partial Upload Success',
-          description: `Processed ${jsonData.length} row${jsonData.length > 1 ? 's' : ''}: ${successCount} successful, ${errorCount} failed. View error details below.`,
+          description: `Processed ${jsonData.length} row${jsonData.length > 1 ? 's' : ''}: ${successCount} successful, ${errorCount} failed. Download failed rows to review errors.`,
           className: 'bg-yellow-50 border-yellow-200 text-yellow-800 dark:bg-yellow-900/20 dark:border-yellow-800 dark:text-yellow-200',
           duration: 6000
         })
@@ -1097,7 +1131,7 @@ export default function CoursesPage() {
         setErrorPopupOpen(true)
         toast({
           title: '❌ Upload Failed',
-          description: `Processed ${jsonData.length} row${jsonData.length > 1 ? 's' : ''}: 0 successful, ${errorCount} failed. View error details below.`,
+          description: `Processed ${jsonData.length} row${jsonData.length > 1 ? 's' : ''}: 0 successful, ${errorCount} failed. Download failed rows to review errors.`,
           variant: 'destructive',
           className: 'bg-red-50 border-red-200 text-red-800 dark:bg-red-900/20 dark:border-red-800 dark:text-red-200',
           duration: 6000
@@ -1114,7 +1148,56 @@ export default function CoursesPage() {
         variant: 'destructive',
         className: 'bg-red-50 border-red-200 text-red-800 dark:bg-red-900/20 dark:border-red-800 dark:text-red-200'
       })
+    } finally {
+      setImportInProgress(false)
     }
+  }
+
+  // Download failed rows as Excel file (original columns + Error Reason)
+  const handleDownloadFailedRows = () => {
+    if (failedRowsData.length === 0) return
+
+    // Map errors by row number for precise matching
+    const errorByRow = new Map<number, string[]>()
+    importErrors.forEach(err => {
+      errorByRow.set(err.row, err.errors)
+    })
+
+    // Determine column order from first row's keys + Error Reason at the end
+    const sampleKeys = failedRowsData.length > 0 ? Object.keys(failedRowsData[0]) : []
+    const columns = [...sampleKeys, 'Error Reason']
+
+    const rowsWithErrors = failedRowsData.map((row, index) => {
+      // Row number in original file = index in failedRows is NOT the original row position,
+      // but importErrors is in the same order failures occurred. Match by index.
+      const errors = importErrors[index]?.errors
+      const errorReason = errors?.join('; ') || 'Unknown error'
+
+      const ordered: Record<string, unknown> = {}
+      for (const col of columns) {
+        ordered[col] = col === 'Error Reason' ? errorReason : (row as any)[col] ?? ''
+      }
+      return ordered
+    })
+
+    const ws = XLSX.utils.json_to_sheet(rowsWithErrors, { header: columns })
+
+    // Set reasonable widths
+    ws['!cols'] = columns.map(col => ({ wch: col === 'Error Reason' ? 60 : 20 }))
+
+    const wb = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb, ws, 'Failed Rows')
+
+    const timestamp = new Date().toISOString().slice(0, 10)
+    const filename = `courses-failed-${timestamp}.xlsx`
+
+    XLSX.writeFile(wb, filename)
+
+    toast({
+      title: '📥 Downloaded',
+      description: `${failedRowsData.length} failed row${failedRowsData.length > 1 ? 's' : ''} with error details exported to ${filename}`,
+      className: 'bg-blue-50 border-blue-200 text-blue-800 dark:bg-blue-900/20 dark:border-blue-800 dark:text-blue-200'
+    })
   }
 
   const handleBulkUpdate = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -1421,6 +1504,45 @@ export default function CoursesPage() {
 
   return (
     <SidebarProvider>
+      {/* Import Loading Overlay */}
+      {importInProgress && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[100] flex items-center justify-center">
+          <div className="bg-white dark:bg-slate-800 rounded-lg p-8 shadow-2xl max-w-md w-full mx-4">
+            <div className="flex flex-col items-center gap-4">
+              <Loader2 className="h-12 w-12 text-blue-600 animate-spin" />
+              <div className="text-center">
+                <h3 className="text-lg font-semibold text-slate-900 dark:text-slate-100">
+                  {importPhase === 'reading' && 'Reading File...'}
+                  {importPhase === 'processing' && 'Importing Courses'}
+                  {importPhase === 'finalizing' && 'Finalizing...'}
+                </h3>
+                <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
+                  {importPhase === 'reading' && 'Please wait while the file is being parsed...'}
+                  {importPhase === 'processing' && 'Please wait while the data is being processed...'}
+                  {importPhase === 'finalizing' && 'Refreshing list and preparing results...'}
+                </p>
+              </div>
+              {importProgress.total > 0 && importPhase === 'processing' && (
+                <div className="w-full space-y-2">
+                  <div className="flex justify-between text-sm text-slate-600 dark:text-slate-300">
+                    <span>Progress</span>
+                    <span>{importProgress.current} / {importProgress.total}</span>
+                  </div>
+                  <div className="w-full bg-slate-200 dark:bg-slate-700 rounded-full h-2.5">
+                    <div
+                      className="bg-blue-600 h-2.5 rounded-full transition-all duration-300"
+                      style={{ width: `${Math.min(100, (importProgress.current / importProgress.total) * 100)}%` }}
+                    />
+                  </div>
+                  <p className="text-xs text-center text-slate-500 dark:text-slate-400">
+                    {Math.round((importProgress.current / importProgress.total) * 100)}% complete
+                  </p>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
       <AppSidebar />
       <SidebarInset className="flex flex-col min-h-screen">
         <AppHeader />
@@ -1867,6 +1989,15 @@ export default function CoursesPage() {
               <AlertDialogCancel className="bg-gray-100 hover:bg-gray-200">
                 Close
               </AlertDialogCancel>
+              {failedRowsData.length > 0 && (
+                <Button
+                  onClick={handleDownloadFailedRows}
+                  className="bg-red-600 hover:bg-red-700 text-white"
+                >
+                  <Download className="h-3.5 w-3.5 mr-1.5" />
+                  Download Failed Rows
+                </Button>
+              )}
               <Button
                 onClick={() => {
                   setErrorPopupOpen(false)

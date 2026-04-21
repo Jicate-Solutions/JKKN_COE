@@ -271,6 +271,9 @@ export const navMain: NavItem[] = [
 		items: [
 			{ title: 'Dummy Numbers', url: '/utilities/dummy-numbers', icon: Hash, coe_roles: ['super_admin', 'coe'] },
 			{ title: 'Answer Sheet Packets', url: '/post-exam/answer-sheet-packets', icon: Package, coe_roles: ['super_admin', 'coe'] },
+			{ title: 'Central Valuation - Dates', url: '/post-exam/central-valuation/dates', icon: ClipboardCheck, coe_roles: ['super_admin', 'coe'] },
+			{ title: 'Central Valuation - Examiner', url: '/post-exam/central-valuation/examiner', icon: Users, coe_roles: ['super_admin', 'coe'] },
+			{ title: 'Central Valuation - Email', url: '/post-exam/central-valuation/email', icon: FileText, coe_roles: ['super_admin', 'coe'] },
 			{ title: 'Attendance Bulk Upload', url: '/post-exam/exam-attendance-bulk', icon: ClipboardCheck, coe_roles: ['super_admin', 'coe'] },
 			{ title: 'External Mark Entry', url: '/post-exam/external-mark-entry', icon: FileText, coe_roles: ['super_admin', 'coe'] },
 			{ title: 'External Mark Bulk Upload', url: '/post-exam/external-mark-bulk-upload', icon: FileText, coe_roles: ['super_admin', 'coe'] },

@@ -27,7 +27,7 @@ function getFillOrder(numCols: number): number[] {
 }
 
 export function generateSeatingPlanPDF(data: SeatingPlanPdfData): void {
-	const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
+	const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' })
 	const pageWidth = doc.internal.pageSize.getWidth()
 	const pageHeight = doc.internal.pageSize.getHeight()
 
