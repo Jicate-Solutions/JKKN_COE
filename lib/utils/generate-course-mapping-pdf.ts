@@ -29,7 +29,10 @@ interface CourseMapping {
 }
 
 interface ReportData {
+	institutionCode?: string
 	institutionName: string
+	institutionSubHeadings?: string[]
+	accreditationText?: string
 	institutionAddress?: string
 	programName: string
 	programCode?: string
@@ -87,17 +90,37 @@ export function generateCourseMappingPDF(data: ReportData) {
 		doc.setFont('times', 'bold')
 		doc.setFontSize(14)
 		doc.setTextColor(0, 0, 0)
-		doc.text('J.K.K.NATARAJA COLLEGE OF ARTS & SCIENCE (AUTONOMOUS)', pageWidth / 2, currentY + 5, { align: 'center' })
+		doc.text(data.institutionName, pageWidth / 2, currentY + 5, { align: 'center' })
 
-		doc.setFont('times', 'normal')
-		doc.setFontSize(10)
-		doc.text('(Accredited by NAAC, Approved by AICTE, Recognized by UGC Under Section 2(f) & 12(B), Affiliated to Periyar University)', pageWidth / 2, currentY + 10, { align: 'center' })
+		let headerY = currentY + 10
 
-		doc.setFont('times', 'bold')
-		doc.setFontSize(12)
-		doc.text('Komarapalayam - 638 183, Namakkal District, Tamil Nadu', pageWidth / 2, currentY + 15, { align: 'center' })
+		// Optional sub-headings (e.g., "An Autonomous Institution", "Managed by ...")
+		if (data.institutionSubHeadings && data.institutionSubHeadings.length > 0) {
+			doc.setFont('times', 'normal')
+			doc.setFontSize(10)
+			data.institutionSubHeadings.forEach((line) => {
+				doc.text(line, pageWidth / 2, headerY, { align: 'center' })
+				headerY += 4.5
+			})
+		}
 
-		currentY += 25
+		// Accreditation / affiliation
+		if (data.accreditationText) {
+			doc.setFont('times', 'normal')
+			doc.setFontSize(10)
+			doc.text(data.accreditationText, pageWidth / 2, headerY, { align: 'center' })
+			headerY += 5
+		}
+
+		// Address
+		if (data.institutionAddress) {
+			doc.setFont('times', 'bold')
+			doc.setFontSize(12)
+			doc.text(data.institutionAddress, pageWidth / 2, headerY, { align: 'center' })
+			headerY += 5
+		}
+
+		currentY = Math.max(currentY + 25, headerY + 2)
 
 		// Program and Regulation info (horizontal layout)
 		doc.setFont('times', 'bold')
@@ -165,11 +188,11 @@ export function generateCourseMappingPDF(data: ReportData) {
 			return orderA - orderB
 		})
 
-		// Prepare table data
-		const tableData = sortedCourses.map((course, courseIndex) => {
-			// Use part_name from course (already fetched from courses table)
-			const part = course.part_name || '-'
+		// CET-specific layout: show Internal Marks as single column (weightage)
+		const isCET = (data.institutionCode || '').toUpperCase() === 'CET'
 
+		// Prepare table data (Part column removed for all institutions)
+		const tableData = sortedCourses.map((course, courseIndex) => {
 			// Extract just the number from semester_code (e.g., "UCS-1" -> "1")
 			let semValue = '-'
 			const semCode = course.semester_code || semester.semesterNumber?.toString() || ''
@@ -180,19 +203,29 @@ export function generateCourseMappingPDF(data: ReportData) {
 				semValue = semester.semesterNumber.toString()
 			}
 
-			return [
-				semValue, // Semester number (e.g., "1", "2")
-				part, // Part (from courses.course_part_master)
+			const baseCols: string[] = [
+				semValue,
 				course.course_code || '-',
 				course.course_title || '-',
 				course.course_type || '-',
 				course.evaluation_pattern || '-',
 				course.credits?.toString() || '-',
 				course.exam_hours?.toString() || '-',
+			]
+
+			if (isCET) {
+				// Single Internal Marks column (weightage = converted mark)
+				baseCols.push(course.internal_converted_mark?.toString() || '0')
+			} else {
 				// Internal marks (MAX, PASS, CONV)
-				course.internal_max_mark?.toString() || '0',
-				course.internal_pass_mark?.toString() || '0',
-				course.internal_converted_mark?.toString() || '0',
+				baseCols.push(
+					course.internal_max_mark?.toString() || '0',
+					course.internal_pass_mark?.toString() || '0',
+					course.internal_converted_mark?.toString() || '0',
+				)
+			}
+
+			baseCols.push(
 				// ESE marks (MAX, PASS, CONV)
 				course.external_max_mark?.toString() || '0',
 				course.external_pass_mark?.toString() || '0',
@@ -200,7 +233,9 @@ export function generateCourseMappingPDF(data: ReportData) {
 				// Total marks (MAX, MIN)
 				course.total_max_mark?.toString() || '0',
 				course.total_pass_mark?.toString() || '0'
-			]
+			)
+
+			return baseCols
 		})
 
 		// Add spacing between semesters
@@ -208,28 +243,35 @@ export function generateCourseMappingPDF(data: ReportData) {
 			startY += 7
 		}
 
+		const headRow1: any[] = [
+			{ content: 'Sem', rowSpan: 2, styles: { halign: 'center', valign: 'middle' } },
+		]
+		headRow1.push(
+			{ content: 'Course\nCode', rowSpan: 2, styles: { halign: 'center', valign: 'middle' } },
+			{ content: 'Course Name', rowSpan: 2, styles: { halign: 'center', valign: 'middle' } },
+			{ content: 'Course\nType', rowSpan: 2, styles: { halign: 'center', valign: 'middle' } },
+			{ content: 'Evaluation\nPattern', rowSpan: 2, styles: { halign: 'center', valign: 'middle' } },
+			{ content: 'Credit', rowSpan: 2, styles: { halign: 'center', valign: 'middle' } },
+			{ content: 'Exam\nHRS', rowSpan: 2, styles: { halign: 'center', valign: 'middle' } },
+		)
+		if (isCET) {
+			headRow1.push({ content: 'Internal Marks', rowSpan: 2, styles: { halign: 'center', valign: 'middle' } })
+		} else {
+			headRow1.push({ content: 'Internal Marks', colSpan: 3, styles: { halign: 'center', valign: 'middle' } })
+		}
+		headRow1.push(
+			{ content: 'ESE Marks', colSpan: 3, styles: { halign: 'center', valign: 'middle' } },
+			{ content: 'Total', colSpan: 2, styles: { halign: 'center', valign: 'middle' } }
+		)
+
+		const headRow2: string[] = []
+		if (!isCET) headRow2.push('Max', 'Pass', 'Conv') // Internal sub-headers only when not CET
+		headRow2.push('Max', 'Pass', 'Conv') // ESE
+		headRow2.push('Max', 'Pass') // Total
+
 		autoTable(doc, {
 			startY: startY,
-			head: [
-				[
-					{ content: 'Sem', rowSpan: 2, styles: { halign: 'center', valign: 'middle' } },
-					{ content: 'Part', rowSpan: 2, styles: { halign: 'center', valign: 'middle' } },
-					{ content: 'Course\nCode', rowSpan: 2, styles: { halign: 'center', valign: 'middle' } },
-					{ content: 'Course Name', rowSpan: 2, styles: { halign: 'center', valign: 'middle' } },
-					{ content: 'Course\nType', rowSpan: 2, styles: { halign: 'center', valign: 'middle' } },
-					{ content: 'Evaluation\nPattern', rowSpan: 2, styles: { halign: 'center', valign: 'middle' } },
-					{ content: 'Credit', rowSpan: 2, styles: { halign: 'center', valign: 'middle' } },
-					{ content: 'Exam\nHRS', rowSpan: 2, styles: { halign: 'center', valign: 'middle' } },
-					{ content: 'Internal Marks', colSpan: 3, styles: { halign: 'center', valign: 'middle' } },
-					{ content: 'ESE Marks', colSpan: 3, styles: { halign: 'center', valign: 'middle' } },
-					{ content: 'Total', colSpan: 2, styles: { halign: 'center', valign: 'middle' } }
-				],
-				[
-					'Max', 'Pass', 'Conv', // Internal
-					'Max', 'Pass', 'Conv', // ESE
-					'Max', 'Pass' // Total
-				]
-			],
+			head: [headRow1, headRow2],
 			body: tableData,
 			theme: 'grid',
 			styles: {
@@ -262,26 +304,45 @@ export function generateCourseMappingPDF(data: ReportData) {
 				lineColor: [0, 0, 0],
 				cellPadding: 1.5
 			},
-			columnStyles: {
-				0: { halign: 'center', cellWidth: 18 }, // SEM
-				1: { halign: 'center', cellWidth: 18 }, // PART
-				2: { halign: 'center', cellWidth: 28 }, // COURSE CODE
-				3: { halign: 'left', cellWidth: 95 }, // COURSE TITLE
-				4: { halign: 'center', cellWidth: 18 }, // COURSE TYPE
-				5: { halign: 'center', cellWidth: 22 }, // EVALUATION PATTERN
-				6: { halign: 'center', cellWidth: 14 }, // CREDIT
-				7: { halign: 'center', cellWidth: 14 }, // EXAM HRS
-				8: { halign: 'center', cellWidth: 13 }, // INT MAX
-				9: { halign: 'center', cellWidth: 13 }, // INT PASS
-				10: { halign: 'center', cellWidth: 13 }, // INT CONV
-				11: { halign: 'center', cellWidth: 13 }, // ESE MAX
-				12: { halign: 'center', cellWidth: 13 }, // ESE PASS
-				13: { halign: 'center', cellWidth: 13 }, // ESE CONV
-				14: { halign: 'center', cellWidth: 13 }, // TOTAL MAX
-				15: { halign: 'center', cellWidth: 13 } // TOTAL MIN
-			},
+			columnStyles: (() => {
+				// Fixed widths for every column except Course Name (which absorbs remaining space)
+				const semW = 18
+				const codeW = 28
+				const typeW = 18
+				const evalW = 22
+				const creditW = 14
+				const examW = 14
+				const internalW = isCET ? 20 : 13 * 3 // single col vs Max/Pass/Conv
+				const eseW = 13 * 3 // Max/Pass/Conv
+				const totalW = 13 * 2 // Max/Pass
+				const fixedTotal = semW + codeW + typeW + evalW + creditW + examW + internalW + eseW + totalW
+				const nameW = Math.max(60, contentWidth - fixedTotal) // fill remaining space
+
+				const styles: Record<number, any> = {}
+				let i = 0
+				styles[i++] = { halign: 'center', cellWidth: semW } // SEM
+				styles[i++] = { halign: 'center', cellWidth: codeW } // COURSE CODE
+				styles[i++] = { halign: 'left', cellWidth: nameW } // COURSE TITLE (flexes)
+				styles[i++] = { halign: 'center', cellWidth: typeW } // COURSE TYPE
+				styles[i++] = { halign: 'center', cellWidth: evalW } // EVALUATION PATTERN
+				styles[i++] = { halign: 'center', cellWidth: creditW } // CREDIT
+				styles[i++] = { halign: 'center', cellWidth: examW } // EXAM HRS
+				if (isCET) {
+					styles[i++] = { halign: 'center', cellWidth: internalW } // INTERNAL MARKS (single)
+				} else {
+					styles[i++] = { halign: 'center', cellWidth: 13 } // INT MAX
+					styles[i++] = { halign: 'center', cellWidth: 13 } // INT PASS
+					styles[i++] = { halign: 'center', cellWidth: 13 } // INT CONV
+				}
+				styles[i++] = { halign: 'center', cellWidth: 13 } // ESE MAX
+				styles[i++] = { halign: 'center', cellWidth: 13 } // ESE PASS
+				styles[i++] = { halign: 'center', cellWidth: 13 } // ESE CONV
+				styles[i++] = { halign: 'center', cellWidth: 13 } // TOTAL MAX
+				styles[i++] = { halign: 'center', cellWidth: 13 } // TOTAL MIN
+				return styles
+			})(),
 			margin: { left: margin, right: margin, top: margin, bottom: margin },
-			tableWidth: 'wrap',
+			tableWidth: contentWidth,
 			didDrawPage: (data) => {
 				// Add footer with page number and timestamp on all pages
 				const currentPageNumber = doc.internal.pages.length - 1 // Get actual page number

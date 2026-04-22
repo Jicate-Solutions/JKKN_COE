@@ -81,10 +81,24 @@ export async function GET(req: NextRequest) {
 			}
 		}
 
+		// ── 2b. Fetch boards from local DB ───────────────────────────────
+		let boardQuery = supabase
+			.from('board')
+			.select('board_code, board_name')
+			.order('board_code')
+		if (institutionCode) {
+			boardQuery = boardQuery.eq('institution_code', institutionCode)
+		}
+		const { data: boardRows } = await boardQuery
+		const boards = (boardRows || [])
+			.filter((b: any) => b?.board_code)
+			.map((b: any) => ({ board_code: b.board_code, board_name: b.board_name || undefined }))
+
 		// ── 3. Build reference data & generate template ──────────────────
 		const referenceData: CourseReferenceData = {
 			institutions: (institutions || []).map(i => ({ institution_code: i.institution_code })),
 			regulations,
+			boards,
 		}
 
 		const workbook = generateCourseTemplate(referenceData)

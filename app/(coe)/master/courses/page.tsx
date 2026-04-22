@@ -553,8 +553,8 @@ export default function CoursesPage() {
     if (!formData.qp_code.trim()) e.qp_code = 'QP code is required'
     if (!formData.course_category) e.course_category = 'Course category is required'
     if (!formData.evaluation_type) e.evaluation_type = 'Evaluation type is required'
-    if (formData.evaluation_type && !['CIA', 'ESE', 'CIA + ESE'].includes(formData.evaluation_type)) {
-      e.evaluation_type = 'Evaluation type must be CIA, ESE, or CIA + ESE'
+    if (formData.evaluation_type && !['CIA', 'ESE', 'CIA + ESE', 'CA', 'CA + ESE'].includes(formData.evaluation_type)) {
+      e.evaluation_type = 'Evaluation type must be CIA, ESE, CIA + ESE, CA, or CA + ESE'
     }
     if (!formData.result_type) e.result_type = 'Result type is required'
     if (formData.result_type && !['Mark', 'Status', 'comment', 'credit'].includes(formData.result_type)) {
@@ -1004,8 +1004,8 @@ export default function CoursesPage() {
           if (!payload.qp_code?.trim()) validationErrors.push('QP code required')
           if (!payload.course_category) validationErrors.push('Course category required')
           if (!payload.evaluation_type) validationErrors.push('Evaluation type required')
-          if (payload.evaluation_type && !['CIA', 'ESE', 'CIA + ESE'].includes(payload.evaluation_type)) {
-            validationErrors.push('Evaluation type must be CIA, ESE, or CIA + ESE')
+          if (payload.evaluation_type && !['CIA', 'ESE', 'CIA + ESE', 'CA', 'CA + ESE'].includes(payload.evaluation_type)) {
+            validationErrors.push('Evaluation type must be CIA, ESE, CIA + ESE, CA, or CA + ESE')
           }
           if (!payload.result_type) validationErrors.push('Result type required')
           if (payload.result_type && !['Mark', 'Status', 'comment', 'credit'].includes(payload.result_type)) {
@@ -1717,6 +1717,8 @@ export default function CoursesPage() {
                         <SelectItem value="CIA">CIA</SelectItem>
                         <SelectItem value="ESE">ESE</SelectItem>
                         <SelectItem value="CIA + ESE">CIA + ESE</SelectItem>
+                        <SelectItem value="CA">CA</SelectItem>
+                        <SelectItem value="CA + ESE">CA + ESE</SelectItem>
                       </SelectContent>
                     </Select>
 
@@ -2165,7 +2167,26 @@ export default function CoursesPage() {
                       "Foundation Course", "Generic Elective Practical", "Generic Elective",
                       "Internship", "Language", "Naanmuthalvan", "Non Academic",
                       "Non Major Elective Practical", "Non Major Elective",
-                      "Practical", "Project", "Skill Enhancement Practical", "Skill Enhancement"
+                      "Practical", "Project", "Skill Enhancement Practical", "Skill Enhancement",
+                      "Humanities, Social Sciences & Management Courses",
+                      "Basic Science Courses",
+                      "Engineering Science Courses",
+                      "Employability Enhancement Courses",
+                      "Professional Core Courses",
+                      "Programme Core",
+                      "Programme Elective",
+                      "Open Elective Courses",
+                      "Mandatory Courses",
+                      "Engineering Science (General)",
+                      "Basic Science",
+                      "Humanities",
+                      "Skill Development",
+                      "Self Learning",
+                      "Project Work",
+                      "Internship cum Project Work",
+                      "Lab Integrated Theory",
+                      "Department Intro Course",
+                      "Total Contact Period"
                     ])}
                     placeholder="Select type"
                     searchPlaceholder="Search course types..."
@@ -2252,7 +2273,7 @@ export default function CoursesPage() {
                   <SearchableSelect
                     value={formData.evaluation_type}
                     onValueChange={(v) => setFormData({ ...formData, evaluation_type: v })}
-                    options={toSearchableOptions(["CIA", "ESE", "CIA + ESE"])}
+                    options={toSearchableOptions(["CIA", "ESE", "CIA + ESE", "CA", "CA + ESE"])}
                     placeholder="Select evaluation type"
                     searchPlaceholder="Search evaluation types..."
                     error={!!errors.evaluation_type}

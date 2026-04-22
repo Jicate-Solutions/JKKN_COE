@@ -1603,6 +1603,13 @@ export default function ExamRegistrationsPage() {
 												Import
 											</Button>
 
+											<Link href="/exam-management/exam-registrations/bulk-create">
+												<Button variant="outline" size="sm" className="h-8 text-sm px-3">
+													<LayoutList className="h-3.5 w-3.5 mr-1.5" />
+													Bulk Register
+												</Button>
+											</Link>
+
 											<Link href="/exam-management/exam-registrations/program-wise">
 												<Button variant="outline" size="sm" className="h-8 text-sm px-3">
 													<LayoutList className="h-3.5 w-3.5 mr-1.5" />

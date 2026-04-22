@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
 import { createRouteHandlerSupabaseClient } from '@/lib/supabase-route-handler'
 import { fetchAllMyJKKNPrograms, fetchAllMyJKKNRegulations, fetchAllMyJKKNSemesters, fetchAllMyJKKNInstitutions } from '@/lib/myjkkn-api'
+import { getInstitutionHeaderConfig } from '@/lib/utils/institution-pdf-header-config'
 import path from 'path'
 import fs from 'fs'
 
@@ -319,10 +320,13 @@ export async function GET(request: NextRequest) {
 			console.warn('[Report Route] Error fetching MyJKKN institution address:', error)
 		}
 
-		// Load JKKN logo (left side)
+		// Resolve institution-specific header config (name, accreditation, address, logo)
+		const headerConfig = getInstitutionHeaderConfig(institutionCode)
+
+		// Load left logo from institution config
 		let logoImage: string | undefined
 		try {
-			const logoPath = path.join(process.cwd(), 'public', 'jkkn_logo.png')
+			const logoPath = path.join(process.cwd(), 'public', headerConfig.logoFile)
 			const logoBase64 = fs.readFileSync(logoPath).toString('base64')
 			logoImage = `data:image/png;base64,${logoBase64}`
 		} catch (error) {
@@ -330,7 +334,7 @@ export async function GET(request: NextRequest) {
 			logoImage = undefined
 		}
 
-		// Load right logo (JKKN text logo)
+		// Load right logo (shared JKKN text logo)
 		let rightLogoImage: string | undefined
 		try {
 			const rightLogoPath = path.join(process.cwd(), 'public', 'jkkn_text_logo.png')
@@ -347,10 +351,13 @@ export async function GET(request: NextRequest) {
 			mappings[0]?.courses?.regulation_code ||
 			regulationName
 
-		// Prepare response data
+		// Prepare response data (institution header fields come from config, not the DB record name)
 		const reportData = {
-			institutionName: institution.name,
-			institutionAddress: institutionAddress || undefined,
+			institutionCode: institutionCode,
+			institutionName: headerConfig.institutionName,
+			institutionSubHeadings: headerConfig.subHeadings,
+			accreditationText: headerConfig.accreditationText,
+			institutionAddress: headerConfig.address || institutionAddress || undefined,
 			programName: programName,
 			programCode: programCode,
 			degreeName: degreeName,

@@ -322,17 +322,21 @@ export async function POST(req: NextRequest) {
       offeringDepartmentId = deptData.id
     }
 
-    // 4. Resolve board_id from board_code
+    // 4. Resolve board_id from board_code (optional — but if provided, must exist)
     let boardId = null
     if (input.board_code) {
       const { data: boardData } = await supabase2
         .from('board')
         .select('id')
         .eq('board_code', String(input.board_code))
-        .single()
-      if (boardData) {
-        boardId = boardData.id
+        .eq('institution_code', String(input.institution_code))
+        .maybeSingle()
+      if (!boardData) {
+        return NextResponse.json({
+          error: `Board with code "${input.board_code}" not found for institution "${input.institution_code}". Please ensure the board exists.`
+        }, { status: 400 })
       }
+      boardId = boardData.id
     }
 
     // 5. Insert course with resolved IDs
