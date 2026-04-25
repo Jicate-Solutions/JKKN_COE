@@ -352,14 +352,30 @@ export async function GET(request: NextRequest) {
 			}
 
 			// Enrich data with lookup values
-			const enrichedData = enrichLearnerData(filteredData, lookups)
+			let enrichedData = enrichLearnerData(filteredData, lookups)
+
+			// Post-enrichment filtering: program_code and current_semester
+			// MyJKKN API often ignores these server-side, so we enforce client-side after enrichment
+			if (program_code) {
+				const before = enrichedData.length
+				enrichedData = enrichedData.filter((l: any) => l.program_code === program_code)
+				console.log(`[Learner Profiles API] program_code filter "${program_code}": ${before} → ${enrichedData.length}`)
+			}
+			if (current_semester) {
+				const semNum = parseInt(current_semester, 10)
+				if (!isNaN(semNum)) {
+					const before = enrichedData.length
+					enrichedData = enrichedData.filter((l: any) => Number(l.current_semester) === semNum)
+					console.log(`[Learner Profiles API] current_semester filter ${semNum}: ${before} → ${enrichedData.length}`)
+				}
+			}
 
 			return NextResponse.json({
 				data: enrichedData,
 				metadata: {
 					page: 1,
 					limit: enrichedData.length,
-					total: filteredData.length,
+					total: enrichedData.length,
 					totalPages: 1,
 				},
 			})

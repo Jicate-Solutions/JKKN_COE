@@ -47,7 +47,7 @@ export async function POST(request: Request) {
 		.eq('id', examination_session_id)
 		.single()
 	const { data: board } = board_code
-		? await supabase.from('boards').select('board_name').eq('board_code', board_code).maybeSingle()
+		? await supabase.from('board').select('board_name').eq('board_code', board_code).maybeSingle()
 		: { data: null }
 
 	const settings = await getPdfSettingsWithFallback(inst?.institution_code || '', 'default')

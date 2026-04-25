@@ -40,7 +40,7 @@ export async function GET(request: Request) {
 				}, { status: 400 })
 			}
 
-			// 1. Get course_mapping rows for this regulation+semester+program
+			// 1. Get course_mapping rows for this regulation+semester+program+institution
 			const { data: mappings, error: mappingErr } = await supabase
 				.from('course_mapping')
 				.select('id, course_id, course_code, course_order')
@@ -49,6 +49,7 @@ export async function GET(request: Request) {
 				.eq('regulation_code', regulationCode)
 				.eq('semester_code', semesterCode)
 				.order('course_order', { ascending: true })
+				.range(0, 9999)
 
 			if (mappingErr) {
 				console.error('[bulk-create lookups] course_mapping error:', mappingErr)
@@ -60,16 +61,18 @@ export async function GET(request: Request) {
 				return NextResponse.json([])
 			}
 
-			// 2. Get matching course_offerings for the exam session
+			// 2. Get matching course_offerings for the exam session (institution-scoped)
 			const mappingIds = mappingList.map(m => m.id)
 			const { data: offerings, error: offerErr } = await supabase
 				.from('course_offerings')
 				.select('id, course_mapping_id, course_code, course_id, semester, semester_code, program_code')
 				.eq('institutions_id', institutionsId)
+				.eq('institution_code', institutionCode)
 				.eq('examination_session_id', examinationSessionId)
 				.eq('program_code', programCode)
 				.eq('semester_code', semesterCode)
 				.in('course_mapping_id', mappingIds)
+				.range(0, 9999)
 
 			if (offerErr) {
 				console.error('[bulk-create lookups] course_offerings error:', offerErr)
@@ -89,6 +92,7 @@ export async function GET(request: Request) {
 					.from('courses')
 					.select('id, course_code, course_name')
 					.in('id', courseIds)
+					.range(0, 9999)
 				;(courses || []).forEach(c => {
 					courseNamesMap.set(c.id, c.course_name || c.course_code)
 				})
@@ -113,6 +117,7 @@ export async function GET(request: Request) {
 
 		if (type === 'registered') {
 			const institutionsId = searchParams.get('institutions_id')
+			const institutionCode = searchParams.get('institution_code')
 			const examinationSessionId = searchParams.get('examination_session_id')
 			const courseOfferingIds = searchParams.get('course_offering_ids') // comma-separated
 
@@ -127,19 +132,21 @@ export async function GET(request: Request) {
 				return NextResponse.json([])
 			}
 
-			// Paginate to bypass 1000-row limit
+			// Paginate to bypass 1000-row limit — up to 1,000,000 rows
 			const all: any[] = []
 			let page = 0
 			const pageSize = 1000
 			let hasMore = true
-			while (hasMore && all.length < 100000) {
-				const { data, error } = await supabase
+			while (hasMore && all.length < 1000000) {
+				let q = supabase
 					.from('exam_registrations')
 					.select('id, student_id, stu_register_no, course_offering_id')
 					.eq('institutions_id', institutionsId)
 					.eq('examination_session_id', examinationSessionId)
 					.in('course_offering_id', ids)
 					.range(page * pageSize, (page + 1) * pageSize - 1)
+				if (institutionCode) q = q.eq('institution_code', institutionCode)
+				const { data, error } = await q
 
 				if (error) {
 					console.error('[bulk-create lookups] registered error:', error)

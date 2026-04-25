@@ -300,10 +300,14 @@ export default function BulkCreateExamRegistrationPage() {
 
 	useEffect(() => { loadCourses() }, [loadCourses])
 
+	// Track why learners got filtered out (for diagnostics in empty state)
+	const [learnerFilterStats, setLearnerFilterStats] = useState({ total: 0, programMismatch: 0, semesterMismatch: 0 })
+
 	// ── Load learners (program + semester) from MyJKKN ──
 	const loadLearners = useCallback(async () => {
 		if (!programCode || !semesterCode || myjkknInstitutionIds.length === 0) {
 			setLearners([])
+			setLearnerFilterStats({ total: 0, programMismatch: 0, semesterMismatch: 0 })
 			return
 		}
 		setLoadingLearners(true)
@@ -312,9 +316,18 @@ export default function BulkCreateExamRegistrationPage() {
 			const targetSemester = parseSemesterNumber(semesterCode)
 			const all: LearnerRow[] = []
 			const seen = new Set<string>()
+			let total = 0
+			let programMismatch = 0
+			let semesterMismatch = 0
 
 			for (const myjkknInstId of myjkknInstitutionIds) {
-				const params = new URLSearchParams({ institution_id: myjkknInstId, fetchAll: 'true' })
+				// Pass program_code + current_semester so the API filters post-enrichment
+				const params = new URLSearchParams({
+					institution_id: myjkknInstId,
+					fetchAll: 'true',
+					program_code: programCode,
+					current_semester: String(targetSemester),
+				})
 				const res = await fetch(`/api/myjkkn/learner-profiles?${params}`)
 				if (!res.ok) continue
 				const raw = await res.json()
@@ -322,8 +335,12 @@ export default function BulkCreateExamRegistrationPage() {
 				for (const s of list) {
 					const id = s.id
 					if (!id || seen.has(id)) continue
-					if (s.program_code !== programCode) continue
-					if (s.current_semester !== targetSemester) continue
+					total++
+					// API already filtered — but count mismatches for diagnostic accuracy
+					const learnerProg = s.program_code || s.program_id
+					const learnerSem = Number(s.current_semester)
+					if (learnerProg && learnerProg !== programCode) { programMismatch++; continue }
+					if (learnerSem && learnerSem !== targetSemester) { semesterMismatch++; continue }
 					seen.add(id)
 					all.push({
 						id,
@@ -334,6 +351,7 @@ export default function BulkCreateExamRegistrationPage() {
 			}
 			all.sort((a, b) => a.stu_register_no.localeCompare(b.stu_register_no))
 			setLearners(all)
+			setLearnerFilterStats({ total, programMismatch, semesterMismatch })
 		} catch (e) {
 			console.error('[bulk-create] load learners failed:', e)
 			toast({ title: '❌ Load Failed', description: 'Failed to load learners from MyJKKN', variant: 'destructive' })
@@ -355,6 +373,7 @@ export default function BulkCreateExamRegistrationPage() {
 		const params = new URLSearchParams({
 			type: 'registered',
 			institutions_id: institutionsId,
+			institution_code: institutionCode,
 			examination_session_id: sessionId,
 			course_offering_ids: ids,
 		})
@@ -409,17 +428,44 @@ export default function BulkCreateExamRegistrationPage() {
 		})
 	}
 
-	// ── Learner select-all ──
-	const allLearnersChecked = filteredLearners.length > 0 && filteredLearners.every(l => selectedLearners.has(l.id))
+	// ── Registered-state per learner (for the currently-selected courses) ──
+	// count = how many of the selected courses this learner is already registered for
+	const registeredCountByLearner = useMemo(() => {
+		const map = new Map<string, number>()
+		if (selectedCourses.size === 0) return map
+		for (const l of learners) {
+			let count = 0
+			for (const cid of selectedCourses) {
+				const sidKey = `${l.id}|${cid}`
+				const regKey = `reg:${l.stu_register_no}|${cid}`
+				if (registeredKeys.has(sidKey) || registeredKeys.has(regKey)) count++
+			}
+			if (count > 0) map.set(l.id, count)
+		}
+		return map
+	}, [learners, selectedCourses, registeredKeys])
+
+	const isLearnerFullyRegistered = useCallback(
+		(id: string) => selectedCourses.size > 0 && registeredCountByLearner.get(id) === selectedCourses.size,
+		[selectedCourses, registeredCountByLearner]
+	)
+
+	// ── Learner select-all (skips fully-registered learners) ──
+	const selectableLearners = useMemo(
+		() => filteredLearners.filter(l => !isLearnerFullyRegistered(l.id)),
+		[filteredLearners, isLearnerFullyRegistered]
+	)
+	const allLearnersChecked = selectableLearners.length > 0 && selectableLearners.every(l => selectedLearners.has(l.id))
 	const toggleAllLearners = () => {
 		setSelectedLearners(prev => {
 			const next = new Set(prev)
-			if (allLearnersChecked) filteredLearners.forEach(l => next.delete(l.id))
-			else filteredLearners.forEach(l => next.add(l.id))
+			if (allLearnersChecked) selectableLearners.forEach(l => next.delete(l.id))
+			else selectableLearners.forEach(l => next.add(l.id))
 			return next
 		})
 	}
 	const toggleLearner = (id: string) => {
+		if (isLearnerFullyRegistered(id)) return // can't unselect fully-registered
 		setSelectedLearners(prev => {
 			const next = new Set(prev)
 			if (next.has(id)) next.delete(id); else next.add(id)
@@ -520,6 +566,7 @@ export default function BulkCreateExamRegistrationPage() {
 				const params = new URLSearchParams({
 					type: 'registered',
 					institutions_id: institutionsId,
+					institution_code: institutionCode,
 					examination_session_id: sessionId,
 					course_offering_ids: ids,
 				})
@@ -840,30 +887,72 @@ export default function BulkCreateExamRegistrationPage() {
 											<Loader2 className="h-4 w-4 animate-spin mr-2" />Loading...
 										</div>
 									) : filteredLearners.length === 0 ? (
-										<div className="flex flex-col items-center justify-center h-full p-8 text-sm text-muted-foreground">
+										<div className="flex flex-col items-center justify-center h-full p-8 text-sm text-muted-foreground text-center">
 											<Users className="h-8 w-8 mb-2 opacity-40" />
-											<p>{learners.length === 0 ? 'No learners to show' : 'No learners match search'}</p>
+											{learners.length === 0 ? (
+												learnerFilterStats.total === 0 ? (
+													<p>No learners to show</p>
+												) : (
+													<div className="space-y-1">
+														<p>No learners match <span className="font-medium">{programCode}</span> · Semester {ROMAN[parseSemesterNumber(semesterCode)] || parseSemesterNumber(semesterCode)}</p>
+														<p className="text-xs">
+															Scanned {learnerFilterStats.total} learner{learnerFilterStats.total !== 1 ? 's' : ''} for this institution:
+															{' '}<span className="text-amber-600">{learnerFilterStats.programMismatch} different program</span>,
+															{' '}<span className="text-amber-600">{learnerFilterStats.semesterMismatch} different semester</span>
+														</p>
+													</div>
+												)
+											) : (
+												<p>No learners match search</p>
+											)}
 										</div>
 									) : (
 										<div>
 											<label className="flex items-center gap-2 px-4 py-2 border-b bg-slate-50 dark:bg-slate-900/40 cursor-pointer text-xs font-medium sticky top-0">
 												<Checkbox checked={allLearnersChecked} onCheckedChange={toggleAllLearners} />
-												<span>Select all ({filteredLearners.length})</span>
+												<span>
+													Select all ({selectableLearners.length})
+													{filteredLearners.length > selectableLearners.length && (
+														<span className="ml-2 text-muted-foreground font-normal">
+															· {filteredLearners.length - selectableLearners.length} already registered
+														</span>
+													)}
+												</span>
 											</label>
 											<div>
 												{filteredLearners.map(l => {
-													const checked = selectedLearners.has(l.id)
+													const fullyRegistered = isLearnerFullyRegistered(l.id)
+													const regCount = registeredCountByLearner.get(l.id) || 0
+													const checked = fullyRegistered || selectedLearners.has(l.id)
 													return (
 														<label
 															key={l.id}
 															className={cn(
-																'flex items-center gap-2 px-4 py-2 border-b cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-900/30',
-																checked && 'bg-blue-50/40 dark:bg-blue-950/20'
+																'flex items-center gap-2 px-4 py-2 border-b',
+																fullyRegistered
+																	? 'bg-amber-50/40 dark:bg-amber-950/20 cursor-not-allowed'
+																	: 'cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-900/30',
+																!fullyRegistered && checked && 'bg-blue-50/40 dark:bg-blue-950/20'
 															)}
 														>
-															<Checkbox checked={checked} onCheckedChange={() => toggleLearner(l.id)} />
+															<Checkbox
+																checked={checked}
+																disabled={fullyRegistered}
+																onCheckedChange={() => toggleLearner(l.id)}
+															/>
 															<div className="min-w-0 flex-1">
-																<div className="text-xs font-mono text-muted-foreground">{l.stu_register_no}</div>
+																<div className="flex items-center gap-2">
+																	<span className="text-xs font-mono text-muted-foreground">{l.stu_register_no}</span>
+																	{fullyRegistered ? (
+																		<Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4 border-amber-300 bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-800">
+																			Registered
+																		</Badge>
+																	) : regCount > 0 ? (
+																		<Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4 border-amber-300 bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-800">
+																			{regCount}/{selectedCourses.size} registered
+																		</Badge>
+																	) : null}
+																</div>
 																<div className="text-sm truncate">{l.student_name}</div>
 															</div>
 														</label>

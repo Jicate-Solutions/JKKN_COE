@@ -25,7 +25,10 @@ import { useMyJKKNInstitutionFilter } from "@/hooks/use-myjkkn-institution-filte
 import { useSessionSync } from "@/hooks/use-session-sync"
 import { cn } from "@/lib/utils"
 import Link from "next/link"
-import { Plus, Pencil, Trash2, Save, Loader2, Check, ChevronsUpDown, X, Search, Settings2, ChevronLeft, ChevronRight, MoreHorizontal, Eye, PlusCircle, RefreshCw, ListChecks, Layers } from "lucide-react"
+import { Plus, Pencil, Trash2, Save, Loader2, Check, ChevronsUpDown, X, Search, Settings2, ChevronLeft, ChevronRight, MoreHorizontal, Eye, PlusCircle, RefreshCw, ListChecks, Layers, Calendar } from "lucide-react"
+import { featureFlags } from "@/lib/feature-flags"
+import type { MarkConversionRule } from "@/types/mark-conversion-rule"
+import { CIARoundTimetableDialog } from "@/components/cia/cia-round-timetable-dialog"
 
 // ─── Constants ───
 const ALL_COMPONENTS = [
@@ -81,6 +84,9 @@ interface CIARound {
 	round_name: string
 	entry_from?: string
 	entry_to?: string
+	session_from?: string
+	session_to?: string
+	conversion_rule_id?: string
 	components: RoundComponent[]
 }
 
@@ -120,6 +126,7 @@ const emptyForm = () => ({
 	course_types: [] as string[],
 	use_course_max: false,
 	cia_rounds: [emptyRound()] as CIARound[],
+	conversion_rule_id: '' as string,
 })
 
 export default function CIAEntrySettingPage() {
@@ -153,6 +160,13 @@ export default function CIAEntrySettingPage() {
 	const [form, setForm] = useState(emptyForm())
 	// Effective institution for the form (could differ from page-level when super_admin)
 	const formInstitutionId = form.institutions_id || effectiveInstitutionId
+
+	// v2: conversion rules available for the form institution
+	const [conversionRules, setConversionRules] = useState<MarkConversionRule[]>([])
+	// v2: timetable dialog state
+	const [timetableDialog, setTimetableDialog] = useState({ open: false, round: 1, roundName: 'CIA-1' })
+	// v2: fetch attendance loading per round
+	const [fetching, setFetching] = useState<number | null>(null)
 
 	// Search & Pagination
 	const [searchTerm, setSearchTerm] = useState("")
@@ -292,16 +306,64 @@ export default function CIAEntrySettingPage() {
 				: [],
 			use_course_max: s.use_course_max || false,
 			cia_rounds: s.cia_rounds || [emptyRound()],
+			conversion_rule_id: (s as any).conversion_rule_id || '',
 		})
 		// Fetch programs for the setting's institution
 		fetchPrograms(s.institutions_id)
+		if (featureFlags.ciaRoundsV2) fetchConversionRules(s.institutions_id)
 		setSheetOpen(true)
 	}
 
-	// When form institution changes, reload programs
+	// When form institution changes, reload programs + conversion rules
 	const handleFormInstitutionChange = (instId: string) => {
 		setForm(prev => ({ ...prev, institutions_id: instId, program_codes: [] }))
 		fetchPrograms(instId)
+		if (featureFlags.ciaRoundsV2) fetchConversionRules(instId)
+	}
+
+	// v2: fetch conversion rules for institution
+	const fetchConversionRules = async (instId: string) => {
+		if (!instId) return
+		try {
+			const res = await fetch(`/api/pre-exam/mark-conversion-rules?institutions_id=${instId}`)
+			if (res.ok) setConversionRules(await res.json())
+		} catch { setConversionRules([]) }
+	}
+
+	// v2: generic round field updater
+	const updateRound = (idx: number, patch: Partial<CIARound>) => {
+		setForm(prev => {
+			const rounds = [...prev.cia_rounds]
+			rounds[idx] = { ...rounds[idx], ...patch }
+			return { ...prev, cia_rounds: rounds }
+		})
+	}
+
+	// v2: fetch attendance from MyJKKN for a round
+	const handleFetchAttendance = async (roundNumber: number) => {
+		if (!editingId) return
+		setFetching(roundNumber)
+		try {
+			const res = await fetch(`/api/pre-exam/cia-entry-settings/${editingId}/fetch-attendance`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ round_number: roundNumber, performed_by: user?.id }),
+			})
+			const data = await res.json()
+			if (res.ok) {
+				toast({
+					title: '✅ Attendance fetched',
+					description: `${data.fetched} learners · ${data.below_threshold} below 75% · ${data.missing_count} missing`,
+					className: 'bg-green-50 border-green-200 text-green-800',
+				})
+			} else {
+				toast({ title: '❌ Fetch failed', description: data.error, variant: 'destructive' })
+			}
+		} catch {
+			toast({ title: '❌ Network error', variant: 'destructive' })
+		} finally {
+			setFetching(null)
+		}
 	}
 
 	const addRound = () => {
@@ -367,6 +429,7 @@ export default function CIAEntrySettingPage() {
 				regulation_id: reg?.id || form.regulation_id || null,
 				course_type: form.course_types,
 				total_rounds: form.cia_rounds.length, created_by: user?.email,
+				conversion_rule_id: form.conversion_rule_id || null,
 				...(editingId ? { id: editingId } : {}),
 			}
 			const res = await fetch('/api/pre-exam/cia-entry-settings', {
@@ -776,6 +839,26 @@ export default function CIAEntrySettingPage() {
 								</div>
 							</div>
 
+							{/* v2: Setting-level Conversion Rule */}
+							{featureFlags.ciaRoundsV2 && (
+								<div className="space-y-2">
+									<Label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Default Conversion Rule</Label>
+									<Select
+										value={form.conversion_rule_id || '__none__'}
+										onValueChange={v => setForm(prev => ({ ...prev, conversion_rule_id: v === '__none__' ? '' : v }))}
+									>
+										<SelectTrigger className="h-8 text-sm"><SelectValue placeholder="None (rounds must have own rule)" /></SelectTrigger>
+										<SelectContent>
+											<SelectItem value="__none__">None</SelectItem>
+											{conversionRules.map(r => (
+												<SelectItem key={r.id} value={r.id}>{r.rule_name} (WEF {r.wef_date})</SelectItem>
+											))}
+										</SelectContent>
+									</Select>
+									<p className="text-xs text-muted-foreground">Applied to all rounds unless overridden per-round.</p>
+								</div>
+							)}
+
 							{/* Section 3: CIA Rounds */}
 							<div className="space-y-4">
 								<div className="flex items-center justify-between">
@@ -804,13 +887,27 @@ export default function CIAEntrySettingPage() {
 									<Card key={rIdx} className="border-dashed">
 										<CardHeader className="pb-2 pt-3 px-4">
 											<div className="flex items-center justify-between">
-												<div className="flex items-center gap-2">
+												<div className="flex items-center gap-2 flex-wrap">
 													<Input value={round.round_name} onChange={e => updateRoundName(rIdx, e.target.value)} className="h-7 w-32 text-sm font-semibold" />
 													{!form.use_course_max && (
 														<Badge variant="secondary" className="text-xs">{round.components.reduce((s, c) => s + (c.max_marks || 0), 0)} marks</Badge>
 													)}
 													{form.use_course_max && (
 														<Badge variant="outline" className="text-xs">From course</Badge>
+													)}
+													{featureFlags.ciaRoundsV2 && editingId && (
+														<Button variant="outline" size="sm" className="h-7 text-xs" type="button"
+															onClick={() => setTimetableDialog({ open: true, round: round.round, roundName: round.round_name })}>
+															<Calendar className="h-3.5 w-3.5 mr-1" />Schedule
+														</Button>
+													)}
+													{featureFlags.ciaRoundsV2 && editingId && round.components.some(c => c.code === "attendance") && round.session_from && round.session_to && (
+														<Button variant="outline" size="sm" className="h-7 text-xs" type="button"
+															disabled={fetching === round.round}
+															onClick={() => handleFetchAttendance(round.round)}>
+															{fetching === round.round ? <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5 mr-1" />}
+															Attendance
+														</Button>
 													)}
 												</div>
 												{form.cia_rounds.length > 1 && (
@@ -826,11 +923,7 @@ export default function CIAEntrySettingPage() {
 													<Input
 														type="date"
 														value={round.entry_from || ''}
-														onChange={e => {
-															const rounds = [...form.cia_rounds]
-															rounds[rIdx] = { ...rounds[rIdx], entry_from: e.target.value }
-															setForm(prev => ({ ...prev, cia_rounds: rounds }))
-														}}
+														onChange={e => updateRound(rIdx, { entry_from: e.target.value })}
 														className="h-7 text-xs"
 													/>
 												</div>
@@ -839,14 +932,47 @@ export default function CIAEntrySettingPage() {
 													<Input
 														type="date"
 														value={round.entry_to || ''}
-														onChange={e => {
-															const rounds = [...form.cia_rounds]
-															rounds[rIdx] = { ...rounds[rIdx], entry_to: e.target.value }
-															setForm(prev => ({ ...prev, cia_rounds: rounds }))
-														}}
+														onChange={e => updateRound(rIdx, { entry_to: e.target.value })}
 														className="h-7 text-xs"
 													/>
 												</div>
+												{featureFlags.ciaRoundsV2 && (
+													<>
+														<div className="space-y-1">
+															<label className="text-xs font-medium text-muted-foreground">Session From (attendance)</label>
+															<Input
+																type="date"
+																value={round.session_from || ''}
+																onChange={e => updateRound(rIdx, { session_from: e.target.value })}
+																className="h-7 text-xs"
+															/>
+														</div>
+														<div className="space-y-1">
+															<label className="text-xs font-medium text-muted-foreground">Session To (attendance)</label>
+															<Input
+																type="date"
+																value={round.session_to || ''}
+																onChange={e => updateRound(rIdx, { session_to: e.target.value })}
+																className="h-7 text-xs"
+															/>
+														</div>
+														<div className="col-span-2 space-y-1">
+															<label className="text-xs font-medium text-muted-foreground">Conversion Rule (round override)</label>
+															<Select
+																value={round.conversion_rule_id || '__default__'}
+																onValueChange={v => updateRound(rIdx, { conversion_rule_id: v === '__default__' ? '' : v })}
+															>
+																<SelectTrigger className="h-7 text-xs"><SelectValue placeholder="Use setting default" /></SelectTrigger>
+																<SelectContent>
+																	<SelectItem value="__default__">Use setting default</SelectItem>
+																	{conversionRules.map(r => (
+																		<SelectItem key={r.id} value={r.id}>{r.rule_name} (WEF {r.wef_date})</SelectItem>
+																	))}
+																</SelectContent>
+															</Select>
+														</div>
+													</>
+												)}
 											</div>
 											{/* Components */}
 											<div className="grid grid-cols-2 gap-2">
@@ -879,6 +1005,17 @@ export default function CIAEntrySettingPage() {
 						</div>
 					</SheetContent>
 				</Sheet>
+
+				{/* v2: per-round timetable dialog */}
+				{featureFlags.ciaRoundsV2 && editingId && (
+					<CIARoundTimetableDialog
+						open={timetableDialog.open}
+						onClose={() => setTimetableDialog(prev => ({ ...prev, open: false }))}
+						settingId={editingId}
+						round={timetableDialog.round}
+						roundName={timetableDialog.roundName}
+					/>
+				)}
 
 				<AppFooter />
 			</SidebarInset>

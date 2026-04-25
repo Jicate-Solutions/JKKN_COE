@@ -70,6 +70,7 @@ import {
 	LayoutDashboard,
 	AppWindow,
 	ScrollText,
+	Scale,
 	type LucideIcon,
 } from 'lucide-react'
 
@@ -222,6 +223,7 @@ export const navMain: NavItem[] = [
 			{ title: 'Practical Allotment', url: '/pre-exam/practical-allotment', icon: FlaskConical, coe_roles: ['super_admin', 'coe'] },
 			{ title: 'Bulk Internal Marks', url: '/pre-exam/bulk-internal-marks', icon: FileText, coe_roles: ['super_admin', 'coe'] },
 			{ title: 'CIA Entry Setting', url: '/pre-exam/internal-mark-entry-setting', icon: Settings2, coe_roles: ['super_admin', 'coe'] },
+			{ title: 'Mark Conversion Rules', url: '/pre-exam/mark-conversion-rules', icon: Scale, coe_roles: ['super_admin', 'coe'] },
 			{ title: 'Internal Mark Entry', url: '/pre-exam/internal-mark-entry', icon: Edit, coe_roles: ['super_admin', 'coe'] },
 			{ title: 'Internal Mark Report', url: '/pre-exam/internal-mark-report', icon: FileText, coe_roles: ['super_admin', 'coe'] },
 			{ title: 'COE Calendar', url: '/pre-exam/coe-calendar', icon: CalendarDays, coe_roles: ['super_admin', 'coe'] },

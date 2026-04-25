@@ -103,6 +103,39 @@ import {
 } from '@/services/master/courses-service'
 import { useInstitutionFilter } from '@/hooks/use-institution-filter'
 
+// Single source of truth for all course types — used by the filter dropdown,
+// the Add/Edit Course form, and the Excel import validator. Keep them in sync.
+const COURSE_TYPES = [
+  'Ability Enhancement', 'Additional Credit course', 'Advance learner course',
+  'Audit Course', 'Bridge course', 'Core Practical', 'Core',
+  'Discipline Specific elective Practical', 'Discipline Specific elective',
+  'Elective Practical', 'Elective', 'English',
+  'Extra Disciplinary Elective Practical', 'Extra Disciplinary',
+  'Foundation Course', 'Generic Elective Practical', 'Generic Elective',
+  'Internship', 'Language', 'Naanmuthalvan', 'Non Academic',
+  'Non Major Elective Practical', 'Non Major Elective',
+  'Practical', 'Project', 'Skill Enhancement Practical', 'Skill Enhancement',
+  'Humanities, Social Sciences & Management Courses',
+  'Basic Science Courses',
+  'Engineering Science Courses',
+  'Employability Enhancement Courses',
+  'Professional Core Courses',
+  'Programme Core',
+  'Programme Elective',
+  'Open Elective Courses',
+  'Mandatory Courses',
+  'Engineering Science (General)',
+  'Basic Science',
+  'Humanities',
+  'Skill Development',
+  'Self Learning',
+  'Project Work',
+  'Internship cum Project Work',
+  'Lab Integrated Theory',
+  'Department Intro Course',
+  'Total Contact Period',
+] as const
+
 export default function CoursesPage() {
   const [courses, setCourses] = useState<Course[]>([])
   const [loading, setLoading] = useState(true)
@@ -945,25 +978,31 @@ export default function CoursesPage() {
         }
 
         try {
+          // Coerce Excel values to strings (Excel auto-parses numeric-only codes as numbers)
+          const str = (v: unknown): string | null => {
+            if (v === null || v === undefined || v === '') return null
+            return String(v).trim() || null
+          }
+
           const payload = {
-            institution_code: row['Institution Code*'] || row['Institution Code'] || row.institution_code,
-            regulation_code: row['Regulation Code*'] || row['Regulation Code'] || row.regulation_code,
-            board_code: row['Board Code'] || row.board_code || null,
-            course_code: row['Course Code*'] || row['Course Code'] || row.course_code,
-            course_title: row['Course Name*'] || row['Course Name'] || row.course_title,
-            display_code: row['Display Code*'] || row['Display Code'] || row.display_code,
-            course_category: row['Course Category*'] || row['Course Category'] || row.course_category,
-            course_type: row['Course Type'] || row.course_type || null,
-            course_part_master: row['Course Part Master'] || row['Part'] || row.course_part_master || null,
+            institution_code: str(row['Institution Code*'] || row['Institution Code'] || row.institution_code),
+            regulation_code: str(row['Regulation Code*'] || row['Regulation Code'] || row.regulation_code),
+            board_code: str(row['Board Code'] || row.board_code),
+            course_code: str(row['Course Code*'] || row['Course Code'] || row.course_code),
+            course_title: str(row['Course Name*'] || row['Course Name'] || row.course_title),
+            display_code: str(row['Display Code*'] || row['Display Code'] || row.display_code),
+            course_category: str(row['Course Category*'] || row['Course Category'] || row.course_category),
+            course_type: str(row['Course Type'] || row.course_type),
+            course_part_master: str(row['Course Part Master'] || row['Part'] || row.course_part_master),
             credits: Number(row['Credit'] || row.credits) || 0,
             split_credit: typeof row.split_credit === 'boolean' ? row.split_credit : String(row['Split Credit'] || row['Split Credit (TRUE/FALSE)'] || '').toUpperCase() === 'TRUE',
             theory_credit: Number(row['Theory Credit'] || row.theory_credit) || 0,
             practical_credit: Number(row['Practical Credit'] || row.practical_credit) || 0,
-            qp_code: row['QP Code*'] || row['QP Code'] || row.qp_code,
-            e_code_name: row['E Code Name'] || row['E-Code Name'] || row['E-Code Name (Tamil/English/French/Malayalam/Hindi)'] || row.e_code_name || null,
+            qp_code: str(row['QP Code*'] || row['QP Code'] || row.qp_code),
+            e_code_name: str(row['E Code Name'] || row['E-Code Name'] || row['E-Code Name (Tamil/English/French/Malayalam/Hindi)'] || row.e_code_name),
             exam_duration: Number(row['Exam Hours'] || row['Exam hours'] || row['Exam hours'] || row.exam_duration) || 0,
-            evaluation_type: row['Evaluation Type*'] || row['Evaluation Type'] || row['Evaluation Type* (CIA/ESE/CIA + ESE)'] || row.evaluation_type,
-            result_type: row['Result Type*'] || row['Result Type'] || row['Result Type* (Mark/Status)'] || row.result_type || 'Mark',
+            evaluation_type: str(row['Evaluation Type*'] || row['Evaluation Type'] || row['Evaluation Type* (CIA/ESE/CIA + ESE)'] || row.evaluation_type),
+            result_type: str(row['Result Type*'] || row['Result Type'] || row['Result Type* (Mark/Status)'] || row.result_type) || 'Mark',
             self_study_course: typeof row.self_study_course === 'boolean' ? row.self_study_course : String(row['Self Study Course'] || row['Self Study Course (TRUE/FALSE)'] || '').toUpperCase() === 'TRUE',
             outside_class_course: typeof row.outside_class_course === 'boolean' ? row.outside_class_course : String(row['Outside Class Course'] || row['Outside Class Course (TRUE/FALSE)'] || '').toUpperCase() === 'TRUE',
             open_book: typeof row.open_book === 'boolean' ? row.open_book : String(row['Open Book'] || row['Open Book (TRUE/FALSE)'] || '').toUpperCase() === 'TRUE',
@@ -975,8 +1014,8 @@ export default function CoursesPage() {
             no_of_scrutinizer: Number(row['No of Scrutinizer'] || row.no_of_scrutinizer) || null,
             fee_exception: typeof row.fee_exception === 'boolean' ? row.fee_exception : String(row['Fee Exception'] || row['Fee Exception (TRUE/FALSE)'] || '').toUpperCase() === 'TRUE',
             has_hall_ticket: typeof row.has_hall_ticket === 'boolean' ? row.has_hall_ticket : row['Has Hall Ticket'] !== undefined ? String(row['Has Hall Ticket'] || '').toUpperCase() === 'TRUE' : true,
-            syllabus_pdf_url: row['Syllabus PDF URL'] || row.syllabus_pdf_url || null,
-            description: row['Description'] || row.description || null,
+            syllabus_pdf_url: str(row['Syllabus PDF URL'] || row.syllabus_pdf_url),
+            description: str(row['Description'] || row.description),
             class_hours: Number(row['Class Hours*'] || row['Class Hours'] || row['Total Class Hours'] || row.class_hours) || 0,
             theory_hours: Number(row['Theory Hours*'] || row['Theory Hours'] || row.theory_hours) || 0,
             practical_hours: Number(row['Practical Hours*'] || row['Practical Hours'] || row.practical_hours) || 0,
@@ -1012,20 +1051,9 @@ export default function CoursesPage() {
             validationErrors.push('Result type must be Mark, Status, comment, or credit')
           }
 
-          // Validate course_type against allowed values
-          const allowedCourseTypes = [
-            'Ability Enhancement', 'Additional Credit course', 'Advance learner course',
-            'Audit Course', 'Bridge course', 'Core Practical', 'Core',
-            'Discipline Specific elective Practical', 'Discipline Specific elective',
-            'Elective Practical', 'Elective', 'English',
-            'Extra Disciplinary Elective Practical', 'Extra Disciplinary',
-            'Foundation Course', 'Generic Elective Practical', 'Generic Elective',
-            'Internship', 'Language', 'Naanmuthalvan', 'Non Academic',
-            'Non Major Elective Practical', 'Non Major Elective',
-            'Practical', 'Project', 'Skill Enhancement Practical', 'Skill Enhancement'
-          ]
-          if (payload.course_type && !allowedCourseTypes.includes(payload.course_type)) {
-            validationErrors.push(`Invalid course type. Must be one of: ${allowedCourseTypes.join(', ')}`)
+          // Validate course_type against the shared COURSE_TYPES constant (single source of truth)
+          if (payload.course_type && !(COURSE_TYPES as readonly string[]).includes(payload.course_type)) {
+            validationErrors.push(`Invalid course type. Must be one of: ${COURSE_TYPES.join(', ')}`)
           }
 
           if (payload.course_code && !/^[A-Za-z0-9\-_]+$/.test(payload.course_code)) {
@@ -1698,13 +1726,11 @@ export default function CoursesPage() {
                       <SelectTrigger className="h-8 text-sm w-[130px]">
                         <SelectValue placeholder="All Types" />
                       </SelectTrigger>
-                      <SelectContent>
+                      <SelectContent className="max-h-[400px]">
                         <SelectItem value="all">All Types</SelectItem>
-                        <SelectItem value="Core">Core</SelectItem>
-                        <SelectItem value="Generic Elective">Generic Elective</SelectItem>
-                        <SelectItem value="Skill Enhancement">Skill Enhancement</SelectItem>
-                        <SelectItem value="Ability Enhancement">Ability Enhancement</SelectItem>
-                        <SelectItem value="Language">Language</SelectItem>
+                        {COURSE_TYPES.map((t) => (
+                          <SelectItem key={t} value={t}>{t}</SelectItem>
+                        ))}
                       </SelectContent>
                     </Select>
 
@@ -2158,36 +2184,7 @@ export default function CoursesPage() {
                   <SearchableSelect
                     value={formData.course_type}
                     onValueChange={(v) => setFormData({ ...formData, course_type: v })}
-                    options={toSearchableOptions([
-                      "Ability Enhancement", "Additional Credit course", "Advance learner course",
-                      "Audit Course", "Bridge course", "Core Practical", "Core",
-                      "Discipline Specific elective Practical", "Discipline Specific elective",
-                      "Elective Practical", "Elective", "English",
-                      "Extra Disciplinary Elective Practical", "Extra Disciplinary",
-                      "Foundation Course", "Generic Elective Practical", "Generic Elective",
-                      "Internship", "Language", "Naanmuthalvan", "Non Academic",
-                      "Non Major Elective Practical", "Non Major Elective",
-                      "Practical", "Project", "Skill Enhancement Practical", "Skill Enhancement",
-                      "Humanities, Social Sciences & Management Courses",
-                      "Basic Science Courses",
-                      "Engineering Science Courses",
-                      "Employability Enhancement Courses",
-                      "Professional Core Courses",
-                      "Programme Core",
-                      "Programme Elective",
-                      "Open Elective Courses",
-                      "Mandatory Courses",
-                      "Engineering Science (General)",
-                      "Basic Science",
-                      "Humanities",
-                      "Skill Development",
-                      "Self Learning",
-                      "Project Work",
-                      "Internship cum Project Work",
-                      "Lab Integrated Theory",
-                      "Department Intro Course",
-                      "Total Contact Period"
-                    ])}
+                    options={toSearchableOptions(COURSE_TYPES as unknown as string[])}
                     placeholder="Select type"
                     searchPlaceholder="Search course types..."
                     clearable

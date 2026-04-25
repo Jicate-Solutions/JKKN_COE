@@ -87,6 +87,7 @@ export async function POST(request: Request) {
 					.from('exam_registrations')
 					.select('student_id, stu_register_no, course_offering_id')
 					.eq('institutions_id', body.institutions_id)
+					.eq('institution_code', body.institution_code)
 					.eq('examination_session_id', body.examination_session_id)
 					.in('course_offering_id', courseOfferingIds)
 					.range(page * pageSize, (page + 1) * pageSize - 1)

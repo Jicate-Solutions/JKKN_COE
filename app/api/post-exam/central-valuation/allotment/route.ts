@@ -123,7 +123,7 @@ export async function GET(request: Request) {
 	const dateMap = new Map((cvDates || []).map(d => [d.course_id, d.valuation_date]))
 
 	const { data: board } = await supabase
-		.from('boards')
+		.from('board')
 		.select('board_name')
 		.eq('board_code', boardCode)
 		.maybeSingle()

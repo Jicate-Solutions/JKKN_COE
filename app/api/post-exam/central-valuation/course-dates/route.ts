@@ -7,6 +7,11 @@ interface BatchEntry {
 	valuation_date: string | null
 }
 
+/**
+ * GET — Course list for a board derived from exam_registrations (fee_paid=true)
+ * so dates can be pre-planned before packet generation. Packet counts come from
+ * answer_sheet_packets if available, else 0 (indicates packets not generated yet).
+ */
 export async function GET(request: Request) {
 	const { searchParams } = new URL(request.url)
 	const institutionsId = searchParams.get('institutions_id')
@@ -19,6 +24,56 @@ export async function GET(request: Request) {
 
 	const supabase = getSupabaseServer()
 
+	// 1. Paginated exam_registrations (fee paid)
+	const pageSize = 1000
+	let allRegs: Array<{ course_code: string | null; is_regular: boolean | null }> = []
+	let page = 0
+	let more = true
+
+	while (more) {
+		const { data, error } = await supabase
+			.from('exam_registrations')
+			.select('course_code, is_regular')
+			.eq('institutions_id', institutionsId)
+			.eq('examination_session_id', sessionId)
+			.range(page * pageSize, (page + 1) * pageSize - 1)
+
+		if (error) {
+			console.error('course-dates registrations error:', error)
+			return NextResponse.json({ error: 'Failed to load registrations' }, { status: 500 })
+		}
+		if (!data || data.length === 0) break
+		allRegs = allRegs.concat(data)
+		page++
+		more = data.length === pageSize
+	}
+
+	// Aggregate registration counts by course_code
+	const regCounts = new Map<string, { regular: number; arrear: number; total: number }>()
+	for (const r of allRegs) {
+		if (!r.course_code) continue
+		const prev = regCounts.get(r.course_code) || { regular: 0, arrear: 0, total: 0 }
+		if (r.is_regular) prev.regular += 1
+		else prev.arrear += 1
+		prev.total += 1
+		regCounts.set(r.course_code, prev)
+	}
+
+	const courseCodes = [...regCounts.keys()]
+	if (courseCodes.length === 0) return NextResponse.json([])
+
+	// 2. Course details (filter by board if passed)
+	let coursesQuery = supabase
+		.from('courses')
+		.select('id, course_code, course_name, course_title, board_code')
+		.in('course_code', courseCodes)
+
+	if (boardCode) coursesQuery = coursesQuery.eq('board_code', boardCode)
+
+	const { data: courses, error: courseErr } = await coursesQuery
+	if (courseErr) return NextResponse.json({ error: 'Failed to load courses' }, { status: 500 })
+
+	// 3. Packet aggregates (optional — may be empty before packets are generated)
 	const { data: packets } = await supabase
 		.from('answer_sheet_packets')
 		.select('course_id, total_sheets')
@@ -27,48 +82,44 @@ export async function GET(request: Request) {
 		.eq('is_active', true)
 		.range(0, 99999)
 
-	const courseIds = [...new Set((packets || []).map(p => p.course_id))]
-	if (courseIds.length === 0) return NextResponse.json([])
+	const packetAgg = new Map<string, { packet_count: number; sheet_count: number }>()
+	for (const p of packets || []) {
+		const prev = packetAgg.get(p.course_id) || { packet_count: 0, sheet_count: 0 }
+		prev.packet_count += 1
+		prev.sheet_count += p.total_sheets || 0
+		packetAgg.set(p.course_id, prev)
+	}
 
-	let coursesQuery = supabase
-		.from('courses')
-		.select('id, course_code, course_name, course_title, board_code')
-		.in('id', courseIds)
-
-	if (boardCode) coursesQuery = coursesQuery.eq('board_code', boardCode)
-
-	const { data: courses, error: courseErr } = await coursesQuery
-	if (courseErr) return NextResponse.json({ error: 'Failed to load courses' }, { status: 500 })
-
+	// 4. Existing valuation dates
 	const { data: cvDates } = await supabase
 		.from('course_valuation_dates')
 		.select('course_id, valuation_date, board_code')
 		.eq('institutions_id', institutionsId)
 		.eq('examination_session_id', sessionId)
-
 	const dateMap = new Map((cvDates || []).map(d => [d.course_id, d]))
 
-	const aggMap = new Map<string, { packet_count: number; sheet_count: number }>()
-	for (const p of packets || []) {
-		const prev = aggMap.get(p.course_id) || { packet_count: 0, sheet_count: 0 }
-		prev.packet_count += 1
-		prev.sheet_count += p.total_sheets || 0
-		aggMap.set(p.course_id, prev)
-	}
-
+	// 5. Build rows
 	const result = (courses || []).map(c => {
-		const agg = aggMap.get(c.id) || { packet_count: 0, sheet_count: 0 }
-		const d = dateMap.get(c.id)
+		const agg = packetAgg.get(c.id) || { packet_count: 0, sheet_count: 0 }
+		const dr = dateMap.get(c.id)
+		const regStats = regCounts.get(c.course_code) || { regular: 0, arrear: 0, total: 0 }
 		return {
 			course_id: c.id,
 			course_code: c.course_code,
 			course_name: c.course_name || c.course_title,
 			board_code: c.board_code,
-			valuation_date: d?.valuation_date || null,
+			valuation_date: dr?.valuation_date || null,
 			packet_count: agg.packet_count,
 			sheet_count: agg.sheet_count,
+			regular_count: regStats.regular,
+			arrear_count: regStats.arrear,
+			student_count: regStats.total,
+			packets_generated: agg.packet_count > 0,
 		}
 	})
+
+	// Sort by course_code
+	result.sort((a, b) => a.course_code.localeCompare(b.course_code))
 
 	return NextResponse.json(result)
 }

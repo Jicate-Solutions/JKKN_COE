@@ -40,7 +40,7 @@ export async function GET(request: Request) {
 		.single()
 
 	const { data: board } = boardCode
-		? await supabase.from('boards').select('board_name').eq('board_code', boardCode).maybeSingle()
+		? await supabase.from('board').select('board_name').eq('board_code', boardCode).maybeSingle()
 		: { data: null }
 
 	const settings = await getPdfSettingsWithFallback(inst?.institution_code || '', 'default')

@@ -82,6 +82,7 @@ export async function POST(request: Request) {
 			use_course_max,
 			total_rounds,
 			cia_rounds,
+			conversion_rule_id,
 			created_by,
 		} = body
 
@@ -102,7 +103,7 @@ export async function POST(request: Request) {
 			return NextResponse.json({ error: 'At least one CIA round must be configured' }, { status: 400 })
 		}
 
-		// Validate each round has components
+		// Validate each round has components + v2 session dates
 		for (const round of cia_rounds) {
 			if (!round.round || !round.round_name) {
 				return NextResponse.json({ error: 'Each CIA round must have a round number and name' }, { status: 400 })
@@ -117,6 +118,13 @@ export async function POST(request: Request) {
 				if (!use_course_max && (comp.max_marks == null || comp.max_marks <= 0)) {
 					return NextResponse.json({ error: `${round.round_name} → ${comp.name}: max marks must be > 0` }, { status: 400 })
 				}
+			}
+			// v2: validate session dates
+			if (round.session_from && round.session_to && round.session_from > round.session_to) {
+				return NextResponse.json({ error: `${round.round_name}: session_from must be ≤ session_to` }, { status: 400 })
+			}
+			if (round.entry_from && round.entry_to && round.entry_from > round.entry_to) {
+				return NextResponse.json({ error: `${round.round_name}: entry_from must be ≤ entry_to` }, { status: 400 })
 			}
 		}
 
@@ -134,6 +142,7 @@ export async function POST(request: Request) {
 				use_course_max: use_course_max || false,
 				total_rounds: total_rounds || cia_rounds.length,
 				cia_rounds,
+				conversion_rule_id: conversion_rule_id || null,
 				created_by,
 				is_active: true,
 			})
@@ -185,9 +194,16 @@ export async function PUT(request: Request) {
 				if (!Array.isArray(round.components) || round.components.length === 0) {
 					return NextResponse.json({ error: `${round.round_name} must have at least one component` }, { status: 400 })
 				}
+				if (round.session_from && round.session_to && round.session_from > round.session_to) {
+					return NextResponse.json({ error: `${round.round_name}: session_from must be ≤ session_to` }, { status: 400 })
+				}
 			}
 			// Sync total_rounds
 			updateData.total_rounds = updateData.cia_rounds.length
+		}
+		// Allow updating conversion_rule_id (null clears it)
+		if ('conversion_rule_id' in updateData) {
+			updateData.conversion_rule_id = updateData.conversion_rule_id || null
 		}
 
 		if (updateData.setting_name) {
