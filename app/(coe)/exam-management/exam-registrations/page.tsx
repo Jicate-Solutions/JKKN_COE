@@ -18,6 +18,7 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Badge } from "@/components/ui/badge"
 import { Label } from "@/components/ui/label"
@@ -35,6 +36,9 @@ import { useSessionSync } from "@/hooks/use-session-sync"
 export default function ExamRegistrationsPage() {
 	const { toast } = useToast()
 	const { selectedSessionId: syncedSessionId, mustSelectSession } = useSessionSync()
+
+	// Tab state
+	const [activeTab, setActiveTab] = useState("registrations")
 
 	// Filter states - defined first so they can be passed to hook
 	const [programFilter, setProgramFilter] = useState("all")
@@ -1497,7 +1501,16 @@ export default function ExamRegistrationsPage() {
 									</BreadcrumbItem>
 								</BreadcrumbList>
 							</Breadcrumb>
-						</div>
+
+t				</div>
+							{/* Tabs */}
+							<Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
+								<TabsList className="grid w-full grid-cols-2 lg:w-auto">
+									<TabsTrigger value="registrations">Registrations</TabsTrigger>
+									<TabsTrigger value="approvals">Approvals</TabsTrigger>
+								</TabsList>
+
+								<TabsContent value="registrations" className="space-y-4">
 
 						{/* Stats Cards */}
 						<div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3 flex-shrink-0">
@@ -1876,6 +1889,26 @@ export default function ExamRegistrationsPage() {
 							</CardContent>
 						</Card>
 						</TooltipProvider>
+								</TabsContent>
+
+								<TabsContent value="approvals">
+									<div className="flex justify-end mb-4">
+										<Link href="/exam-management/exam-registrations/approvals" target="_blank">
+											<Button>
+												Open Approvals Page <span className="ml-2">→</span>
+											</Button>
+										</Link>
+									</div>
+									<Card>
+										<CardContent className="pt-12 pb-12 text-center">
+											<p className="text-muted-foreground mb-4">Manage exam registration approvals on a dedicated page</p>
+											<Link href="/exam-management/exam-registrations/approvals">
+												<Button variant="outline" size="lg">Go to Approvals Page</Button>
+											</Link>
+										</CardContent>
+									</Card>
+								</TabsContent>
+							</Tabs>
 					</div>
 				</PageTransition>
 				<AppFooter />

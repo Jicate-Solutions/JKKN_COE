@@ -126,6 +126,16 @@ export async function POST(request: Request) {
 			if (round.entry_from && round.entry_to && round.entry_from > round.entry_to) {
 				return NextResponse.json({ error: `${round.round_name}: entry_from must be ≤ entry_to` }, { status: 400 })
 			}
+			// v2: validate attendance periods
+			if (round.total_periods != null && round.total_periods < 0) {
+				return NextResponse.json({ error: `${round.round_name}: total_periods must be ≥ 0` }, { status: 400 })
+			}
+			if (round.attended_periods != null && round.attended_periods < 0) {
+				return NextResponse.json({ error: `${round.round_name}: attended_periods must be ≥ 0` }, { status: 400 })
+			}
+			if (round.total_periods != null && round.attended_periods != null && round.attended_periods > round.total_periods) {
+				return NextResponse.json({ error: `${round.round_name}: attended_periods cannot exceed total_periods` }, { status: 400 })
+			}
 		}
 
 		const { data, error } = await supabase
@@ -196,6 +206,15 @@ export async function PUT(request: Request) {
 				}
 				if (round.session_from && round.session_to && round.session_from > round.session_to) {
 					return NextResponse.json({ error: `${round.round_name}: session_from must be ≤ session_to` }, { status: 400 })
+				}
+				if (round.total_periods != null && round.total_periods < 0) {
+					return NextResponse.json({ error: `${round.round_name}: total_periods must be ≥ 0` }, { status: 400 })
+				}
+				if (round.attended_periods != null && round.attended_periods < 0) {
+					return NextResponse.json({ error: `${round.round_name}: attended_periods must be ≥ 0` }, { status: 400 })
+				}
+				if (round.total_periods != null && round.attended_periods != null && round.attended_periods > round.total_periods) {
+					return NextResponse.json({ error: `${round.round_name}: attended_periods cannot exceed total_periods` }, { status: 400 })
 				}
 			}
 			// Sync total_rounds

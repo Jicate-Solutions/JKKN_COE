@@ -53,7 +53,8 @@
       "mcp__chrome-devtools__*",
       "Bash(taskkill /PID 11492 /F)",
       "Bash(awk '{print $2}')",
-      "Bash(xargs kill *)"
+      "Bash(xargs kill *)",
+      "Bash(netstat -ano)"
     ],
     "deny": [
       "mcp__filesystem__*"

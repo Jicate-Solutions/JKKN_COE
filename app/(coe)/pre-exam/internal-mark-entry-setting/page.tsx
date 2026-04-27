@@ -88,6 +88,8 @@ interface CIARound {
 	session_from?: string
 	session_to?: string
 	conversion_rule_id?: string
+	total_periods?: number     // total class periods in session window (manual now, MyJKKN later)
+	attended_periods?: number  // default/template attended periods (manual now, MyJKKN later)
 	components: RoundComponent[]
 }
 
@@ -967,6 +969,39 @@ export default function CIAEntrySettingPage() {
 																className="h-7 text-xs"
 															/>
 														</div>
+														<div className="space-y-1">
+															<label className="text-xs font-medium text-muted-foreground">Total Periods</label>
+															<Input
+																type="number"
+																min={0}
+																value={round.total_periods ?? ''}
+																onChange={e => updateRound(rIdx, { total_periods: e.target.value === '' ? undefined : Number(e.target.value) })}
+																placeholder="e.g., 60"
+																className="h-7 text-xs"
+															/>
+														</div>
+														<div className="space-y-1">
+															<label className="text-xs font-medium text-muted-foreground">Attended Periods</label>
+															<Input
+																type="number"
+																min={0}
+																max={round.total_periods || undefined}
+																value={round.attended_periods ?? ''}
+																onChange={e => updateRound(rIdx, { attended_periods: e.target.value === '' ? undefined : Number(e.target.value) })}
+																placeholder="e.g., 54"
+																className="h-7 text-xs"
+															/>
+														</div>
+														{round.total_periods != null && round.attended_periods != null && round.total_periods > 0 && (
+															<div className="col-span-2 -mt-1">
+																<p className="text-xs text-muted-foreground">
+																	Attendance %: <span className="font-semibold text-foreground">
+																		{((round.attended_periods / round.total_periods) * 100).toFixed(2)}%
+																	</span>
+																	<span className="ml-2 italic">— Will be auto-fetched from MyJKKN using session dates when API is connected.</span>
+																</p>
+															</div>
+														)}
 														<div className="col-span-2 space-y-1">
 															<label className="text-xs font-medium text-muted-foreground">Conversion Rule (round override)</label>
 															<Select
