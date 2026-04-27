@@ -63,6 +63,7 @@ interface Session {
 	id: string
 	session_name: string
 	session_code: string
+	institutions_id: string
 }
 
 interface Program {
@@ -146,8 +147,8 @@ export default function CIAEntrySettingPage() {
 	const [settings, setSettings] = useState<CIAEntrySetting[]>([])
 
 	// Local institution for super_admin header
-	const [localInstitutionId, setLocalInstitutionId] = useState("")
-	const effectiveInstitutionId = institutionId || localInstitutionId || ""
+	const [localInstitutionId, setLocalInstitutionId] = useState("__all__")
+	const effectiveInstitutionId = institutionId || (localInstitutionId === "__all__" ? "" : localInstitutionId) || ""
 
 	// UI
 	const [sheetOpen, setSheetOpen] = useState(false)
@@ -182,13 +183,20 @@ export default function CIAEntrySettingPage() {
 		programs.filter(p => (p.program_type || '').toUpperCase() === 'PG')
 			.sort((a, b) => (a.program_order ?? 999) - (b.program_order ?? 999)), [programs])
 
+	const pageFilteredSessions = useMemo(() => {
+		if (!effectiveInstitutionId) return sessions
+		return sessions.filter(s => s.institutions_id === effectiveInstitutionId)
+	}, [sessions, effectiveInstitutionId])
+
+	const formFilteredSessions = useMemo(() =>
+		sessions.filter(s => s.institutions_id === formInstitutionId), [sessions, formInstitutionId])
+
 	const totalMaxMarks = useMemo(() =>
 		form.cia_rounds.reduce((sum, r) => sum + r.components.reduce((rs, c) => rs + (c.max_marks || 0), 0), 0), [form.cia_rounds])
 
-	// Filtered + paginated
+	// Filtered + paginated (session filtering now done server-side)
 	const filteredSettings = useMemo(() => {
 		let result = settings
-		if (sessionFilter !== 'all') result = result.filter(s => s.examination_session_id === sessionFilter)
 		if (searchTerm) {
 			const term = searchTerm.toLowerCase()
 			result = result.filter(s =>
@@ -198,7 +206,7 @@ export default function CIAEntrySettingPage() {
 			)
 		}
 		return result
-	}, [settings, sessionFilter, searchTerm])
+	}, [settings, searchTerm])
 
 	const totalPages = Math.max(1, Math.ceil(filteredSettings.length / itemsPerPage))
 	const paginatedSettings = useMemo(() => {
@@ -221,11 +229,11 @@ export default function CIAEntrySettingPage() {
 	}, [isReady])
 
 	useEffect(() => {
-		if (isReady && effectiveInstitutionId && institutions.length > 0) {
-			fetchPrograms(effectiveInstitutionId)
-			fetchSettings()
+		if (isReady && institutions.length > 0) {
+			if (effectiveInstitutionId) fetchPrograms(effectiveInstitutionId)
+			fetchSettings(sessionFilter)
 		}
-	}, [isReady, institutionId, localInstitutionId, institutions.length])
+	}, [isReady, institutionId, localInstitutionId, institutions.length, sessionFilter])
 
 	const fetchInstitutions = async () => {
 		try {
@@ -269,10 +277,13 @@ export default function CIAEntrySettingPage() {
 		} catch (error) { console.error('Failed to fetch programs:', error); setPrograms([]); setRegulations([]) }
 	}
 
-	const fetchSettings = async () => {
+	const fetchSettings = async (sessionId?: string) => {
 		try {
 			setLoading(true)
-			const res = await fetch(`/api/pre-exam/cia-entry-settings?institutions_id=${effectiveInstitutionId}`)
+			const params = new URLSearchParams()
+			if (effectiveInstitutionId) params.set('institutions_id', effectiveInstitutionId)
+			if (sessionId && sessionId !== 'all') params.set('examination_session_id', sessionId)
+			const res = await fetch(`/api/pre-exam/cia-entry-settings?${params.toString()}`)
 			if (res.ok) setSettings(await res.json())
 		} catch (error) { console.error('Failed to fetch settings:', error) }
 		finally { setLoading(false) }
@@ -286,7 +297,7 @@ export default function CIAEntrySettingPage() {
 		setForm(prev => ({
 			...prev,
 			institutions_id: effectiveInstitutionId,
-			examination_session_id: globalSessionId || '',
+			examination_session_id: sessionFilter !== 'all' ? sessionFilter : (globalSessionId || ''),
 			use_course_max: false,
 		}))
 		setSheetOpen(true)
@@ -549,6 +560,7 @@ export default function CIAEntrySettingPage() {
 									<Select value={localInstitutionId} onValueChange={setLocalInstitutionId}>
 										<SelectTrigger className="h-8 text-sm w-[200px]"><SelectValue placeholder="Select Institution" /></SelectTrigger>
 										<SelectContent>
+											<SelectItem value="__all__">All Institutions</SelectItem>
 											{institutions.map(inst => (
 												<SelectItem key={inst.id} value={inst.id}>{inst.institution_code} - {inst.name}</SelectItem>
 											))}
@@ -559,7 +571,7 @@ export default function CIAEntrySettingPage() {
 									<SelectTrigger className="h-8 text-sm w-[180px]"><SelectValue placeholder="All Sessions" /></SelectTrigger>
 									<SelectContent>
 										<SelectItem value="all">All Sessions</SelectItem>
-										{sessions.map(s => (
+										{pageFilteredSessions.map(s => (
 											<SelectItem key={s.id} value={s.id}>{s.session_name}</SelectItem>
 										))}
 									</SelectContent>
@@ -699,33 +711,32 @@ export default function CIAEntrySettingPage() {
 							{/* Section 1: Basic Info */}
 							<div className="space-y-4">
 								<h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Basic Information</h3>
-								{/* Institution + Session: only show dropdowns when global value is NOT set */}
-								{(mustSelectInstitution || !globalSessionId) && (
-									<div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-										{mustSelectInstitution && (
-											<div className="space-y-2">
-												<Label className="text-sm font-semibold">Institution <span className="text-red-500">*</span></Label>
-												<Select value={formInstitutionId} onValueChange={handleFormInstitutionChange} disabled={!!editingId}>
-													<SelectTrigger><SelectValue placeholder="Select Institution" /></SelectTrigger>
-													<SelectContent>
-														{institutions.map(inst => (
-															<SelectItem key={inst.id} value={inst.id}>{inst.institution_code} - {inst.name}</SelectItem>
-														))}
-													</SelectContent>
-												</Select>
-											</div>
-										)}
-										{!globalSessionId && (
-											<div className="space-y-2">
-												<Label className="text-sm font-semibold">Exam Session <span className="text-red-500">*</span></Label>
-												<Select value={form.examination_session_id} onValueChange={val => setForm(prev => ({ ...prev, examination_session_id: val }))}>
-													<SelectTrigger><SelectValue placeholder="Select Session" /></SelectTrigger>
-													<SelectContent>
-														{sessions.map(s => <SelectItem key={s.id} value={s.id}>{s.session_name}</SelectItem>)}
-													</SelectContent>
-												</Select>
-											</div>
-										)}
+								{/* Institution dropdown: only show when super_admin */}
+								{mustSelectInstitution && (
+									<div className="space-y-2">
+										<Label className="text-sm font-semibold">Institution <span className="text-red-500">*</span></Label>
+										<Select value={formInstitutionId} onValueChange={handleFormInstitutionChange} disabled={!!editingId}>
+											<SelectTrigger><SelectValue placeholder="Select Institution" /></SelectTrigger>
+											<SelectContent>
+												<SelectItem value="__all__">All Institutions</SelectItem>
+												<SelectItem value="__all__">All Institutions</SelectItem>
+												{institutions.map(inst => (
+													<SelectItem key={inst.id} value={inst.id}>{inst.institution_code} - {inst.name}</SelectItem>
+												))}
+											</SelectContent>
+										</Select>
+									</div>
+								)}
+								{/* Session dropdown: only show when "All Sessions" is selected on page */}
+								{sessionFilter === 'all' && (
+									<div className="space-y-2">
+										<Label className="text-sm font-semibold">Exam Session <span className="text-red-500">*</span></Label>
+										<Select value={form.examination_session_id} onValueChange={val => setForm(prev => ({ ...prev, examination_session_id: val }))}>
+											<SelectTrigger><SelectValue placeholder="Select Session" /></SelectTrigger>
+											<SelectContent>
+												{formFilteredSessions.map(s => <SelectItem key={s.id} value={s.id}>{s.session_name}</SelectItem>)}
+											</SelectContent>
+										</Select>
 									</div>
 								)}
 								<div className="grid grid-cols-1 md:grid-cols-2 gap-4">

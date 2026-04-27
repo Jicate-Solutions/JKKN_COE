@@ -133,11 +133,12 @@ export default function BulkCreateExamRegistrationPage() {
 	const [programCode, setProgramCode] = useState('')
 	const [regulationCode, setRegulationCode] = useState('')
 	const [semesterCode, setSemesterCode] = useState('')
+	const [semesterId, setSemesterId] = useState('')
 
 	// Dropdown data
 	const [programs, setPrograms] = useState<ProgramOption[]>([])
 	const [regulations, setRegulations] = useState<string[]>([])
-	const [semesters, setSemesters] = useState<{ value: string; label: string }[]>([])
+	const [semesters, setSemesters] = useState<{ value: string; id: string; label: string }[]>([])
 	const [courses, setCourses] = useState<CourseRow[]>([])
 	const [learners, setLearners] = useState<LearnerRow[]>([])
 	const [registeredKeys, setRegisteredKeys] = useState<Set<string>>(new Set()) // `studentId|courseOfferingId`
@@ -257,12 +258,16 @@ export default function BulkCreateExamRegistrationPage() {
 
 		fetch(`/api/course-management/course-offering/lookups?type=semesters&institution_code=${encodeURIComponent(institutionCode)}&program_code=${encodeURIComponent(programCode)}&regulation_code=${encodeURIComponent(regulationCode)}`)
 			.then(r => r.json())
-			.then((data: string[]) => {
+			.then((data: any[]) => {
 				const arr = Array.isArray(data) ? data : []
-				const sorted = arr.sort((a, b) => parseSemesterNumber(a) - parseSemesterNumber(b))
-				setSemesters(sorted.map(code => {
+				setSemesters(arr.map(item => {
+					const code = item.semester_code || item
 					const num = parseSemesterNumber(code)
-					return { value: code, label: num > 0 ? `Semester ${ROMAN[num] || num}` : code }
+					return {
+						value: code,
+						id: item.semester_id || '',
+						label: num > 0 ? `Semester ${ROMAN[num] || num}` : code
+					}
 				}))
 			})
 			.catch(() => setSemesters([]))
@@ -303,9 +308,17 @@ export default function BulkCreateExamRegistrationPage() {
 	// Track why learners got filtered out (for diagnostics in empty state)
 	const [learnerFilterStats, setLearnerFilterStats] = useState({ total: 0, programMismatch: 0, semesterMismatch: 0 })
 
+	// Helper: parse semester value (handles number, string code, raw semester_id)
+	const getSemesterNum = useCallback((val: unknown): number => {
+		if (val == null) return 0
+		const n = Number(val)
+		if (!isNaN(n) && n > 0) return n
+		return parseSemesterNumber(String(val))
+	}, [])
+
 	// ── Load learners (program + semester) from MyJKKN ──
 	const loadLearners = useCallback(async () => {
-		if (!programCode || !semesterCode || myjkknInstitutionIds.length === 0) {
+		if (!programCode || !semesterId || myjkknInstitutionIds.length === 0) {
 			setLearners([])
 			setLearnerFilterStats({ total: 0, programMismatch: 0, semesterMismatch: 0 })
 			return
@@ -313,20 +326,21 @@ export default function BulkCreateExamRegistrationPage() {
 		setLoadingLearners(true)
 		setSelectedLearners(new Set())
 		try {
-			const targetSemester = parseSemesterNumber(semesterCode)
+			const targetSemesterId = semesterId
 			const all: LearnerRow[] = []
 			const seen = new Set<string>()
 			let total = 0
 			let programMismatch = 0
 			let semesterMismatch = 0
+			const sampleSemesterMismatches: Array<{ reg: string; raw: string; parsed: number }> = []
 
 			for (const myjkknInstId of myjkknInstitutionIds) {
-				// Pass program_code + current_semester so the API filters post-enrichment
+				// Pass program_code + semester_id for filtering
 				const params = new URLSearchParams({
 					institution_id: myjkknInstId,
 					fetchAll: 'true',
 					program_code: programCode,
-					current_semester: String(targetSemester),
+					semester_id: targetSemesterId,
 				})
 				const res = await fetch(`/api/myjkkn/learner-profiles?${params}`)
 				if (!res.ok) continue
@@ -336,11 +350,20 @@ export default function BulkCreateExamRegistrationPage() {
 					const id = s.id
 					if (!id || seen.has(id)) continue
 					total++
-					// API already filtered — but count mismatches for diagnostic accuracy
 					const learnerProg = s.program_code || s.program_id
-					const learnerSem = Number(s.current_semester)
 					if (learnerProg && learnerProg !== programCode) { programMismatch++; continue }
-					if (learnerSem && learnerSem !== targetSemester) { semesterMismatch++; continue }
+					// Filter by semester_id direct match
+					if (s.semester_id !== targetSemesterId) {
+						semesterMismatch++
+						if (sampleSemesterMismatches.length < 5) {
+							sampleSemesterMismatches.push({
+								reg: s.register_number || s.roll_number || '?',
+								raw: String(s.semester_id),
+								parsed: targetSemesterId,
+							})
+						}
+						continue
+					}
 					seen.add(id)
 					all.push({
 						id,
@@ -348,6 +371,11 @@ export default function BulkCreateExamRegistrationPage() {
 						student_name: `${s.first_name || ''} ${s.last_name || ''}`.trim() || s.name || '',
 					})
 				}
+			}
+			if (sampleSemesterMismatches.length > 0) {
+				const details = sampleSemesterMismatches.map(s => `${s.reg}: raw="${s.raw}" → parsed=${s.parsed}`).join(', ')
+				console.log(`[bulk-create] ${semesterMismatch} learners skipped (expected ${targetSemester}): ${details}`)
+				console.log('[bulk-create] Full samples:', sampleSemesterMismatches)
 			}
 			all.sort((a, b) => a.stu_register_no.localeCompare(b.stu_register_no))
 			setLearners(all)
@@ -358,7 +386,7 @@ export default function BulkCreateExamRegistrationPage() {
 		} finally {
 			setLoadingLearners(false)
 		}
-	}, [programCode, semesterCode, myjkknInstitutionIds, toast])
+	}, [programCode, semesterId, myjkknInstitutionIds, toast, getSemesterNum])
 
 	useEffect(() => { loadLearners() }, [loadLearners])
 
@@ -759,7 +787,11 @@ export default function BulkCreateExamRegistrationPage() {
 									{/* Semester */}
 									<div className="space-y-1.5">
 										<Label className="text-xs font-medium">Semester <span className="text-red-500">*</span></Label>
-										<Select value={semesterCode} onValueChange={setSemesterCode} disabled={!regulationCode || loadingSemesters}>
+										<Select value={semesterCode} onValueChange={(code) => {
+											setSemesterCode(code)
+											const sem = semesters.find(s => s.value === code)
+											setSemesterId(sem?.id || '')
+										}} disabled={!regulationCode || loadingSemesters}>
 											<SelectTrigger className="h-9 text-sm">
 												{loadingSemesters
 													? <span className="flex items-center gap-2 text-muted-foreground"><Loader2 className="h-3 w-3 animate-spin" />Loading...</span>

@@ -41,14 +41,14 @@ export async function GET(request: Request) {
 		}
 
 		if (type === 'semesters') {
-			// Get distinct semester_codes from course_mapping for institution + program + regulation
+			// Get distinct semesters from course_mapping for institution + program + regulation
 			if (!institutionCode || !programCode || !regulationCode) {
 				return NextResponse.json({ error: 'institution_code, program_code, and regulation_code are required' }, { status: 400 })
 			}
 
 			const { data, error } = await supabase
 				.from('course_mapping')
-				.select('semester_code')
+				.select('semester_id, semester_code')
 				.eq('institution_code', institutionCode)
 				.eq('program_code', programCode)
 				.eq('regulation_code', regulationCode)
@@ -59,11 +59,18 @@ export async function GET(request: Request) {
 				return NextResponse.json({ error: 'Failed to fetch semesters' }, { status: 500 })
 			}
 
-			// Deduplicate and extract semester number for sorting
-			const unique = [...new Set((data || []).map(d => d.semester_code).filter(Boolean))]
+			// Deduplicate by semester_id, preserve both id and code
+			const seen = new Set<string>()
+			const unique: Array<{ semester_id: string; semester_code: string }> = []
+			for (const row of data || []) {
+				if (row.semester_id && !seen.has(row.semester_id)) {
+					seen.add(row.semester_id)
+					unique.push({ semester_id: row.semester_id, semester_code: row.semester_code })
+				}
+			}
 			const sorted = unique.sort((a, b) => {
-				const numA = parseInt(a.match(/(\d+)/)?.[1] || '0')
-				const numB = parseInt(b.match(/(\d+)/)?.[1] || '0')
+				const numA = parseInt(a.semester_code.match(/(\d+)/)?.[1] || '0')
+				const numB = parseInt(b.semester_code.match(/(\d+)/)?.[1] || '0')
 				return numA - numB
 			})
 			return NextResponse.json(sorted)

@@ -27,6 +27,17 @@ interface LookupMaps {
 	localInstitutions: Map<string, { institution_name: string; institution_code: string }>
 }
 
+// Helper: parse semester value from number, string code, or raw format
+function parseSemesterValue(val: unknown): number {
+	if (val == null) return 0
+	const n = Number(val)
+	if (!isNaN(n) && n > 0) return n
+	// Fallback: extract digits from string code (e.g., "ECE-4" → 4, "Sem IV" → 0)
+	const str = String(val)
+	const m = str.match(/(\d+)/)
+	return m ? parseInt(m[1], 10) : 0
+}
+
 // Fetch all lookup data from MyJKKN APIs (with caching)
 async function fetchLookupData(): Promise<LookupMaps> {
 	// Check cache first
@@ -268,6 +279,7 @@ export async function GET(request: NextRequest) {
 	const department_code = searchParams.get('department_code')
 	const batch_id = searchParams.get('batch_id')
 	const current_semester = searchParams.get('current_semester')
+	const semester_id = searchParams.get('semester_id')
 	const admission_year = searchParams.get('admission_year')
 	const fetchAll = searchParams.get('fetchAll') === 'true' || (limit && parseInt(limit, 10) > MYJKKN_MAX_PER_PAGE)
 
@@ -288,7 +300,9 @@ export async function GET(request: NextRequest) {
 			department_id: department_id || undefined,
 			department_code: department_code || undefined,
 			batch_id: batch_id || undefined,
-			current_semester: current_semester ? parseInt(current_semester, 10) : undefined,
+			// Prefer semester_id (UUID) if provided, otherwise use current_semester (number)
+			semester_id: semester_id || undefined,
+			current_semester: !semester_id && current_semester ? parseInt(current_semester, 10) : undefined,
 			admission_year: admission_year ? parseInt(admission_year, 10) : undefined,
 		}
 
@@ -361,11 +375,26 @@ export async function GET(request: NextRequest) {
 				enrichedData = enrichedData.filter((l: any) => l.program_code === program_code)
 				console.log(`[Learner Profiles API] program_code filter "${program_code}": ${before} → ${enrichedData.length}`)
 			}
-			if (current_semester) {
+			// Filter by semester_id (UUID) if provided
+			if (semester_id) {
+				const before = enrichedData.length
+				// Debug: log what semester_id values learners have
+				const sampleIds = [...new Set(enrichedData.slice(0, 10).map((l: any) => l.semester_id))].slice(0, 3)
+				console.log(`[Learner Profiles API] semester_id filter: looking for "${semester_id}", sample learner values: [${sampleIds.join(', ')}]`)
+				enrichedData = enrichedData.filter((l: any) => l.semester_id === semester_id)
+				console.log(`[Learner Profiles API] semester_id filter: ${before} → ${enrichedData.length}`)
+			}
+			// Or filter by current_semester (number) if semester_id not provided
+			else if (current_semester) {
 				const semNum = parseInt(current_semester, 10)
 				if (!isNaN(semNum)) {
 					const before = enrichedData.length
-					enrichedData = enrichedData.filter((l: any) => Number(l.current_semester) === semNum)
+					// Only filter if learner has a valid current_semester; keep learners without semester mapping
+					enrichedData = enrichedData.filter((l: any) => {
+						const learnerSem = l.current_semester
+						if (learnerSem == null) return true // Keep learners without semester (might be unresolved)
+						return parseSemesterValue(learnerSem) === semNum
+					})
 					console.log(`[Learner Profiles API] current_semester filter ${semNum}: ${before} → ${enrichedData.length}`)
 				}
 			}
