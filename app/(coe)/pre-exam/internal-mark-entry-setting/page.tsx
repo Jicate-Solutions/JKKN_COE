@@ -40,6 +40,7 @@ const ALL_COMPONENTS = [
 	{ code: 'mid_term', name: 'Mid Term' },
 	{ code: 'presentation', name: 'Presentation' },
 	{ code: 'attendance', name: 'Attendance' },
+	{ code: 'ai_tools_usage', name: 'AI Tools Usage/Interactive Mode' },
 	{ code: 'lab', name: 'Lab' },
 	{ code: 'project', name: 'Project' },
 	{ code: 'seminar', name: 'Seminar' },
@@ -407,6 +408,56 @@ export default function CIAEntrySettingPage() {
 			rounds[rIdx] = round; return { ...prev, cia_rounds: rounds }
 		})
 	}
+	const updateComponentAttendance = (rIdx: number, field: 'total' | 'attended', v: number) => {
+		setForm(prev => {
+			const rounds = [...prev.cia_rounds]; const round = { ...rounds[rIdx] }
+			round.components = round.components.map(c => c.code === 'attendance' ? { ...c, attendance_total_periods: field === 'total' ? v : c.attendance_total_periods, attendance_attended_periods: field === 'attended' ? v : c.attendance_attended_periods } : c)
+			rounds[rIdx] = round; return { ...prev, cia_rounds: rounds }
+		})
+	}
+
+	// Render component with attendance tracking fields
+	const renderComponentItem = (rIdx: number, comp: any) => {
+		const sel = form.cia_rounds[rIdx].components.find(c => c.code === comp.code)
+		if (comp.code === 'attendance' && sel) {
+			return (
+				<div key={comp.code} className="col-span-2 space-y-2">
+					<div className="flex items-center gap-2">
+						<Checkbox checked={true} onCheckedChange={() => toggleComponent(rIdx, comp.code, comp.name)} id={`r${rIdx}-${comp.code}`} />
+						<label htmlFor={`r${rIdx}-${comp.code}`} className="text-xs flex-1 cursor-pointer">{comp.name}</label>
+					</div>
+					<div className="bg-blue-50 dark:bg-blue-950 p-3 rounded-md space-y-2 border border-blue-200 dark:border-blue-800">
+						<div className="text-xs font-semibold text-blue-900 dark:text-blue-100">Attendance Tracking</div>
+						<div className="grid grid-cols-2 gap-2">
+							<div>
+								<label className="text-xs text-foreground/70">Total Periods</label>
+								<Input type="number" min={0} value={sel.attendance_total_periods || ''} onChange={e => updateComponentAttendance(rIdx, 'total', parseInt(e.target.value) || 0)} placeholder="60" className="h-7 text-xs" />
+							</div>
+							<div>
+								<label className="text-xs text-foreground/70">Attended</label>
+								<Input type="number" min={0} max={sel.attendance_total_periods || 0} value={sel.attendance_attended_periods || ''} onChange={e => updateComponentAttendance(rIdx, 'attended', parseInt(e.target.value) || 0)} placeholder="54" className="h-7 text-xs" />
+							</div>
+						</div>
+						{sel.attendance_total_periods ? (
+							<div className="text-xs text-foreground/70 pt-1">
+								Attendance: <span className="font-semibold">{((sel.attendance_attended_periods || 0) / sel.attendance_total_periods * 100).toFixed(1)}%</span>
+							</div>
+						) : null}
+					</div>
+				</div>
+			)
+		}
+		return (
+			<div key={comp.code} className="flex items-center gap-2">
+				<Checkbox checked={!!sel} onCheckedChange={() => toggleComponent(rIdx, comp.code, comp.name)} id={`r${rIdx}-${comp.code}`} />
+				<label htmlFor={`r${rIdx}-${comp.code}`} className={cn("text-xs flex-1 cursor-pointer", !sel && "text-muted-foreground")}>{comp.name}</label>
+				{sel && !form.use_course_max && (
+					<Input type="number" min={1} value={sel.max_marks || ''} onChange={e => updateComponentMaxMarks(rIdx, comp.code, parseInt(e.target.value) || 0)} placeholder="Max" className="h-7 w-16 text-xs text-center" />
+				)}
+			</div>
+		)
+	}
+
 	const toggleProgram = (code: string) => {
 		setForm(prev => ({
 			...prev, program_codes: prev.program_codes.includes(code)
@@ -1022,18 +1073,7 @@ export default function CIAEntrySettingPage() {
 											</div>
 											{/* Components */}
 											<div className="grid grid-cols-2 gap-2">
-												{ALL_COMPONENTS.map(comp => {
-													const sel = round.components.find(c => c.code === comp.code)
-													return (
-														<div key={comp.code} className="flex items-center gap-2">
-															<Checkbox checked={!!sel} onCheckedChange={() => toggleComponent(rIdx, comp.code, comp.name)} id={`r${rIdx}-${comp.code}`} />
-															<label htmlFor={`r${rIdx}-${comp.code}`} className={cn("text-xs flex-1 cursor-pointer", !sel && "text-muted-foreground")}>{comp.name}</label>
-															{sel && !form.use_course_max && (
-																<Input type="number" min={1} value={sel.max_marks || ''} onChange={e => updateComponentMaxMarks(rIdx, comp.code, parseInt(e.target.value) || 0)} placeholder="Max" className="h-7 w-16 text-xs text-center" />
-															)}
-														</div>
-													)
-												})}
+												{ALL_COMPONENTS.map(comp => renderComponentItem(rIdx, comp))}
 											</div>
 										</CardContent>
 									</Card>
