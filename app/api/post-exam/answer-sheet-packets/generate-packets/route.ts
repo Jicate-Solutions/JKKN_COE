@@ -41,16 +41,18 @@ export async function POST(request: NextRequest) {
 			}, { status: 400 })
 		}
 
-		// Fetch examination_session_id from session_code
+		// Fetch examination_session_id from session_code (scoped to the institution
+		// to disambiguate when multiple institutions share the same session_code)
 		const { data: sessionData, error: sessionError } = await supabase
 			.from('examination_sessions')
 			.select('id')
 			.eq('session_code', String(exam_session))
+			.eq('institutions_id', institutionData.id)
 			.single()
 
 		if (sessionError || !sessionData) {
 			return NextResponse.json({
-				error: `Examination session with code "${exam_session}" not found.`,
+				error: `Examination session with code "${exam_session}" not found for institution "${institution_code}".`,
 			}, { status: 400 })
 		}
 
@@ -241,78 +243,95 @@ export async function POST(request: NextRequest) {
 				const totalStudents = studentsWithAttendance.length
 				const totalPackets = Math.ceil(totalStudents / packSize)
 
-				// Create packets and assign students
-				let studentIndex = 0
+				// Build all packet rows + their student slices up front
+				const packetRows: Array<{
+					institutions_id: string
+					examination_session_id: string
+					course_id: string
+					packet_no: string
+					total_sheets: number
+					packet_status: string
+					sheets_evaluated: number
+					evaluation_progress: number
+					is_active: boolean
+				}> = []
+				const studentSlices: Array<{ packet_no: string; students: StudentWithAttendance[] }> = []
 
+				let studentIndex = 0
 				for (let packetIndex = 1; packetIndex <= totalPackets; packetIndex++) {
 					const sheetsInPacket = Math.min(packSize, totalStudents - studentIndex)
 					const packetNo = `${packetIndex}/${totalPackets}`
 
-					// Insert packet
-					const { data: packetData, error: packetError } = await supabase
-						.from('answer_sheet_packets')
-						.insert({
-							institutions_id: institutionData.id,
-							examination_session_id: sessionData.id,
-							course_id: course.id,
-							packet_no: packetNo,
-							total_sheets: sheetsInPacket,
-							packet_status: 'Created',
-							sheets_evaluated: 0,
-							evaluation_progress: 0,
-							is_active: true,
-						})
-						.select('id')
-						.single()
-
-					if (packetError) {
-						console.error(`Error creating packet ${packetNo} for ${course.course_code}:`, packetError)
-
-						// If duplicate, skip this packet
-						if (packetError.code === '23505') {
-							console.warn(`Packet ${packetNo} already exists for ${course.course_code}, skipping...`)
-							studentIndex += sheetsInPacket
-							continue
-						}
-
-						throw packetError
-					}
-
-					totalPacketsCreated++
-
-					// Update student_dummy_numbers with packet_id (foreign key reference)
-					const studentsToUpdate = studentsWithAttendance.slice(studentIndex, studentIndex + sheetsInPacket)
-					const studentIds = studentsToUpdate.map((s) => s.id)
-
-					console.log(`[PACKET ${packetNo}] Updating ${studentIds.length} student records`)
-					console.log(`[PACKET ${packetNo}] Student IDs:`, studentIds)
-					console.log(`[PACKET ${packetNo}] Packet ID:`, packetData.id)
-
-					const { data: updateData, error: updateError } = await supabase
-						.from('student_dummy_numbers')
-						.update({ packet_id: packetData.id, packet_no: packetNo })
-						.in('id', studentIds)
-						.select()
-
-					// Track update results for debugging
-					debugInfo.update_results?.push({
+					packetRows.push({
+						institutions_id: institutionData.id,
+						examination_session_id: sessionData.id,
+						course_id: course.id,
 						packet_no: packetNo,
-						student_ids_count: studentIds.length,
-						rows_updated: updateData?.length || 0,
-						error: updateError ? `${updateError.code}: ${updateError.message}` : undefined
+						total_sheets: sheetsInPacket,
+						packet_status: 'Created',
+						sheets_evaluated: 0,
+						evaluation_progress: 0,
+						is_active: true,
+					})
+					studentSlices.push({
+						packet_no: packetNo,
+						students: studentsWithAttendance.slice(studentIndex, studentIndex + sheetsInPacket),
 					})
 
-					if (updateError) {
-						console.error(`[PACKET ${packetNo}] Error updating students:`, updateError)
-						console.error(`[PACKET ${packetNo}] Error code:`, updateError.code)
-						console.error(`[PACKET ${packetNo}] Error message:`, updateError.message)
-						console.error(`[PACKET ${packetNo}] Error details:`, updateError.details)
-					} else {
-						console.log(`[PACKET ${packetNo}] Successfully updated ${updateData?.length || 0} students with packet_id ${packetData.id}`)
-						totalStudentsAssigned += studentsToUpdate.length
-					}
-
 					studentIndex += sheetsInPacket
+				}
+
+				// Bulk-insert all packets for this course in a single round-trip
+				const { data: insertedPackets, error: bulkInsertError } = await supabase
+					.from('answer_sheet_packets')
+					.insert(packetRows)
+					.select('id, packet_no')
+
+				if (bulkInsertError) {
+					console.error(`Bulk insert failed for ${course.course_code}:`, bulkInsertError)
+					throw bulkInsertError
+				}
+
+				totalPacketsCreated += insertedPackets?.length || 0
+
+				// Map packet_no → packet_id for lookup
+				const packetIdByNo = new Map<string, string>()
+				for (const p of insertedPackets || []) {
+					packetIdByNo.set(p.packet_no, p.id)
+				}
+
+				// Run all student-dummy-number updates in parallel
+				const updateResults = await Promise.all(
+					studentSlices.map(async ({ packet_no, students }) => {
+						const packetId = packetIdByNo.get(packet_no)
+						if (!packetId) {
+							return { packet_no, students_count: students.length, rows_updated: 0, error: 'Packet ID not found after insert' }
+						}
+						const studentIds = students.map((s) => s.id)
+						const { data, error } = await supabase
+							.from('student_dummy_numbers')
+							.update({ packet_id: packetId, packet_no })
+							.in('id', studentIds)
+							.select('id')
+						return {
+							packet_no,
+							students_count: students.length,
+							rows_updated: data?.length || 0,
+							error: error ? `${error.code}: ${error.message}` : undefined,
+						}
+					})
+				)
+
+				for (const ur of updateResults) {
+					debugInfo.update_results?.push({
+						packet_no: ur.packet_no,
+						student_ids_count: ur.students_count,
+						rows_updated: ur.rows_updated,
+						error: ur.error,
+					})
+					if (!ur.error) {
+						totalStudentsAssigned += ur.students_count
+					}
 				}
 
 				courseResults.push({

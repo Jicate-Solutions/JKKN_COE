@@ -121,13 +121,23 @@ export default function AnswerSheetPacketsPage() {
 	}, [institutions, institutionSearch])
 
 	const filteredSessions = useMemo(() => {
-		if (!sessionSearch) return sessions
+		let list = sessions
+
+		// In super_admin "All Institutions" mode, filter sessions by the locally selected institution
+		if (mustSelectInstitution && genInstitution) {
+			const selectedInst = institutions.find(i => i.institution_code === genInstitution)
+			if (selectedInst) {
+				list = list.filter(s => (s as any).institutions_id === selectedInst.id)
+			}
+		}
+
+		if (!sessionSearch) return list
 		const search = sessionSearch.toLowerCase()
-		return sessions.filter(sess =>
+		return list.filter(sess =>
 			sess.session_code.toLowerCase().includes(search) ||
 			sess.session_name?.toLowerCase().includes(search)
 		)
-	}, [sessions, sessionSearch])
+	}, [sessions, sessionSearch, mustSelectInstitution, genInstitution, institutions])
 
 	const filteredBoards = useMemo(() => {
 		const sorted = [...boards].sort((a, b) => (a.board_order ?? 999) - (b.board_order ?? 999))
@@ -375,22 +385,40 @@ export default function AnswerSheetPacketsPage() {
 				return
 			}
 
-			// Generate packets for each selected course sequentially
-			const results = []
-			for (const courseCode of genCourses) {
-				const response = await fetch('/api/post-exam/answer-sheet-packets/generate-packets', {
-					method: 'POST',
-					headers: { 'Content-Type': 'application/json' },
-					body: JSON.stringify({
-						institution_code: effectiveInstitutionCode,
-						exam_session: genSession,
-						course_code: courseCode,
-					}),
-				})
+			// Generate packets for all selected courses in parallel
+			const results: any[] = []
+			const failures: Array<{ course_code: string; error: string }> = []
 
-				if (response.ok) {
-					const result = await response.json()
-					results.push(result)
+			const responses = await Promise.all(
+				genCourses.map(async (courseCode) => {
+					const response = await fetch('/api/post-exam/answer-sheet-packets/generate-packets', {
+						method: 'POST',
+						headers: { 'Content-Type': 'application/json' },
+						body: JSON.stringify({
+							institution_code: effectiveInstitutionCode,
+							exam_session: genSession,
+							course_code: courseCode,
+						}),
+					})
+
+					if (response.ok) {
+						return { ok: true, courseCode, data: await response.json() }
+					}
+
+					let errMsg = `Request failed with status ${response.status}`
+					try {
+						const errData = await response.json()
+						if (errData?.error) errMsg = errData.error
+					} catch { /* ignore */ }
+					return { ok: false, courseCode, error: errMsg }
+				})
+			)
+
+			for (const r of responses) {
+				if (r.ok) {
+					results.push(r.data)
+				} else {
+					failures.push({ course_code: r.courseCode, error: r.error! })
 				}
 			}
 
@@ -403,19 +431,34 @@ export default function AnswerSheetPacketsPage() {
 				course_results: results.flatMap(r => r.course_results || [])
 			}
 
+			const allFailed = results.length === 0 && failures.length > 0
+			const someFailed = failures.length > 0
+
 			// Set generation result for UI display
 			setGenerationResult({
-				success: true,
-				message: `Successfully generated ${result.total_packets_created} packet(s) for ${result.courses_processed} course(s)`,
+				success: !allFailed,
+				message: allFailed
+					? `Failed to generate packets — ${failures[0].error}`
+					: someFailed
+						? `Generated ${result.total_packets_created} packet(s) for ${result.courses_processed} course(s) — ${failures.length} failed`
+						: `Successfully generated ${result.total_packets_created} packet(s) for ${result.courses_processed} course(s)`,
 				total_packets: result.total_packets_created,
 				total_students: result.total_students_assigned,
 				courses_processed: result.courses_processed,
-				details: result.course_results.map((cr: any) => ({
-					course_code: cr.course_code,
-					packets: cr.packets_created || 0,
-					students: cr.students_assigned || 0,
-					error: cr.error
-				}))
+				details: [
+					...result.course_results.map((cr: any) => ({
+						course_code: cr.course_code,
+						packets: cr.packets_created || 0,
+						students: cr.students_assigned || 0,
+						error: cr.error
+					})),
+					...failures.map(f => ({
+						course_code: f.course_code,
+						packets: 0,
+						students: 0,
+						error: f.error
+					}))
+				]
 			})
 
 			// Refresh packets list

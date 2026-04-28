@@ -394,7 +394,7 @@ export default function CreateCourseOfferingPage() {
 			)
 			if (!res.ok) throw new Error('Failed')
 			const data = await res.json()
-			setSemesters(Array.isArray(data) ? data : [])
+			setSemesters(Array.isArray(data) ? data.map((item: any) => item.semester_code).filter(Boolean) : [])
 		} catch (e) {
 			console.error('Failed to load semesters:', e)
 			setSemesters([])

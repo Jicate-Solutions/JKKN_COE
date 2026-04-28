@@ -57,3 +57,6 @@ automation/storage/
 automation/.env.automation
 automation/.venv/
 *.png
+
+#MCP
+/mcp-servers

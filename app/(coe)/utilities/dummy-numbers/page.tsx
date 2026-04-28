@@ -41,7 +41,7 @@ import { Badge } from '@/components/ui/badge'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { useToast } from "@/hooks/common/use-toast"
-import { Shuffle, Hash, Trash2, Download, Eye, EyeOff, FileText, ChevronsUpDown, X } from 'lucide-react'
+import { Shuffle, Hash, Trash2, Download, Eye, EyeOff, FileText, ChevronsUpDown, X, AlertCircle, UserPlus } from 'lucide-react'
 import { useAuth } from '@/context/auth-context'
 import { useInstitutionFilter } from '@/hooks/use-institution-filter'
 import jsPDF from 'jspdf'
@@ -153,6 +153,13 @@ export default function DummyNumbersPage() {
 	const [showDeleteDialog, setShowDeleteDialog] = useState(false)
 	const [hideActualNumbers, setHideActualNumbers] = useState(true)
 
+	// Missing learners state
+	const [missingCount, setMissingCount] = useState<number | null>(null)
+	const [missingInfo, setMissingInfo] = useState<{ next_roll_number: number; existing_format: string; next_dummy_number_preview: string } | null>(null)
+	const [missingPreview, setMissingPreview] = useState<{ count: number; students: any[]; next_roll_number: number; existing_format: string } | null>(null)
+	const [previewingMissing, setPreviewingMissing] = useState(false)
+	const [fillingMissing, setFillingMissing] = useState(false)
+
 	// Fetch institutions for display purposes (e.g., PDF export)
 	useEffect(() => {
 		if (isReady) {
@@ -214,6 +221,17 @@ export default function DummyNumbersPage() {
 			setRegistrationCount(null)
 		}
 	}, [selectedCourses, institutionId, selectedSession])
+
+	// Fetch missing learners count whenever dummy numbers list or filters change
+	useEffect(() => {
+		if (isReady && institutionId && selectedSession && dummyNumbers.length > 0) {
+			fetchMissingCount()
+		} else {
+			setMissingCount(null)
+			setMissingInfo(null)
+			setMissingPreview(null)
+		}
+	}, [isReady, institutionId, selectedSession, dummyNumbers, selectedBoard, selectedProgram, selectedCourses, selectedCourseCategories])
 
 	const fetchInstitutions = async () => {
 		try {
@@ -277,6 +295,155 @@ export default function DummyNumbersPage() {
 		} catch (error) {
 			console.error('Error fetching registration count:', error)
 		}
+	}
+
+	const fetchMissingCount = async () => {
+		if (!institutionId || !selectedSession) return
+		try {
+			const params = new URLSearchParams({
+				institutions_id: institutionId,
+				examination_session_id: selectedSession,
+			})
+			if (selectedBoard) params.set('board_code', selectedBoard)
+			if (selectedProgram) params.set('program_code', selectedProgram)
+			if (selectedCourses.length > 0) params.set('course_code', selectedCourses.join(','))
+			if (selectedCourseCategories.length > 0) params.set('course_category', selectedCourseCategories.join(','))
+
+			const res = await fetch(`/api/utilities/dummy-numbers/missing?${params}`)
+			if (res.ok) {
+				const data = await res.json()
+				setMissingCount(data.count ?? 0)
+				setMissingInfo({
+					next_roll_number: data.next_roll_number,
+					existing_format: data.existing_format,
+					next_dummy_number_preview: data.next_dummy_number_preview,
+				})
+			}
+		} catch (error) {
+			console.error('Error fetching missing learners count:', error)
+		}
+	}
+
+	const handlePreviewMissing = async () => {
+		if (!institutionId || !selectedSession) return
+		try {
+			setPreviewingMissing(true)
+			setMissingPreview(null)
+
+			const payload: any = {
+				institutions_id: institutionId,
+				examination_session_id: selectedSession,
+				preview_only: true,
+			}
+			if (selectedBoard) payload.board_code = selectedBoard
+			if (selectedProgram) payload.program_code = selectedProgram
+			if (selectedCourses.length > 0) payload.course_codes = selectedCourses
+			if (selectedCourseCategories.length > 0) payload.course_categories = selectedCourseCategories
+
+			const res = await fetch('/api/utilities/dummy-numbers/missing', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify(payload),
+			})
+			const result = await res.json()
+
+			if (!res.ok) {
+				throw new Error(result.error || 'Preview failed')
+			}
+
+			setMissingPreview({
+				count: result.count,
+				students: result.preview || [],
+				next_roll_number: result.next_roll_number,
+				existing_format: result.existing_format,
+			})
+			toast({
+				title: '✅ Missing Learners Preview Ready',
+				description: `Found ${result.count} missing learners. Roll numbers will continue from ${result.next_roll_number}.`,
+				className: 'bg-amber-50 border-amber-200 text-amber-800',
+			})
+		} catch (error) {
+			const msg = error instanceof Error ? error.message : 'Preview failed'
+			toast({ title: '❌ Preview Failed', description: msg, variant: 'destructive' })
+		} finally {
+			setPreviewingMissing(false)
+		}
+	}
+
+	const handleFillMissing = async () => {
+		if (!institutionId || !selectedSession) return
+		try {
+			setFillingMissing(true)
+
+			const payload: any = {
+				institutions_id: institutionId,
+				examination_session_id: selectedSession,
+				generated_by: user?.id || null,
+			}
+			if (selectedBoard) payload.board_code = selectedBoard
+			if (selectedProgram) payload.program_code = selectedProgram
+			if (selectedCourses.length > 0) payload.course_codes = selectedCourses
+			if (selectedCourseCategories.length > 0) payload.course_categories = selectedCourseCategories
+
+			const res = await fetch('/api/utilities/dummy-numbers/missing', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify(payload),
+			})
+			const result = await res.json()
+
+			if (!res.ok) {
+				throw new Error(result.error || 'Failed to fill missing dummy numbers')
+			}
+
+			toast({
+				title: '✅ Missing Learners Filled',
+				description: result.message,
+				className: 'bg-green-50 border-green-200 text-green-800',
+			})
+
+			setMissingPreview(null)
+			fetchDummyNumbers()
+		} catch (error) {
+			const msg = error instanceof Error ? error.message : 'Failed to fill missing dummy numbers'
+			toast({ title: '❌ Fill Failed', description: msg, variant: 'destructive' })
+		} finally {
+			setFillingMissing(false)
+		}
+	}
+
+	const exportMissingPreviewToExcel = async () => {
+		if (!missingPreview || missingPreview.students.length === 0) return
+
+		const wsData = [
+			['Roll No.', 'Dummy Number', 'Register No.', 'Student Name', 'Board', 'Program', 'Course', 'Type'],
+			...missingPreview.students.map((s: any) => [
+				s.roll,
+				s.dummy_number,
+				s.register_no,
+				s.student_name,
+				s.board,
+				s.program,
+				s.course,
+				s.type,
+			])
+		]
+
+		const wb = new ExcelJS.Workbook()
+		const ws = wb.addWorksheet('Missing Learners Preview')
+		ws.addRows(wsData)
+		ws.columns = [
+			{ width: 8 }, { width: 15 }, { width: 20 }, { width: 30 },
+			{ width: 8 }, { width: 10 }, { width: 12 }, { width: 10 },
+		]
+		const buffer = await wb.xlsx.writeBuffer()
+		const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })
+		const url = URL.createObjectURL(blob)
+		const a = document.createElement('a')
+		a.href = url
+		a.download = `missing-learners-preview-${new Date().toISOString().split('T')[0]}.xlsx`
+		a.click()
+		URL.revokeObjectURL(url)
 	}
 
 	const fetchDummyNumbers = async () => {
@@ -946,6 +1113,26 @@ export default function DummyNumbersPage() {
 									<span className="text-lg font-bold text-blue-900 dark:text-blue-100">{registrationCount}</span>
 								</div>
 							)}
+
+							{/* Missing learners alert when there are dummy numbers but new learners need filling */}
+							{dummyNumbers.length > 0 && missingCount !== null && missingCount > 0 && missingInfo && (
+								<div className="mt-3 flex items-start gap-3 rounded-md bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 px-4 py-3">
+									<AlertCircle className="h-5 w-5 text-amber-600 dark:text-amber-400 flex-shrink-0 mt-0.5" />
+									<div className="flex-1">
+										<div className="flex items-center gap-2 flex-wrap">
+											<span className="text-sm font-semibold text-amber-900 dark:text-amber-100">
+												{missingCount} learner{missingCount > 1 ? 's' : ''} missing dummy number{missingCount > 1 ? 's' : ''}
+											</span>
+											<Badge variant="outline" className="border-amber-300 text-amber-700 dark:border-amber-700 dark:text-amber-300 bg-amber-100/50">
+												Next: {missingInfo.next_dummy_number_preview} (Roll {missingInfo.next_roll_number})
+											</Badge>
+										</div>
+										<p className="text-xs text-amber-700 dark:text-amber-300 mt-1">
+											New candidates registered after the initial generation. Use "Preview Missing" below to review and fill dummy numbers for them while preserving existing assignments.
+										</p>
+									</div>
+								</div>
+							)}
 						</div>
 					)}
 
@@ -1042,6 +1229,18 @@ export default function DummyNumbersPage() {
 							</Button>
 						)}
 
+						{dummyNumbers.length > 0 && missingCount !== null && missingCount > 0 && (
+							<Button
+								variant="outline"
+								onClick={handlePreviewMissing}
+								disabled={previewingMissing || fillingMissing}
+								className="border-amber-300 text-amber-700 hover:bg-amber-50 dark:border-amber-700 dark:text-amber-300 dark:hover:bg-amber-900/20"
+							>
+								<UserPlus className="h-4 w-4 mr-2" />
+								{previewingMissing ? 'Loading...' : `Preview ${missingCount} Missing`}
+							</Button>
+						)}
+
 						{dummyNumbers.length > 0 && (
 							<>
 								<Button variant="outline" onClick={exportToExcel}>
@@ -1119,6 +1318,85 @@ export default function DummyNumbersPage() {
 										<TableRow key={i}>
 											<TableCell className="font-medium">{s.roll}</TableCell>
 											<TableCell className="font-mono font-semibold">{s.dummy_number}</TableCell>
+											<TableCell className="font-mono">{s.register_no}</TableCell>
+											<TableCell>{s.student_name}</TableCell>
+											<TableCell>{s.board}</TableCell>
+											<TableCell>{s.program}</TableCell>
+											<TableCell>{s.course}</TableCell>
+											<TableCell>
+												<Badge variant={s.type === 'Regular' ? 'default' : 'secondary'}>
+													{s.type}
+												</Badge>
+											</TableCell>
+										</TableRow>
+									))}
+								</TableBody>
+							</Table>
+						</div>
+					</CardContent>
+				</Card>
+			)}
+
+			{/* Missing Learners Preview Card */}
+			{missingPreview && missingPreview.students.length > 0 && (
+				<Card className="border-amber-200 bg-amber-50/30 dark:border-amber-800 dark:bg-amber-900/10">
+					<CardHeader>
+						<div className="flex items-center justify-between flex-wrap gap-2">
+							<div>
+								<CardTitle className="text-amber-900 dark:text-amber-100 flex items-center gap-2">
+									<UserPlus className="h-5 w-5" />
+									Missing Learners Preview ({missingPreview.count})
+								</CardTitle>
+								<CardDescription>
+									{missingPreview.count > 50
+										? `Showing first 50 of ${missingPreview.count} missing learners. Roll numbers continue from ${missingPreview.next_roll_number}. Download Excel to review all.`
+										: `Roll numbers continue from ${missingPreview.next_roll_number}. Format: ${missingPreview.existing_format}. Review and click "Fill Missing" to assign dummy numbers.`}
+								</CardDescription>
+							</div>
+							<div className="flex gap-2">
+								<Button variant="outline" onClick={exportMissingPreviewToExcel} className="border-amber-300 text-amber-700 hover:bg-amber-100">
+									<Download className="h-4 w-4 mr-2" />
+									Download Excel
+								</Button>
+								<Button
+									onClick={handleFillMissing}
+									disabled={fillingMissing}
+									className="bg-amber-600 hover:bg-amber-700 text-white"
+								>
+									<UserPlus className="h-4 w-4 mr-2" />
+									{fillingMissing ? 'Filling...' : `Fill ${missingPreview.count} Missing`}
+								</Button>
+								<Button
+									variant="ghost"
+									size="sm"
+									onClick={() => setMissingPreview(null)}
+									disabled={fillingMissing}
+								>
+									<X className="h-4 w-4" />
+								</Button>
+							</div>
+						</div>
+					</CardHeader>
+					<CardContent>
+						<div className="border rounded-lg overflow-hidden">
+							<Table>
+								<TableHeader>
+									<TableRow>
+										<TableHead className="w-16">Roll</TableHead>
+										<TableHead>Dummy No.</TableHead>
+										<TableHead>Register No.</TableHead>
+										<TableHead>Student Name</TableHead>
+										<TableHead>Board</TableHead>
+										<TableHead>Program</TableHead>
+										<TableHead>Course</TableHead>
+										<TableHead>Type</TableHead>
+									</TableRow>
+								</TableHeader>
+								<TableBody>
+									{missingPreview.students.slice(0, 50).map((s: any, i: number) => (
+										<TableRow key={i}>
+											<TableCell className="font-medium">{s.roll}</TableCell>
+											<TableCell className="font-mono font-semibold text-amber-700 dark:text-amber-300">{s.dummy_number}</TableCell>
 											<TableCell className="font-mono">{s.register_no}</TableCell>
 											<TableCell>{s.student_name}</TableCell>
 											<TableCell>{s.board}</TableCell>
