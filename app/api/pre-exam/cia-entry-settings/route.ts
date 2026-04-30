@@ -118,6 +118,18 @@ export async function POST(request: Request) {
 				if (!use_course_max && (comp.max_marks == null || comp.max_marks <= 0)) {
 					return NextResponse.json({ error: `${round.round_name} → ${comp.name}: max marks must be > 0` }, { status: 400 })
 				}
+				// Validate attendance component periods
+				if (comp.code === 'attendance') {
+					if (comp.attendance_total_periods != null && comp.attendance_total_periods < 0) {
+						return NextResponse.json({ error: `${round.round_name} → Attendance: total periods must be ≥ 0` }, { status: 400 })
+					}
+					if (comp.attendance_attended_periods != null && comp.attendance_attended_periods < 0) {
+						return NextResponse.json({ error: `${round.round_name} → Attendance: attended periods must be ≥ 0` }, { status: 400 })
+					}
+					if (comp.attendance_total_periods != null && comp.attendance_attended_periods != null && comp.attendance_attended_periods > comp.attendance_total_periods) {
+						return NextResponse.json({ error: `${round.round_name} → Attendance: attended periods cannot exceed total periods` }, { status: 400 })
+					}
+				}
 			}
 			// v2: validate session dates
 			if (round.session_from && round.session_to && round.session_from > round.session_to) {
@@ -207,6 +219,9 @@ export async function PUT(request: Request) {
 				if (round.session_from && round.session_to && round.session_from > round.session_to) {
 					return NextResponse.json({ error: `${round.round_name}: session_from must be ≤ session_to` }, { status: 400 })
 				}
+				if (round.entry_from && round.entry_to && round.entry_from > round.entry_to) {
+					return NextResponse.json({ error: `${round.round_name}: entry_from must be ≤ entry_to` }, { status: 400 })
+				}
 				if (round.total_periods != null && round.total_periods < 0) {
 					return NextResponse.json({ error: `${round.round_name}: total_periods must be ≥ 0` }, { status: 400 })
 				}
@@ -215,6 +230,20 @@ export async function PUT(request: Request) {
 				}
 				if (round.total_periods != null && round.attended_periods != null && round.attended_periods > round.total_periods) {
 					return NextResponse.json({ error: `${round.round_name}: attended_periods cannot exceed total_periods` }, { status: 400 })
+				}
+				// Validate per-component attendance periods
+				for (const comp of round.components) {
+					if (comp.code === 'attendance') {
+						if (comp.attendance_total_periods != null && comp.attendance_total_periods < 0) {
+							return NextResponse.json({ error: `${round.round_name} → Attendance: total periods must be ≥ 0` }, { status: 400 })
+						}
+						if (comp.attendance_attended_periods != null && comp.attendance_attended_periods < 0) {
+							return NextResponse.json({ error: `${round.round_name} → Attendance: attended periods must be ≥ 0` }, { status: 400 })
+						}
+						if (comp.attendance_total_periods != null && comp.attendance_attended_periods != null && comp.attendance_attended_periods > comp.attendance_total_periods) {
+							return NextResponse.json({ error: `${round.round_name} → Attendance: attended periods cannot exceed total periods` }, { status: 400 })
+						}
+					}
 				}
 			}
 			// Sync total_rounds

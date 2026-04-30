@@ -1000,26 +1000,26 @@ export default function CIAEntrySettingPage() {
 														className="h-7 text-xs"
 													/>
 												</div>
+												<div className="space-y-1">
+													<label className="text-xs font-medium text-muted-foreground">Attendance Period From</label>
+													<Input
+														type="date"
+														value={round.session_from || ''}
+														onChange={e => updateRound(rIdx, { session_from: e.target.value })}
+														className="h-7 text-xs"
+													/>
+												</div>
+												<div className="space-y-1">
+													<label className="text-xs font-medium text-muted-foreground">Attendance Period To</label>
+													<Input
+														type="date"
+														value={round.session_to || ''}
+														onChange={e => updateRound(rIdx, { session_to: e.target.value })}
+														className="h-7 text-xs"
+													/>
+												</div>
 												{featureFlags.ciaRoundsV2 && (
 													<>
-														<div className="space-y-1">
-															<label className="text-xs font-medium text-muted-foreground">Session From (attendance)</label>
-															<Input
-																type="date"
-																value={round.session_from || ''}
-																onChange={e => updateRound(rIdx, { session_from: e.target.value })}
-																className="h-7 text-xs"
-															/>
-														</div>
-														<div className="space-y-1">
-															<label className="text-xs font-medium text-muted-foreground">Session To (attendance)</label>
-															<Input
-																type="date"
-																value={round.session_to || ''}
-																onChange={e => updateRound(rIdx, { session_to: e.target.value })}
-																className="h-7 text-xs"
-															/>
-														</div>
 														<div className="space-y-1">
 															<label className="text-xs font-medium text-muted-foreground">Total Periods</label>
 															<Input
