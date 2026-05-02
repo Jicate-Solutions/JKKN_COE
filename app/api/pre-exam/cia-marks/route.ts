@@ -1,6 +1,71 @@
 import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
 
+// Standard component codes that have dedicated columns on cia_marks.
+// Anything outside this set must come in via the extra_marks JSONB column.
+const STANDARD_COMPONENT_TO_COLUMN: Record<string, string> = {
+	assignment: 'assignment_marks',
+	quiz: 'quiz_marks',
+	mid_term: 'mid_term_marks',
+	presentation: 'presentation_marks',
+	attendance: 'attendance_marks',
+	lab: 'lab_marks',
+	project: 'project_marks',
+	seminar: 'seminar_marks',
+	viva: 'viva_marks',
+	other: 'other_marks',
+	test_1: 'test_1_mark',
+	test_2: 'test_2_mark',
+	test_3: 'test_3_mark',
+}
+
+const STANDARD_MAX_TO_COLUMN: Record<string, string> = {
+	assignment: 'max_assignment_marks',
+	quiz: 'max_quiz_marks',
+	mid_term: 'max_mid_term_marks',
+	presentation: 'max_presentation_marks',
+	attendance: 'max_attendance_marks',
+	lab: 'max_lab_marks',
+	project: 'max_project_marks',
+	seminar: 'max_seminar_marks',
+	viva: 'max_viva_marks',
+	other: 'max_other_marks',
+	test_1: 'max_test_1_mark',
+	test_2: 'max_test_2_mark',
+	test_3: 'max_test_3_mark',
+}
+
+/**
+ * Splits a payload `component_marks` map into:
+ *   - flat columns for the 13 standard codes
+ *   - a residual extra_marks object for everything else
+ * Caller may also pass `extra_marks` directly — those are merged in.
+ */
+function mapComponentsToColumns(input: {
+	component_marks?: Record<string, number>
+	extra_marks?: Record<string, number>
+	extra_marks_max?: Record<string, number>
+}) {
+	const out: Record<string, unknown> = {}
+	const residualExtra: Record<string, number> = { ...(input.extra_marks || {}) }
+
+	if (input.component_marks) {
+		for (const [code, value] of Object.entries(input.component_marks)) {
+			const col = STANDARD_COMPONENT_TO_COLUMN[code]
+			if (col) {
+				out[col] = value
+			} else {
+				residualExtra[code] = value
+			}
+		}
+	}
+
+	out.extra_marks = residualExtra
+	if (input.extra_marks_max) out.extra_marks_max = input.extra_marks_max
+
+	return out
+}
+
 export async function GET(request: Request) {
 	try {
 		const { searchParams } = new URL(request.url)
@@ -46,9 +111,9 @@ export async function POST(request: Request) {
 			cia_round,
 			cia_round_name,
 			component_marks,
+			extra_marks,
+			extra_marks_max,
 			round_total_marks,
-			ai_tools_score,
-			ai_tools_max_marks,
 			submission_date,
 			submitted_by,
 		} = body
@@ -61,6 +126,8 @@ export async function POST(request: Request) {
 			return NextResponse.json({ error: 'CIA setting ID and round number are required' }, { status: 400 })
 		}
 
+		const mapped = mapComponentsToColumns({ component_marks, extra_marks, extra_marks_max })
+
 		const { data, error } = await supabase
 			.from('cia_marks')
 			.insert({
@@ -71,10 +138,8 @@ export async function POST(request: Request) {
 				cia_setting_id,
 				cia_round,
 				cia_round_name: cia_round_name || null,
-				component_marks: component_marks || {},
+				...mapped,
 				round_total_marks: round_total_marks || null,
-				ai_tools_score: ai_tools_score || null,
-				ai_tools_max_marks: ai_tools_max_marks || null,
 				submission_date: submission_date || new Date().toISOString().slice(0, 10),
 				submitted_by: submitted_by || null,
 			})
@@ -129,10 +194,19 @@ export async function PUT(request: Request) {
 		delete updateData.cia_setting_id
 		delete updateData.cia_round
 
+		// Map component_marks/extra_marks payload onto column shape
+		const mapped = mapComponentsToColumns({
+			component_marks: updateData.component_marks,
+			extra_marks: updateData.extra_marks,
+			extra_marks_max: updateData.extra_marks_max,
+		})
+		delete updateData.component_marks
+
 		const { data, error } = await supabase
 			.from('cia_marks')
 			.update({
 				...updateData,
+				...mapped,
 				updated_at: new Date().toISOString(),
 			})
 			.eq('id', id)

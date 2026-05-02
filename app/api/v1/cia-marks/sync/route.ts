@@ -43,6 +43,9 @@ const ALLOWED_FIELDS = new Set([
 	'max_test_1_mark', 'max_test_2_mark', 'max_test_3_mark',
 	// Totals
 	'total_internal_marks', 'max_internal_marks',
+	// End-user-defined components (Option C — JSONB keyed by component code,
+	// e.g. {"ai_tools": 8, "interactive_mode": 5}). Mirrors extra_marks_max.
+	'extra_marks', 'extra_marks_max',
 	// Grade
 	'grade',
 	// Submission
@@ -84,7 +87,15 @@ function hasAnyMark(record: SyncRecord): boolean {
 	}
 	// Allow total-only submissions (caller computed aggregate externally)
 	const total = Number(record.total_internal_marks)
-	return !isNaN(total) && total > 0
+	if (!isNaN(total) && total > 0) return true
+	// Accept extra_marks too — for end-user-defined components
+	const extra = record.extra_marks
+	if (extra && typeof extra === 'object') {
+		for (const v of Object.values(extra as Record<string, unknown>)) {
+			if (v !== undefined && v !== null && Number(v) > 0) return true
+		}
+	}
+	return false
 }
 
 interface SyncRecord { [key: string]: unknown }

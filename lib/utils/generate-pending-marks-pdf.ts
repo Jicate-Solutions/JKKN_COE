@@ -31,6 +31,10 @@ interface PendingLearner {
 
 interface PendingMarksPDFData {
 	institution_name: string
+	institution_subtitle?: string
+	institution_trust_line?: string
+	institution_accreditation?: string
+	institution_address?: string
 	exam_session: string
 	assessment_name: string
 	cia_round_name: string
@@ -62,15 +66,26 @@ function drawHeader(doc: jsPDF, data: PendingMarksPDFData, subtitle: string) {
 	doc.setFont('times', 'bold')
 	doc.setFontSize(12)
 	doc.setTextColor(0, 0, 0)
-	doc.text('J.K.K.NATARAJA COLLEGE OF ARTS & SCIENCE (AUTONOMOUS)', pageWidth / 2, currentY + 3, { align: 'center' })
-	doc.setFont('times', 'normal')
-	doc.setFontSize(7)
-	doc.text('(Accredited by NAAC, Approved by AICTE, Recognized by UGC Under Section 2(f) & 12(B), Affiliated to Periyar University)', pageWidth / 2, currentY + 7.5, { align: 'center' })
-	currentY += 10
-	doc.setFont('times', 'bold')
-	doc.setFontSize(8)
-	doc.text('Komarapalayam - 638 183, Namakkal District, Tamil Nadu', pageWidth / 2, currentY, { align: 'center' })
-	currentY += 4
+	doc.text((data.institution_name || 'J.K.K.NATARAJA EDUCATIONAL INSTITUTIONS').toUpperCase(), pageWidth / 2, currentY + 3, { align: 'center' })
+
+	let lineY = currentY + 7.5
+	if (data.institution_subtitle) {
+		doc.setFont('times', 'italic'); doc.setFontSize(8)
+		doc.text(data.institution_subtitle, pageWidth / 2, lineY, { align: 'center' }); lineY += 3.5
+	}
+	if (data.institution_trust_line) {
+		doc.setFont('times', 'italic'); doc.setFontSize(7)
+		doc.text(data.institution_trust_line, pageWidth / 2, lineY, { align: 'center' }); lineY += 3.5
+	}
+	if (data.institution_accreditation) {
+		doc.setFont('times', 'normal'); doc.setFontSize(7)
+		doc.text(data.institution_accreditation, pageWidth / 2, lineY, { align: 'center' }); lineY += 3.5
+	}
+	if (data.institution_address) {
+		doc.setFont('times', 'bold'); doc.setFontSize(8)
+		doc.text(data.institution_address, pageWidth / 2, lineY, { align: 'center' }); lineY += 4
+	}
+	currentY = Math.max(currentY + 11, lineY)
 	doc.setFontSize(10)
 	doc.text(`SEMESTER EXAMINATION - ${data.exam_session}`, pageWidth / 2, currentY, { align: 'center' })
 	currentY += 4.5

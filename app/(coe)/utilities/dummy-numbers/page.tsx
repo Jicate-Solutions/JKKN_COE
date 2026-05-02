@@ -40,10 +40,12 @@ import {
 import { Badge } from '@/components/ui/badge'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from '@/components/ui/command'
 import { useToast } from "@/hooks/common/use-toast"
-import { Shuffle, Hash, Trash2, Download, Eye, EyeOff, FileText, ChevronsUpDown, X, AlertCircle, UserPlus } from 'lucide-react'
+import { Shuffle, Hash, Trash2, Download, Eye, EyeOff, FileText, ChevronsUpDown, X, AlertCircle, UserPlus, Check, ChevronLeft, ChevronRight } from 'lucide-react'
 import { useAuth } from '@/context/auth-context'
 import { useInstitutionFilter } from '@/hooks/use-institution-filter'
+import { cn } from '@/lib/utils'
 import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
 import ExcelJS from 'exceljs'
@@ -94,13 +96,22 @@ export default function DummyNumbersPage() {
 	// Global institution filter - uses context from header dropdown
 	const {
 		isReady,
-		institutionId,
+		institutionId: contextInstitutionId,
 		mustSelectInstitution,
+		shouldFilter,
 	} = useInstitutionFilter()
 
-	// Form state - removed local institution selection (uses global filter)
+	// Form state
 	const [institutions, setInstitutions] = useState<Institution[]>([])
 	const [sessions, setSessions] = useState<ExaminationSession[]>([])
+	const [selectedInstitutionId, setSelectedInstitutionId] = useState('')
+	const [institutionOpen, setInstitutionOpen] = useState(false)
+
+	// Effective institution ID: local selection takes precedence over global context
+	const institutionId = selectedInstitutionId || contextInstitutionId
+
+	// Show institution dropdown only when super admin has "All Institutions" selected globally
+	const showInstitutionDropdown = mustSelectInstitution
 	const { selectedSessionId: selectedSession, setSelectedSessionId: setSelectedSession, mustSelectSession } = useSessionSync()
 	const [sourceMode, setSourceMode] = useState<'attendance' | 'registration'>('attendance')
 	const [generationMode, setGenerationMode] = useState<'sequence' | 'shuffle'>('sequence')
@@ -159,6 +170,11 @@ export default function DummyNumbersPage() {
 	const [missingPreview, setMissingPreview] = useState<{ count: number; students: any[]; next_roll_number: number; existing_format: string } | null>(null)
 	const [previewingMissing, setPreviewingMissing] = useState(false)
 	const [fillingMissing, setFillingMissing] = useState(false)
+	const [selectedMissingIds, setSelectedMissingIds] = useState<Set<string>>(new Set())
+
+	// Pagination state for Generated Dummy Numbers table
+	const [currentPage, setCurrentPage] = useState(1)
+	const [itemsPerPage, setItemsPerPage] = useState(10)
 
 	// Fetch institutions for display purposes (e.g., PDF export)
 	useEffect(() => {
@@ -166,6 +182,21 @@ export default function DummyNumbersPage() {
 			fetchInstitutions()
 		}
 	}, [isReady])
+
+	// Auto-select institution for normal users from global filter; clear local selection when user has specific institution
+	useEffect(() => {
+		if (institutions.length > 0) {
+			if (shouldFilter && contextInstitutionId) {
+				// Normal users: their institution comes from global context
+				setSelectedInstitutionId(contextInstitutionId)
+			} else if (!mustSelectInstitution && contextInstitutionId) {
+				setSelectedInstitutionId(contextInstitutionId)
+			} else if (mustSelectInstitution) {
+				// Super admin with "All Institutions" - clear local so dropdown is required
+				setSelectedInstitutionId('')
+			}
+		}
+	}, [institutions, shouldFilter, mustSelectInstitution, contextInstitutionId])
 
 	// Fetch sessions when global institution filter changes
 	useEffect(() => {
@@ -232,6 +263,11 @@ export default function DummyNumbersPage() {
 			setMissingPreview(null)
 		}
 	}, [isReady, institutionId, selectedSession, dummyNumbers, selectedBoard, selectedProgram, selectedCourses, selectedCourseCategories])
+
+	// Reset pagination when dummy numbers list changes
+	useEffect(() => {
+		setCurrentPage(1)
+	}, [dummyNumbers.length, itemsPerPage])
 
 	const fetchInstitutions = async () => {
 		try {
@@ -357,6 +393,8 @@ export default function DummyNumbersPage() {
 				next_roll_number: result.next_roll_number,
 				existing_format: result.existing_format,
 			})
+			// Default: all learners selected
+			setSelectedMissingIds(new Set<string>((result.preview || []).map((s: any) => s.exam_registration_id)))
 			toast({
 				title: '✅ Missing Learners Preview Ready',
 				description: `Found ${result.count} missing learners. Roll numbers will continue from ${result.next_roll_number}.`,
@@ -372,6 +410,10 @@ export default function DummyNumbersPage() {
 
 	const handleFillMissing = async () => {
 		if (!institutionId || !selectedSession) return
+		if (selectedMissingIds.size === 0) {
+			toast({ title: '⚠️ No Learners Selected', description: 'Select at least one learner to fill', variant: 'destructive' })
+			return
+		}
 		try {
 			setFillingMissing(true)
 
@@ -379,6 +421,7 @@ export default function DummyNumbersPage() {
 				institutions_id: institutionId,
 				examination_session_id: selectedSession,
 				generated_by: user?.id || null,
+				exam_registration_ids: Array.from(selectedMissingIds),
 			}
 			if (selectedBoard) payload.board_code = selectedBoard
 			if (selectedProgram) payload.program_code = selectedProgram
@@ -403,6 +446,7 @@ export default function DummyNumbersPage() {
 			})
 
 			setMissingPreview(null)
+			setSelectedMissingIds(new Set())
 			fetchDummyNumbers()
 		} catch (error) {
 			const msg = error instanceof Error ? error.message : 'Failed to fill missing dummy numbers'
@@ -908,37 +952,88 @@ export default function DummyNumbersPage() {
 					</CardDescription>
 				</CardHeader>
 				<CardContent className="space-y-6">
-					{/* Show message when super_admin has "All Institutions" selected */}
-					{mustSelectInstitution && (
+					{/* Institution & Session - single row. Institution dropdown only visible when super admin has "All Institutions" selected globally */}
+					<div className={cn("grid gap-4", showInstitutionDropdown ? "grid-cols-1 md:grid-cols-2" : "grid-cols-1")}>
+						{showInstitutionDropdown && (
+							<div className="space-y-2">
+								<Label>
+									Institution <span className="text-red-500">*</span>
+								</Label>
+								<Popover open={institutionOpen} onOpenChange={setInstitutionOpen}>
+									<PopoverTrigger asChild>
+										<Button variant="outline" className="w-full justify-between font-normal">
+											{selectedInstitutionId
+												? (() => {
+													const inst = institutions.find(i => i.id === selectedInstitutionId)
+													return inst ? `${inst.institution_code} - ${inst.name}` : 'Select institution'
+												})()
+												: 'Select institution'}
+											<ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+										</Button>
+									</PopoverTrigger>
+									<PopoverContent className="w-[350px] p-0" align="start">
+										<Command>
+											<CommandInput placeholder="Search institution..." />
+											<CommandList>
+												<CommandEmpty>No institution found.</CommandEmpty>
+												<CommandGroup>
+													{institutions.map((inst) => (
+														<CommandItem
+															key={inst.id}
+															value={`${inst.institution_code} ${inst.name}`}
+															onSelect={() => {
+																setSelectedInstitutionId(inst.id)
+																setInstitutionOpen(false)
+																setSelectedSession('')
+																setDummyNumbers([])
+																setPreviewData(null)
+																setMissingPreview(null)
+															}}
+														>
+															<Check className={cn("mr-2 h-4 w-4", selectedInstitutionId === inst.id ? "opacity-100" : "opacity-0")} />
+															{inst.institution_code} - {inst.name}
+														</CommandItem>
+													))}
+												</CommandGroup>
+											</CommandList>
+										</Command>
+									</PopoverContent>
+								</Popover>
+							</div>
+						)}
+
+						{/* Session Selection */}
+						{mustSelectSession && (
+							<div className="space-y-2">
+								<Label htmlFor="session">
+									Examination Session <span className="text-red-500">*</span>
+								</Label>
+								<Select
+									value={selectedSession}
+									onValueChange={setSelectedSession}
+									disabled={!institutionId}
+								>
+									<SelectTrigger>
+										<SelectValue placeholder={!institutionId ? "Select institution first" : "Select session"} />
+									</SelectTrigger>
+									<SelectContent>
+										{sessions.map((session) => (
+											<SelectItem key={session.id} value={session.id}>
+												{session.session_name}{session.session_code !== session.session_name ? ` (${session.session_code})` : ''}
+											</SelectItem>
+										))}
+									</SelectContent>
+								</Select>
+							</div>
+						)}
+					</div>
+
+					{/* Helper message when super admin hasn't selected an institution yet */}
+					{showInstitutionDropdown && !selectedInstitutionId && (
 						<div className="p-4 border border-amber-200 bg-amber-50 dark:bg-amber-900/20 dark:border-amber-800 rounded-lg">
 							<p className="text-sm text-amber-800 dark:text-amber-200">
-								Please select a specific institution from the header dropdown to generate dummy numbers.
+								Please select a specific institution above to generate dummy numbers.
 							</p>
-						</div>
-					)}
-
-					{/* Session Selection - only show when institution is selected and no global session */}
-					{!mustSelectInstitution && mustSelectSession && (
-						<div className="space-y-2">
-							<Label htmlFor="session">
-								Examination Session <span className="text-red-500">*</span>
-							</Label>
-							<Select
-								value={selectedSession}
-								onValueChange={setSelectedSession}
-								disabled={!institutionId}
-							>
-								<SelectTrigger>
-									<SelectValue placeholder={!institutionId ? "Select institution first" : "Select session"} />
-								</SelectTrigger>
-								<SelectContent>
-									{sessions.map((session) => (
-										<SelectItem key={session.id} value={session.id}>
-											{session.session_name}{session.session_code !== session.session_name ? ` (${session.session_code})` : ''}
-										</SelectItem>
-									))}
-								</SelectContent>
-							</Select>
 						</div>
 					)}
 
@@ -1128,7 +1223,8 @@ export default function DummyNumbersPage() {
 											</Badge>
 										</div>
 										<p className="text-xs text-amber-700 dark:text-amber-300 mt-1">
-											New candidates registered after the initial generation. Use "Preview Missing" below to review and fill dummy numbers for them while preserving existing assignments.
+											New candidates registered after the initial generation. Use "Preview Missing" below to review and fill dummy numbers for them while preserving existing assignments.{' '}
+											<span className="font-medium">Practical courses are skipped by default</span> — only Theory/ESE/CIA papers are checked.
 										</p>
 									</div>
 								</div>
@@ -1215,7 +1311,7 @@ export default function DummyNumbersPage() {
 						<Button
 							variant="outline"
 							onClick={handlePreview}
-							disabled={previewing || generating || !institutionId || !selectedSession || mustSelectInstitution}
+							disabled={previewing || generating || !institutionId || !selectedSession}
 						>
 							{previewing ? 'Loading Preview...' : 'Preview'}
 						</Button>
@@ -1223,7 +1319,7 @@ export default function DummyNumbersPage() {
 						{previewData && (
 							<Button
 								onClick={handleGenerate}
-								disabled={generating || !institutionId || !selectedSession || mustSelectInstitution}
+								disabled={generating || !institutionId || !selectedSession}
 							>
 								{generating ? 'Generating...' : `Generate ${previewData.count} Dummy Numbers`}
 							</Button>
@@ -1345,31 +1441,45 @@ export default function DummyNumbersPage() {
 							<div>
 								<CardTitle className="text-amber-900 dark:text-amber-100 flex items-center gap-2">
 									<UserPlus className="h-5 w-5" />
-									Missing Learners Preview ({missingPreview.count})
+									Missing Learners Preview ({selectedMissingIds.size} of {missingPreview.count} selected)
 								</CardTitle>
 								<CardDescription>
-									{missingPreview.count > 50
-										? `Showing first 50 of ${missingPreview.count} missing learners. Roll numbers continue from ${missingPreview.next_roll_number}. Download Excel to review all.`
-										: `Roll numbers continue from ${missingPreview.next_roll_number}. Format: ${missingPreview.existing_format}. Review and click "Fill Missing" to assign dummy numbers.`}
+									Roll numbers continue from {missingPreview.next_roll_number}. Format: {missingPreview.existing_format}. Tick the checkboxes to choose which learners to fill, then click "Fill Selected".
 								</CardDescription>
 							</div>
-							<div className="flex gap-2">
+							<div className="flex gap-2 flex-wrap">
+								<Button
+									variant="outline"
+									size="sm"
+									onClick={() => setSelectedMissingIds(new Set(missingPreview.students.map((s: any) => s.exam_registration_id)))}
+									disabled={fillingMissing}
+								>
+									Select All
+								</Button>
+								<Button
+									variant="outline"
+									size="sm"
+									onClick={() => setSelectedMissingIds(new Set())}
+									disabled={fillingMissing}
+								>
+									Clear
+								</Button>
 								<Button variant="outline" onClick={exportMissingPreviewToExcel} className="border-amber-300 text-amber-700 hover:bg-amber-100">
 									<Download className="h-4 w-4 mr-2" />
 									Download Excel
 								</Button>
 								<Button
 									onClick={handleFillMissing}
-									disabled={fillingMissing}
+									disabled={fillingMissing || selectedMissingIds.size === 0}
 									className="bg-amber-600 hover:bg-amber-700 text-white"
 								>
 									<UserPlus className="h-4 w-4 mr-2" />
-									{fillingMissing ? 'Filling...' : `Fill ${missingPreview.count} Missing`}
+									{fillingMissing ? 'Filling...' : `Fill ${selectedMissingIds.size} Selected`}
 								</Button>
 								<Button
 									variant="ghost"
 									size="sm"
-									onClick={() => setMissingPreview(null)}
+									onClick={() => { setMissingPreview(null); setSelectedMissingIds(new Set()) }}
 									disabled={fillingMissing}
 								>
 									<X className="h-4 w-4" />
@@ -1382,6 +1492,19 @@ export default function DummyNumbersPage() {
 							<Table>
 								<TableHeader>
 									<TableRow>
+										<TableHead className="w-12">
+											<Checkbox
+												checked={selectedMissingIds.size === missingPreview.students.length && missingPreview.students.length > 0}
+												onCheckedChange={(checked) => {
+													if (checked) {
+														setSelectedMissingIds(new Set(missingPreview.students.map((s: any) => s.exam_registration_id)))
+													} else {
+														setSelectedMissingIds(new Set())
+													}
+												}}
+												aria-label="Select all missing learners"
+											/>
+										</TableHead>
 										<TableHead className="w-16">Roll</TableHead>
 										<TableHead>Dummy No.</TableHead>
 										<TableHead>Register No.</TableHead>
@@ -1393,31 +1516,56 @@ export default function DummyNumbersPage() {
 									</TableRow>
 								</TableHeader>
 								<TableBody>
-									{missingPreview.students.slice(0, 50).map((s: any, i: number) => (
-										<TableRow key={i}>
-											<TableCell className="font-medium">{s.roll}</TableCell>
-											<TableCell className="font-mono font-semibold text-amber-700 dark:text-amber-300">{s.dummy_number}</TableCell>
-											<TableCell className="font-mono">{s.register_no}</TableCell>
-											<TableCell>{s.student_name}</TableCell>
-											<TableCell>{s.board}</TableCell>
-											<TableCell>{s.program}</TableCell>
-											<TableCell>{s.course}</TableCell>
-											<TableCell>
-												<Badge variant={s.type === 'Regular' ? 'default' : 'secondary'}>
-													{s.type}
-												</Badge>
-											</TableCell>
-										</TableRow>
-									))}
+									{missingPreview.students.slice(0, 200).map((s: any, i: number) => {
+										const isChecked = selectedMissingIds.has(s.exam_registration_id)
+										return (
+											<TableRow key={s.exam_registration_id || i} className={isChecked ? '' : 'opacity-50'}>
+												<TableCell>
+													<Checkbox
+														checked={isChecked}
+														onCheckedChange={(checked) => {
+															setSelectedMissingIds(prev => {
+																const next = new Set(prev)
+																if (checked) next.add(s.exam_registration_id)
+																else next.delete(s.exam_registration_id)
+																return next
+															})
+														}}
+														aria-label={`Select ${s.student_name}`}
+													/>
+												</TableCell>
+												<TableCell className="font-medium">{s.roll}</TableCell>
+												<TableCell className="font-mono font-semibold text-amber-700 dark:text-amber-300">{s.dummy_number}</TableCell>
+												<TableCell className="font-mono">{s.register_no}</TableCell>
+												<TableCell>{s.student_name}</TableCell>
+												<TableCell>{s.board}</TableCell>
+												<TableCell>{s.program}</TableCell>
+												<TableCell>{s.course}</TableCell>
+												<TableCell>
+													<Badge variant={s.type === 'Regular' ? 'default' : 'secondary'}>
+														{s.type}
+													</Badge>
+												</TableCell>
+											</TableRow>
+										)
+									})}
 								</TableBody>
 							</Table>
 						</div>
+						{missingPreview.students.length > 200 && (
+							<p className="text-xs text-muted-foreground mt-2">
+								Showing first 200 of {missingPreview.count} learners. Use Excel export to review all, or apply filters above to narrow the list.
+							</p>
+						)}
+						<p className="text-xs text-amber-700 dark:text-amber-300 mt-2">
+							Note: Roll numbers shown are based on the full missing list. After filling only selected learners, the actual assigned roll numbers will be sequential starting from {missingPreview.next_roll_number}.
+						</p>
 					</CardContent>
 				</Card>
 			)}
 
 			{/* Data Table */}
-			{institutionId && selectedSession && !mustSelectInstitution && (
+			{institutionId && selectedSession && (
 				<Card>
 					<CardHeader>
 						<CardTitle>Generated Dummy Numbers ({dummyNumbers.length})</CardTitle>
@@ -1435,52 +1583,118 @@ export default function DummyNumbersPage() {
 								No dummy numbers found. Click "Generate Dummy Numbers" to create them.
 							</div>
 						) : (
-							<div className="border rounded-lg overflow-hidden">
-								<Table>
-									<TableHeader>
-										<TableRow>
-											<TableHead className="w-20">Roll No.</TableHead>
-											<TableHead>Dummy Number</TableHead>
-											<TableHead>Actual Register No.</TableHead>
-											<TableHead>Student Name</TableHead>
-											<TableHead>Board</TableHead>
-											<TableHead>Program</TableHead>
-											<TableHead>Course</TableHead>
-											<TableHead>Type</TableHead>
-										</TableRow>
-									</TableHeader>
-									<TableBody>
-										{dummyNumbers.map((dn) => (
-											<TableRow key={dn.id}>
-												<TableCell className="font-medium">
-													{dn.roll_number_for_evaluation}
-												</TableCell>
-												<TableCell className="font-mono font-semibold">
-													{dn.dummy_number}
-												</TableCell>
-												<TableCell className="font-mono">
-													{hideActualNumbers ? '••••••••' : dn.actual_register_number}
-												</TableCell>
-												<TableCell>
-													{dn.exam_registration?.student_name || '-'}
-												</TableCell>
-												<TableCell>{dn.exam_registration?.course_offering?.course?.board?.board_code || '-'}</TableCell>
-												<TableCell>
-													{dn.exam_registration?.course_offering?.program_code || '-'}
-												</TableCell>
-												<TableCell>
-													{dn.exam_registration?.course_offering?.course?.course_code || '-'}
-												</TableCell>
-												<TableCell>
-													<Badge variant={dn.exam_registration?.is_regular ? 'default' : 'secondary'}>
-														{dn.exam_registration?.is_regular ? 'Regular' : 'Arrear'}
-													</Badge>
-												</TableCell>
-											</TableRow>
-										))}
-									</TableBody>
-								</Table>
-							</div>
+							(() => {
+								const totalRows = dummyNumbers.length
+								const effectivePageSize = itemsPerPage === -1 ? totalRows : itemsPerPage
+								const totalPages = Math.max(1, Math.ceil(totalRows / effectivePageSize))
+								const safePage = Math.min(currentPage, totalPages)
+								const startIndex = (safePage - 1) * effectivePageSize
+								const endIndex = startIndex + effectivePageSize
+								const visibleRows = dummyNumbers.slice(startIndex, endIndex)
+								return (
+									<>
+										<div className="border rounded-lg overflow-hidden">
+											<Table>
+												<TableHeader>
+													<TableRow>
+														<TableHead className="w-20">Roll No.</TableHead>
+														<TableHead>Dummy Number</TableHead>
+														<TableHead>Actual Register No.</TableHead>
+														<TableHead>Student Name</TableHead>
+														<TableHead>Board</TableHead>
+														<TableHead>Program</TableHead>
+														<TableHead>Course</TableHead>
+														<TableHead>Type</TableHead>
+													</TableRow>
+												</TableHeader>
+												<TableBody>
+													{visibleRows.map((dn) => (
+														<TableRow key={dn.id}>
+															<TableCell className="font-medium">
+																{dn.roll_number_for_evaluation}
+															</TableCell>
+															<TableCell className="font-mono font-semibold">
+																{dn.dummy_number}
+															</TableCell>
+															<TableCell className="font-mono">
+																{hideActualNumbers ? '••••••••' : dn.actual_register_number}
+															</TableCell>
+															<TableCell>
+																{dn.exam_registration?.student_name || '-'}
+															</TableCell>
+															<TableCell>{dn.exam_registration?.course_offering?.course?.board?.board_code || '-'}</TableCell>
+															<TableCell>
+																{dn.exam_registration?.course_offering?.program_code || '-'}
+															</TableCell>
+															<TableCell>
+																{dn.exam_registration?.course_offering?.course?.course_code || '-'}
+															</TableCell>
+															<TableCell>
+																<Badge variant={dn.exam_registration?.is_regular ? 'default' : 'secondary'}>
+																	{dn.exam_registration?.is_regular ? 'Regular' : 'Arrear'}
+																</Badge>
+															</TableCell>
+														</TableRow>
+													))}
+												</TableBody>
+											</Table>
+										</div>
+
+										{/* Pagination Controls */}
+										<div className="flex items-center justify-between flex-wrap gap-2 mt-4">
+											<div className="flex items-center gap-4">
+												<div className="text-sm text-muted-foreground">
+													Showing {totalRows === 0 ? 0 : startIndex + 1}-{Math.min(endIndex, totalRows)} of {totalRows} learners
+												</div>
+												<div className="flex items-center gap-2">
+													<Label htmlFor="page-size" className="text-sm text-muted-foreground">
+														Rows:
+													</Label>
+													<Select
+														value={String(itemsPerPage)}
+														onValueChange={(value) => {
+															setItemsPerPage(Number(value))
+															setCurrentPage(1)
+														}}
+													>
+														<SelectTrigger id="page-size" className="h-7 w-[80px] text-sm">
+															<SelectValue />
+														</SelectTrigger>
+														<SelectContent>
+															<SelectItem value="10">10</SelectItem>
+															<SelectItem value="20">20</SelectItem>
+															<SelectItem value="50">50</SelectItem>
+															<SelectItem value="100">100</SelectItem>
+															<SelectItem value="-1">All</SelectItem>
+														</SelectContent>
+													</Select>
+												</div>
+											</div>
+											<div className="flex items-center gap-2">
+												<span className="text-sm text-muted-foreground">Page {safePage} of {totalPages}</span>
+												<Button
+													variant="outline"
+													size="sm"
+													onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+													disabled={safePage === 1}
+													className="h-7 w-7 p-0"
+												>
+													<ChevronLeft className="h-4 w-4" />
+												</Button>
+												<Button
+													variant="outline"
+													size="sm"
+													onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+													disabled={safePage >= totalPages}
+													className="h-7 w-7 p-0"
+												>
+													<ChevronRight className="h-4 w-4" />
+												</Button>
+											</div>
+										</div>
+									</>
+								)
+							})()
 						)}
 					</CardContent>
 				</Card>

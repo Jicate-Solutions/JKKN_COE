@@ -1,45 +1,8 @@
 import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
 import { createHash } from 'crypto'
-
-// Helper function to convert number to words
-function numberToWords(num: number): string {
-	if (num === 0) return 'Zero'
-
-	const ones = ['', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine', 'Ten',
-		'Eleven', 'Twelve', 'Thirteen', 'Fourteen', 'Fifteen', 'Sixteen', 'Seventeen', 'Eighteen', 'Nineteen']
-	const tens = ['', '', 'Twenty', 'Thirty', 'Forty', 'Fifty', 'Sixty', 'Seventy', 'Eighty', 'Ninety']
-
-	const intPart = Math.floor(num)
-	const decimalPart = Math.round((num - intPart) * 100)
-
-	let words = ''
-
-	if (intPart >= 100) {
-		words += ones[Math.floor(intPart / 100)] + ' Hundred '
-		const remainder = intPart % 100
-		if (remainder >= 20) {
-			words += tens[Math.floor(remainder / 10)] + ' ' + ones[remainder % 10]
-		} else if (remainder > 0) {
-			words += ones[remainder]
-		}
-	} else if (intPart >= 20) {
-		words += tens[Math.floor(intPart / 10)] + ' ' + ones[intPart % 10]
-	} else if (intPart > 0) {
-		words += ones[intPart]
-	}
-
-	if (decimalPart > 0) {
-		words = words.trim() + ' Point '
-		if (decimalPart >= 20) {
-			words += tens[Math.floor(decimalPart / 10)] + ' ' + ones[decimalPart % 10]
-		} else {
-			words += ones[decimalPart]
-		}
-	}
-
-	return words.trim() || 'Zero'
-}
+// Digit-by-digit words ("28" → "TWO EIGHT") — shared with all mark surfaces.
+import { numberToWords } from '@/services/post-exam/external-mark-entry-service'
 
 export async function GET(request: Request) {
 	try {

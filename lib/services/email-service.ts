@@ -29,23 +29,21 @@ interface SmtpConfig {
  * Get SMTP configuration from database or environment
  */
 export async function getSmtpConfig(institutionCode?: string): Promise<SmtpConfig | null> {
-	// First try to get from database
 	const supabase = getSupabaseServer()
 
+	// 1) Per-institution row (preferred)
 	if (institutionCode) {
 		const { data } = await supabase
 			.from('smtp_configuration')
 			.select('*')
 			.eq('institution_code', institutionCode)
 			.eq('is_active', true)
-			.single()
+			.maybeSingle()
 
-		if (data) {
-			return data
-		}
+		if (data) return data
 	}
 
-	// Fallback to environment variables
+	// 2) Env vars
 	if (process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASSWORD) {
 		return {
 			smtp_host: process.env.SMTP_HOST,
@@ -56,6 +54,27 @@ export async function getSmtpConfig(institutionCode?: string): Promise<SmtpConfi
 			sender_email: process.env.SMTP_FROM_EMAIL || process.env.SMTP_USER,
 			sender_name: process.env.SMTP_FROM_NAME || 'Controller of Examinations',
 		}
+	}
+
+	// 3) Last-resort fallback: any active SMTP row in the table.
+	//    Useful when the calling flow couldn't resolve an institution_code
+	//    (e.g. data mismatch between institutions.institution_code and
+	//    smtp_configuration.institution_code) and we still have a working
+	//    config the admin marked active.
+	const { data: anyActive } = await supabase
+		.from('smtp_configuration')
+		.select('*')
+		.eq('is_active', true)
+		.order('updated_at', { ascending: false, nullsFirst: false })
+		.limit(1)
+		.maybeSingle()
+
+	if (anyActive) {
+		console.warn(
+			`[email] No SMTP row for institution_code='${institutionCode || ''}'. ` +
+			`Falling back to active row institution_code='${anyActive.institution_code}'.`,
+		)
+		return anyActive
 	}
 
 	return null

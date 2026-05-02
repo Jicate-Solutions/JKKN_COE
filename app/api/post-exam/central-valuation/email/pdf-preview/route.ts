@@ -68,13 +68,14 @@ export async function GET(request: Request) {
 			break
 	}
 
-	const selectFields = ['course_id', 'total_sheets', ...(columnStaff ? [columnStaff, ...staffFields] : ['external_examiner_id'])].join(', ')
+	const selectFields = ['id', 'course_id', 'packet_no', 'total_sheets', 'valuation_date', ...(columnStaff ? [columnStaff, ...staffFields] : ['external_examiner_id'])].join(', ')
 	let query = supabase
 		.from('answer_sheet_packets')
 		.select(selectFields)
 		.eq('institutions_id', institutionsId)
 		.eq('examination_session_id', sessionId)
 		.eq('is_active', true)
+		.order('packet_no', { ascending: true })
 		.range(0, 99999)
 
 	if (columnStaff) query = query.eq(columnStaff, examinerKey)
@@ -128,7 +129,7 @@ export async function GET(request: Request) {
 	const courseIds = [...new Set(pList.map(p => p.course_id))]
 	let coursesQuery = supabase
 		.from('courses')
-		.select('id, course_code, course_name, course_title, board_code')
+		.select('id, course_code, course_name, board_code')
 		.in('id', courseIds)
 
 	if (boardCode) coursesQuery = coursesQuery.eq('board_code', boardCode)
@@ -136,32 +137,48 @@ export async function GET(request: Request) {
 	const { data: courses } = await coursesQuery
 	const courseMap = new Map((courses || []).map(c => [c.id, c]))
 
-	const { data: cvDates } = await supabase
-		.from('course_valuation_dates')
-		.select('course_id, valuation_date')
+	// Total packets per course across the WHOLE session (so packet_index/total
+	// reads "1/9" even when this examiner only handles a subset)
+	const { data: allCoursePackets } = await supabase
+		.from('answer_sheet_packets')
+		.select('course_id, packet_no, id')
 		.eq('institutions_id', institutionsId)
 		.eq('examination_session_id', sessionId)
-	const dateMap = new Map((cvDates || []).map(d => [d.course_id, d.valuation_date]))
+		.eq('is_active', true)
+		.in('course_id', courseIds)
+		.order('packet_no', { ascending: true })
+		.range(0, 99999)
 
-	const courseAgg = new Map<string, { packet_count: number; sheet_count: number }>()
-	for (const p of pList) {
-		if (!courseMap.has(p.course_id)) continue
-		const prev = courseAgg.get(p.course_id) || { packet_count: 0, sheet_count: 0 }
-		prev.packet_count += 1
-		prev.sheet_count += p.total_sheets || 0
-		courseAgg.set(p.course_id, prev)
+	const totalPacketsByCourse = new Map<string, number>()
+	const indexById = new Map<string, number>()
+	const seenSeq = new Map<string, number>()
+	for (const p of allCoursePackets || []) {
+		totalPacketsByCourse.set(p.course_id, (totalPacketsByCourse.get(p.course_id) || 0) + 1)
+		const next = (seenSeq.get(p.course_id) || 0) + 1
+		seenSeq.set(p.course_id, next)
+		indexById.set(p.id, next)
 	}
 
-	const courseEntries: CentralValuationCourseEntry[] = [...courseAgg.entries()].map(([cid, agg]) => {
-		const c = courseMap.get(cid)!
-		return {
-			course_code: c.course_code,
-			course_name: c.course_name || c.course_title,
-			valuation_date: dateMap.get(cid) || '',
-			packet_count: agg.packet_count,
-			sheet_count: agg.sheet_count,
-		}
-	})
+	const courseEntries: CentralValuationCourseEntry[] = pList
+		.filter(p => courseMap.has(p.course_id))
+		.map(p => {
+			const c = courseMap.get(p.course_id)! as any
+			return {
+				course_code: c.course_code,
+				course_name: c.course_name,
+				valuation_date: p.valuation_date || '',
+				packet_no: p.packet_no,
+				packet_index: indexById.get(p.id) || 0,
+				total_packets: totalPacketsByCourse.get(p.course_id) || 0,
+				packet_count: 1,
+				sheet_count: p.total_sheets || 0,
+			}
+		})
+		.sort((a, b) => {
+			const cmp = (a.course_code || '').localeCompare(b.course_code || '')
+			if (cmp !== 0) return cmp
+			return (a.packet_index || 0) - (b.packet_index || 0)
+		})
 
 	// Date range display
 	const dates = courseEntries.map(c => c.valuation_date).filter(Boolean).sort()
@@ -170,7 +187,7 @@ export async function GET(request: Request) {
 	const letterData: CentralValuationAppointmentData = {
 		institution_name: inst?.name,
 		institution_address: inst?.address,
-		ref_number: `JKKNCAS/CoE/${(session?.session_code || '').slice(0, 8)}`,
+		ref_number: `JKKNCAS/ CoE/ ${session?.session_name || session?.session_code || ''}/ Central Valuation`,
 		letter_date: new Date().toISOString().slice(0, 10),
 		examiner_name: examinerName || 'Examiner',
 		examiner_type: examinerType,

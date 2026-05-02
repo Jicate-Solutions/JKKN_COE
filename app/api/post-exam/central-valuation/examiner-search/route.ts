@@ -1,23 +1,27 @@
 import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
 
+/**
+ * GET /api/post-exam/central-valuation/examiner-search
+ *
+ * Returns examiners from the `examiners` table for the dropdown on the
+ * Central Valuation Examiner Allotment page. No status/institution/board
+ * filters — pen to all examiners; only `search` narrows results.
+ */
 export async function GET(request: Request) {
 	const { searchParams } = new URL(request.url)
-	const search = searchParams.get('search')
-	const institutionsId = searchParams.get('institutions_id')
+	const search = searchParams.get('search')?.trim() || ''
 
 	const supabase = getSupabaseServer()
+
 	let query = supabase
 		.from('examiners')
 		.select('id, full_name, email, mobile, designation, department, institution_name')
 		.limit(50)
 		.order('full_name')
 
-	if (institutionsId) {
-		query = query.eq('institutions_id', institutionsId)
-	}
 	if (search) {
-		query = query.ilike('full_name', `%${search}%`)
+		query = query.or(`full_name.ilike.%${search}%,email.ilike.%${search}%`)
 	}
 
 	const { data, error } = await query

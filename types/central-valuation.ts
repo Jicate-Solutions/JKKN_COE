@@ -48,14 +48,21 @@ export interface ExternalExaminer {
 }
 
 export interface CentralValuationAllotmentRow {
+	// Packet identity
+	packet_id: string
+	packet_no: string
+	packet_index: number
+	total_packets: number
+	// Course identity (shared across packets of the same course)
 	course_id: string
 	course_code: string
 	course_name: string
 	board_code: string
 	board_name: string
+	// Per-packet date and sheet count
 	valuation_date: string | null
-	packet_count: number
 	sheet_count: number
+	// Per-packet examiners
 	internal_examiner: InternalStaff | null
 	external_examiner: ExternalExaminer | null
 	chief_examiner: InternalStaff | null
@@ -66,7 +73,7 @@ export interface CentralValuationAllotmentRow {
 export interface CentralValuationAllotmentSavePayload {
 	institutions_id: string
 	examination_session_id: string
-	course_id: string
+	packet_id: string
 	internal_examiner_staff_id: string | null
 	external_examiner_id: string | null
 	chief_examiner_staff_id: string | null

@@ -40,11 +40,29 @@ interface CIAMark {
 	id: string
 	exam_registration_id: string
 	cia_round: number
-	component_marks: Record<string, number>
+	component_marks: Record<string, number> | null
+	extra_marks: Record<string, number> | null
 	round_total_marks: number
-	ai_tools_score: number | null
 	is_locked: boolean
 }
+
+// Standard 13 component codes — these map to dedicated columns on cia_marks.
+// Anything outside this set goes into the extra_marks JSONB column.
+const STANDARD_COMPONENT_CODES = new Set([
+	'assignment',
+	'quiz',
+	'mid_term',
+	'presentation',
+	'attendance',
+	'lab',
+	'project',
+	'seminar',
+	'viva',
+	'other',
+	'test_1',
+	'test_2',
+	'test_3',
+])
 
 export default function CIAMarksEntryPage() {
 	const { toast } = useToast()
@@ -118,12 +136,13 @@ export default function CIAMarksEntryPage() {
 			const data = await res.json()
 			setMarks(Array.isArray(data) ? data : [])
 
-			// Initialize form marks from existing marks
+			// Initialize form marks from existing marks (read both component_marks
+			// and extra_marks; UI uses component code as the form key)
 			const initial: Record<string, Record<string, number>> = {}
 			for (const mark of data) {
 				initial[mark.exam_registration_id] = {
-					...mark.component_marks,
-					ai_tools_score: mark.ai_tools_score || 0,
+					...(mark.component_marks || {}),
+					...(mark.extra_marks || {}),
 				}
 			}
 			setFormMarks(initial)
@@ -141,13 +160,6 @@ export default function CIAMarksEntryPage() {
 		}))
 	}
 
-	const handleAIToolsChange = (regId: string, value: number) => {
-		setFormMarks(prev => ({
-			...prev,
-			[regId]: { ...prev[regId], ai_tools_score: value },
-		}))
-	}
-
 	const handleSaveMarks = async () => {
 		if (!selectedSettingId || selectedRound === null) return
 
@@ -158,20 +170,26 @@ export default function CIAMarksEntryPage() {
 			if (!setting || !round) return
 
 			for (const reg of registrations) {
-				const marks = formMarks[reg.id] || {}
-				const aiToolsScore = marks.ai_tools_score || null
+				const formData = formMarks[reg.id] || {}
 
-				// Calculate round total
+				// Split components into standard (→ fixed columns) vs custom (→ extra_marks)
 				const componentMarks: Record<string, number> = {}
+				const extraMarks: Record<string, number> = {}
+				const extraMarksMax: Record<string, number> = {}
 				let roundTotal = 0
+
 				for (const comp of round.components) {
-					const score = marks[comp.code] || 0
-					componentMarks[comp.code] = score
+					const score = Number(formData[comp.code]) || 0
+					if (STANDARD_COMPONENT_CODES.has(comp.code)) {
+						componentMarks[comp.code] = score
+					} else {
+						extraMarks[comp.code] = score
+						extraMarksMax[comp.code] = comp.max_marks
+					}
 					roundTotal += score
 				}
-				if (aiToolsScore != null) roundTotal += aiToolsScore
 
-				// Find existing mark
+				// Look up the existing mark from outer state — DO NOT shadow `marks`
 				const existing = marks.find(m => m.exam_registration_id === reg.id)
 
 				const payload = {
@@ -184,8 +202,9 @@ export default function CIAMarksEntryPage() {
 					cia_round: selectedRound,
 					cia_round_name: round.round_name,
 					component_marks: componentMarks,
+					extra_marks: extraMarks,
+					extra_marks_max: extraMarksMax,
 					round_total_marks: roundTotal,
-					ai_tools_score: aiToolsScore,
 					submission_date: new Date().toISOString().slice(0, 10),
 				}
 
@@ -328,10 +347,6 @@ export default function CIAMarksEntryPage() {
 															<div className="text-xs text-muted-foreground">/{comp.max_marks}</div>
 														</TableHead>
 													))}
-													<TableHead className="text-center w-20">
-														<div className="text-xs">AI Tools</div>
-														<div className="text-xs text-muted-foreground">/10</div>
-													</TableHead>
 													<TableHead className="text-center w-20">Total</TableHead>
 													<TableHead className="w-16">Action</TableHead>
 												</TableRow>
@@ -344,9 +359,8 @@ export default function CIAMarksEntryPage() {
 
 													let total = 0
 													roundDef?.components.forEach(comp => {
-														total += formData[comp.code] || 0
+														total += Number(formData[comp.code]) || 0
 													})
-													if (formData.ai_tools_score) total += formData.ai_tools_score
 
 													return (
 														<TableRow key={reg.id} className={markEntry?.is_locked ? 'bg-amber-50' : ''}>
@@ -365,17 +379,6 @@ export default function CIAMarksEntryPage() {
 																	/>
 																</TableCell>
 															))}
-															<TableCell className="p-1">
-																<Input
-																	type="number"
-																	min={0}
-																	max={10}
-																	value={formData.ai_tools_score ?? ''}
-																	onChange={e => handleAIToolsChange(reg.id, parseInt(e.target.value) || 0)}
-																	disabled={markEntry?.is_locked}
-																	className="h-7 text-xs text-center"
-																/>
-															</TableCell>
 															<TableCell className="text-sm font-semibold text-center">{total}</TableCell>
 															<TableCell>
 																{markEntry && (

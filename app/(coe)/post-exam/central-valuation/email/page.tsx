@@ -506,7 +506,7 @@ export default function CentralValuationEmailPage() {
 																				<TableHead className="text-[10px] h-7">Course Code</TableHead>
 																				<TableHead className="text-[10px] h-7">Course Name</TableHead>
 																				<TableHead className="text-[10px] h-7">Date</TableHead>
-																				<TableHead className="text-[10px] h-7 text-center">Packets</TableHead>
+																				<TableHead className="text-[10px] h-7 text-center">Packet</TableHead>
 																				<TableHead className="text-[10px] h-7 text-center">Sheets</TableHead>
 																			</TableRow>
 																		</TableHeader>
@@ -516,7 +516,7 @@ export default function CentralValuationEmailPage() {
 																					<TableCell className="text-xs py-1 font-medium">{c.course_code}</TableCell>
 																					<TableCell className="text-xs py-1">{c.course_name}</TableCell>
 																					<TableCell className="text-xs py-1">{c.valuation_date || '—'}</TableCell>
-																					<TableCell className="text-xs py-1 text-center">{c.packet_count}</TableCell>
+																					<TableCell className="text-xs py-1 text-center font-mono">{c.packet_index && c.total_packets ? `${c.packet_index}/${c.total_packets}` : c.packet_count}</TableCell>
 																					<TableCell className="text-xs py-1 text-center">{c.sheet_count}</TableCell>
 																				</TableRow>
 																			))}

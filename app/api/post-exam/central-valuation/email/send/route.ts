@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
-import { sendEmail } from '@/lib/services/email-service'
+import { sendEmail, getEmailTemplate, replacePlaceholders } from '@/lib/services/email-service'
 import { generateCentralValuationAppointmentPdf } from '@/lib/pdf/central-valuation-appointment-letter'
 import { getPdfSettingsWithFallback } from '@/lib/pdf/settings-service'
 import type {
@@ -50,7 +50,13 @@ export async function POST(request: Request) {
 		? await supabase.from('board').select('board_name').eq('board_code', board_code).maybeSingle()
 		: { data: null }
 
-	const settings = await getPdfSettingsWithFallback(inst?.institution_code || '', 'default')
+	// Mirrors the practical-allotment email config:
+	//   - 'report' template type with a fallback to the institution's default PDF settings
+	//   - email subject/body pulled from examiner_email_templates if a row exists,
+	//     else use the inline default
+	const institutionCode = inst?.institution_code || ''
+	const settings = await getPdfSettingsWithFallback(institutionCode, 'report')
+	const emailTemplate = await getEmailTemplate('CENTRAL_VALUATION_APPOINTMENT', institutionCode)
 
 	const results: Array<{ examiner_type: string; examiner_key: string; status: 'SENT' | 'FAILED'; error?: string }> = []
 
@@ -64,6 +70,7 @@ export async function POST(request: Request) {
 			session,
 			board,
 			settings,
+			emailTemplate,
 		})
 		results.push(res)
 	}
@@ -83,8 +90,9 @@ async function processOne(supabase: any, args: {
 	session: any
 	board: any
 	settings: any
+	emailTemplate: { subject: string; body: string } | null
 }): Promise<{ examiner_type: string; examiner_key: string; status: 'SENT' | 'FAILED'; error?: string }> {
-	const { institutions_id, examination_session_id, board_code, recipient, inst, session, board, settings } = args
+	const { institutions_id, examination_session_id, board_code, recipient, inst, session, board, settings, emailTemplate } = args
 	const { examiner_type, examiner_key } = recipient
 
 	let columnStaff: string | null = null
@@ -105,13 +113,14 @@ async function processOne(supabase: any, args: {
 			break
 	}
 
-	const selectFields = ['course_id', 'total_sheets', ...(columnStaff ? [columnStaff, ...staffFields] : ['external_examiner_id'])].join(', ')
+	const selectFields = ['id', 'course_id', 'packet_no', 'total_sheets', 'valuation_date', ...(columnStaff ? [columnStaff, ...staffFields] : ['external_examiner_id'])].join(', ')
 	let query = supabase
 		.from('answer_sheet_packets')
 		.select(selectFields)
 		.eq('institutions_id', institutions_id)
 		.eq('examination_session_id', examination_session_id)
 		.eq('is_active', true)
+		.order('packet_no', { ascending: true })
 		.range(0, 99999)
 
 	if (columnStaff) query = query.eq(columnStaff, examiner_key)
@@ -171,46 +180,60 @@ async function processOne(supabase: any, args: {
 	const courseIds = [...new Set(packets.map((p: any) => p.course_id))]
 	let coursesQuery = supabase
 		.from('courses')
-		.select('id, course_code, course_name, course_title, board_code')
+		.select('id, course_code, course_name, board_code')
 		.in('id', courseIds)
 	if (board_code) coursesQuery = coursesQuery.eq('board_code', board_code)
 	const { data: courses } = await coursesQuery
 	const courseMap = new Map((courses || []).map((c: any) => [c.id, c]))
 
-	const { data: cvDates } = await supabase
-		.from('course_valuation_dates')
-		.select('course_id, valuation_date')
+	const { data: allCoursePackets } = await supabase
+		.from('answer_sheet_packets')
+		.select('course_id, packet_no, id')
 		.eq('institutions_id', institutions_id)
 		.eq('examination_session_id', examination_session_id)
-	const dateMap = new Map((cvDates || []).map((d: any) => [d.course_id, d.valuation_date]))
+		.eq('is_active', true)
+		.in('course_id', courseIds)
+		.order('packet_no', { ascending: true })
+		.range(0, 99999)
 
-	const courseAgg = new Map<string, { packet_count: number; sheet_count: number }>()
-	for (const p of packets as any[]) {
-		if (!courseMap.has(p.course_id)) continue
-		const prev = courseAgg.get(p.course_id) || { packet_count: 0, sheet_count: 0 }
-		prev.packet_count += 1
-		prev.sheet_count += p.total_sheets || 0
-		courseAgg.set(p.course_id, prev)
+	const totalPacketsByCourse = new Map<string, number>()
+	const indexById = new Map<string, number>()
+	const seenSeq = new Map<string, number>()
+	for (const p of (allCoursePackets || []) as any[]) {
+		totalPacketsByCourse.set(p.course_id, (totalPacketsByCourse.get(p.course_id) || 0) + 1)
+		const next = (seenSeq.get(p.course_id) || 0) + 1
+		seenSeq.set(p.course_id, next)
+		indexById.set(p.id, next)
 	}
 
-	const courseEntries: CentralValuationCourseEntry[] = [...courseAgg.entries()].map(([cid, agg]) => {
-		const c = courseMap.get(cid) as any
-		return {
-			course_code: c.course_code,
-			course_name: c.course_name || c.course_title,
-			valuation_date: dateMap.get(cid) as string || '',
-			packet_count: agg.packet_count,
-			sheet_count: agg.sheet_count,
-		}
-	})
+	const courseEntries: CentralValuationCourseEntry[] = (packets as any[])
+		.filter(p => courseMap.has(p.course_id))
+		.map(p => {
+			const c = courseMap.get(p.course_id) as any
+			return {
+				course_code: c.course_code,
+				course_name: c.course_name,
+				valuation_date: p.valuation_date || '',
+				packet_no: p.packet_no,
+				packet_index: indexById.get(p.id) || 0,
+				total_packets: totalPacketsByCourse.get(p.course_id) || 0,
+				packet_count: 1,
+				sheet_count: p.total_sheets || 0,
+			}
+		})
+		.sort((a, b) => {
+			const cmp = (a.course_code || '').localeCompare(b.course_code || '')
+			if (cmp !== 0) return cmp
+			return (a.packet_index || 0) - (b.packet_index || 0)
+		})
 
 	const dates = courseEntries.map(c => c.valuation_date).filter(Boolean).sort()
 	const dateRange = dates.length === 0 ? '' : dates[0] === dates[dates.length - 1] ? dates[0] : `${dates[0]} to ${dates[dates.length - 1]}`
 
 	const letterData: CentralValuationAppointmentData = {
-		institution_name: inst?.name,
-		institution_address: inst?.address,
-		ref_number: `JKKNCAS/CoE/${(session?.session_code || '').slice(0, 8)}`,
+		institution_name: (settings as any)?.institution_name || inst?.name || 'J.K.K.NATARAJA COLLEGE OF ARTS & SCIENCE (AUTONOMOUS)',
+		institution_address: (settings as any)?.institution_address || inst?.address,
+		ref_number: `JKKNCAS/ CoE/ ${session?.session_name || session?.session_code || ''}/ Central Valuation`,
 		letter_date: new Date().toISOString().slice(0, 10),
 		examiner_name: examinerName || 'Examiner',
 		examiner_type,
@@ -231,11 +254,58 @@ async function processOne(supabase: any, args: {
 		valuation_date_range: dateRange,
 		courses: courseEntries,
 		pdf_settings: settings,
-		coe_email: 'coearts@jkkn.ac.in',
+		coe_name: (settings as any)?.coe_name || 'Controller of Examinations',
+		coe_qualifications: (settings as any)?.coe_qualifications || '',
+		coe_contact: (settings as any)?.coe_contact || '',
+		coe_email: process.env.COE_EMAIL || 'coearts@jkkn.ac.in',
+		coe_signature_url: (settings as any)?.coe_signature_url || null,
+		coe_seal_url: (settings as any)?.coe_seal_url || null,
 	}
 
-	const subject = `Appointment of Examiner for ${session?.session_name || ''} Examinations- Reg.`
-	const bodyHtml = `<p>Sir/Madam,</p><p>Here I have attached your appointment ; we are expecting your acceptance Mail.</p><p>With Regards,<br/>Controller of Examinations</p>`
+	const examinerRoleLabel = letterData.examiner_role || 'Examiner'
+	const examSessionName = session?.session_name || ''
+	const institutionName = (settings as any)?.institution_name || inst?.name || 'J.K.K. NATARAJA COLLEGE OF ARTS & SCIENCE (Autonomous)'
+	const institutionAddress = (settings as any)?.institution_address || inst?.address || 'Komarapalayam- 638 183, Namakkal District, Tamil Nadu'
+	const coeName = (settings as any)?.coe_name || 'Dr. S. UMAVATHI'
+	const coeQualifications = (settings as any)?.coe_qualifications || 'M.Sc., Ph.D'
+	const coeContact = (settings as any)?.coe_contact || '93605 12090'
+	const coeEmail = process.env.COE_EMAIL || 'coearts@jkkn.ac.in'
+
+	// Default subject and body. If a template row exists in examiner_email_templates
+	// for CENTRAL_VALUATION_APPOINTMENT, use it instead with placeholder substitution.
+	let subject = `Appointment Letter - ${examinerRoleLabel} - ${examSessionName}`
+	const coeNameLine = coeName && coeName !== 'Controller of Examinations'
+		? `${coeName}${coeQualifications ? ', ' + coeQualifications : ''},<br/>`
+		: ''
+
+	let bodyHtml = `
+<p>Dear Sir/Madam,</p>
+<p>Greetings from <strong>${institutionName}</strong></p>
+<p>Please find attached the Central Valuation appointment order for your reference.</p>
+<p>If you are not in a position to accept this offer, please inform us through mail at <a href="mailto:${coeEmail}">${coeEmail}</a> immediately.</p>
+<br/>
+<p>Warm Regards,<br/>
+${coeNameLine}Controller of Examinations,<br/>
+<strong>${institutionName}</strong>,<br/>
+${institutionAddress},<br/>
+Email: ${coeEmail},${coeContact ? `<br/>Contact: ${coeContact}.` : ''}</p>`
+
+	if (emailTemplate) {
+		const placeholders: Record<string, string> = {
+			examiner_name: examinerName,
+			examiner_designation: examinerDesignation || '',
+			examiner_role: examinerRoleLabel,
+			exam_session: examSessionName,
+			board_name: board?.board_name || board_code || '',
+			institution_name: institutionName,
+			institution_address: institutionAddress,
+			coe_name: coeQualifications ? `${coeName}, ${coeQualifications}` : coeName,
+			coe_email: coeEmail,
+			coe_contact: coeContact,
+		}
+		subject = replacePlaceholders(emailTemplate.subject, placeholders)
+		bodyHtml = replacePlaceholders(emailTemplate.body, placeholders)
+	}
 
 	try {
 		const pdfBuffer = await generateCentralValuationAppointmentPdf(letterData)

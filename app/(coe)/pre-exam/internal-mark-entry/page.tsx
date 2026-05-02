@@ -23,6 +23,7 @@ import { useSessionSync } from "@/hooks/use-session-sync"
 import { cn } from "@/lib/utils"
 import Link from "next/link"
 import { Save, Loader2, Search, RefreshCw, AlertTriangle, Check, ChevronsUpDown, Download } from "lucide-react"
+import { numberToWords } from "@/services/post-exam/external-mark-entry-service"
 
 // Types
 interface Institution {
@@ -79,17 +80,7 @@ interface PatternComponent {
 }
 
 // ─── Number to words (for marks in words column) ───
-const ones = ['', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine', 'Ten',
-	'Eleven', 'Twelve', 'Thirteen', 'Fourteen', 'Fifteen', 'Sixteen', 'Seventeen', 'Eighteen', 'Nineteen']
-const tens = ['', '', 'Twenty', 'Thirty', 'Forty', 'Fifty', 'Sixty', 'Seventy', 'Eighty', 'Ninety']
-function numberToWords(n: number): string {
-	if (n === 0) return 'Zero'
-	if (n < 0) return 'Minus ' + numberToWords(-n)
-	if (n < 20) return ones[n]
-	if (n < 100) return tens[Math.floor(n / 10)] + (n % 10 ? ' ' + ones[n % 10] : '')
-	if (n < 1000) return ones[Math.floor(n / 100)] + ' Hundred' + (n % 100 ? ' and ' + numberToWords(n % 100) : '')
-	return String(n)
-}
+// Digit-by-digit words ("28" → "TWO EIGHT") — shared with all mark PDFs.
 
 export default function InternalMarkEntryPage() {
 	const { toast } = useToast()
@@ -332,7 +323,15 @@ export default function InternalMarkEntryPage() {
 			if (!res.ok) { setAssessmentOptions([]); return }
 			const settings = await res.json()
 
-			const today = new Date().toISOString().split('T')[0]
+			// Compute "today" in Indian Standard Time (UTC+5:30) so the cutoff
+			// matches the institution's calendar regardless of the user's machine
+			// timezone or whether the browser was opened from outside India.
+			const today = new Intl.DateTimeFormat('en-CA', {
+				timeZone: 'Asia/Kolkata',
+				year: 'numeric',
+				month: '2-digit',
+				day: '2-digit',
+			}).format(new Date()) // → "YYYY-MM-DD"
 			const options: typeof assessmentOptions = []
 
 			for (const setting of settings) {
@@ -340,10 +339,13 @@ export default function InternalMarkEntryPage() {
 					const from = round.entry_from || ''
 					const to = round.entry_to || '9999-12-31'
 
+					// Strict cutoff: entry closes once `today` reaches `entry_to`.
+					// "entry to 2026-05-01" means submissions are blocked starting
+					// 2026-05-01 — the deadline date itself is closed, not open.
 					let status: 'open' | 'expired' | 'upcoming' | 'no-dates' = 'no-dates'
 					if (from) {
 						if (today < from) status = 'upcoming'
-						else if (today > to) status = 'expired'
+						else if (today >= to) status = 'expired'
 						else status = 'open'
 					}
 
@@ -485,10 +487,21 @@ export default function InternalMarkEntryPage() {
 				data.forEach((l: any) => {
 					marks[l.id] = {}
 					if (l.saved_marks) {
-						// Pre-fill from saved cia_marks row
+						// Pre-fill from saved cia_marks row — standard fixed columns.
+						// Include 0 (a valid saved mark) — only skip null/undefined.
 						for (const [compCode, dbField] of Object.entries(markFieldMap)) {
 							const val = l.saved_marks[dbField]
-							if (val != null && val > 0) marks[l.id][compCode] = val
+							if (val != null) marks[l.id][compCode] = Number(val) || 0
+						}
+						// Custom components (added via CIA settings) live in extra_marks JSONB.
+						// Same rule: explicit 0 round-trips, missing keys stay missing.
+						const extra = l.saved_marks.extra_marks
+						if (extra && typeof extra === 'object') {
+							for (const [compCode, val] of Object.entries(extra)) {
+								if (val == null) continue
+								const num = Number(val)
+								if (!isNaN(num)) marks[l.id][compCode] = num
+							}
 						}
 					}
 				})
@@ -593,6 +606,13 @@ export default function InternalMarkEntryPage() {
 		return Object.values(marks).reduce((sum, val) => sum + (val || 0), 0)
 	}
 
+	// True when at least one component key exists for this learner — distinguishes
+	// "nothing entered yet" (show blank in Entry/Edit/View) from "entered as 0".
+	const learnerHasEntries = (examRegId: string): boolean => {
+		const marks = learnerMarks[examRegId]
+		return !!marks && Object.keys(marks).length > 0
+	}
+
 	// ===== Save =====
 	const [confirmOpen, setConfirmOpen] = useState(false)
 
@@ -600,16 +620,19 @@ export default function InternalMarkEntryPage() {
 		return Object.keys(errors).length > 0
 	}, [errors])
 
+	// A learner counts as "entered" the moment any component has a value (including 0).
+	// 0 is a valid mark — students who scored 0 must still be saved and shown.
+	const learnerHasAnyComponent = (marks: Record<string, number> | undefined): boolean => {
+		if (!marks) return false
+		return Object.values(marks).some(v => v !== undefined && v !== null && !isNaN(Number(v)))
+	}
+
 	const hasAnyMarks = useMemo(() => {
-		return Object.values(learnerMarks).some(marks =>
-			Object.values(marks).some(v => v > 0)
-		)
+		return Object.values(learnerMarks).some(learnerHasAnyComponent)
 	}, [learnerMarks])
 
 	const marksToSaveCount = useMemo(() => {
-		return Object.values(learnerMarks).filter(marks =>
-			Object.values(marks).some(v => v > 0)
-		).length
+		return Object.values(learnerMarks).filter(learnerHasAnyComponent).length
 	}, [learnerMarks])
 
 	// Strict check: every learner must have a mark for every active component.
@@ -698,12 +721,11 @@ export default function InternalMarkEntryPage() {
 			if (val > 0) activeMaxMarks[code] = val
 		}
 
-		// Build learner marks array (only learners with marks entered)
+		// Build learner marks array — include any learner with at least one
+		// component touched, even if the value is 0. Zero is a valid mark and
+		// must round-trip through save → fetch → display.
 		const marksToSave = learners
-			.filter(l => {
-				const marks = learnerMarks[l.id] || {}
-				return Object.values(marks).some(v => v > 0)
-			})
+			.filter(l => learnerHasAnyComponent(learnerMarks[l.id]))
 			.map(l => ({
 				exam_registration_id: l.id,
 				student_id: l.student_id,
@@ -810,13 +832,21 @@ export default function InternalMarkEntryPage() {
 				})
 			} catch { return '' }
 		}
-		const [leftLogo, rightLogo] = await Promise.all([
-			loadImage('/jkkncas_logo.png'),
-			loadImage('/jkkn_logo.png'),
-		])
+		// Resolve all per-institution PDF header bits (logo + name + subtitle +
+		// trust line + accreditation + address) from the central config map.
+		// Onboarding a new college only requires editing lib/utils/institution-header.ts.
+		const { getInstitutionHeader } = await import('@/lib/utils/institution-header')
+		const header = getInstitutionHeader(institution?.institution_code)
+		// Single institution logo on the LEFT; right side is blank (per request).
+		// Note: in the PDF generator, `rightLogoImage` is drawn at the LEFT margin.
+		const leftLogo = await loadImage(header.logo_path)
 
 		generateInternalMarksPDF({
-			institution_name: institution?.name || 'J.K.K.NATARAJA COLLEGE OF ARTS & SCIENCE (AUTONOMOUS)',
+			institution_name: header.name,
+			institution_subtitle: header.subtitle,
+			institution_trust_line: header.trust_line,
+			institution_accreditation: header.accreditation,
+			institution_address: header.address,
 			program_code: prog?.program_code || '',
 			program_name: prog?.program_name || '',
 			semester: selectedSemester,
@@ -828,8 +858,7 @@ export default function InternalMarkEntryPage() {
 			cia_round_name: activeAssessment?.round?.round_name || 'CIA',
 			components: pdfComponents,
 			learners: pdfLearners,
-			logoImage: leftLogo,
-			rightLogoImage: rightLogo,
+			rightLogoImage: leftLogo,
 		})
 	}
 
@@ -1111,9 +1140,8 @@ export default function InternalMarkEntryPage() {
 								<div className="flex items-center gap-4 flex-wrap">
 									<div className="flex items-center gap-2 min-w-0">
 										<span className="text-sm font-semibold truncate">{selectedCourse.course_code} - {selectedCourse.course_name}</span>
-										<Badge variant="outline" className="text-[10px] shrink-0">Max: {selectedCourse.internal_max_mark}</Badge>
 										{totalMaxMarks > 0 && (
-											<Badge variant={totalMaxMarks > selectedCourse.internal_max_mark ? 'destructive' : 'default'} className={cn("text-[10px] shrink-0", totalMaxMarks <= selectedCourse.internal_max_mark && "bg-emerald-100 text-emerald-700 hover:bg-emerald-100")}>
+											<Badge className="text-[10px] shrink-0 bg-emerald-100 text-emerald-700 hover:bg-emerald-100">
 												Total: {totalMaxMarks}
 											</Badge>
 										)}
@@ -1263,9 +1291,9 @@ export default function InternalMarkEntryPage() {
 																return (
 																	<TableCell key={comp.component_code} className="text-center p-1.5">
 																		{viewMode === 'view' ? (
-																			// Read-only display — no input, just the value as bold text
+																			// Read-only display — Option B: missing component → 0.
 																			<div className="h-9 w-18 mx-auto flex items-center justify-center text-sm font-bold text-blue-700">
-																				{learnerMarks[learner.id]?.[comp.component_code] ?? '-'}
+																				{learnerMarks[learner.id]?.[comp.component_code] ?? 0}
 																			</div>
 																		) : (
 																			<Input
@@ -1284,7 +1312,7 @@ export default function InternalMarkEntryPage() {
 																						: "border-emerald-200 bg-emerald-50/40 focus:border-emerald-500",
 																					error && "!border-red-400 !bg-red-50 text-red-700"
 																				)}
-																				placeholder="-"
+																				placeholder=""
 																			/>
 																		)}
 																		{error && <p className="text-[10px] text-red-500 mt-0.5">{error}</p>}
@@ -1292,15 +1320,22 @@ export default function InternalMarkEntryPage() {
 																)
 															})}
 															<TableCell className="text-center">
-																<span className={cn(
-																	"inline-flex items-center justify-center h-9 w-16 rounded-md text-sm font-bold",
-																	total > 0 ? "bg-emerald-50 text-emerald-700 border border-emerald-200" : "text-muted-foreground"
-																)}>
-																	{total > 0 ? total : '-'}
-																</span>
+																{(() => {
+																	// View mode: always show total (matches Option B for component cells).
+																	// Entry/Edit mode: only show once the user has touched something.
+																	const showTotal = viewMode === 'view' || learnerHasEntries(learner.id)
+																	return (
+																		<span className={cn(
+																			"inline-flex items-center justify-center h-9 w-16 rounded-md text-sm font-bold",
+																			showTotal ? "bg-emerald-50 text-emerald-700 border border-emerald-200" : "text-muted-foreground"
+																		)}>
+																			{showTotal ? total : ''}
+																		</span>
+																	)
+																})()}
 															</TableCell>
 															<TableCell className="text-sm font-medium text-purple-700">
-																{total > 0 ? numberToWords(total) : '-'}
+																{(viewMode === 'view' || learnerHasEntries(learner.id)) ? numberToWords(total) : ''}
 															</TableCell>
 														</TableRow>
 													)

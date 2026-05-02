@@ -1,5 +1,6 @@
 'use client'
 
+import { cloneElement } from 'react'
 import { usePathname } from 'next/navigation'
 import Link from 'next/link'
 import { AppSidebar } from '@/components/layout/app-sidebar'
@@ -58,33 +59,26 @@ export default function CentralValuationLayout({
 					<div className="flex items-center gap-2">
 						<Breadcrumb>
 							<BreadcrumbList>
-								<BreadcrumbItem>
-									<BreadcrumbLink asChild>
-										<Link href="/dashboard">Dashboard</Link>
-									</BreadcrumbLink>
-								</BreadcrumbItem>
-								<BreadcrumbSeparator />
-								<BreadcrumbItem>
-									<BreadcrumbLink className="text-muted-foreground">Post-Exam</BreadcrumbLink>
-								</BreadcrumbItem>
-								<BreadcrumbSeparator />
-								{activeTab ? (
-									<>
-										<BreadcrumbItem>
-											<BreadcrumbLink asChild>
-												<Link href="/post-exam/central-valuation/dates">Central Valuation</Link>
-											</BreadcrumbLink>
-										</BreadcrumbItem>
-										<BreadcrumbSeparator />
-										<BreadcrumbItem>
-											<BreadcrumbPage>{activeTab.name}</BreadcrumbPage>
-										</BreadcrumbItem>
-									</>
-								) : (
-									<BreadcrumbItem>
-										<BreadcrumbPage>Central Valuation</BreadcrumbPage>
-									</BreadcrumbItem>
-								)}
+								{(() => {
+									const crumbs: Array<{ key: string; el: React.ReactElement }> = [
+										{ key: 'dashboard', el: <BreadcrumbItem><BreadcrumbLink asChild><Link href="/dashboard">Dashboard</Link></BreadcrumbLink></BreadcrumbItem> },
+										{ key: 'sep-1', el: <BreadcrumbSeparator /> },
+										{ key: 'post-exam', el: <BreadcrumbItem><BreadcrumbLink className="text-muted-foreground">Post-Exam</BreadcrumbLink></BreadcrumbItem> },
+										{ key: 'sep-2', el: <BreadcrumbSeparator /> },
+									]
+									if (activeTab) {
+										crumbs.push(
+											{ key: 'cv-link', el: <BreadcrumbItem><BreadcrumbLink asChild><Link href="/post-exam/central-valuation/dates">Central Valuation</Link></BreadcrumbLink></BreadcrumbItem> },
+											{ key: 'sep-3', el: <BreadcrumbSeparator /> },
+											{ key: 'cv-active', el: <BreadcrumbItem><BreadcrumbPage>{activeTab.name}</BreadcrumbPage></BreadcrumbItem> },
+										)
+									} else {
+										crumbs.push(
+											{ key: 'cv-only', el: <BreadcrumbItem><BreadcrumbPage>Central Valuation</BreadcrumbPage></BreadcrumbItem> },
+										)
+									}
+									return crumbs.map(c => cloneElement(c.el, { key: c.key }))
+								})()}
 							</BreadcrumbList>
 						</Breadcrumb>
 					</div>

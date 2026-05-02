@@ -97,17 +97,21 @@ interface Session {
 	session_code: string
 }
 
-interface CourseDateRow {
+interface PacketDateRow {
+	row_id: string
+	packet_id: string | null
 	course_id: string
 	course_code: string
 	course_name: string
 	board_code: string
-	valuation_date: string | null
-	packet_count: number
-	sheet_count: number
+	packet_no: string | null
+	packet_index: number
+	total_packets: number
+	total_sheets: number
 	regular_count: number
 	arrear_count: number
 	student_count: number
+	valuation_date: string | null
 	packets_generated: boolean
 }
 
@@ -147,12 +151,15 @@ export default function CentralValuationDatesPage() {
 
 	const [courseBoardCode, setCourseBoardCode] = useState('')
 	const [courseBoardOpen, setCourseBoardOpen] = useState(false)
-	const [courseDates, setCourseDates] = useState<CourseDateRow[]>([])
+	const [courseCodeFilter, setCourseCodeFilter] = useState('')
+	const [courseCodeOpen, setCourseCodeOpen] = useState(false)
+	const [courseDates, setCourseDates] = useState<PacketDateRow[]>([])
 	const [loadingCourses, setLoadingCourses] = useState(false)
 	const [dirtyDates, setDirtyDates] = useState<Record<string, string | null>>({})
 	const [savingCourseDates, setSavingCourseDates] = useState(false)
-	const [selectedCourseIds, setSelectedCourseIds] = useState<Set<string>>(new Set())
+	const [selectedRowIds, setSelectedRowIds] = useState<Set<string>>(new Set())
 	const [bulkDate, setBulkDate] = useState('')
+	const [courseSearch, setCourseSearch] = useState('')
 
 	useEffect(() => {
 		if (isReady && !mustSelectInstitution && contextInstitutionId && !selectedInstitutionId) {
@@ -182,8 +189,9 @@ export default function CentralValuationDatesPage() {
 		} else {
 			setCourseDates([])
 			setDirtyDates({})
-			setSelectedCourseIds(new Set())
+			setSelectedRowIds(new Set())
 		}
+		setCourseCodeFilter('')
 	}, [isReady, selectedSessionId, effectiveInstitutionId, courseBoardCode])
 
 	const loadInstitutions = useCallback(async () => {
@@ -234,10 +242,10 @@ export default function CentralValuationDatesPage() {
 			setLoadingCourses(true)
 			const r = await fetch(`/api/post-exam/central-valuation/course-dates?institutions_id=${effectiveInstitutionId}&session_id=${selectedSessionId}&board_code=${boardCode}`)
 			if (!r.ok) throw new Error('Failed')
-			const rows = (await r.json()) as CourseDateRow[]
+			const rows = (await r.json()) as PacketDateRow[]
 			setCourseDates(rows)
 			setDirtyDates({})
-			setSelectedCourseIds(new Set())
+			setSelectedRowIds(new Set())
 		} catch {
 			toast({ title: '❌ Error', description: 'Failed to load courses', variant: 'destructive' })
 		} finally {
@@ -490,9 +498,46 @@ export default function CentralValuationDatesPage() {
 		return b?.window || null
 	}, [courseBoardCode, boards])
 
-	const handleCourseDateChange = (courseId: string, value: string) => {
-		setDirtyDates(prev => ({ ...prev, [courseId]: value || null }))
+	const handlePacketDateChange = (packetId: string, value: string) => {
+		if (value && currentWindow) {
+			if (value < currentWindow.from_date || value > currentWindow.to_date) {
+				toast({
+					title: '❌ Out of window',
+					description: `Date must be between ${currentWindow.from_date} and ${currentWindow.to_date}`,
+					variant: 'destructive',
+				})
+				return
+			}
+		}
+		setDirtyDates(prev => ({ ...prev, [packetId]: value || null }))
 	}
+
+	const uniqueCourseCodes = useMemo(() => {
+		const seen = new Map<string, string>()
+		for (const c of courseDates) {
+			if (c.course_code && !seen.has(c.course_code)) {
+				seen.set(c.course_code, c.course_name || '')
+			}
+		}
+		return [...seen.entries()]
+			.map(([code, name]) => ({ code, name }))
+			.sort((a, b) => a.code.localeCompare(b.code))
+	}, [courseDates])
+
+	const filteredCourseDates = useMemo(() => {
+		const term = courseSearch.trim().toLowerCase()
+		let rows = courseDates
+		if (courseCodeFilter) {
+			rows = rows.filter(c => c.course_code === courseCodeFilter)
+		}
+		if (term) {
+			rows = rows.filter(c =>
+				(c.course_code || '').toLowerCase().includes(term) ||
+				(c.course_name || '').toLowerCase().includes(term)
+			)
+		}
+		return rows
+	}, [courseDates, courseSearch, courseCodeFilter])
 
 	const applyBulkDate = () => {
 		if (!bulkDate) {
@@ -510,24 +555,26 @@ export default function CentralValuationDatesPage() {
 			}
 		}
 		const newDirty = { ...dirtyDates }
-		for (const id of selectedCourseIds) newDirty[id] = bulkDate
+		for (const rowId of selectedRowIds) {
+			const row = courseDates.find(c => c.row_id === rowId)
+			if (row?.packet_id) newDirty[row.packet_id] = bulkDate
+		}
 		setDirtyDates(newDirty)
 	}
 
 	const saveCourseDates = async () => {
 		const entries = Object.entries(dirtyDates)
-			.filter(([courseId]) => {
-				const c = courseDates.find(c => c.course_id === courseId)
-				return !!c
-			})
-			.map(([courseId, val]) => {
-				const c = courseDates.find(c => c.course_id === courseId)!
+			.map(([packetId, val]) => {
+				const c = courseDates.find(c => c.packet_id === packetId)
+				if (!c) return null
 				return {
-					course_id: courseId,
+					packet_id: packetId,
+					course_id: c.course_id,
 					board_code: c.board_code,
 					valuation_date: val,
 				}
 			})
+			.filter((e): e is { packet_id: string; course_id: string; board_code: string; valuation_date: string | null } => e !== null)
 
 		if (entries.length === 0) {
 			toast({ title: 'Nothing to save', description: 'No changes made' })
@@ -562,16 +609,21 @@ export default function CentralValuationDatesPage() {
 		}
 	}
 
-	const toggleCourseSelect = (courseId: string) => {
-		const next = new Set(selectedCourseIds)
-		if (next.has(courseId)) next.delete(courseId)
-		else next.add(courseId)
-		setSelectedCourseIds(next)
+	const toggleRowSelect = (rowId: string) => {
+		const next = new Set(selectedRowIds)
+		if (next.has(rowId)) next.delete(rowId)
+		else next.add(rowId)
+		setSelectedRowIds(next)
 	}
 
 	const toggleAllSelect = () => {
-		if (selectedCourseIds.size === courseDates.length) setSelectedCourseIds(new Set())
-		else setSelectedCourseIds(new Set(courseDates.map(c => c.course_id)))
+		const selectableRows = filteredCourseDates.filter(c => !!c.packet_id)
+		const visibleIds = selectableRows.map(c => c.row_id)
+		const allSelected = visibleIds.length > 0 && visibleIds.every(id => selectedRowIds.has(id))
+		const next = new Set(selectedRowIds)
+		if (allSelected) visibleIds.forEach(id => next.delete(id))
+		else visibleIds.forEach(id => next.add(id))
+		setSelectedRowIds(next)
 	}
 
 	const boardsWithWindow = boards.filter(b => !!b.window)
@@ -860,56 +912,137 @@ export default function CentralValuationDatesPage() {
 					<TabsContent value="course-dates" className="space-y-4">
 						<Card className="shadow-sm">
 							<CardHeader className="pb-3">
-								<CardTitle className="text-base">Select Board</CardTitle>
+								<CardTitle className="text-base">Select Board &amp; Course</CardTitle>
 							</CardHeader>
 							<CardContent>
-								<Popover open={courseBoardOpen} onOpenChange={setCourseBoardOpen}>
-									<PopoverTrigger asChild>
+								<div className="flex flex-wrap items-end gap-3">
+									<div className="space-y-1.5">
+										<Label className="text-xs text-muted-foreground">Board</Label>
+										<Popover open={courseBoardOpen} onOpenChange={setCourseBoardOpen}>
+											<PopoverTrigger asChild>
+												<Button
+													variant="outline"
+													role="combobox"
+													className="w-full md:w-[280px] justify-between h-9 text-left text-xs truncate"
+													disabled={boardsWithWindow.length === 0}
+												>
+													<span className="flex-1 pr-2 truncate">
+														{courseBoardCode
+															? (boards.find(b => b.board_code === courseBoardCode)?.board_name || courseBoardCode)
+															: boardsWithWindow.length === 0
+																? 'Set a board window first'
+																: 'Select board'}
+													</span>
+													<ChevronsUpDown className="h-3.5 w-3.5 shrink-0 opacity-50" />
+												</Button>
+											</PopoverTrigger>
+											<PopoverContent className="w-[320px] p-0" align="start">
+												<Command>
+													<CommandInput placeholder="Search board..." className="h-8 text-xs" />
+													<CommandEmpty className="text-xs py-4">No board found.</CommandEmpty>
+													<CommandGroup className="max-h-56 overflow-auto">
+														{boardsWithWindow.map(b => (
+															<CommandItem
+																key={b.board_code}
+																value={`${b.board_code} ${b.board_name}`}
+																onSelect={() => {
+																	setCourseBoardCode(b.board_code)
+																	setCourseBoardOpen(false)
+																}}
+																className="py-2 text-xs"
+															>
+																<Check className={cn('mr-2 h-3.5 w-3.5 shrink-0', courseBoardCode === b.board_code ? 'opacity-100' : 'opacity-0')} />
+																<span className="flex-1">
+																	{b.board_name}
+																	<span className="text-muted-foreground ml-1">({b.window?.from_date} → {b.window?.to_date})</span>
+																</span>
+															</CommandItem>
+														))}
+													</CommandGroup>
+												</Command>
+											</PopoverContent>
+										</Popover>
+									</div>
+
+									<div className="space-y-1.5">
+										<Label className="text-xs text-muted-foreground">Course Code</Label>
+										<Popover open={courseCodeOpen} onOpenChange={setCourseCodeOpen}>
+											<PopoverTrigger asChild>
+												<Button
+													variant="outline"
+													role="combobox"
+													className="w-full md:w-[280px] justify-between h-9 text-left text-xs truncate"
+													disabled={!courseBoardCode || uniqueCourseCodes.length === 0}
+												>
+													<span className="flex-1 pr-2 truncate">
+														{courseCodeFilter
+															? (() => {
+																const m = uniqueCourseCodes.find(u => u.code === courseCodeFilter)
+																return m?.name ? `${courseCodeFilter} — ${m.name}` : courseCodeFilter
+															})()
+															: !courseBoardCode
+																? 'Pick a board first'
+																: uniqueCourseCodes.length === 0
+																	? 'No courses'
+																	: `All courses (${uniqueCourseCodes.length})`}
+													</span>
+													<ChevronsUpDown className="h-3.5 w-3.5 shrink-0 opacity-50" />
+												</Button>
+											</PopoverTrigger>
+											<PopoverContent className="w-[320px] p-0" align="start">
+												<Command>
+													<CommandInput placeholder="Search course..." className="h-8 text-xs" />
+													<CommandEmpty className="text-xs py-4">No course found.</CommandEmpty>
+													<CommandGroup className="max-h-56 overflow-auto">
+														<CommandItem
+															key="__all__"
+															value="all courses"
+															onSelect={() => {
+																setCourseCodeFilter('')
+																setCourseCodeOpen(false)
+															}}
+															className="py-2 text-xs"
+														>
+															<Check className={cn('mr-2 h-3.5 w-3.5 shrink-0', !courseCodeFilter ? 'opacity-100' : 'opacity-0')} />
+															<span className="flex-1 italic text-muted-foreground">All courses</span>
+														</CommandItem>
+														{uniqueCourseCodes.map(u => (
+															<CommandItem
+																key={u.code}
+																value={`${u.code} ${u.name}`}
+																onSelect={() => {
+																	setCourseCodeFilter(u.code)
+																	setCourseCodeOpen(false)
+																}}
+																className="py-2 text-xs"
+															>
+																<Check className={cn('mr-2 h-3.5 w-3.5 shrink-0', courseCodeFilter === u.code ? 'opacity-100' : 'opacity-0')} />
+																<span className="flex-1">
+																	<span className="font-medium">{u.code}</span>
+																	<span className="text-muted-foreground ml-2">{u.name}</span>
+																</span>
+															</CommandItem>
+														))}
+													</CommandGroup>
+												</Command>
+											</PopoverContent>
+										</Popover>
+									</div>
+
+									{courseCodeFilter && (
 										<Button
-											variant="outline"
-											role="combobox"
-											className="w-full md:w-[320px] justify-between h-9 text-left text-xs truncate"
-											disabled={boardsWithWindow.length === 0}
+											variant="ghost"
+											size="sm"
+											className="h-9 text-xs"
+											onClick={() => setCourseCodeFilter('')}
 										>
-											<span className="flex-1 pr-2 truncate">
-												{courseBoardCode
-													? (boards.find(b => b.board_code === courseBoardCode)?.board_name || courseBoardCode)
-													: boardsWithWindow.length === 0
-														? 'Set a board window first'
-														: 'Select board'}
-											</span>
-											<ChevronsUpDown className="h-3.5 w-3.5 shrink-0 opacity-50" />
+											Clear
 										</Button>
-									</PopoverTrigger>
-									<PopoverContent className="w-[320px] p-0" align="start">
-										<Command>
-											<CommandInput placeholder="Search board..." className="h-8 text-xs" />
-											<CommandEmpty className="text-xs py-4">No board found.</CommandEmpty>
-											<CommandGroup className="max-h-56 overflow-auto">
-												{boardsWithWindow.map(b => (
-													<CommandItem
-														key={b.board_code}
-														value={`${b.board_code} ${b.board_name}`}
-														onSelect={() => {
-															setCourseBoardCode(b.board_code)
-															setCourseBoardOpen(false)
-														}}
-														className="py-2 text-xs"
-													>
-														<Check className={cn('mr-2 h-3.5 w-3.5 shrink-0', courseBoardCode === b.board_code ? 'opacity-100' : 'opacity-0')} />
-														<span className="flex-1">
-															{b.board_name}
-															<span className="text-muted-foreground ml-1">({b.window?.from_date} → {b.window?.to_date})</span>
-														</span>
-													</CommandItem>
-												))}
-											</CommandGroup>
-										</Command>
-									</PopoverContent>
-								</Popover>
+									)}
+								</div>
 
 								{currentWindow && (
-									<p className="mt-2 text-xs text-muted-foreground">
+									<p className="mt-3 text-xs text-muted-foreground">
 										Valuation window: <span className="font-medium text-foreground">{currentWindow.from_date}</span> to <span className="font-medium text-foreground">{currentWindow.to_date}</span>
 									</p>
 								)}
@@ -920,10 +1053,24 @@ export default function CentralValuationDatesPage() {
 							<Card className="shadow-md">
 								<CardHeader className="pb-3">
 									<div className="flex items-center justify-between flex-wrap gap-2">
-										<CardTitle className="text-base">
-											Courses in {boards.find(b => b.board_code === courseBoardCode)?.board_name}
-										</CardTitle>
+										<div className="flex items-center gap-2">
+											<CardTitle className="text-base">
+												Courses in {boards.find(b => b.board_code === courseBoardCode)?.board_name}
+											</CardTitle>
+											<Badge variant="outline" className="text-[10px] px-1.5 py-0">
+												{filteredCourseDates.length} / {courseDates.length}
+											</Badge>
+										</div>
 										<div className="flex items-center gap-2 flex-wrap">
+											<div className="relative">
+												<Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3 w-3 text-muted-foreground" />
+												<Input
+													value={courseSearch}
+													onChange={e => setCourseSearch(e.target.value)}
+													placeholder="Filter by course code/name..."
+													className="h-8 text-xs pl-6 w-[220px]"
+												/>
+											</div>
 											<Input
 												type="date"
 												value={bulkDate}
@@ -937,9 +1084,9 @@ export default function CentralValuationDatesPage() {
 												size="sm"
 												variant="outline"
 												onClick={applyBulkDate}
-												disabled={selectedCourseIds.size === 0 || !bulkDate}
+												disabled={selectedRowIds.size === 0 || !bulkDate}
 											>
-												Apply to {selectedCourseIds.size} selected
+												Apply to {selectedRowIds.size} selected
 											</Button>
 											<Button
 												size="sm"
@@ -970,49 +1117,63 @@ export default function CentralValuationDatesPage() {
 													<TableRow className="bg-slate-800 hover:bg-slate-800">
 														<TableHead className="text-white text-xs w-10">
 															<Checkbox
-																checked={selectedCourseIds.size === courseDates.length && courseDates.length > 0}
+																checked={(() => {
+																	const selectable = filteredCourseDates.filter(c => !!c.packet_id)
+																	return selectable.length > 0 && selectable.every(c => selectedRowIds.has(c.row_id))
+																})()}
 																onCheckedChange={toggleAllSelect}
 															/>
 														</TableHead>
 														<TableHead className="text-white text-xs">Course Code</TableHead>
 														<TableHead className="text-white text-xs">Course Name</TableHead>
-														<TableHead className="text-white text-xs text-center">Reg / Arr / Total</TableHead>
+														<TableHead className="text-white text-xs text-center">Total</TableHead>
 														<TableHead className="text-white text-xs text-center">Packets</TableHead>
 														<TableHead className="text-white text-xs">Valuation Date</TableHead>
 													</TableRow>
 												</TableHeader>
 												<TableBody>
-													{courseDates.map((c, idx) => {
-														const liveDate = dirtyDates[c.course_id] !== undefined
-															? dirtyDates[c.course_id] || ''
+													{filteredCourseDates.length === 0 && (
+														<TableRow>
+															<TableCell colSpan={6} className="text-xs text-center text-muted-foreground py-4">
+																No courses match &quot;{courseSearch}&quot;
+															</TableCell>
+														</TableRow>
+													)}
+													{filteredCourseDates.map((c, idx) => {
+														const liveDate = c.packet_id && dirtyDates[c.packet_id] !== undefined
+															? dirtyDates[c.packet_id] || ''
 															: (c.valuation_date || '')
+														const isDirty = c.packet_id ? dirtyDates[c.packet_id] !== undefined : false
+														const prevRow = idx > 0 ? filteredCourseDates[idx - 1] : null
+														const isFirstOfCourse = !prevRow || prevRow.course_id !== c.course_id
 														return (
 															<TableRow
-																key={c.course_id}
+																key={c.row_id}
 																className={cn(
 																	idx % 2 === 0 ? 'bg-white dark:bg-slate-950' : 'bg-slate-50/70 dark:bg-slate-900/30',
-																	dirtyDates[c.course_id] !== undefined && 'bg-amber-50 dark:bg-amber-900/10'
+																	isDirty && 'bg-amber-50 dark:bg-amber-900/10'
 																)}
 															>
 																<TableCell className="text-xs">
 																	<Checkbox
-																		checked={selectedCourseIds.has(c.course_id)}
-																		onCheckedChange={() => toggleCourseSelect(c.course_id)}
+																		checked={selectedRowIds.has(c.row_id)}
+																		onCheckedChange={() => toggleRowSelect(c.row_id)}
+																		disabled={!c.packet_id}
 																	/>
 																</TableCell>
-																<TableCell className="text-xs font-medium">{c.course_code}</TableCell>
-																<TableCell className="text-xs">{c.course_name}</TableCell>
-																<TableCell className="text-xs text-center whitespace-nowrap">
-																	<span className="text-blue-700">{c.regular_count}</span>
-																	<span className="text-muted-foreground"> / </span>
-																	<span className="text-amber-700">{c.arrear_count}</span>
-																	<span className="text-muted-foreground"> / </span>
-																	<span className="font-semibold">{c.student_count}</span>
+																<TableCell className="text-xs font-medium">
+																	{isFirstOfCourse ? c.course_code : <span className="text-muted-foreground/60">{c.course_code}</span>}
+																</TableCell>
+																<TableCell className="text-xs">
+																	{isFirstOfCourse ? c.course_name : <span className="text-muted-foreground/60">{c.course_name}</span>}
+																</TableCell>
+																<TableCell className="text-xs text-center font-medium">
+																	{c.packets_generated ? c.total_sheets : <span className="text-muted-foreground">—</span>}
 																</TableCell>
 																<TableCell className="text-xs text-center">
 																	{c.packets_generated ? (
-																		<Badge variant="outline" className="bg-green-50 text-green-700 border-green-200">
-																			{c.packet_count} ({c.sheet_count})
+																		<Badge variant="outline" className="bg-green-50 text-green-700 border-green-200 font-mono">
+																			{c.packet_index}/{c.total_packets}
 																		</Badge>
 																	) : (
 																		<Badge variant="outline" className="bg-slate-50 text-slate-500 border-slate-200">
@@ -1026,8 +1187,10 @@ export default function CentralValuationDatesPage() {
 																		value={liveDate}
 																		min={currentWindow?.from_date}
 																		max={currentWindow?.to_date}
-																		onChange={e => handleCourseDateChange(c.course_id, e.target.value)}
+																		onChange={e => c.packet_id && handlePacketDateChange(c.packet_id, e.target.value)}
+																		disabled={!c.packet_id}
 																		className="h-8 text-xs w-[150px]"
+																		title={c.packet_id ? '' : 'Generate packets first'}
 																	/>
 																</TableCell>
 															</TableRow>

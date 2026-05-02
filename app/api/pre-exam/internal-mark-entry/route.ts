@@ -556,21 +556,33 @@ export async function POST(request: Request) {
 				updated_by: currentUserId,
 			}
 
-			// Set component marks and max marks
+			// Set component marks and max marks.
+			// Standard codes (assignment, quiz, ..., test_3) → dedicated cia_marks columns.
+			// Custom codes added via CIA settings (e.g. ai_tools_usage, interactive_mode)
+			// → stored in extra_marks / extra_marks_max JSONB. Without this, custom
+			// component marks were silently dropped.
 			let totalMarks = 0
+			const extraMarks: Record<string, number> = {}
+			const extraMarksMax: Record<string, number> = {}
 			for (const [code, maxVal] of Object.entries(max_marks || {})) {
 				const markField = markFieldMap[code]
 				const maxField = maxFieldMap[code]
+				const mark = Number(lm.marks?.[code]) || 0
 				if (markField) {
-					const mark = Number(lm.marks?.[code]) || 0
 					record[markField] = mark
-					totalMarks += mark
+				} else {
+					extraMarks[code] = mark
 				}
 				if (maxField) {
 					record[maxField] = Number(maxVal) || 0
+				} else {
+					extraMarksMax[code] = Number(maxVal) || 0
 				}
+				totalMarks += mark
 			}
 
+			record.extra_marks = extraMarks
+			record.extra_marks_max = extraMarksMax
 			record.total_internal_marks = totalMarks
 			return record
 		})

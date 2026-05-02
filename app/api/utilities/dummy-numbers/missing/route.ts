@@ -63,10 +63,16 @@ async function fetchMissingLearners(
 	const sampleDummy = existingDummy[0]?.dummy_number || ''
 	const existingFormat = sampleDummy ? detectFormat(sampleDummy) : 'DN{N:4}'
 
-	// Pre-resolve allowed course offering IDs based on filters
-	let allowedOfferingIds: Set<string> | null = null
-	const hasFilters = !!(filters.board_code || filters.program_code || (filters.course_codes && filters.course_codes.length > 0) || (filters.course_categories && filters.course_categories.length > 0))
-	if (hasFilters) {
+	// Pre-resolve allowed course offering IDs based on filters.
+	// Default behavior: skip Practical courses (dummy numbers are only for theory/written papers — ESE & CIA).
+	// Practicals are included only when the user explicitly selects 'Practical' in the category filter.
+	const userCategoriesProvided = !!(filters.course_categories && filters.course_categories.length > 0)
+	const effectiveCategories = userCategoriesProvided
+		? filters.course_categories!
+		: ['Theory', 'Project', 'Field Work'] // exclude 'Practical' by default
+
+	let allowedOfferingIds: Set<string> = new Set()
+	{
 		let coQuery = supabase
 			.from('course_offerings')
 			.select(`
@@ -99,11 +105,17 @@ async function fetchMissingLearners(
 		if (filters.board_code) {
 			offerings = offerings.filter((co: any) => co.course?.board_code === filters.board_code)
 		}
-		if (filters.course_categories && filters.course_categories.length > 0) {
-			const catSet = new Set(filters.course_categories)
-			offerings = offerings.filter((co: any) => catSet.has(co.course?.course_category))
-		}
+
+		// Always apply category filter (default excludes Practical)
+		const catSet = new Set(effectiveCategories)
+		offerings = offerings.filter((co: any) => catSet.has(co.course?.course_category))
+
 		allowedOfferingIds = new Set(offerings.map((co: any) => co.id))
+	}
+
+	// If no offerings match the filters (including the default "skip Practical"), there are no missing learners
+	if (allowedOfferingIds.size === 0) {
+		return { missingStudents: [], maxRoll, existingFormat }
 	}
 
 	// Fetch all approved registrations
@@ -127,8 +139,8 @@ async function fetchMissingLearners(
 				.eq('examination_session_id', examination_session_id)
 				.eq('registration_status', 'Approved')
 
-			// Apply offering filter at query level when possible
-			if (allowedOfferingIds && allowedOfferingIds.size > 0 && allowedOfferingIds.size <= 100) {
+			// Apply offering filter at query level when possible (.in() can't handle very large sets without HeadersOverflow)
+			if (allowedOfferingIds.size <= 100) {
 				query = query.in('course_offering_id', [...allowedOfferingIds])
 			}
 
@@ -145,11 +157,8 @@ async function fetchMissingLearners(
 	let missingRegs = allRegs.filter(r => !existingRegIds.has(r.id))
 
 	// If we couldn't apply offering filter at query level (large set), apply client-side
-	if (allowedOfferingIds && allowedOfferingIds.size > 100) {
-		missingRegs = missingRegs.filter(r => allowedOfferingIds!.has(r.course_offering_id))
-	} else if (allowedOfferingIds && allowedOfferingIds.size === 0) {
-		// No matching offerings at all
-		missingRegs = []
+	if (allowedOfferingIds.size > 100) {
+		missingRegs = missingRegs.filter(r => allowedOfferingIds.has(r.course_offering_id))
 	}
 
 	// Enrich with course offering details
@@ -394,6 +403,7 @@ export async function POST(request: Request) {
 			course_code,
 			course_categories,
 			course_category,
+			exam_registration_ids, // optional: subset to fill (selected learners only)
 			preview_only,
 		} = body
 
@@ -418,7 +428,7 @@ export async function POST(request: Request) {
 			course_categories: categoryFilter,
 		}
 
-		console.log('🔍 Detecting missing learners:', { institutions_id, examination_session_id, filters })
+		console.log('🔍 Detecting missing learners:', { institutions_id, examination_session_id, filters, selected_count: exam_registration_ids?.length ?? 'all' })
 
 		const { missingStudents, maxRoll, existingFormat } = await fetchMissingLearners(
 			supabase,
@@ -433,11 +443,23 @@ export async function POST(request: Request) {
 			}, { status: 400 })
 		}
 
+		// Apply per-learner selection filter if provided
+		let scopedStudents = missingStudents
+		if (Array.isArray(exam_registration_ids) && exam_registration_ids.length > 0) {
+			const selectedSet = new Set<string>(exam_registration_ids)
+			scopedStudents = missingStudents.filter(s => selectedSet.has(s.exam_registration_id))
+			if (scopedStudents.length === 0) {
+				return NextResponse.json({
+					error: 'None of the selected learners are missing dummy numbers'
+				}, { status: 400 })
+			}
+		}
+
 		// Enrich with program_order
-		await enrichWithProgramOrder(supabase, institutions_id, missingStudents)
+		await enrichWithProgramOrder(supabase, institutions_id, scopedStudents)
 
 		// Sort (always sequence mode for fill missing)
-		const sortedStudents = sortStudents(missingStudents)
+		const sortedStudents = sortStudents(scopedStudents)
 
 		const formatToUse = dummy_number_format || existingFormat
 		const startNumber = maxRoll + 1
@@ -447,6 +469,7 @@ export async function POST(request: Request) {
 		// Preview mode
 		if (preview_only) {
 			const preview = sortedStudents.map((s: any, i: number) => ({
+				exam_registration_id: s.exam_registration_id,
 				roll: startNumber + i,
 				dummy_number: generateDummyNumber(formatToUse, i, startNumber),
 				register_no: s.exam_registration?.stu_register_no || 'N/A',

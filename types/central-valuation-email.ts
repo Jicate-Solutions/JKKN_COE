@@ -4,6 +4,11 @@ export interface CentralValuationCourseEntry {
 	course_code: string
 	course_name: string
 	valuation_date: string
+	// Per-packet identity. When a row represents a single packet,
+	// packet_no/packet_index/total_packets are populated and packet_count is 1.
+	packet_no?: string
+	packet_index?: number
+	total_packets?: number
 	packet_count: number
 	sheet_count: number
 }

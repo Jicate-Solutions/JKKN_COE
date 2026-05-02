@@ -115,10 +115,25 @@ export async function POST(request: Request) {
 				coQuery = coQuery.eq('program_code', program_code)
 			}
 
-			const { data: filteredOfferings, error: coError } = await coQuery.range(0, 9999)
+			// Retry on transient network errors (ECONNRESET / fetch failed)
+			let filteredOfferings: any[] | null = null
+			let coError: any = null
+			for (let attempt = 1; attempt <= 3; attempt++) {
+				const result = await coQuery.range(0, 9999)
+				filteredOfferings = result.data
+				coError = result.error
+				if (!coError) break
+				const msg = String(coError?.message || coError?.details || '')
+				const isTransient = /ECONNRESET|fetch failed|ETIMEDOUT|EAI_AGAIN|socket hang up/i.test(msg)
+				if (!isTransient || attempt === 3) break
+				console.warn(`⚠️ Transient error pre-filtering course offerings (attempt ${attempt}/3): ${msg}. Retrying...`)
+				await new Promise(r => setTimeout(r, 500 * attempt))
+			}
 			if (coError) {
 				console.error('Error pre-filtering course offerings:', coError)
-				return NextResponse.json({ error: 'Failed to filter course offerings' }, { status: 500 })
+				return NextResponse.json({
+					error: 'Failed to filter course offerings. This may be a temporary network issue — please try again.'
+				}, { status: 503 })
 			}
 
 			// Apply board + category filter (needs client-side since they're on the joined courses table)

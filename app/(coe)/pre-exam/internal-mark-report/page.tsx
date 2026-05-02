@@ -23,6 +23,10 @@ import { cn } from "@/lib/utils"
 import Link from "next/link"
 import { Download, Loader2, Check, ChevronsUpDown, FileText, AlertTriangle, ChevronDown, ChevronRight, Clock } from "lucide-react"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+// Per-institution PDF header info (logo, subtitle, trust line, accreditation,
+// address) is centralized so a new college can be onboarded without touching
+// any page or PDF generator code.
+import { getInstitutionHeader } from '@/lib/utils/institution-header'
 
 interface Institution { id: string; name: string; institution_code: string; myjkkn_institution_ids: string[] }
 interface Session { id: string; session_name: string; session_code: string; institutions_id?: string }
@@ -276,7 +280,9 @@ export default function InternalMarkReportPage() {
 			const loadImage = async (url: string): Promise<string> => {
 				try { const r = await fetch(url); const blob = await r.blob(); return new Promise((res, rej) => { const reader = new FileReader(); reader.onloadend = () => res(reader.result as string); reader.onerror = rej; reader.readAsDataURL(blob) }) } catch { return '' }
 			}
-			const [leftLogo, rightLogo] = await Promise.all([loadImage('/jkkncas_logo.png'), loadImage('/jkkn_logo.png')])
+			const header = getInstitutionHeader(institution?.institution_code)
+			// Single institution logo on the LEFT side; right side blank.
+			const leftLogo = await loadImage(header.logo_path)
 
 			// Fetch data for all selected courses in parallel
 			const allCourseData = await Promise.all(selectedCourses.map(async (coId) => {
@@ -295,25 +301,40 @@ export default function InternalMarkReportPage() {
 				}))
 
 				const pdfLearners = learners.map((l: any, idx: number) => {
+					// Option B: every learner has every component; missing values default to 0.
 					const componentMarks: Record<string, number> = {}
 					let total = 0
-					if (l.saved_marks) {
-						for (const comp of roundComponents) {
-							const dbField = markFieldMap[comp.code]
-							const val = dbField ? (l.saved_marks[dbField] || 0) : 0
-							if (val > 0) { componentMarks[comp.code] = val; total += val }
+					const extra = l.saved_marks?.extra_marks || {}
+					for (const comp of roundComponents) {
+						const dbField = markFieldMap[comp.code]
+						let val = 0
+						if (l.saved_marks) {
+							if (dbField) {
+								val = Number(l.saved_marks[dbField]) || 0
+							} else if (comp.code in extra) {
+								val = Number(extra[comp.code]) || 0
+							}
 						}
+						componentMarks[comp.code] = val
+						total += val
 					}
-					return { serial_number: idx + 1, register_number: l.dummy_number || l.stu_register_no, student_name: l.student_name, component_marks: componentMarks, total }
+					// API returns dummy_number = '-' as a placeholder when no dummy is assigned;
+					// '-' is truthy so the obvious `||` chain never falls back. Treat it as empty.
+					const dummy = l.dummy_number && l.dummy_number !== '-' ? l.dummy_number : null
+					return { serial_number: idx + 1, register_number: dummy || l.stu_register_no, student_name: l.student_name, component_marks: componentMarks, total }
 				})
 
 				return {
-					institution_name: institution?.name || 'J.K.K.NATARAJA COLLEGE OF ARTS & SCIENCE (AUTONOMOUS)',
+					institution_name: header.name,
+					institution_subtitle: header.subtitle,
+					institution_trust_line: header.trust_line,
+					institution_accreditation: header.accreditation,
+					institution_address: header.address,
 					program_code: prog?.program_code || '', program_name: prog?.program_name || '',
 					semester: co.semester || '', course_code: co.course_code, course_name: co.course_name,
 					internal_max_mark: co.internal_max_mark, exam_session: sessionName,
 					assessment_name: activeAssessment.setting.setting_name, cia_round_name: activeAssessment.round.round_name,
-					components: pdfComponents, learners: pdfLearners, logoImage: leftLogo, rightLogoImage: rightLogo,
+					components: pdfComponents, learners: pdfLearners, rightLogoImage: leftLogo,
 				}
 			}))
 
@@ -441,12 +462,17 @@ export default function InternalMarkReportPage() {
 			const loadImage = async (url: string): Promise<string> => {
 				try { const r = await fetch(url); const blob = await r.blob(); return new Promise((res, rej) => { const reader = new FileReader(); reader.onloadend = () => res(reader.result as string); reader.onerror = rej; reader.readAsDataURL(blob) }) } catch { return '' }
 			}
-			const [leftLogo, rightLogo] = await Promise.all([loadImage('/jkkncas_logo.png'), loadImage('/jkkn_logo.png')])
 			const institution = institutions.find(i => i.id === effectiveInstitutionId)
+			const header = getInstitutionHeader(institution?.institution_code)
+			const leftLogo = await loadImage(header.logo_path)
 
 			const { generatePendingMarksPDF } = await import('@/lib/utils/generate-pending-marks-pdf')
 			generatePendingMarksPDF({
-				institution_name: institution?.name || '',
+				institution_name: header.name,
+				institution_subtitle: header.subtitle,
+				institution_trust_line: header.trust_line,
+				institution_accreditation: header.accreditation,
+				institution_address: header.address,
 				exam_session: sessions.find(s => s.id === effectiveSession)?.session_name || '',
 				assessment_name: activeAssessment!.setting.setting_name,
 				cia_round_name: activeAssessment!.round.round_name,
@@ -456,8 +482,7 @@ export default function InternalMarkReportPage() {
 					semesters: p.semesters,
 				})),
 				learner_details: learnerDetails,
-				logoImage: leftLogo,
-				rightLogoImage: rightLogo,
+				rightLogoImage: leftLogo,
 			})
 
 			toast({
@@ -543,20 +568,24 @@ export default function InternalMarkReportPage() {
 			const loadImage = async (url: string): Promise<string> => {
 				try { const r = await fetch(url); const blob = await r.blob(); return new Promise((res, rej) => { const reader = new FileReader(); reader.onloadend = () => res(reader.result as string); reader.onerror = rej; reader.readAsDataURL(blob) }) } catch { return '' }
 			}
-			const [leftLogo, rightLogo] = await Promise.all([loadImage('/jkkncas_logo.png'), loadImage('/jkkn_logo.png')])
 			const institution = institutions.find(i => i.id === effectiveInstitutionId)
+			const header = getInstitutionHeader(institution?.institution_code)
+			const leftLogo = await loadImage(header.logo_path)
 
 			const { generateConsolidatedInternalMarksPDF } = await import('@/lib/utils/generate-consolidated-internal-marks-pdf')
 			generateConsolidatedInternalMarksPDF({
-				institution_name: institution?.name || '',
+				institution_name: header.name,
+				institution_subtitle: header.subtitle,
+				institution_trust_line: header.trust_line,
+				institution_accreditation: header.accreditation,
+				institution_address: header.address,
 				program_code: prog.program_code,
 				program_name: prog.program_name,
 				exam_session: sessions.find(s => s.id === effectiveSession)?.session_name || '',
 				assessment_name: activeAssessment.setting.setting_name,
 				cia_round_name: activeAssessment.round.round_name,
 				semesters: validSemesters,
-				logoImage: leftLogo,
-				rightLogoImage: rightLogo,
+				rightLogoImage: leftLogo,
 			})
 
 			const skipped = multiSemesters.length - validSemesters.length

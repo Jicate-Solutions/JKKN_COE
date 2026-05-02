@@ -42,8 +42,9 @@ function buildCspHeader(nonce: string): string {
 		// Fonts: Google Fonts
 		"font-src 'self' https://fonts.gstatic.com data:",
 
-		// Images: self + Supabase storage + data URIs (base64 images in PDFs)
-		"img-src 'self' data: blob: https://*.supabase.co https://jkkn.ai https://*.jkkn.ai",
+		// Images: self + Supabase storage + data URIs (base64 images in PDFs) +
+		// Google user profile photos (lh3/lh4/lh5/lh6.googleusercontent.com)
+		"img-src 'self' data: blob: https://*.supabase.co https://jkkn.ai https://*.jkkn.ai https://*.googleusercontent.com",
 
 		// API connections: self + Supabase + MyJKKN parent app + Google auth
 		"connect-src 'self' https://*.supabase.co https://jkkn.ai https://*.jkkn.ai wss://*.supabase.co https://accounts.google.com",

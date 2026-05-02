@@ -178,6 +178,9 @@ export default function CIAEntrySettingPage() {
 	const [currentPage, setCurrentPage] = useState(1)
 	const [itemsPerPage, setItemsPerPage] = useState(10)
 
+	// Per-round "add custom component" inline form state, keyed by round index
+	const [customCompDraft, setCustomCompDraft] = useState<Record<number, { code: string; name: string; max_marks: number }>>({})
+
 	// ─── Derived ───
 	const ugPrograms = useMemo(() =>
 		programs.filter(p => (p.program_type || '').toUpperCase() !== 'PG')
@@ -413,6 +416,47 @@ export default function CIAEntrySettingPage() {
 			const rounds = [...prev.cia_rounds]; const round = { ...rounds[rIdx] }
 			round.components = round.components.map(c => c.code === 'attendance' ? { ...c, attendance_total_periods: field === 'total' ? v : c.attendance_total_periods, attendance_attended_periods: field === 'attended' ? v : c.attendance_attended_periods } : c)
 			rounds[rIdx] = round; return { ...prev, cia_rounds: rounds }
+		})
+	}
+
+	// Slugify a component name into a stable code (e.g., "Code Review" → "code_review").
+	// Codes are what the marks-entry UI and API use as keys, so they must be lowercase
+	// with underscores and stay stable across edits.
+	const slugifyComponentCode = (name: string): string =>
+		name.trim().toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 40)
+
+	const addCustomComponent = (rIdx: number) => {
+		const draft = customCompDraft[rIdx]
+		if (!draft) return
+		const name = draft.name.trim()
+		if (!name) {
+			toast({ title: '❌ Component name is required', variant: 'destructive' })
+			return
+		}
+		const code = (draft.code || slugifyComponentCode(name)).trim()
+		if (!/^[a-z][a-z0-9_]*$/.test(code)) {
+			toast({ title: '❌ Invalid code', description: 'Use lowercase letters, digits, underscores; must start with a letter.', variant: 'destructive' })
+			return
+		}
+		const max = Number(draft.max_marks) || 0
+		const round = form.cia_rounds[rIdx]
+		if (round.components.some(c => c.code === code)) {
+			toast({ title: '❌ Duplicate code', description: `"${code}" already exists in ${round.round_name}`, variant: 'destructive' })
+			return
+		}
+		setForm(prev => {
+			const rounds = [...prev.cia_rounds]
+			rounds[rIdx] = { ...rounds[rIdx], components: [...rounds[rIdx].components, { code, name, max_marks: max }] }
+			return { ...prev, cia_rounds: rounds }
+		})
+		setCustomCompDraft(prev => ({ ...prev, [rIdx]: { code: '', name: '', max_marks: 0 } }))
+	}
+
+	const removeComponent = (rIdx: number, code: string) => {
+		setForm(prev => {
+			const rounds = [...prev.cia_rounds]
+			rounds[rIdx] = { ...rounds[rIdx], components: rounds[rIdx].components.filter(c => c.code !== code) }
+			return { ...prev, cia_rounds: rounds }
 		})
 	}
 
@@ -1074,6 +1118,87 @@ export default function CIAEntrySettingPage() {
 											{/* Components */}
 											<div className="grid grid-cols-2 gap-2">
 												{ALL_COMPONENTS.map(comp => renderComponentItem(rIdx, comp))}
+											</div>
+
+											{/* Custom (end-user-defined) components for this round */}
+											{(() => {
+												const standardCodes = new Set(ALL_COMPONENTS.map(c => c.code))
+												const customComps = round.components.filter(c => !standardCodes.has(c.code))
+												return customComps.length > 0 ? (
+													<div className="mt-3 space-y-1.5">
+														<div className="text-xs font-semibold text-foreground/70">Custom Components</div>
+														{customComps.map(c => (
+															<div key={c.code} className="flex items-center gap-2 rounded-md border bg-violet-50/40 dark:bg-violet-950/20 px-2 py-1.5">
+																<span className="text-xs flex-1">
+																	{c.name} <span className="text-muted-foreground">({c.code})</span>
+																</span>
+																{!form.use_course_max && (
+																	<Input
+																		type="number"
+																		min={1}
+																		value={c.max_marks || ''}
+																		onChange={e => updateComponentMaxMarks(rIdx, c.code, parseInt(e.target.value) || 0)}
+																		placeholder="Max"
+																		className="h-7 w-16 text-xs text-center"
+																	/>
+																)}
+																<Button variant="ghost" size="sm" className="h-6 w-6 p-0" onClick={() => removeComponent(rIdx, c.code)} title="Remove">
+																	<X className="h-3.5 w-3.5" />
+																</Button>
+															</div>
+														))}
+													</div>
+												) : null
+											})()}
+
+											{/* Add custom component inline */}
+											<div className="mt-3 rounded-md border border-dashed bg-muted/30 p-2 space-y-2">
+												<div className="text-xs font-semibold text-foreground/70">+ Add Custom Component</div>
+												<div className="grid grid-cols-12 gap-1.5">
+													<Input
+														className="col-span-5 h-8 text-xs"
+														placeholder="Name (e.g., Code Review)"
+														value={customCompDraft[rIdx]?.name || ''}
+														onChange={e => setCustomCompDraft(prev => ({
+															...prev,
+															[rIdx]: {
+																code: prev[rIdx]?.code || '',
+																max_marks: prev[rIdx]?.max_marks || 0,
+																name: e.target.value,
+															},
+														}))}
+													/>
+													<Input
+														className="col-span-4 h-8 text-xs font-mono"
+														placeholder="code (auto)"
+														value={customCompDraft[rIdx]?.code || ''}
+														onChange={e => setCustomCompDraft(prev => ({
+															...prev,
+															[rIdx]: {
+																name: prev[rIdx]?.name || '',
+																max_marks: prev[rIdx]?.max_marks || 0,
+																code: e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, '_'),
+															},
+														}))}
+													/>
+													<Input
+														type="number"
+														min={1}
+														className="col-span-2 h-8 text-xs text-center"
+														placeholder="Max"
+														value={customCompDraft[rIdx]?.max_marks || ''}
+														onChange={e => setCustomCompDraft(prev => ({
+															...prev,
+															[rIdx]: {
+																name: prev[rIdx]?.name || '',
+																code: prev[rIdx]?.code || '',
+																max_marks: parseInt(e.target.value) || 0,
+															},
+														}))}
+													/>
+													<Button size="sm" className="col-span-1 h-8 text-xs px-0" onClick={() => addCustomComponent(rIdx)}>Add</Button>
+												</div>
+												<p className="text-[10px] text-muted-foreground">Leave code blank to auto-generate from the name. Codes are stored as keys in <code className="px-1 bg-background rounded">extra_marks</code> on cia_marks.</p>
 											</div>
 										</CardContent>
 									</Card>

@@ -108,13 +108,19 @@ export function buildCentralValuationAppointmentHtml(
 		? `<img src="${secondaryLogoSrc}" alt="" style="width: 80px; height: 80px; object-fit: contain;" />`
 		: ''
 
-	const institutionNameUpper = (data.institution_name || 'J.K.K. NATARAJA COLLEGE OF ARTS & SCIENCE').toUpperCase()
+	const rawInstitutionName = (data.institution_name || 'J.K.K. NATARAJA COLLEGE OF ARTS & SCIENCE (Autonomous)').toUpperCase()
+	// Render the (AUTONOMOUS) suffix on its own line, slightly smaller than the
+	// main name (matches the reference letterhead format).
+	const institutionNameHtml = rawInstitutionName.replace(
+		/\s*\((AUTONOMOUS)\)\s*$/i,
+		'<br><span style="font-size: 14pt;">($1)</span>',
+	)
 	const accreditationText = data.institution_accreditation || '(Accredited by NAAC, Approved by AICTE, Recognized by UGC Under Section 2(f) & 12(B), Affiliated to Periyar University)'
 	const addressText = data.institution_address || 'Komarapalayam- 638 183, Namakkal District, Tamil Nadu'
 
-	const coeName = data.coe_name || ''
-	const coeQual = data.coe_qualifications || ''
-	const coeCont = data.coe_contact || ''
+	const coeName = data.coe_name || 'Dr. S. UMAVATHI'
+	const coeQual = data.coe_qualifications || 'M.Sc., Ph.D'
+	const coeCont = data.coe_contact || '93605 12090'
 	const coeNameLine = coeQual ? `${coeName}, ${coeQual}` : coeName
 	const showCoeInfo = coeName && coeName !== 'Controller of Examinations'
 
@@ -122,14 +128,14 @@ export function buildCentralValuationAppointmentHtml(
 	<div class="header-row">
 		${leftLogo ? `<div class="header-logo-left">${leftLogo}</div>` : ''}
 		<div class="header-center">
-			<div style="font-size: 18pt; font-weight: bold; color: ${primaryColor}; line-height: 1.3;">
-				${institutionNameUpper}
+			<div style="font-size: 17pt; font-weight: bold; color: ${primaryColor}; line-height: 1.2;">
+				${institutionNameHtml}
 			</div>
-			<div style="font-size: 10pt; font-style: italic; color: #000; margin-top: 2pt; line-height: 1.4;">${accreditationText}</div>
+			<div style="font-size: 10pt; font-style: italic; color: #000; margin-top: 4pt; line-height: 1.4;">${accreditationText}</div>
 		</div>
 		${rightLogo ? `<div class="header-logo-right">${rightLogo}</div>` : ''}
 	</div>
-	<div style="text-align: center; font-size: 12pt; font-weight: bold; color: #000; margin-top: 2pt;">
+	<div style="text-align: center; font-size: 12pt; font-weight: bold; color: #000; margin-top: 4pt;">
 		${addressText}
 	</div>
 	${showCoeInfo ? `
@@ -151,12 +157,15 @@ export function buildCentralValuationAppointmentHtml(
 	const courseRows = data.courses
 		.map((course) => {
 			const displayDate = formatDate(course.valuation_date)
+			const packetLabel = course.packet_index && course.total_packets
+				? `${course.packet_index}/${course.total_packets}`
+				: String(course.packet_count ?? '')
 			return `
 			<tr>
 				<td>${displayDate}</td>
 				<td>${course.course_code}</td>
 				<td>${course.course_name}</td>
-				<td style="text-align: center;">${course.packet_count}</td>
+				<td style="text-align: center;">${packetLabel}</td>
 				<td style="text-align: center;">${course.sheet_count}</td>
 			</tr>`
 		})
@@ -172,23 +181,35 @@ export function buildCentralValuationAppointmentHtml(
 			: ''
 
 		signatureBlock = `
-		<div style="margin-top: 2pt; text-align: center; font-size: ${fontSizeBody}; line-height: 1.2;">
-			<div>Thanking you.</div>
-		</div>
-		<div style="margin-top: 2pt; text-align: right; padding-right: 72pt; font-size: ${fontSizeBody}; font-style: italic;">
-			With Regards,
-		</div>
-		<div style="margin-top: 2pt; display: flex; justify-content: space-between; align-items: flex-end;">
-			<div style="text-align: left;">${coeSealHtml}</div>
-			<div style="text-align: right;">
-				${coeSignatureHtml}
+		<div class="signature-block">
+			<div style="margin-top: 2pt; text-align: center; font-size: ${fontSizeBody}; line-height: 1.2;">
+				<div>Thanking you.</div>
+			</div>
+			<div style="margin-top: 2pt; text-align: right; padding-right: 72pt; font-size: ${fontSizeBody}; font-style: italic;">
+				With Regards,
+			</div>
+			<div style="margin-top: 2pt; display: flex; justify-content: space-between; align-items: flex-end;">
+				<div style="text-align: left;">${coeSealHtml}</div>
+				<div style="text-align: right;">
+					${coeSignatureHtml}
+				</div>
 			</div>
 		</div>`
 	}
 
 	const letterDate = formatDate(data.letter_date)
 	const roleLabel = ROLE_LABEL[data.examiner_type]
-	const valuationDates = data.valuation_date_range || (data.courses[0] ? formatDate(data.courses[0].valuation_date) : '')
+	// Format the date range as DD.MM.YYYY (and join multi-day ranges similarly).
+	const formatRange = (range: string): string => {
+		if (!range) return ''
+		const parts = range.split(/\s*to\s*/i)
+		const formatted = parts.map(p => formatDate(p.trim()))
+		return formatted.join(' to ')
+	}
+	const valuationDates = formatRange(data.valuation_date_range || '') || (data.courses[0] ? formatDate(data.courses[0].valuation_date) : '')
+	// Resolve the board label — prefer the friendly name; fall back to the code so
+	// the sentence never reads "for the Central Valuation of  for ...".
+	const boardLabel = data.board_name || data.board_code || ''
 
 	return `<!DOCTYPE html>
 <html lang="en">
@@ -256,9 +277,10 @@ export function buildCentralValuationAppointmentHtml(
 			border-collapse: collapse;
 			margin-bottom: 12pt;
 			font-size: 11pt;
+			page-break-inside: avoid;
 		}
 		.course-table th {
-			padding: 6px 8px;
+			padding: 5px 8px;
 			border: 1px solid ${borderColor};
 			background-color: #f0f0f0;
 			color: #000;
@@ -267,7 +289,7 @@ export function buildCentralValuationAppointmentHtml(
 			font-size: 11pt;
 		}
 		.course-table td {
-			padding: 6px 8px;
+			padding: 5px 8px;
 			border: 1px solid ${borderColor};
 			font-size: 11pt;
 			color: #000;
@@ -277,6 +299,10 @@ export function buildCentralValuationAppointmentHtml(
 			margin-bottom: 2pt;
 			font-size: ${fontSizeBody};
 			line-height: 1.4;
+		}
+		.signature-block {
+			page-break-inside: avoid;
+			margin-top: 12pt;
 		}
 	</style>
 </head>
@@ -294,7 +320,7 @@ export function buildCentralValuationAppointmentHtml(
 			<p>To</p>
 			<p style="padding-left: 24pt;">${data.examiner_name},</p>
 			${data.examiner_designation ? `<p style="padding-left: 24pt;">${data.examiner_designation},</p>` : ''}
-			${data.examiner_department ? `<p style="padding-left: 24pt;">Department of ${data.examiner_department},</p>` : ''}
+			${data.examiner_department ? `<p style="padding-left: 24pt;">${/^department of/i.test(data.examiner_department) ? data.examiner_department : `Department of ${data.examiner_department}`},</p>` : ''}
 			${data.examiner_institution ? `<p style="padding-left: 24pt;">${data.examiner_institution},</p>` : ''}
 			${data.examiner_address ? `<p style="padding-left: 24pt;">${data.examiner_address}.</p>` : ''}
 			${data.examiner_mobile ? `<p style="padding-left: 24pt;">Mobile: ${data.examiner_mobile}</p>` : ''}
@@ -309,7 +335,7 @@ export function buildCentralValuationAppointmentHtml(
 
 		<p class="body-paragraph">
 			I am pleased to inform that you have been appointed as ${roleLabel}
-			for the Central Valuation of ${data.board_name} for ${data.exam_session_name}
+			for the Central Valuation of ${boardLabel ? `${boardLabel} ` : ''}for ${data.exam_session_name}
 			Semester Examinations to be held on ${valuationDates}. Requested to report
 			on time at 9.30am to the Office of the Controller of Examinations.
 		</p>
@@ -347,10 +373,14 @@ export async function generateCentralValuationAppointmentPdf(
 	data: CentralValuationAppointmentData,
 ): Promise<Buffer> {
 	const ps = data.pdf_settings
-	const logoUrl = ps?.logo_url || data.header_image_url || null
-	const secondaryLogoUrl = ps?.secondary_logo_url || null
-	const sealUrl = data.coe_seal_url || (ps as any)?.coe_seal_url || null
-	const signatureUrl = data.coe_signature_url || null
+
+	// Fall back to bundled JKKN assets in /public when DB settings have null URLs.
+	// Left logo = JKKN brand stripe (jkkn_logo.png) — "Your Success - Our Tradition"
+	// Right logo = LOVE-LEARN-SERVE circular badge (cas_secondary_*.png)
+	const logoUrl = ps?.logo_url || data.header_image_url || '/jkkn_logo.png'
+	const secondaryLogoUrl = ps?.secondary_logo_url || '/logo/cas_secondary_1773393756290.png'
+	const sealUrl = data.coe_seal_url || (ps as any)?.coe_seal_url || '/coe_seal_cas.png'
+	const signatureUrl = data.coe_signature_url || '/coe_signature_cas.png'
 
 	const [logoBase64, secondaryLogoBase64, sealBase64, signatureBase64] = await Promise.all([
 		urlToBase64(logoUrl),
