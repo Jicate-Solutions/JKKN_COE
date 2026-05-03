@@ -108,13 +108,7 @@ export function buildCentralValuationAppointmentHtml(
 		? `<img src="${secondaryLogoSrc}" alt="" style="width: 80px; height: 80px; object-fit: contain;" />`
 		: ''
 
-	const rawInstitutionName = (data.institution_name || 'J.K.K. NATARAJA COLLEGE OF ARTS & SCIENCE (Autonomous)').toUpperCase()
-	// Render the (AUTONOMOUS) suffix on its own line, slightly smaller than the
-	// main name (matches the reference letterhead format).
-	const institutionNameHtml = rawInstitutionName.replace(
-		/\s*\((AUTONOMOUS)\)\s*$/i,
-		'<br><span style="font-size: 14pt;">($1)</span>',
-	)
+	const institutionNameUpper = (data.institution_name || 'J.K.K. NATARAJA COLLEGE OF ARTS & SCIENCE').toUpperCase()
 	const accreditationText = data.institution_accreditation || '(Accredited by NAAC, Approved by AICTE, Recognized by UGC Under Section 2(f) & 12(B), Affiliated to Periyar University)'
 	const addressText = data.institution_address || 'Komarapalayam- 638 183, Namakkal District, Tamil Nadu'
 
@@ -125,19 +119,24 @@ export function buildCentralValuationAppointmentHtml(
 	const showCoeInfo = coeName && coeName !== 'Controller of Examinations'
 
 	const headerSection = `
+	<!-- Logo row: left logo | institution name + accreditation | right logo -->
 	<div class="header-row">
 		${leftLogo ? `<div class="header-logo-left">${leftLogo}</div>` : ''}
 		<div class="header-center">
-			<div style="font-size: 17pt; font-weight: bold; color: ${primaryColor}; line-height: 1.2;">
-				${institutionNameHtml}
+			<div style="font-size: 18pt; font-weight: bold; color: ${primaryColor}; line-height: 1.3;">
+				${institutionNameUpper}
 			</div>
-			<div style="font-size: 10pt; font-style: italic; color: #000; margin-top: 4pt; line-height: 1.4;">${accreditationText}</div>
+			<div style="font-size: 10pt; font-style: italic; color: #000; margin-top: 2pt; line-height: 1.4;">${accreditationText}</div>
 		</div>
 		${rightLogo ? `<div class="header-logo-right">${rightLogo}</div>` : ''}
 	</div>
-	<div style="text-align: center; font-size: 12pt; font-weight: bold; color: #000; margin-top: 4pt;">
+
+	<!-- Address (separate line below logos, bold, centered — matches hall ticket) -->
+	<div style="text-align: center; font-size: 12pt; font-weight: bold; color: #000; margin-top: 2pt;">
 		${addressText}
 	</div>
+
+	<!-- COE Name & Contact line (9pt bold, matches hall ticket) -->
 	${showCoeInfo ? `
 	<div class="coe-info-row">
 		<div>
@@ -146,6 +145,7 @@ export function buildCentralValuationAppointmentHtml(
 		</div>
 		${coeCont ? `<div class="coe-contact-text">Contact: ${coeCont}</div>` : ''}
 	</div>` : ''}
+
 	<hr style="border: none; border-top: 2px solid ${primaryColor}; margin: 4pt 0 10pt 0;" />`
 
 	const watermarkSection = watermarkEnabled && watermarkUrl
@@ -153,23 +153,6 @@ export function buildCentralValuationAppointmentHtml(
 				<img src="${watermarkUrl}" alt="" style="max-width: 60%; max-height: 60%;" />
 			</div>`
 		: ''
-
-	const courseRows = data.courses
-		.map((course) => {
-			const displayDate = formatDate(course.valuation_date)
-			const packetLabel = course.packet_index && course.total_packets
-				? `${course.packet_index}/${course.total_packets}`
-				: String(course.packet_count ?? '')
-			return `
-			<tr>
-				<td>${displayDate}</td>
-				<td>${course.course_code}</td>
-				<td>${course.course_name}</td>
-				<td style="text-align: center;">${packetLabel}</td>
-				<td style="text-align: center;">${course.sheet_count}</td>
-			</tr>`
-		})
-		.join('')
 
 	let signatureBlock = ''
 	if (signatureEnabled) {
@@ -199,17 +182,32 @@ export function buildCentralValuationAppointmentHtml(
 
 	const letterDate = formatDate(data.letter_date)
 	const roleLabel = ROLE_LABEL[data.examiner_type]
-	// Format the date range as DD.MM.YYYY (and join multi-day ranges similarly).
-	const formatRange = (range: string): string => {
-		if (!range) return ''
-		const parts = range.split(/\s*to\s*/i)
-		const formatted = parts.map(p => formatDate(p.trim()))
-		return formatted.join(' to ')
-	}
-	const valuationDates = formatRange(data.valuation_date_range || '') || (data.courses[0] ? formatDate(data.courses[0].valuation_date) : '')
-	// Resolve the board label — prefer the friendly name; fall back to the code so
-	// the sentence never reads "for the Central Valuation of  for ...".
+	// Resolve the board label — prefer the friendly name; fall back to the code.
 	const boardLabel = data.board_name || data.board_code || ''
+
+	// Build the list of unique valuation dates joined as "04.05.2026 and 05.05.2026"
+	// (matches the Dr.M.Shobana sample letter format).
+	const uniqueDates = [...new Set(
+		data.courses.map(c => c.valuation_date).filter(Boolean),
+	)].sort().map(formatDate)
+	const valuationDates = uniqueDates.length > 0
+		? uniqueDates.length === 1
+			? uniqueDates[0]
+			: uniqueDates.slice(0, -1).join(', ') + ' and ' + uniqueDates[uniqueDates.length - 1]
+		: ''
+
+	// Convert "APRIL-MAY-2026" → "April/May, 2026" (subject) and "April/May 2026" (body)
+	const formatSession = (s: string): { subject: string; body: string } => {
+		if (!s) return { subject: '', body: '' }
+		const parts = s.split('-').map(p => p.charAt(0).toUpperCase() + p.slice(1).toLowerCase())
+		if (parts.length >= 3) {
+			const year = parts[parts.length - 1]
+			const months = parts.slice(0, -1).join('/')
+			return { subject: `${months}, ${year}`, body: `${months} ${year}` }
+		}
+		return { subject: s, body: s }
+	}
+	const sessionFormatted = formatSession(data.exam_session_name)
 
 	return `<!DOCTYPE html>
 <html lang="en">
@@ -330,37 +328,22 @@ export function buildCentralValuationAppointmentHtml(
 
 		<div class="subject-line">
 			<span class="subject-label">Sub:</span>
-			Appointment of ${roleLabel} for Central Valuation - ${data.exam_session_name} Examinations &ndash; Reg.
+			Appointment of ${roleLabel} for ${sessionFormatted.subject} Semester valuation - Reg.
 		</div>
 
 		<p class="body-paragraph">
-			I am pleased to inform that you have been appointed as ${roleLabel}
-			for the Central Valuation of ${boardLabel ? `${boardLabel} ` : ''}for ${data.exam_session_name}
-			Semester Examinations to be held on ${valuationDates}. Requested to report
-			on time at 9.30am to the Office of the Controller of Examinations.
+			I am pleased to inform you that you have been appointed as an ${roleLabel}
+			for the ${boardLabel ? `UG-${boardLabel} Board` : 'UG Board'} semester valuation for the ${sessionFormatted.body}
+			Examinations, scheduled to be held on ${valuationDates}. You are requested to report
+			to the Office of the Controller of Examinations at 9:30 a.m.
 		</p>
 
-		<table class="course-table">
-			<thead>
-				<tr>
-					<th style="white-space: nowrap;">Date</th>
-					<th style="white-space: nowrap;">Course Code</th>
-					<th>Course Name</th>
-					<th style="white-space: nowrap;">Packets</th>
-					<th style="white-space: nowrap;">Sheets</th>
-				</tr>
-			</thead>
-			<tbody>
-				${courseRows}
-			</tbody>
-		</table>
-
-		<p class="note-paragraph">
-			If you are not in a position to accept this offer, please inform us through mail${data.coe_email ? ` <strong><u>${data.coe_email}</u></strong>` : ''} immediately.
+		<p class="body-paragraph">
+			If you are unable to accept this appointment, kindly inform us immediately via email at${data.coe_email ? ` <strong><u>${data.coe_email}</u></strong>` : ''}
 		</p>
 
 		<p class="note-paragraph">
-			Remuneration will be paid as per the norms.
+			Remuneration will be paid as per norms.
 		</p>
 
 		${signatureBlock}

@@ -185,9 +185,9 @@ export async function GET(request: Request) {
 	const dateRange = dates.length === 0 ? '' : dates[0] === dates[dates.length - 1] ? dates[0] : `${dates[0]} to ${dates[dates.length - 1]}`
 
 	const letterData: CentralValuationAppointmentData = {
-		institution_name: inst?.name,
-		institution_address: inst?.address,
-		ref_number: `JKKNCAS/ CoE/ ${session?.session_name || session?.session_code || ''}/ Central Valuation`,
+		institution_name: (settings as any)?.institution_name || inst?.name || 'J.K.K. NATARAJA COLLEGE OF ARTS & SCIENCE (Autonomous)',
+		institution_address: (settings as any)?.institution_address || inst?.address,
+		ref_number: `JKKNCAS/ CoE/ ${session?.session_name || session?.session_code || ''}/ Sem Valuation`,
 		letter_date: new Date().toISOString().slice(0, 10),
 		examiner_name: examinerName || 'Examiner',
 		examiner_type: examinerType,
@@ -208,7 +208,12 @@ export async function GET(request: Request) {
 		valuation_date_range: dateRange,
 		courses: courseEntries,
 		pdf_settings: settings,
-		coe_email: 'coearts@jkkn.ac.in',
+		coe_name: (settings as any)?.coe_name || 'Dr. S. UMAVATHI',
+		coe_qualifications: (settings as any)?.coe_qualifications || 'M.Sc., Ph.D',
+		coe_contact: (settings as any)?.coe_contact || '93605 12090',
+		coe_email: process.env.COE_EMAIL || 'coearts@jkkn.ac.in',
+		coe_signature_url: (settings as any)?.coe_signature_url || null,
+		coe_seal_url: (settings as any)?.coe_seal_url || null,
 	}
 
 	const pdfBuffer = await generateCentralValuationAppointmentPdf(letterData)
