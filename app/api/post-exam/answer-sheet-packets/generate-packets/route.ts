@@ -59,7 +59,7 @@ export async function POST(request: NextRequest) {
 		// Build courses query
 		let coursesQuery = supabase
 			.from('courses')
-			.select('id, course_code, course_name, course_type')
+			.select('id, course_code, course_name, course_type, board_code')
 			.eq('institution_code', String(institution_code))
 
 		// If specific course_code is provided, filter by it
@@ -80,6 +80,29 @@ export async function POST(request: NextRequest) {
 					? `Course with code "${course_code}" not found.`
 					: 'No courses found for this institution.',
 			}, { status: 404 })
+		}
+
+		// Fetch board_type for each course's board_code (UG/PG determines pack size)
+		const boardCodes = Array.from(
+			new Set(courses.map(c => c.board_code).filter((bc): bc is string => Boolean(bc)))
+		)
+		const boardTypeByCode = new Map<string, string>()
+		if (boardCodes.length > 0) {
+			const { data: boardsData, error: boardsError } = await supabase
+				.from('board')
+				.select('board_code, board_type')
+				.eq('institutions_id', institutionData.id)
+				.in('board_code', boardCodes)
+
+			if (boardsError) {
+				console.error('Error fetching board types:', boardsError)
+			}
+
+			for (const b of boardsData || []) {
+				if (b.board_code && b.board_type) {
+					boardTypeByCode.set(b.board_code, String(b.board_type).toUpperCase())
+				}
+			}
 		}
 
 		let totalPacketsCreated = 0
@@ -234,11 +257,11 @@ export async function POST(request: NextRequest) {
 					continue
 				}
 
-				// Determine pack size based on course type
+				// Determine pack size based on the course's board_type (UG/PG)
 				// UG courses: 25 sheets per packet
 				// PG courses: 20 sheets per packet
-				const courseType = course.course_type?.toUpperCase() || ''
-				const packSize = courseType.includes('PG') ? 20 : 25
+				const boardType = course.board_code ? boardTypeByCode.get(course.board_code) : undefined
+				const packSize = boardType === 'PG' ? 20 : 25
 
 				const totalStudents = studentsWithAttendance.length
 				const totalPackets = Math.ceil(totalStudents / packSize)
