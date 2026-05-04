@@ -185,17 +185,44 @@ export function generateExternalMarksPDF(data: ExternalMarksPDFData): string {
 		student.remarks || ''
 	])
 
+	// Compute totals
+	const totalCount = data.students.length
+	const passCount = data.students.filter(s => (s.remarks || '').toUpperCase() === 'PASS').length
+	const failCount = data.students.filter(s => (s.remarks || '').toUpperCase() === 'FAIL').length
+
+	// Adaptive sizing to keep everything on a single page
+	const signatureBoxHeight = 18
+	const footerReserve = 15 // signature gap + page footer
+	const availableHeight = pageHeight - currentY - signatureBoxHeight - footerReserve
+	// Rows = students + header + totals foot row
+	const rowsToFit = totalCount + 2
+	const estRowHeight = availableHeight / rowsToFit
+	let tableFontSize = 10
+	let tableCellPadding = 1.5
+	if (estRowHeight < 6) {
+		tableFontSize = 8
+		tableCellPadding = 0.8
+	} else if (estRowHeight < 7) {
+		tableFontSize = 9
+		tableCellPadding = 1
+	}
+
 	let finalTableY = currentY
 
 	autoTable(doc, {
 		startY: currentY,
 		head: [['S. No', 'Dummy No', 'Marks\nAwarded', 'Marks in Words', 'Remarks']],
 		body: tableData,
+		foot: [[
+			{ content: `Total: ${totalCount}`, colSpan: 2, styles: { halign: 'center', fontStyle: 'bold' } },
+			{ content: `Pass: ${passCount}`, colSpan: 2, styles: { halign: 'center', fontStyle: 'bold' } },
+			{ content: `Fail: ${failCount}`, colSpan: 1, styles: { halign: 'center', fontStyle: 'bold' } }
+		]],
 		theme: 'grid',
 		styles: {
-			fontSize: 10,
+			fontSize: tableFontSize,
 			font: 'times',
-			cellPadding: 1.5,
+			cellPadding: tableCellPadding,
 			textColor: [0, 0, 0],
 			lineColor: [0, 0, 0],
 			lineWidth: 0.2,
@@ -206,11 +233,19 @@ export function generateExternalMarksPDF(data: ExternalMarksPDFData): string {
 			fillColor: [255, 255, 255],
 			textColor: [0, 0, 0],
 			fontStyle: 'bold',
-			fontSize: 10,
+			fontSize: tableFontSize,
 			lineWidth: 0.2,
 			lineColor: [0, 0, 0]
 		},
 		bodyStyles: {
+			lineWidth: 0.2,
+			lineColor: [0, 0, 0]
+		},
+		footStyles: {
+			fillColor: [255, 255, 255],
+			textColor: [0, 0, 0],
+			fontStyle: 'bold',
+			fontSize: tableFontSize,
 			lineWidth: 0.2,
 			lineColor: [0, 0, 0]
 		},
@@ -229,7 +264,6 @@ export function generateExternalMarksPDF(data: ExternalMarksPDFData): string {
 	})
 
 	// ========== SIGNATURE SECTION ==========
-	const signatureBoxHeight = 18
 	// Ensure signature section fits on current page (signature + footer space)
 	if (finalTableY + signatureBoxHeight + 15 > pageHeight) {
 		doc.addPage()
