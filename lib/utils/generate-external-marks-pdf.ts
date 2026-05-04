@@ -190,19 +190,25 @@ export function generateExternalMarksPDF(data: ExternalMarksPDFData): string {
 	const passCount = data.students.filter(s => (s.remarks || '').toUpperCase() === 'PASS').length
 	const failCount = data.students.filter(s => (s.remarks || '').toUpperCase() === 'FAIL').length
 
-	// Adaptive sizing to keep everything on a single page
-	const signatureBoxHeight = 18
-	const footerReserve = 15 // signature gap + page footer
-	const availableHeight = pageHeight - currentY - signatureBoxHeight - footerReserve
+	// Adaptive sizing to keep everything (table + signature + footer) on a single page
+	const signatureBoxHeight = 20
+	const footerReserve = 12 // page-number footer
+	const safetyGap = 3 // small gap between table end and signature
+	// Header row is 2 lines ("Marks\nAwarded") so it takes ~1.5x a body row
+	const headerExtraHeight = 4
+	const availableHeight = pageHeight - currentY - signatureBoxHeight - footerReserve - safetyGap - headerExtraHeight
 	// Rows = students + header + totals foot row
 	const rowsToFit = totalCount + 2
 	const estRowHeight = availableHeight / rowsToFit
 	let tableFontSize = 10
-	let tableCellPadding = 1.5
-	if (estRowHeight < 6) {
+	let tableCellPadding = 2
+	if (estRowHeight < 4.5) {
+		tableFontSize = 7
+		tableCellPadding = 0.4
+	} else if (estRowHeight < 5.5) {
 		tableFontSize = 8
-		tableCellPadding = 0.8
-	} else if (estRowHeight < 7) {
+		tableCellPadding = 0.6
+	} else if (estRowHeight < 7.5) {
 		tableFontSize = 9
 		tableCellPadding = 1
 	}
@@ -288,7 +294,7 @@ export function generateExternalMarksPDF(data: ExternalMarksPDFData): string {
 
 	// Add signature text in boxes
 	doc.setFont('times', 'normal')
-	doc.setFontSize(9)
+	doc.setFontSize(10)
 
 	const textY = finalTableY + signatureBoxHeight - 6
 
