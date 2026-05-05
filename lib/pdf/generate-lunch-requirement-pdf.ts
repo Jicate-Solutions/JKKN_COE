@@ -28,6 +28,8 @@ export interface LunchRequirementPdfOptions {
 	primary_color?: string
 	logoImage?: string
 	rightLogoImage?: string
+	report_title?: string
+	purpose_label?: string
 }
 
 // ---------------------------------------------------------------------------
@@ -108,8 +110,8 @@ function drawPageHeader(doc: jsPDF, pageWidth: number, opts: LunchRequirementPdf
 	doc.setFont('times', 'bold')
 	doc.setFontSize(12)
 	doc.setTextColor(0, 0, 0)
-	doc.text('Lunch Requirement', pageWidth / 2, y, { align: 'center' })
-	const titleText = 'Lunch Requirement'
+	const titleText = opts.report_title || 'Lunch Requirement'
+	doc.text(titleText, pageWidth / 2, y, { align: 'center' })
 	const titleWidth = doc.getTextWidth(titleText)
 	doc.setDrawColor(0, 0, 0)
 	doc.setLineWidth(0.3)
@@ -134,7 +136,7 @@ export function generateLunchRequirementPdf(opts: LunchRequirementPdfOptions): j
 	doc.setFont('times', 'bold')
 	doc.setFontSize(10)
 	doc.setTextColor(0, 0, 0)
-	doc.text('Purpose : Practical Examination', MARGIN + 4, y)
+	doc.text(opts.purpose_label || 'Purpose : Practical Examination', MARGIN + 4, y)
 	y += 6
 
 	// Column definitions (3 columns: S.No, Date, Total Persons)
@@ -185,7 +187,7 @@ export function generateLunchRequirementPdf(opts: LunchRequirementPdfOptions): j
 			drawPageHeader(doc, pageWidth, opts)
 			doc.setFont('times', 'bold')
 			doc.setFontSize(10)
-			doc.text('Purpose : Practical Examination', MARGIN + 4, y)
+			doc.text(opts.purpose_label || 'Purpose : Practical Examination', MARGIN + 4, y)
 			y += 6
 			drawTableHeader()
 		}

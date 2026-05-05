@@ -451,10 +451,30 @@ export default function ExternalMarkCorrectionPage() {
 		try {
 			const { generateExternalMarksPDF } = await import('@/lib/utils/generate-external-marks-pdf')
 
+			// Look up bundle number for this institution/session/course
+			let bundleNo = ''
+			if (selectedInstitutionId && selectedSessionId && selectedCourseId) {
+				try {
+					const params = new URLSearchParams({
+						institutions_id: selectedInstitutionId,
+						examination_session_id: selectedSessionId,
+						course_id: selectedCourseId
+					})
+					const res = await fetch(`/api/post-exam/bundle-numbers?${params.toString()}`)
+					if (res.ok) {
+						const json = await res.json()
+						if (json?.bundle_number != null) bundleNo = String(json.bundle_number)
+					}
+				} catch (e) {
+					console.warn('Bundle number lookup failed:', e)
+				}
+			}
+
 			const pdfData = {
 				subject_code: courseDetails.subject_code,
 				subject_name: courseDetails.subject_name,
 				register_number: registerNumber,
+				bundle_no: bundleNo,
 				maximum_marks: courseDetails.maximum_marks,
 				minimum_pass_marks: courseDetails.minimum_pass_marks,
 				exam_date: '',

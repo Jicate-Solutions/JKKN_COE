@@ -16,6 +16,8 @@ import { Label } from "@/components/ui/label"
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Checkbox } from "@/components/ui/checkbox"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import BundleNumbersTab from "./bundle-numbers-tab"
 import { useToast } from "@/hooks/common/use-toast"
 import { useInstitutionFilter } from "@/hooks/use-institution-filter"
 import { useSessionSync } from "@/hooks/use-session-sync"
@@ -624,6 +626,20 @@ export default function AnswerSheetPacketsPage() {
 							Refresh
 						</Button>
 					</div>
+
+					<Tabs defaultValue="packets" className="space-y-6">
+						<TabsList>
+							<TabsTrigger value="packets">
+								<Package className="h-4 w-4 mr-2" />
+								Packets
+							</TabsTrigger>
+							<TabsTrigger value="bundle-numbers">
+								<Sparkles className="h-4 w-4 mr-2" />
+								Bundle Numbers
+							</TabsTrigger>
+						</TabsList>
+
+						<TabsContent value="packets" className="space-y-6 mt-0">
 
 					{/* Packet Generation Card */}
 					<Card className="border-2 border-dashed border-purple-300 dark:border-purple-700 bg-purple-50/50 dark:bg-purple-900/10">
@@ -1344,6 +1360,12 @@ export default function AnswerSheetPacketsPage() {
 							)}
 						</CardContent>
 					</Card>
+						</TabsContent>
+
+						<TabsContent value="bundle-numbers" className="mt-0">
+							<BundleNumbersTab />
+						</TabsContent>
+					</Tabs>
 				</div>
 
 				<AppFooter />

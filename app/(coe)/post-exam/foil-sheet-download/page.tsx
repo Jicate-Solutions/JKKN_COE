@@ -394,11 +394,30 @@ export default function FoilSheetDownloadPage() {
 				loadImageAsBase64('/jkkn_logo.png'),
 			])
 
+			// Look up bundle number for this institution/session/course
+			let bundleNo = ''
+			if (effectiveInstitutionId && selectedSessionId && selectedTheoryCourseId) {
+				try {
+					const params = new URLSearchParams({
+						institutions_id: effectiveInstitutionId,
+						examination_session_id: selectedSessionId,
+						course_id: selectedTheoryCourseId
+					})
+					const res = await fetch(`/api/post-exam/bundle-numbers?${params.toString()}`)
+					if (res.ok) {
+						const json = await res.json()
+						if (json?.bundle_number != null) bundleNo = String(json.bundle_number)
+					}
+				} catch (e) {
+					console.warn('Bundle number lookup failed:', e)
+				}
+			}
+
 			const pdfData = {
 				subject_code: data.course_details.subject_code,
 				subject_name: data.course_details.subject_name,
 				packet_no: data.course_details.packet_no,
-				bundle_no: data.course_details.packet_no,
+				bundle_no: bundleNo,
 				total_sheets: data.course_details.total_sheets,
 				maximum_marks: data.course_details.maximum_marks,
 				minimum_pass_marks: data.course_details.minimum_pass_marks,

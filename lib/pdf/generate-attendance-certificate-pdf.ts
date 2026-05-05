@@ -26,6 +26,12 @@ export interface AttendanceCertificatePdfOptions {
 	logoImage?: string
 	rightLogoImage?: string
 	coe_name?: string
+	/**
+	 * Which examination context to highlight (bold) in the certificate body.
+	 * One of 'Practical' (default), 'Theory', 'Scrutiny', or 'Central Valuation'.
+	 * The other two options listed in the sentence are struck through.
+	 */
+	certificate_context?: 'Practical' | 'Theory' | 'Scrutiny' | 'Central Valuation'
 }
 
 // ---------------------------------------------------------------------------
@@ -122,6 +128,7 @@ function drawCertificateBody(
 	pageWidth: number,
 	y: number,
 	examiner: ExaminerCertificateData,
+	context: 'Practical' | 'Theory' | 'Scrutiny' | 'Central Valuation' = 'Practical',
 ): number {
 	const contentX = MARGIN + 8
 	const maxWidth = pageWidth - 2 * MARGIN - 16
@@ -203,41 +210,35 @@ function drawCertificateBody(
 		y += lineSpacing
 	}
 
-	// Line: "has acted as the External examiner for Practical \ Theory \ Scrutiny Examination(s) in our"
+	// Line: "has acted as the External examiner for <Practical \ Theory \ Scrutiny \ Central Valuation> Examination(s) in our"
 	doc.setFont('times', 'normal')
 	const part1 = `has acted as the ${examinerTypeText} examiner for `
 	doc.text(part1, contentX, y)
 
 	let curX = contentX + doc.getTextWidth(part1)
 
-	// "Practical" in bold
-	doc.setFont('times', 'bold')
-	doc.text('Practical', curX, y)
-	curX += doc.getTextWidth('Practical')
+	const contextOptions: Array<'Practical' | 'Theory' | 'Scrutiny' | 'Central Valuation'> =
+		['Practical', 'Theory', 'Scrutiny', 'Central Valuation']
 
-	// " \ " separator
+	contextOptions.forEach((opt, idx) => {
+		const isActive = opt === context
+		doc.setFont('times', isActive ? 'bold' : 'normal')
+		doc.text(opt, curX, y)
+		const w = doc.getTextWidth(opt)
+		if (!isActive) {
+			doc.setDrawColor(0, 0, 0)
+			doc.setLineWidth(0.3)
+			doc.line(curX, y - 1.5, curX + w, y - 1.5)
+		}
+		curX += w
+		if (idx < contextOptions.length - 1) {
+			doc.setFont('times', 'normal')
+			doc.text(' \\ ', curX, y)
+			curX += doc.getTextWidth(' \\ ')
+		}
+	})
+
 	doc.setFont('times', 'normal')
-	doc.text(' \\ ', curX, y)
-	curX += doc.getTextWidth(' \\ ')
-
-	// "Theory" with strikethrough
-	doc.text('Theory', curX, y)
-	const theoryW = doc.getTextWidth('Theory')
-	doc.setDrawColor(0, 0, 0)
-	doc.setLineWidth(0.3)
-	doc.line(curX, y - 1.5, curX + theoryW, y - 1.5)
-	curX += theoryW
-
-	// "\ " separator
-	doc.text('\\ ', curX, y)
-	curX += doc.getTextWidth('\\ ')
-
-	// "Scrutiny" with strikethrough
-	doc.text('Scrutiny', curX, y)
-	const scrutinyW = doc.getTextWidth('Scrutiny')
-	doc.line(curX, y - 1.5, curX + scrutinyW, y - 1.5)
-	curX += scrutinyW
-
 	doc.text(' Examination(s) in our', curX, y)
 	y += lineSpacing
 
@@ -348,7 +349,7 @@ export function generateAttendanceCertificatePdf(opts: AttendanceCertificatePdfO
 		if (i > 0) doc.addPage()
 
 		let y = drawCertificateHeader(doc, pageWidth, opts)
-		drawCertificateBody(doc, pageWidth, y, opts.examiners[i])
+		drawCertificateBody(doc, pageWidth, y, opts.examiners[i], opts.certificate_context)
 	}
 
 	return doc

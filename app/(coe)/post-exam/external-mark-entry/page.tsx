@@ -450,12 +450,35 @@ export default function ExternalMarkEntryPage() {
 				loadImageAsBase64('/jkkn_logo.png')
 			])
 
+			// Look up bundle number for this institution/session/course
+			let bundleNo = ''
+			if (selectedPacket) {
+				try {
+					const params = new URLSearchParams({
+						institutions_id: selectedPacket.institutions_id,
+						examination_session_id: selectedPacket.examination_session_id,
+						course_id: selectedPacket.course_id
+					})
+					const res = await fetch(`/api/post-exam/bundle-numbers?${params.toString()}`)
+					console.log('[Bundle lookup] URL:', `/api/post-exam/bundle-numbers?${params.toString()}`)
+					console.log('[Bundle lookup] Response status:', res.status)
+					if (res.ok) {
+						const json = await res.json()
+						console.log('[Bundle lookup] Response JSON:', json)
+						if (json?.bundle_number != null) bundleNo = String(json.bundle_number)
+					}
+					console.log('[Bundle lookup] Final bundleNo:', bundleNo)
+				} catch (e) {
+					console.warn('Bundle number lookup failed:', e)
+				}
+			}
+
 			// Prepare PDF data
 			const pdfData = {
 				subject_code: courseDetails.subject_code,
 				subject_name: courseDetails.subject_name,
 				packet_no: courseDetails.packet_no,
-				bundle_no: courseDetails.packet_no, // Using packet_no as bundle_no for now
+				bundle_no: bundleNo,
 				total_sheets: courseDetails.total_sheets,
 				maximum_marks: courseDetails.maximum_marks,
 				minimum_pass_marks: courseDetails.minimum_pass_marks,

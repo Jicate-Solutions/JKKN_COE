@@ -20,7 +20,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { Checkbox } from '@/components/ui/checkbox'
 import { useToast } from '@/hooks/common/use-toast'
 import { useInstitutionFilter } from '@/hooks/use-institution-filter'
-import { FlaskConical, Download, Loader2, Check, ChevronsUpDown, FileText, Award, Users } from 'lucide-react'
+import { FlaskConical, Download, Loader2, Check, ChevronsUpDown, FileText, Award, Users, BookOpen, ScrollText } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import Link from 'next/link'
 
@@ -109,28 +109,46 @@ export default function PracticalExamReportsPage() {
 	const { selectedSessionId, setSelectedSessionId, mustSelectSession } = useSessionSync()
 	const [institutionOpen, setInstitutionOpen] = useState(false)
 
-	// Lunch data
+	// Lunch data (Practical)
 	const [lunchDates, setLunchDates] = useState<LunchDateRow[]>([])
 	const [lunchSummary, setLunchSummary] = useState<LunchSummary | null>(null)
 	const [lunchFromDate, setLunchFromDate] = useState('')
 	const [lunchToDate, setLunchToDate] = useState('')
 
-	// Attendance certificate data
+	// Attendance certificate data (Practical)
 	const [examiners, setExaminers] = useState<ExaminerCertData[]>([])
 	const [selectedExaminerIds, setSelectedExaminerIds] = useState<Set<number>>(new Set())
 	const [selectAll, setSelectAll] = useState(false)
+
+	// Lunch data (Central Valuation)
+	const [cvLunchDates, setCvLunchDates] = useState<LunchDateRow[]>([])
+	const [cvLunchSummary, setCvLunchSummary] = useState<LunchSummary | null>(null)
+	const [cvLunchFromDate, setCvLunchFromDate] = useState('')
+	const [cvLunchToDate, setCvLunchToDate] = useState('')
+
+	// Attendance certificate data (Central Valuation)
+	const [cvExaminers, setCvExaminers] = useState<ExaminerCertData[]>([])
+	const [cvSelectedExaminerIds, setCvSelectedExaminerIds] = useState<Set<number>>(new Set())
+	const [cvSelectAll, setCvSelectAll] = useState(false)
 
 	// Loading states
 	const [loadingInstitutions, setLoadingInstitutions] = useState(false)
 	const [loadingSessions, setLoadingSessions] = useState(false)
 	const [loadingLunch, setLoadingLunch] = useState(false)
 	const [loadingCert, setLoadingCert] = useState(false)
+	const [loadingCvLunch, setLoadingCvLunch] = useState(false)
+	const [loadingCvCert, setLoadingCvCert] = useState(false)
 	const [downloadingPdf, setDownloadingPdf] = useState(false)
 
-	// Certificate type filter & sorting
+	// Certificate type filter & sorting (Practical)
 	const [certTypeFilter, setCertTypeFilter] = useState<'all' | 'External' | 'Internal'>('all')
 	const [certSortField, setCertSortField] = useState<'examiner_name' | 'type' | 'from_date' | 'to_date' | 'total_days'>('examiner_name')
 	const [certSortDir, setCertSortDir] = useState<'asc' | 'desc'>('asc')
+
+	// Certificate type filter & sorting (Central Valuation)
+	const [cvCertTypeFilter, setCvCertTypeFilter] = useState<'all' | 'External' | 'Internal'>('all')
+	const [cvCertSortField, setCvCertSortField] = useState<'examiner_name' | 'type' | 'from_date' | 'to_date' | 'total_days'>('examiner_name')
+	const [cvCertSortDir, setCvCertSortDir] = useState<'asc' | 'desc'>('asc')
 
 	// Active tab
 	const [activeTab, setActiveTab] = useState('lunch')
@@ -162,6 +180,8 @@ export default function PracticalExamReportsPage() {
 		if (selectedInstitutionId && selectedSessionId) {
 			loadLunchData()
 			loadAttendanceCertData()
+			loadCvLunchData()
+			loadCvAttendanceCertData()
 		}
 	}, [selectedSessionId])
 
@@ -171,6 +191,11 @@ export default function PracticalExamReportsPage() {
 		setExaminers([])
 		setSelectedExaminerIds(new Set())
 		setSelectAll(false)
+		setCvLunchDates([])
+		setCvLunchSummary(null)
+		setCvExaminers([])
+		setCvSelectedExaminerIds(new Set())
+		setCvSelectAll(false)
 	}
 
 	const loadInstitutions = useCallback(async () => {
@@ -235,6 +260,43 @@ export default function PracticalExamReportsPage() {
 			toast({ title: '❌ Error', description: 'Failed to load examiner data', variant: 'destructive' })
 		} finally {
 			setLoadingCert(false)
+		}
+	}
+
+	const loadCvLunchData = async () => {
+		if (!selectedInstitutionId || !selectedSessionId) return
+		try {
+			setLoadingCvLunch(true)
+			const res = await fetch(
+				`/api/reports/central-valuation/lunch-requirement?action=lunch-data&institutionId=${selectedInstitutionId}&sessionId=${selectedSessionId}`
+			)
+			if (!res.ok) throw new Error('Failed to load data')
+			const data = await res.json()
+			setCvLunchDates(data.dates || [])
+			setCvLunchSummary(data.summary || null)
+		} catch {
+			toast({ title: '❌ Error', description: 'Failed to load CV lunch data', variant: 'destructive' })
+		} finally {
+			setLoadingCvLunch(false)
+		}
+	}
+
+	const loadCvAttendanceCertData = async () => {
+		if (!selectedInstitutionId || !selectedSessionId) return
+		try {
+			setLoadingCvCert(true)
+			const res = await fetch(
+				`/api/reports/central-valuation/lunch-requirement?action=attendance-certificate&institutionId=${selectedInstitutionId}&sessionId=${selectedSessionId}`
+			)
+			if (!res.ok) throw new Error('Failed to load data')
+			const data = await res.json()
+			setCvExaminers(data.examiners || [])
+			setCvSelectedExaminerIds(new Set())
+			setCvSelectAll(false)
+		} catch {
+			toast({ title: '❌ Error', description: 'Failed to load CV examiner data', variant: 'destructive' })
+		} finally {
+			setLoadingCvCert(false)
 		}
 	}
 
@@ -396,7 +458,85 @@ export default function PracticalExamReportsPage() {
 		}
 	}
 
-	// Filtered & sorted examiners
+	const handleDownloadCvLunchPdf = async () => {
+		if (cvLunchDates.length === 0) return
+		setDownloadingPdf(true)
+		try {
+			const ctx = await loadPdfContext()
+			const { generateLunchRequirementPdf } = await import('@/lib/pdf/generate-lunch-requirement-pdf')
+
+			let filteredDates = cvLunchDates
+			if (cvLunchFromDate) filteredDates = filteredDates.filter(d => d.exam_date >= cvLunchFromDate)
+			if (cvLunchToDate) filteredDates = filteredDates.filter(d => d.exam_date <= cvLunchToDate)
+
+			const numbered = filteredDates.map((d, i) => ({ ...d, serial_number: i + 1 }))
+			const totalInternal = numbered.reduce((s, d) => s + d.internal_count, 0)
+			const totalExternal = numbered.reduce((s, d) => s + d.external_count, 0)
+
+			const doc = generateLunchRequirementPdf({
+				institution_name: ctx.institutionName,
+				institution_address: ctx.institutionAddress,
+				institution_accreditation: ctx.accreditationText,
+				session_name: ctx.sessionName,
+				dates: numbered,
+				summary: {
+					total_dates: numbered.length,
+					total_internal: totalInternal,
+					total_external: totalExternal,
+					total_persons: totalInternal + totalExternal,
+				},
+				primary_color: ctx.primaryColor,
+				logoImage: ctx.logoImage,
+				rightLogoImage: ctx.rightLogoImage,
+				report_title: 'Central Valuation Lunch Requirement',
+				purpose_label: 'Purpose : Central Valuation',
+			})
+
+			doc.save(`${ctx.institutionCode}_${ctx.sessionName.replace(/\s+/g, '_')}_cv_lunch_requirement.pdf`)
+			toast({ title: '✅ PDF Downloaded', description: `CV lunch requirement saved (${numbered.length} dates)`, className: 'bg-green-50 border-green-200 text-green-800' })
+		} catch (err) {
+			console.error('PDF error:', err)
+			toast({ title: '❌ Failed', description: 'Failed to generate PDF', variant: 'destructive' })
+		} finally {
+			setDownloadingPdf(false)
+		}
+	}
+
+	const handleDownloadCvCertPdf = async () => {
+		const selected = cvExaminers.filter((_, idx) => cvSelectedExaminerIds.has(idx))
+		if (selected.length === 0) {
+			toast({ title: '⚠️ No Selection', description: 'Please select examiners for certificate', variant: 'destructive' })
+			return
+		}
+
+		setDownloadingPdf(true)
+		try {
+			const ctx = await loadPdfContext()
+			const { generateAttendanceCertificatePdf } = await import('@/lib/pdf/generate-attendance-certificate-pdf')
+
+			const doc = generateAttendanceCertificatePdf({
+				institution_name: ctx.institutionName,
+				institution_address: ctx.institutionAddress,
+				institution_accreditation: ctx.accreditationText,
+				session_name: ctx.sessionName,
+				examiners: selected,
+				primary_color: ctx.primaryColor,
+				logoImage: ctx.logoImage,
+				rightLogoImage: ctx.rightLogoImage,
+				certificate_context: 'Central Valuation',
+			})
+
+			doc.save(`${ctx.institutionCode}_${ctx.sessionName.replace(/\s+/g, '_')}_cv_attendance_certificates.pdf`)
+			toast({ title: '✅ PDF Downloaded', description: `${selected.length} certificate(s) generated`, className: 'bg-green-50 border-green-200 text-green-800' })
+		} catch (err) {
+			console.error('PDF error:', err)
+			toast({ title: '❌ Failed', description: 'Failed to generate certificates', variant: 'destructive' })
+		} finally {
+			setDownloadingPdf(false)
+		}
+	}
+
+	// Filtered & sorted examiners (Practical)
 	const filteredExaminers = (() => {
 		let list = examiners.map((e, i) => ({ ...e, _origIdx: i }))
 		if (certTypeFilter !== 'all') list = list.filter(e => e.type === certTypeFilter)
@@ -412,10 +552,8 @@ export default function PracticalExamReportsPage() {
 		return list
 	})()
 
-	// Map filtered index back to original index
 	const filteredIndexMap = filteredExaminers.map(fe => fe._origIdx)
 
-	// Toggle sort
 	const handleCertSort = (field: typeof certSortField) => {
 		if (certSortField === field) {
 			setCertSortDir(d => d === 'asc' ? 'desc' : 'asc')
@@ -428,14 +566,10 @@ export default function PracticalExamReportsPage() {
 	const sortIcon = (field: typeof certSortField) =>
 		certSortField === field ? (certSortDir === 'asc' ? ' ↑' : ' ↓') : ''
 
-	// Select all toggle for certificates (only filtered)
 	const handleSelectAll = (checked: boolean) => {
 		setSelectAll(checked)
-		if (checked) {
-			setSelectedExaminerIds(new Set(filteredIndexMap))
-		} else {
-			setSelectedExaminerIds(new Set())
-		}
+		if (checked) setSelectedExaminerIds(new Set(filteredIndexMap))
+		else setSelectedExaminerIds(new Set())
 	}
 
 	const toggleExaminer = (originalIdx: number) => {
@@ -444,6 +578,50 @@ export default function PracticalExamReportsPage() {
 		else next.add(originalIdx)
 		setSelectedExaminerIds(next)
 		setSelectAll(filteredIndexMap.every(i => next.has(i)))
+	}
+
+	// Filtered & sorted examiners (Central Valuation)
+	const filteredCvExaminers = (() => {
+		let list = cvExaminers.map((e, i) => ({ ...e, _origIdx: i }))
+		if (cvCertTypeFilter !== 'all') list = list.filter(e => e.type === cvCertTypeFilter)
+		list.sort((a, b) => {
+			let cmp = 0
+			if (cvCertSortField === 'examiner_name') cmp = a.examiner_name.localeCompare(b.examiner_name)
+			else if (cvCertSortField === 'type') cmp = a.type.localeCompare(b.type)
+			else if (cvCertSortField === 'from_date') cmp = (a.from_date || '').localeCompare(b.from_date || '')
+			else if (cvCertSortField === 'to_date') cmp = (a.to_date || '').localeCompare(b.to_date || '')
+			else if (cvCertSortField === 'total_days') cmp = a.total_days - b.total_days
+			return cvCertSortDir === 'asc' ? cmp : -cmp
+		})
+		return list
+	})()
+
+	const filteredCvIndexMap = filteredCvExaminers.map(fe => fe._origIdx)
+
+	const handleCvCertSort = (field: typeof cvCertSortField) => {
+		if (cvCertSortField === field) {
+			setCvCertSortDir(d => d === 'asc' ? 'desc' : 'asc')
+		} else {
+			setCvCertSortField(field)
+			setCvCertSortDir('asc')
+		}
+	}
+
+	const cvSortIcon = (field: typeof cvCertSortField) =>
+		cvCertSortField === field ? (cvCertSortDir === 'asc' ? ' ↑' : ' ↓') : ''
+
+	const handleCvSelectAll = (checked: boolean) => {
+		setCvSelectAll(checked)
+		if (checked) setCvSelectedExaminerIds(new Set(filteredCvIndexMap))
+		else setCvSelectedExaminerIds(new Set())
+	}
+
+	const toggleCvExaminer = (originalIdx: number) => {
+		const next = new Set(cvSelectedExaminerIds)
+		if (next.has(originalIdx)) next.delete(originalIdx)
+		else next.add(originalIdx)
+		setCvSelectedExaminerIds(next)
+		setCvSelectAll(filteredCvIndexMap.every(i => next.has(i)))
 	}
 
 	// ---------------------------------------------------------------------------
@@ -556,14 +734,22 @@ export default function PracticalExamReportsPage() {
 					{/* Tabs */}
 					{selectedSessionId && (
 						<Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
-							<TabsList className="grid w-full max-w-md grid-cols-2 bg-slate-100 dark:bg-slate-800/60 p-1 h-10 rounded-lg">
+							<TabsList className="grid w-full max-w-3xl grid-cols-4 bg-slate-100 dark:bg-slate-800/60 p-1 h-10 rounded-lg">
 								<TabsTrigger value="lunch" className="text-xs gap-1.5 rounded-md data-[state=active]:bg-white data-[state=active]:text-slate-900 data-[state=active]:shadow-sm data-[state=active]:font-semibold dark:data-[state=active]:bg-slate-700 dark:data-[state=active]:text-white">
 									<Users className="h-3.5 w-3.5" />
-									Lunch Requirement
+									Practical Lunch
 								</TabsTrigger>
 								<TabsTrigger value="certificate" className="text-xs gap-1.5 rounded-md data-[state=active]:bg-white data-[state=active]:text-slate-900 data-[state=active]:shadow-sm data-[state=active]:font-semibold dark:data-[state=active]:bg-slate-700 dark:data-[state=active]:text-white">
 									<Award className="h-3.5 w-3.5" />
-									Attendance Certificate
+									Practical Attendance
+								</TabsTrigger>
+								<TabsTrigger value="cv-lunch" className="text-xs gap-1.5 rounded-md data-[state=active]:bg-white data-[state=active]:text-slate-900 data-[state=active]:shadow-sm data-[state=active]:font-semibold dark:data-[state=active]:bg-slate-700 dark:data-[state=active]:text-white">
+									<BookOpen className="h-3.5 w-3.5" />
+									Central Valuation
+								</TabsTrigger>
+								<TabsTrigger value="cv-certificate" className="text-xs gap-1.5 rounded-md data-[state=active]:bg-white data-[state=active]:text-slate-900 data-[state=active]:shadow-sm data-[state=active]:font-semibold dark:data-[state=active]:bg-slate-700 dark:data-[state=active]:text-white">
+									<ScrollText className="h-3.5 w-3.5" />
+									CV Attendance
 								</TabsTrigger>
 							</TabsList>
 
@@ -798,6 +984,265 @@ export default function PracticalExamReportsPage() {
 																		<Checkbox
 																			checked={selectedExaminerIds.has(ex._origIdx)}
 																			onCheckedChange={() => toggleExaminer(ex._origIdx)}
+																		/>
+																	</TableCell>
+																	<TableCell className="text-sm py-3 text-muted-foreground">{idx + 1}</TableCell>
+																	<TableCell className="text-sm py-3 font-semibold">{ex.examiner_name}</TableCell>
+																	<TableCell className="py-3">
+																		<Badge variant="outline" className={cn("text-xs", ex.type === 'External' ? 'bg-orange-50 text-orange-700 border-orange-200' : 'bg-blue-50 text-blue-700 border-blue-200')}>
+																			{ex.type}
+																		</Badge>
+																	</TableCell>
+																	<TableCell className="text-sm py-3 text-muted-foreground">
+																		{ex.type === 'External'
+																			? [ex.department, ex.institution_name].filter(Boolean).join(', ')
+																			: '-'
+																		}
+																	</TableCell>
+																	<TableCell className="text-sm py-3 text-center">{formatDate(ex.from_date)}</TableCell>
+																	<TableCell className="text-sm py-3 text-center">
+																		{ex.to_date ? formatDate(ex.to_date) : '-'}
+																	</TableCell>
+																	<TableCell className="text-sm py-3 text-center font-medium">{ex.total_days}</TableCell>
+																</TableRow>
+															))}
+														</TableBody>
+													</Table>
+												</div>
+											</CardContent>
+										</Card>
+									</>
+								)}
+							</TabsContent>
+
+							{/* ────── CENTRAL VALUATION LUNCH TAB ────── */}
+							<TabsContent value="cv-lunch" className="space-y-4">
+								{loadingCvLunch ? (
+									<Card className="shadow-sm">
+										<CardContent className="p-8 text-center text-muted-foreground">
+											<Loader2 className="h-6 w-6 animate-spin mx-auto mb-2" />
+											Loading central valuation lunch data...
+										</CardContent>
+									</Card>
+								) : cvLunchDates.length === 0 ? (
+									<Card className="shadow-sm">
+										<CardContent className="p-8 text-center text-muted-foreground">
+											No central valuation packets with valuation dates found for this session.
+										</CardContent>
+									</Card>
+								) : (
+									<>
+										{/* Summary + Date Filter + Download */}
+										<Card className="shadow-sm">
+											<CardContent className="p-3 space-y-3">
+												<div className="flex items-center gap-4 text-sm flex-wrap">
+													<Badge variant="outline" className="text-xs">
+														{cvLunchSummary?.total_dates} date(s)
+													</Badge>
+													<Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200 text-xs">
+														Internal: {cvLunchSummary?.total_internal}
+													</Badge>
+													<Badge variant="outline" className="bg-orange-50 text-orange-700 border-orange-200 text-xs">
+														External: {cvLunchSummary?.total_external}
+													</Badge>
+													<Badge className="bg-indigo-100 text-indigo-800 text-xs">
+														Total: {cvLunchSummary?.total_persons}
+													</Badge>
+												</div>
+												<div className="flex items-end gap-3 flex-wrap">
+													<div className="space-y-1">
+														<Label className="text-xs font-medium">From Date</Label>
+														<Input
+															type="date"
+															value={cvLunchFromDate}
+															onChange={e => setCvLunchFromDate(e.target.value)}
+															className="h-8 text-xs w-40"
+														/>
+													</div>
+													<div className="space-y-1">
+														<Label className="text-xs font-medium">To Date</Label>
+														<Input
+															type="date"
+															value={cvLunchToDate}
+															onChange={e => setCvLunchToDate(e.target.value)}
+															className="h-8 text-xs w-40"
+														/>
+													</div>
+													{(cvLunchFromDate || cvLunchToDate) && (
+														<Button
+															variant="ghost"
+															size="sm"
+															onClick={() => { setCvLunchFromDate(''); setCvLunchToDate('') }}
+															className="h-8 text-xs text-muted-foreground"
+														>
+															Clear dates
+														</Button>
+													)}
+													<div className="flex-1" />
+													<Button onClick={handleDownloadCvLunchPdf} disabled={downloadingPdf} className="bg-indigo-600 hover:bg-indigo-700 text-white h-8 text-xs">
+														{downloadingPdf ? <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> : <Download className="h-3.5 w-3.5 mr-1.5" />}
+														Download PDF
+													</Button>
+												</div>
+											</CardContent>
+										</Card>
+
+										{/* Data Table */}
+										<Card className="shadow-md">
+											<CardHeader className="pb-3">
+												<CardTitle className="flex items-center gap-2 font-grotesk text-base">
+													<div className="h-2 w-2 rounded-full bg-indigo-500" />
+													Central Valuation Lunch Requirement
+												</CardTitle>
+												<CardDescription className="text-xs">
+													Date-wise examiner count from answer sheet packet allotments
+												</CardDescription>
+											</CardHeader>
+											<CardContent className="pt-0">
+												<div className="border rounded-lg">
+													<Table>
+														<TableHeader>
+															<TableRow className="bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-600 hover:to-violet-600">
+																<TableHead className="w-12 text-white font-semibold text-sm">S.No</TableHead>
+																<TableHead className="text-white font-semibold text-sm">Date</TableHead>
+																<TableHead className="text-white font-semibold text-sm">Purpose</TableHead>
+																<TableHead className="text-white font-semibold text-sm text-center">Internal Examiners</TableHead>
+																<TableHead className="text-white font-semibold text-sm text-center">External Examiners</TableHead>
+																<TableHead className="text-white font-semibold text-sm text-center">Total Persons</TableHead>
+															</TableRow>
+														</TableHeader>
+														<TableBody>
+															{cvLunchDates.map(row => (
+																<TableRow key={row.serial_number} className="hover:bg-indigo-50/50 dark:hover:bg-indigo-900/10">
+																	<TableCell className="text-sm py-3 text-muted-foreground">{row.serial_number}</TableCell>
+																	<TableCell className="text-sm py-3 font-medium">{formatDate(row.exam_date)}</TableCell>
+																	<TableCell className="text-sm py-3">{row.purpose}</TableCell>
+																	<TableCell className="text-sm py-3 text-center font-medium">{row.internal_count}</TableCell>
+																	<TableCell className="text-sm py-3 text-center font-medium">{row.external_count}</TableCell>
+																	<TableCell className="text-sm py-3 text-center font-bold">{row.total_persons}</TableCell>
+																</TableRow>
+															))}
+															<TableRow className="bg-slate-50 dark:bg-slate-800/50 font-bold">
+																<TableCell colSpan={3} className="text-sm py-3 text-center font-bold">Total</TableCell>
+																<TableCell className="text-sm py-3 text-center font-bold">{cvLunchSummary?.total_internal}</TableCell>
+																<TableCell className="text-sm py-3 text-center font-bold">{cvLunchSummary?.total_external}</TableCell>
+																<TableCell className="text-sm py-3 text-center font-bold text-indigo-700">{cvLunchSummary?.total_persons}</TableCell>
+															</TableRow>
+														</TableBody>
+													</Table>
+												</div>
+											</CardContent>
+										</Card>
+									</>
+								)}
+							</TabsContent>
+
+							{/* ────── CENTRAL VALUATION ATTENDANCE TAB ────── */}
+							<TabsContent value="cv-certificate" className="space-y-4">
+								{loadingCvCert ? (
+									<Card className="shadow-sm">
+										<CardContent className="p-8 text-center text-muted-foreground">
+											<Loader2 className="h-6 w-6 animate-spin mx-auto mb-2" />
+											Loading central valuation examiner data...
+										</CardContent>
+									</Card>
+								) : cvExaminers.length === 0 ? (
+									<Card className="shadow-sm">
+										<CardContent className="p-8 text-center text-muted-foreground">
+											No examiner allotments with valuation dates found for this session.
+										</CardContent>
+									</Card>
+								) : (
+									<>
+										<Card className="shadow-sm">
+											<CardContent className="p-3 space-y-3">
+												<div className="flex items-center gap-3 text-sm flex-wrap">
+													<Badge variant="outline" className="text-xs">
+														{cvExaminers.length} examiner(s)
+													</Badge>
+													<Badge variant="outline" className="bg-orange-50 text-orange-700 border-orange-200 text-xs">
+														{cvExaminers.filter(e => e.type === 'External').length} External
+													</Badge>
+													<Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200 text-xs">
+														{cvExaminers.filter(e => e.type === 'Internal').length} Internal
+													</Badge>
+													{cvSelectedExaminerIds.size > 0 && (
+														<Badge className="bg-indigo-100 text-indigo-800 text-xs">
+															{cvSelectedExaminerIds.size} selected
+														</Badge>
+													)}
+												</div>
+												<div className="flex items-end gap-3 flex-wrap">
+													<div className="space-y-1">
+														<Label className="text-xs font-medium">Examiner Type</Label>
+														<Select value={cvCertTypeFilter} onValueChange={(v) => { setCvCertTypeFilter(v as typeof cvCertTypeFilter); setCvSelectedExaminerIds(new Set()); setCvSelectAll(false) }}>
+															<SelectTrigger className="h-8 text-xs w-40">
+																<SelectValue />
+															</SelectTrigger>
+															<SelectContent>
+																<SelectItem value="all" className="text-xs">All Types</SelectItem>
+																<SelectItem value="External" className="text-xs">External</SelectItem>
+																<SelectItem value="Internal" className="text-xs">Internal</SelectItem>
+															</SelectContent>
+														</Select>
+													</div>
+													<div className="flex-1" />
+													<Button onClick={handleDownloadCvCertPdf} disabled={downloadingPdf || cvSelectedExaminerIds.size === 0} className="bg-indigo-600 hover:bg-indigo-700 text-white h-8 text-xs">
+														{downloadingPdf ? <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> : <Download className="h-3.5 w-3.5 mr-1.5" />}
+														Download Certificates ({cvSelectedExaminerIds.size})
+													</Button>
+												</div>
+											</CardContent>
+										</Card>
+
+										<Card className="shadow-md">
+											<CardHeader className="pb-3">
+												<CardTitle className="flex items-center gap-2 font-grotesk text-base">
+													<div className="h-2 w-2 rounded-full bg-violet-500" />
+													Central Valuation Attendance Certificates
+												</CardTitle>
+												<CardDescription className="text-xs">
+													Select examiners to generate central valuation attendance certificates
+												</CardDescription>
+											</CardHeader>
+											<CardContent className="pt-0">
+												<div className="border rounded-lg">
+													<Table>
+														<TableHeader>
+															<TableRow className="bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-600 hover:to-violet-600">
+																<TableHead className="w-10 text-white">
+																	<Checkbox
+																		checked={cvSelectAll}
+																		onCheckedChange={handleCvSelectAll}
+																		className="border-white data-[state=checked]:bg-white data-[state=checked]:text-violet-700"
+																	/>
+																</TableHead>
+																<TableHead className="w-10 text-white font-semibold text-sm">#</TableHead>
+																<TableHead className="text-white font-semibold text-sm cursor-pointer select-none" onClick={() => handleCvCertSort('examiner_name')}>
+																	Examiner Name{cvSortIcon('examiner_name')}
+																</TableHead>
+																<TableHead className="text-white font-semibold text-sm cursor-pointer select-none" onClick={() => handleCvCertSort('type')}>
+																	Type{cvSortIcon('type')}
+																</TableHead>
+																<TableHead className="text-white font-semibold text-sm">Institution / Department</TableHead>
+																<TableHead className="text-white font-semibold text-sm text-center cursor-pointer select-none" onClick={() => handleCvCertSort('from_date')}>
+																	From{cvSortIcon('from_date')}
+																</TableHead>
+																<TableHead className="text-white font-semibold text-sm text-center cursor-pointer select-none" onClick={() => handleCvCertSort('to_date')}>
+																	To{cvSortIcon('to_date')}
+																</TableHead>
+																<TableHead className="text-white font-semibold text-sm text-center cursor-pointer select-none" onClick={() => handleCvCertSort('total_days')}>
+																	Days{cvSortIcon('total_days')}
+																</TableHead>
+															</TableRow>
+														</TableHeader>
+														<TableBody>
+															{filteredCvExaminers.map((ex, idx) => (
+																<TableRow key={ex._origIdx} className={cn("hover:bg-indigo-50/50 dark:hover:bg-indigo-900/10", cvSelectedExaminerIds.has(ex._origIdx) && "bg-indigo-50/80 dark:bg-indigo-900/20")}>
+																	<TableCell className="py-3">
+																		<Checkbox
+																			checked={cvSelectedExaminerIds.has(ex._origIdx)}
+																			onCheckedChange={() => toggleCvExaminer(ex._origIdx)}
 																		/>
 																	</TableCell>
 																	<TableCell className="text-sm py-3 text-muted-foreground">{idx + 1}</TableCell>

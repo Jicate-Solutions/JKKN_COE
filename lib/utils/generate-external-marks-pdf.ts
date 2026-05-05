@@ -168,7 +168,9 @@ export function generateExternalMarksPDF(data: ExternalMarksPDFData): string {
 	doc.rect(margin + col1Width + col2Width, currentY - 4, col3Width, rowHeight)
 	doc.rect(margin + col1Width + col2Width + col3Width, currentY - 4, col4Width, rowHeight)
 	doc.text('Bundle no.', margin + cellPadding, currentY)
-	// Bundle no. value left blank
+	if (data.bundle_no) {
+		doc.text(String(data.bundle_no), margin + col1Width + cellPadding, currentY)
+	}
 	doc.text('Packet No.', margin + col1Width + col2Width + cellPadding, currentY)
 	doc.text(data.packet_no, margin + col1Width + col2Width + col3Width + cellPadding, currentY)
 
@@ -193,24 +195,29 @@ export function generateExternalMarksPDF(data: ExternalMarksPDFData): string {
 	// Adaptive sizing to keep everything (table + signature + footer) on a single page
 	const signatureBoxHeight = 20
 	const footerReserve = 12 // page-number footer
-	const safetyGap = 3 // small gap between table end and signature
-	// Header row is 2 lines ("Marks\nAwarded") so it takes ~1.5x a body row
-	const headerExtraHeight = 4
-	const availableHeight = pageHeight - currentY - signatureBoxHeight - footerReserve - safetyGap - headerExtraHeight
-	// Rows = students + header + totals foot row
-	const rowsToFit = totalCount + 2
-	const estRowHeight = availableHeight / rowsToFit
-	let tableFontSize = 10
-	let tableCellPadding = 2
-	if (estRowHeight < 4.5) {
-		tableFontSize = 7
-		tableCellPadding = 0.4
-	} else if (estRowHeight < 5.5) {
-		tableFontSize = 8
-		tableCellPadding = 0.6
-	} else if (estRowHeight < 7.5) {
-		tableFontSize = 9
-		tableCellPadding = 1
+	const availableHeight = pageHeight - currentY - signatureBoxHeight - footerReserve
+	// Rows = students + header (2-line, ~1.6x) + totals foot row
+	// Predict actual row height: fontSize(pt)*0.353 + 2*padding + lineWidth
+	const predictRowHeight = (fontSize: number, padding: number) => fontSize * 0.353 + padding * 2 + 0.4
+	const sizingOptions: Array<{ fontSize: number; padding: number }> = [
+		{ fontSize: 10, padding: 2 },
+		{ fontSize: 10, padding: 1.5 },
+		{ fontSize: 9, padding: 1.5 },
+		{ fontSize: 9, padding: 1 },
+		{ fontSize: 8, padding: 0.8 },
+		{ fontSize: 8, padding: 0.5 },
+		{ fontSize: 7, padding: 0.4 }
+	]
+	let tableFontSize = 7
+	let tableCellPadding = 0.4
+	for (const opt of sizingOptions) {
+		const rowH = predictRowHeight(opt.fontSize, opt.padding)
+		const tableH = totalCount * rowH + rowH * 1.6 + rowH // body + header(1.6x) + foot
+		if (tableH <= availableHeight) {
+			tableFontSize = opt.fontSize
+			tableCellPadding = opt.padding
+			break
+		}
 	}
 
 	let finalTableY = currentY

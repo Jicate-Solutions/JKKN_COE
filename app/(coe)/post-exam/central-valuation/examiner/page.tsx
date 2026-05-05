@@ -598,72 +598,81 @@ function StaffCombobox({
 	}, [open, search, institutionsId])
 
 	return (
-		<Popover open={open} onOpenChange={setOpen}>
-			<PopoverTrigger asChild>
-				<Button
-					variant="outline"
-					role="combobox"
-					className="w-full justify-between h-8 text-xs truncate"
-					disabled={disabled}
-					title={disabled ? disabledReason : undefined}
-				>
-					<span className="flex-1 pr-2 truncate">
-						{value ? value.staff_name : disabled ? disabledReason : 'Select staff'}
-					</span>
-					{value ? (
-						<X
-							className="h-3 w-3 shrink-0 hover:text-red-500"
-							onClick={(e) => {
-								e.stopPropagation()
-								onChange(null)
-							}}
-						/>
-					) : (
+		<div className="flex items-center gap-1 w-full">
+			<Popover open={open} onOpenChange={setOpen}>
+				<PopoverTrigger asChild>
+					<Button
+						variant="outline"
+						role="combobox"
+						className="flex-1 min-w-0 justify-between h-8 text-xs truncate"
+						disabled={disabled}
+						title={disabled ? disabledReason : value?.staff_name}
+					>
+						<span className="flex-1 pr-2 truncate text-left">
+							{value ? value.staff_name : disabled ? disabledReason : 'Select staff'}
+						</span>
 						<ChevronsUpDown className="h-3 w-3 shrink-0 opacity-50" />
-					)}
+					</Button>
+				</PopoverTrigger>
+				<PopoverContent className="w-[320px] p-0" align="start">
+					<Command shouldFilter={false}>
+						<CommandInput
+							placeholder="Search staff..."
+							className="h-8 text-xs"
+							value={search}
+							onValueChange={setSearch}
+						/>
+						{loading ? (
+							<div className="py-4 text-center text-xs text-muted-foreground">
+								<Loader2 className="h-3.5 w-3.5 animate-spin inline mr-1" />
+								Loading...
+							</div>
+						) : (
+							<>
+								<CommandEmpty className="py-4 text-xs text-center">No staff found.</CommandEmpty>
+								<CommandGroup className="max-h-56 overflow-auto">
+									{results.map(s => (
+										<CommandItem
+											key={s.staff_id}
+											value={s.staff_id}
+											onSelect={() => {
+												onChange(s)
+												setOpen(false)
+											}}
+											className="py-2 text-xs"
+										>
+											<div className="flex-1">
+												<div className="font-medium">{s.staff_name}</div>
+												{s.staff_designation && (
+													<div className="text-[10px] text-muted-foreground">{s.staff_designation}</div>
+												)}
+											</div>
+										</CommandItem>
+									))}
+								</CommandGroup>
+							</>
+						)}
+					</Command>
+				</PopoverContent>
+			</Popover>
+			{value && !disabled && (
+				<Button
+					type="button"
+					variant="ghost"
+					size="icon"
+					className="h-8 w-7 shrink-0 text-muted-foreground hover:text-red-600 hover:bg-red-50"
+					title="Remove examiner"
+					onPointerDown={(e) => e.stopPropagation()}
+					onClick={(e) => {
+						e.preventDefault()
+						e.stopPropagation()
+						onChange(null)
+					}}
+				>
+					<X className="h-3.5 w-3.5" />
 				</Button>
-			</PopoverTrigger>
-			<PopoverContent className="w-[320px] p-0" align="start">
-				<Command shouldFilter={false}>
-					<CommandInput
-						placeholder="Search staff..."
-						className="h-8 text-xs"
-						value={search}
-						onValueChange={setSearch}
-					/>
-					{loading ? (
-						<div className="py-4 text-center text-xs text-muted-foreground">
-							<Loader2 className="h-3.5 w-3.5 animate-spin inline mr-1" />
-							Loading...
-						</div>
-					) : (
-						<>
-							<CommandEmpty className="py-4 text-xs text-center">No staff found.</CommandEmpty>
-							<CommandGroup className="max-h-56 overflow-auto">
-								{results.map(s => (
-									<CommandItem
-										key={s.staff_id}
-										value={s.staff_id}
-										onSelect={() => {
-											onChange(s)
-											setOpen(false)
-										}}
-										className="py-2 text-xs"
-									>
-										<div className="flex-1">
-											<div className="font-medium">{s.staff_name}</div>
-											{s.staff_designation && (
-												<div className="text-[10px] text-muted-foreground">{s.staff_designation}</div>
-											)}
-										</div>
-									</CommandItem>
-								))}
-							</CommandGroup>
-						</>
-					)}
-				</Command>
-			</PopoverContent>
-		</Popover>
+			)}
+		</div>
 	)
 }
 
@@ -713,71 +722,80 @@ function ExaminerCombobox({
 	}, [open, search, boardCode])
 
 	return (
-		<Popover open={open} onOpenChange={setOpen}>
-			<PopoverTrigger asChild>
-				<Button
-					variant="outline"
-					role="combobox"
-					className="w-full justify-between h-8 text-xs truncate"
-					disabled={disabled}
-					title={disabled ? disabledReason : undefined}
-				>
-					<span className="flex-1 pr-2 truncate">
-						{value ? value.full_name : disabled ? disabledReason : 'Select external'}
-					</span>
-					{value ? (
-						<X
-							className="h-3 w-3 shrink-0 hover:text-red-500"
-							onClick={(e) => {
-								e.stopPropagation()
-								onChange(null)
-							}}
-						/>
-					) : (
+		<div className="flex items-center gap-1 w-full">
+			<Popover open={open} onOpenChange={setOpen}>
+				<PopoverTrigger asChild>
+					<Button
+						variant="outline"
+						role="combobox"
+						className="flex-1 min-w-0 justify-between h-8 text-xs truncate"
+						disabled={disabled}
+						title={disabled ? disabledReason : value?.full_name}
+					>
+						<span className="flex-1 pr-2 truncate text-left">
+							{value ? value.full_name : disabled ? disabledReason : 'Select external'}
+						</span>
 						<ChevronsUpDown className="h-3 w-3 shrink-0 opacity-50" />
-					)}
+					</Button>
+				</PopoverTrigger>
+				<PopoverContent className="w-[320px] p-0" align="start">
+					<Command shouldFilter={false}>
+						<CommandInput
+							placeholder="Search examiner..."
+							className="h-8 text-xs"
+							value={search}
+							onValueChange={setSearch}
+						/>
+						{loading ? (
+							<div className="py-4 text-center text-xs text-muted-foreground">
+								<Loader2 className="h-3.5 w-3.5 animate-spin inline mr-1" />
+								Loading...
+							</div>
+						) : (
+							<>
+								<CommandEmpty className="py-4 text-xs text-center">No examiner found.</CommandEmpty>
+								<CommandGroup className="max-h-56 overflow-auto">
+									{results.map(e => (
+										<CommandItem
+											key={e.examiner_id}
+											value={e.examiner_id}
+											onSelect={() => {
+												onChange(e)
+												setOpen(false)
+											}}
+											className="py-2 text-xs"
+										>
+											<div className="flex-1">
+												<div className="font-medium">{e.full_name}</div>
+												{e.institution_name && (
+													<div className="text-[10px] text-muted-foreground">{e.institution_name}</div>
+												)}
+											</div>
+										</CommandItem>
+									))}
+								</CommandGroup>
+							</>
+						)}
+					</Command>
+				</PopoverContent>
+			</Popover>
+			{value && !disabled && (
+				<Button
+					type="button"
+					variant="ghost"
+					size="icon"
+					className="h-8 w-7 shrink-0 text-muted-foreground hover:text-red-600 hover:bg-red-50"
+					title="Remove external examiner"
+					onPointerDown={(e) => e.stopPropagation()}
+					onClick={(e) => {
+						e.preventDefault()
+						e.stopPropagation()
+						onChange(null)
+					}}
+				>
+					<X className="h-3.5 w-3.5" />
 				</Button>
-			</PopoverTrigger>
-			<PopoverContent className="w-[320px] p-0" align="start">
-				<Command shouldFilter={false}>
-					<CommandInput
-						placeholder="Search examiner..."
-						className="h-8 text-xs"
-						value={search}
-						onValueChange={setSearch}
-					/>
-					{loading ? (
-						<div className="py-4 text-center text-xs text-muted-foreground">
-							<Loader2 className="h-3.5 w-3.5 animate-spin inline mr-1" />
-							Loading...
-						</div>
-					) : (
-						<>
-							<CommandEmpty className="py-4 text-xs text-center">No examiner found.</CommandEmpty>
-							<CommandGroup className="max-h-56 overflow-auto">
-								{results.map(e => (
-									<CommandItem
-										key={e.examiner_id}
-										value={e.examiner_id}
-										onSelect={() => {
-											onChange(e)
-											setOpen(false)
-										}}
-										className="py-2 text-xs"
-									>
-										<div className="flex-1">
-											<div className="font-medium">{e.full_name}</div>
-											{e.institution_name && (
-												<div className="text-[10px] text-muted-foreground">{e.institution_name}</div>
-											)}
-										</div>
-									</CommandItem>
-								))}
-							</CommandGroup>
-						</>
-					)}
-				</Command>
-			</PopoverContent>
-		</Popover>
+			)}
+		</div>
 	)
 }
