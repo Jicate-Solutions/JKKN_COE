@@ -62,7 +62,8 @@ export function drawCvReportHeader(opts: CvReportHeaderInput): number {
 	if (subtitle) {
 		doc.setFont('times', 'bold')
 		doc.setFontSize(11)
-		const lines = doc.splitTextToSize(subtitle, pageWidth - margin * 2)
+		const cleanSubtitle = subtitle.replace(/\n/g, ' ')
+		const lines = doc.splitTextToSize(cleanSubtitle, pageWidth - margin * 2)
 		doc.text(lines, pageWidth / 2, y, { align: 'center' })
 		y += lines.length * 5
 	}
@@ -77,17 +78,30 @@ export function drawCvReportHeader(opts: CvReportHeaderInput): number {
 		y += 1
 	}
 
+	// Separator line
+	doc.setDrawColor(0, 0, 0)
+	doc.setLineWidth(0.5)
+	doc.line(margin, y, pageWidth - margin, y)
+	y += 3
+
 	return y
 }
 
 export function drawCvReportFooter(doc: jsPDF, pageWidth: number, pageHeight: number, margin: number, currentPage: number, totalPages: number): void {
-	const footerY = pageHeight - margin
+	const footerY = pageHeight - margin + 2
+	const separatorY = pageHeight - margin - 5
+
 	const now = new Date()
 	const dateStr = `${String(now.getDate()).padStart(2, '0')}/${String(now.getMonth() + 1).padStart(2, '0')}/${now.getFullYear()}`
 	const hours = now.getHours()
 	const ampm = hours >= 12 ? 'PM' : 'AM'
 	const hours12 = hours % 12 || 12
 	const timeStr = `${String(hours12).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')} ${ampm}`
+
+	// Separator line
+	doc.setDrawColor(0, 0, 0)
+	doc.setLineWidth(0.5)
+	doc.line(margin, separatorY, pageWidth - margin, separatorY)
 
 	doc.setFont('times', 'normal')
 	doc.setFontSize(7)
