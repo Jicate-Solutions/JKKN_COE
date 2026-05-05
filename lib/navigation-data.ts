@@ -318,6 +318,7 @@ export const navMain: NavItem[] = [
 			{ title: 'Marksheet Distribution', url: '/reports/marksheet-distribution', icon: FileText, coe_roles: ['super_admin', 'coe'] },
 			{ title: 'Semester Marksheet', url: '/reports/semester-marksheet', icon: FileText, coe_roles: ['super_admin', 'coe'] },
 			{ title: 'Practical Exam Reports', url: '/reports/practical-exam/practical-need', icon: FlaskConical, coe_roles: ['super_admin', 'coe'] },
+			{ title: 'CV Report', url: '/reports/cv-report', icon: ClipboardCheck, coe_roles: ['super_admin', 'coe'] },
 			{ title: 'Dummy Number Report', url: '/reports/dummy-numbers', icon: Hash, coe_roles: ['super_admin', 'coe'] },
 			{ title: 'NAD Report', url: '/reports/nad', icon: Shield, coe_roles: ['super_admin', 'coe', 'deputy_coe', 'nad_coordinator'] },
 		],
