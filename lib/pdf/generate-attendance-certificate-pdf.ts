@@ -27,9 +27,8 @@ export interface AttendanceCertificatePdfOptions {
 	rightLogoImage?: string
 	coe_name?: string
 	/**
-	 * Which examination context to highlight (bold) in the certificate body.
+	 * Which examination context to render (bold) in the certificate body.
 	 * One of 'Practical' (default), 'Theory', 'Scrutiny', or 'Central Valuation'.
-	 * The other two options listed in the sentence are struck through.
 	 */
 	certificate_context?: 'Practical' | 'Theory' | 'Scrutiny' | 'Central Valuation'
 }
@@ -210,33 +209,16 @@ function drawCertificateBody(
 		y += lineSpacing
 	}
 
-	// Line: "has acted as the External examiner for <Practical \ Theory \ Scrutiny \ Central Valuation> Examination(s) in our"
+	// Line: "has acted as the External examiner for <context> Examination(s) in our"
 	doc.setFont('times', 'normal')
 	const part1 = `has acted as the ${examinerTypeText} examiner for `
 	doc.text(part1, contentX, y)
 
 	let curX = contentX + doc.getTextWidth(part1)
 
-	const contextOptions: Array<'Practical' | 'Theory' | 'Scrutiny' | 'Central Valuation'> =
-		['Practical', 'Theory', 'Scrutiny', 'Central Valuation']
-
-	contextOptions.forEach((opt, idx) => {
-		const isActive = opt === context
-		doc.setFont('times', isActive ? 'bold' : 'normal')
-		doc.text(opt, curX, y)
-		const w = doc.getTextWidth(opt)
-		if (!isActive) {
-			doc.setDrawColor(0, 0, 0)
-			doc.setLineWidth(0.3)
-			doc.line(curX, y - 1.5, curX + w, y - 1.5)
-		}
-		curX += w
-		if (idx < contextOptions.length - 1) {
-			doc.setFont('times', 'normal')
-			doc.text(' \\ ', curX, y)
-			curX += doc.getTextWidth(' \\ ')
-		}
-	})
+	doc.setFont('times', 'bold')
+	doc.text(context, curX, y)
+	curX += doc.getTextWidth(context)
 
 	doc.setFont('times', 'normal')
 	doc.text(' Examination(s) in our', curX, y)
