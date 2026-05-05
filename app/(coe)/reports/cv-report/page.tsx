@@ -1,6 +1,10 @@
 'use client'
 
 import { useState, useEffect, useCallback, useMemo } from 'react'
+import { AppSidebar } from '@/components/layout/app-sidebar'
+import { AppHeader } from '@/components/layout/app-header'
+import { AppFooter } from '@/components/layout/app-footer'
+import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar'
 import {
 	Card,
 	CardContent,
@@ -401,13 +405,17 @@ export default function CvReportPage() {
 	}, [passPercentageRows])
 
 	return (
-		<div className='flex flex-col gap-6 p-6'>
-			<div>
-				<h1 className='text-2xl font-bold tracking-tight'>Central Valuation Report</h1>
-				<p className='text-muted-foreground text-sm'>
-					Pass percentage, examiner valuation, and panel of examiners reports for Central Valuation.
-				</p>
-			</div>
+		<SidebarProvider>
+			<AppSidebar />
+			<SidebarInset>
+				<AppHeader />
+				<div className='flex flex-col gap-6 p-6'>
+					<div>
+						<h1 className='text-2xl font-bold tracking-tight'>Central Valuation Report</h1>
+						<p className='text-muted-foreground text-sm'>
+							Pass percentage, examiner valuation, and panel of examiners reports for Central Valuation.
+						</p>
+					</div>
 
 			<Card>
 				<CardHeader>
@@ -751,6 +759,9 @@ export default function CvReportPage() {
 					</Card>
 				</TabsContent>
 			</Tabs>
-		</div>
+			</div>
+			<AppFooter />
+		</SidebarInset>
+	</SidebarProvider>
 	)
 }
