@@ -117,13 +117,17 @@ interface PanelExaminerRow {
 	cumulative_total: number
 }
 
-interface PanelData {
-	board_name: string
+interface PanelChief {
 	chief_name: string
 	chief_designation: string
+	rows: PanelExaminerRow[]
+}
+
+interface PanelData {
+	board_name: string
 	valuation_from_date: string | null
 	valuation_to_date: string | null
-	rows: PanelExaminerRow[]
+	chiefs: PanelChief[]
 }
 
 interface ExaminerOption {
@@ -713,7 +717,9 @@ export default function CvReportPage() {
 						<CardHeader>
 							<CardTitle className='text-base'>Panel of Examiners — {panelData?.board_name || selectedBoard?.board_name || ''}</CardTitle>
 							<CardDescription>
-								{panelData?.chief_name ? `Chief: ${panelData.chief_name}${panelData.chief_designation ? ` — ${panelData.chief_designation}` : ''}` : 'Select a board to load.'}
+								{panelData && panelData.chiefs.length > 0
+									? `${panelData.chiefs.length} Chief${panelData.chiefs.length > 1 ? 's' : ''}: ${panelData.chiefs.map(c => `${c.chief_name}${c.chief_designation ? ` (${c.chief_designation})` : ''}`).join(', ')}`
+									: 'Select a board to load.'}
 							</CardDescription>
 						</CardHeader>
 						<CardContent>
@@ -721,39 +727,55 @@ export default function CvReportPage() {
 								<p className='text-muted-foreground text-sm'>Select a board first.</p>
 							) : loadingPanel ? (
 								<div className='flex items-center gap-2 text-muted-foreground text-sm'><Loader2 className='h-4 w-4 animate-spin' />Loading…</div>
-							) : !panelData || panelData.rows.length === 0 ? (
+							) : !panelData || panelData.chiefs.length === 0 || panelData.chiefs.every(c => c.rows.length === 0) ? (
 								<p className='text-muted-foreground text-sm'>No examiners assigned for this board.</p>
 							) : (
-								<Table>
-									<TableHeader>
-										<TableRow>
-											<TableHead>S.No</TableHead>
-											<TableHead>Examiner</TableHead>
-											<TableHead>Course Code</TableHead>
-											<TableHead>Bundle</TableHead>
-											<TableHead>Pocket</TableHead>
-											<TableHead>Papers / Session</TableHead>
-											<TableHead className='text-right'>Cumulative</TableHead>
-										</TableRow>
-									</TableHeader>
-									<TableBody>
-										{panelData.rows.map(r => (
-											<TableRow key={r.serial_number}>
-												<TableCell>{r.serial_number}</TableCell>
-												<TableCell>
-													<div className='font-medium'>{r.examiner_name}</div>
-													{r.examiner_designation && <div className='text-xs text-muted-foreground'>{r.examiner_designation}</div>}
-													{r.examiner_institution && <div className='text-xs text-muted-foreground'>{r.examiner_institution}</div>}
-												</TableCell>
-												<TableCell className='font-mono'>{r.course_code}</TableCell>
-												<TableCell>{r.bundle_no}</TableCell>
-												<TableCell>{r.pocket_no}</TableCell>
-												<TableCell>{r.papers_session}</TableCell>
-												<TableCell className='text-right'>{r.cumulative_total}</TableCell>
-											</TableRow>
-										))}
-									</TableBody>
-								</Table>
+								<div className='space-y-8'>
+									{panelData.chiefs.map((chief, chiefIdx) => (
+										<div key={chiefIdx}>
+											{chief.chief_name && (
+												<div className='mb-4 pb-2 border-b'>
+													<h3 className='font-semibold'>Chief: {chief.chief_name}</h3>
+													{chief.chief_designation && <p className='text-sm text-muted-foreground'>{chief.chief_designation}</p>}
+												</div>
+											)}
+											{chief.rows.length === 0 ? (
+												<p className='text-sm text-muted-foreground italic'>No examiners assigned to this chief.</p>
+											) : (
+												<Table>
+													<TableHeader>
+														<TableRow>
+															<TableHead>S.No</TableHead>
+															<TableHead>Examiner</TableHead>
+															<TableHead>Course Code</TableHead>
+															<TableHead>Bundle</TableHead>
+															<TableHead>Pocket</TableHead>
+															<TableHead>Papers / Session</TableHead>
+															<TableHead className='text-right'>Cumulative</TableHead>
+														</TableRow>
+													</TableHeader>
+													<TableBody>
+														{chief.rows.map(r => (
+															<TableRow key={`${chiefIdx}-${r.serial_number}`}>
+																<TableCell>{r.serial_number}</TableCell>
+																<TableCell>
+																	<div className='font-medium'>{r.examiner_name}</div>
+																	{r.examiner_designation && <div className='text-xs text-muted-foreground'>{r.examiner_designation}</div>}
+																	{r.examiner_institution && <div className='text-xs text-muted-foreground'>{r.examiner_institution}</div>}
+																</TableCell>
+																<TableCell className='font-mono'>{r.course_code}</TableCell>
+																<TableCell>{r.bundle_no}</TableCell>
+																<TableCell>{r.pocket_no}</TableCell>
+																<TableCell>{r.papers_session}</TableCell>
+																<TableCell className='text-right'>{r.cumulative_total}</TableCell>
+															</TableRow>
+														))}
+													</TableBody>
+												</Table>
+											)}
+										</div>
+									))}
+								</div>
 							)}
 						</CardContent>
 					</Card>

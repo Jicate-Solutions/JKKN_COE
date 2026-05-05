@@ -89,20 +89,26 @@ export async function GET(request: Request) {
 		const boardName = (boardRow as any)?.board_name || boardCode
 
 		const examinerRows: any[] = []
-		let chiefName = ''
-		let chiefDesignation = ''
+		const chiefGroups = new Map<string, { name: string; designation: string; rows: any[] }>()
 		let valuationFromDate: string | null = null
 		let valuationToDate: string | null = null
 
 		for (const p of packets || []) {
 			const courseCode = courseCodeById.get(p.course_id as string) || ''
-			if (p.chief_examiner_name && !chiefName) {
-				chiefName = p.chief_examiner_name as string
-				chiefDesignation = (p.chief_examiner_designation as string) || ''
+			const chiefKey = p.chief_examiner_name || 'Unassigned'
+
+			if (!chiefGroups.has(chiefKey)) {
+				chiefGroups.set(chiefKey, {
+					name: (p.chief_examiner_name as string) || '',
+					designation: (p.chief_examiner_designation as string) || '',
+					rows: []
+				})
 			}
 
+			const chiefGroup = chiefGroups.get(chiefKey)!
+
 			if (p.internal_examiner_staff_id && p.internal_examiner_name) {
-				examinerRows.push({
+				chiefGroup.rows.push({
 					examiner_name: p.internal_examiner_name,
 					examiner_designation: p.internal_examiner_designation || '',
 					examiner_institution: '',
@@ -116,7 +122,7 @@ export async function GET(request: Request) {
 
 			if (p.external_examiner_id) {
 				const ext = externalById.get(p.external_examiner_id as string)
-				examinerRows.push({
+				chiefGroup.rows.push({
 					examiner_name: ext?.name || '',
 					examiner_designation: ext?.designation || '',
 					examiner_institution: ext?.institution || '',
@@ -129,7 +135,7 @@ export async function GET(request: Request) {
 			}
 
 			if (p.assistant_examiner_staff_id && p.assistant_examiner_name) {
-				examinerRows.push({
+				chiefGroup.rows.push({
 					examiner_name: p.assistant_examiner_name,
 					examiner_designation: p.assistant_examiner_designation || '',
 					examiner_institution: '',
@@ -139,24 +145,6 @@ export async function GET(request: Request) {
 					papers_session: String(p.total_sheets || ''),
 					total_papers: p.total_sheets || 0,
 				})
-			}
-		}
-
-		examinerRows.sort((a, b) => {
-			if (a.examiner_name !== b.examiner_name) return a.examiner_name.localeCompare(b.examiner_name)
-			if (a.course_code !== b.course_code) return a.course_code.localeCompare(b.course_code)
-			return (a.pocket_no || '').localeCompare(b.pocket_no || '')
-		})
-
-		const mergedMap = new Map<string, any>()
-		for (const row of examinerRows) {
-			const key = `${row.examiner_name}|${row.course_code}`
-			if (mergedMap.has(key)) {
-				const existing = mergedMap.get(key)
-				existing.total_papers += row.total_papers
-				existing.pocket_no = (existing.pocket_no ? existing.pocket_no + ', ' : '') + row.pocket_no
-			} else {
-				mergedMap.set(key, { ...row })
 			}
 		}
 
@@ -171,25 +159,48 @@ export async function GET(request: Request) {
 			valuationToDate = (valuationWindow as any).to_date
 		}
 
-		const rows = Array.from(mergedMap.values()).map((row, idx) => ({
-			serial_number: idx + 1,
-			examiner_name: row.examiner_name,
-			examiner_designation: row.examiner_designation,
-			examiner_institution: row.examiner_institution,
-			course_code: row.course_code,
-			bundle_no: row.bundle_no,
-			pocket_no: row.pocket_no,
-			papers_session: String(row.total_papers),
-			cumulative_total: row.total_papers,
-		}))
+		const chiefs = Array.from(chiefGroups.values()).map(chief => {
+			const rows = chief.rows
+			rows.sort((a, b) => {
+				if (a.examiner_name !== b.examiner_name) return a.examiner_name.localeCompare(b.examiner_name)
+				if (a.course_code !== b.course_code) return a.course_code.localeCompare(b.course_code)
+				return (a.pocket_no || '').localeCompare(b.pocket_no || '')
+			})
+
+			const mergedMap = new Map<string, any>()
+			for (const row of rows) {
+				const key = `${row.examiner_name}|${row.course_code}`
+				if (mergedMap.has(key)) {
+					const existing = mergedMap.get(key)
+					existing.total_papers += row.total_papers
+					existing.pocket_no = (existing.pocket_no ? existing.pocket_no + ', ' : '') + row.pocket_no
+				} else {
+					mergedMap.set(key, { ...row })
+				}
+			}
+
+			return {
+				chief_name: chief.name,
+				chief_designation: chief.designation,
+				rows: Array.from(mergedMap.values()).map((row, idx) => ({
+					serial_number: idx + 1,
+					examiner_name: row.examiner_name,
+					examiner_designation: row.examiner_designation,
+					examiner_institution: row.examiner_institution,
+					course_code: row.course_code,
+					bundle_no: row.bundle_no,
+					pocket_no: row.pocket_no,
+					papers_session: String(row.total_papers),
+					cumulative_total: row.total_papers,
+				}))
+			}
+		})
 
 		return NextResponse.json({
 			board_name: boardName,
-			chief_name: chiefName,
-			chief_designation: chiefDesignation,
 			valuation_from_date: valuationFromDate,
 			valuation_to_date: valuationToDate,
-			rows,
+			chiefs,
 		})
 	} catch (e: any) {
 		console.error('[cv-report/panel] error', e)
