@@ -348,8 +348,9 @@ export default function CvReportPage() {
 			let logoLeft: string | null = null
 			let logoRight: string | null = null
 
-			if (selectedInstitution?.institution_code) {
-				try {
+			try {
+				// Try to fetch from PDF settings first
+				if (selectedInstitution?.institution_code) {
 					const logoRes = await fetch(`/api/pdf-settings?institution_code=${selectedInstitution.institution_code}`)
 					if (logoRes.ok) {
 						const logoData = await logoRes.json()
@@ -357,20 +358,36 @@ export default function CvReportPage() {
 							try {
 								logoLeft = await fetchImageAsBase64(logoData.logo_url)
 							} catch (e) {
-								console.warn('[cv-report] Failed to fetch left logo:', e)
+								console.warn('[cv-report] Failed to fetch custom left logo')
 							}
 						}
 						if (logoData?.secondary_logo_url) {
 							try {
 								logoRight = await fetchImageAsBase64(logoData.secondary_logo_url)
 							} catch (e) {
-								console.warn('[cv-report] Failed to fetch right logo:', e)
+								console.warn('[cv-report] Failed to fetch custom right logo')
 							}
 						}
 					}
-				} catch (logoErr: any) {
-					console.warn('[cv-report] Error fetching PDF settings:', logoErr?.message || 'unknown error')
 				}
+
+				// Use default logos if custom ones not available
+				if (!logoLeft) {
+					try {
+						logoLeft = await fetchImageAsBase64('/jkkn_logo.png')
+					} catch (e) {
+						console.warn('[cv-report] Failed to load default left logo')
+					}
+				}
+				if (!logoRight) {
+					try {
+						logoRight = await fetchImageAsBase64('/jkkncas_logo.png')
+					} catch (e) {
+						console.warn('[cv-report] Failed to load default right logo')
+					}
+				}
+			} catch (logoErr: any) {
+				console.warn('[cv-report] Error loading logos:', logoErr?.message || 'unknown error')
 			}
 
 			if (activeTab === 'pass-percentage') {
