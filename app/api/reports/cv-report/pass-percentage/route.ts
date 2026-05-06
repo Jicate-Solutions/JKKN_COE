@@ -25,7 +25,7 @@ export async function GET(request: Request) {
 
 		const { data: courses, error: cErr } = await supabase
 			.from('courses')
-			.select('id, course_code, course_name, semester, course_order')
+			.select('id, course_code, course_name')
 			.eq('board_code', boardCode)
 			.range(0, 9999)
 
