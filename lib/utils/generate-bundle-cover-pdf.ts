@@ -1,5 +1,6 @@
 import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
+import { getProgramDisplayName } from './program-name-mapper'
 
 interface StudentAttendance {
 	register_number: string
@@ -133,7 +134,8 @@ export function generateBundleCoverPDF(data: BundleCoverPDFData): string {
 			// Programme Name
 			doc.text('Programme Name', leftColX, currentY)
 			doc.setFont('times', 'normal')
-			doc.text(`: ${subjectData.program_code} - ${subjectData.program_name}`, leftColX + labelWidth, currentY)
+			const displayProgramName = getProgramDisplayName(subjectData.program_code, subjectData.program_name)
+			doc.text(`: ${subjectData.program_code} - ${displayProgramName}`, leftColX + labelWidth, currentY)
 
 			currentY += 7
 

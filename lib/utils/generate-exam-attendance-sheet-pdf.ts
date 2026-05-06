@@ -1,6 +1,7 @@
 import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
 import type { AttendanceSheetPdfData, AttendanceSheet, AttendanceSheetStudent } from '@/types/exam-attendance-sheet'
+import { getProgramDisplayName } from './program-name-mapper'
 
 /**
  * Generate Exam Attendance Sheet PDF
@@ -183,7 +184,8 @@ function drawMetadata(doc: jsPDF, sheet: AttendanceSheet, pageWidth: number, sta
 	doc.setTextColor(0, 0, 0)
 	doc.text('Program Code/Name :', MARGIN + 2, currentY)
 	doc.setFont('times', 'normal')
-	const programText = `${sheet.program_code} - ${sheet.program_name}`
+	const displayProgramName = getProgramDisplayName(sheet.program_code, sheet.program_name)
+	const programText = `${sheet.program_code} - ${displayProgramName}`
 	const programLines = doc.splitTextToSize(programText, valueMaxWidth)
 	doc.text(programLines, labelEnd, currentY)
 

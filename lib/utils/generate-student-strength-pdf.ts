@@ -1,6 +1,7 @@
 import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
 import type { StudentStrengthReport, ProgramStrengthRow, SubtotalRow, YearCount } from '@/types/student-strength-report'
+import { getProgramDisplayName } from './program-name-mapper'
 
 const ROMAN = ['', 'I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII']
 
@@ -14,7 +15,8 @@ function programRowToTableRow(
 	maxYear: number,
 	hasAided: boolean
 ): string[] {
-	const cells: string[] = [String(row.s_no), `${row.program_code} - ${row.program_name}`]
+	const displayProgramName = getProgramDisplayName(row.program_code, row.program_name)
+	const cells: string[] = [String(row.s_no), `${row.program_code} - ${displayProgramName}`]
 	for (let y = 1; y <= maxYear; y++) {
 		const yc = row.year_counts[y] || { aided: 0, sf: 0, total: 0 }
 		if (hasAided) {

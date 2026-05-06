@@ -1,5 +1,6 @@
 import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
+import { getProgramDisplayName } from './program-name-mapper'
 
 interface CourseDef {
 	course_code: string
@@ -101,7 +102,8 @@ export function generateConsolidatedInternalMarksPDF(data: ConsolidatedPDFData):
 		// Program + Semester
 		doc.setFont('times', 'bold')
 		doc.setFontSize(9)
-		doc.text(`Program: ${data.program_code} - ${data.program_name}`, MARGIN, currentY)
+		const displayProgramName = getProgramDisplayName(data.program_code, data.program_name)
+		doc.text(`Program: ${data.program_code} - ${displayProgramName}`, MARGIN, currentY)
 		doc.text(`Semester: ${semBlock.semester}`, pageWidth - MARGIN, currentY, { align: 'right' })
 		currentY += 4
 

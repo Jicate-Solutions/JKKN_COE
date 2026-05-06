@@ -1,5 +1,6 @@
 import jsPDF from 'jspdf'
 import type { ReportType } from '@/types/exam-registration-reports'
+import { getProgramDisplayName } from './program-name-mapper'
 
 interface ReportPdfOptions {
 	report_type: ReportType
@@ -1302,7 +1303,8 @@ function generateCourseCountProgramYearSectionPdf(opts: ReportPdfOptions): strin
 		// Program subtitle (no year)
 		doc.setFont('times', 'bold')
 		doc.setFontSize(10)
-		doc.text(`Program : ${section.program_code}${section.program_name ? ` - ${section.program_name}` : ''}`, margin, currentY + 3)
+		const displayProgramName = getProgramDisplayName(section.program_code, section.program_name)
+		doc.text(`Program : ${section.program_code}${displayProgramName ? ` - ${displayProgramName}` : ''}`, margin, currentY + 3)
 		currentY += 5
 
 		let tableY = drawSectionHeader(currentY)

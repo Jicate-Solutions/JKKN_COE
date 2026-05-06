@@ -2,6 +2,7 @@ import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
 // Digit-by-digit words ("28" → "TWO EIGHT") — shared converter, see service file.
 import { numberToWords } from '@/services/post-exam/external-mark-entry-service'
+import { getProgramDisplayName } from './program-name-mapper'
 
 interface LearnerMark {
 	serial_number: number
@@ -129,7 +130,8 @@ export function generateInternalMarksPDF(data: InternalMarksPDFData): string {
 	doc.setFontSize(9)
 
 	// Row 1: Program & Semester
-	doc.text(`Program: ${data.program_code} - ${data.program_name}`, MARGIN, currentY)
+	const displayProgramName = getProgramDisplayName(data.program_code, data.program_name)
+	doc.text(`Program: ${data.program_code} - ${displayProgramName}`, MARGIN, currentY)
 	doc.text(`Semester: ${data.semester}`, pageWidth - MARGIN, currentY, { align: 'right' })
 	currentY += 4.5
 
@@ -358,7 +360,8 @@ export function generateMultiCourseInternalMarksPDF(courses: InternalMarksPDFDat
 		// ── COURSE DETAILS ──
 		doc.setFont('times', 'bold')
 		doc.setFontSize(9)
-		doc.text(`Program: ${data.program_code} - ${data.program_name}`, MARGIN, currentY)
+		const displayProgramName = getProgramDisplayName(data.program_code, data.program_name)
+	doc.text(`Program: ${data.program_code} - ${displayProgramName}`, MARGIN, currentY)
 		doc.text(`Semester: ${data.semester}`, pageWidth - MARGIN, currentY, { align: 'right' })
 		currentY += 4.5
 		doc.setFont('times', 'normal')

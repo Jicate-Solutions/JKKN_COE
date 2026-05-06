@@ -1,5 +1,6 @@
 import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
+import { getProgramDisplayName } from './program-name-mapper'
 
 interface StudentRecord {
 	register_number: string
@@ -197,7 +198,8 @@ export function generateStudentAttendanceSheetPDF(data: StudentAttendanceSheetDa
 			// Left side - Program code & Name
 			doc.text('Program code & Name', col1X, infoY)
 			doc.setFont('times', 'normal')
-			doc.text(`: ${course.program_code} - ${course.program_name}`, col1X + 45, infoY)
+			const displayProgramName = getProgramDisplayName(course.program_code, course.program_name)
+			doc.text(`: ${course.program_code} - ${displayProgramName}`, col1X + 45, infoY)
 
 			// Right side - Examination
 			doc.setFont('times', 'bold')

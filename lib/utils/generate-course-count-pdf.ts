@@ -6,6 +6,7 @@ import type {
 	BoardCourseCount,
 	InstitutionPdfSettings
 } from '@/types/course-count-report'
+import { getProgramDisplayName } from './program-name-mapper'
 
 /**
  * Generates a PDF report for course count (question paper preparation)
@@ -258,7 +259,8 @@ function generateProgramWiseContent(
 		doc.setFillColor(240, 240, 240)
 		doc.rect(margin, currentY - 4, pageWidth - 2 * margin, 7, 'F')
 		doc.setTextColor(0, 0, 0)
-		doc.text(`${programIndex + 1}. ${program.program_code} - ${program.program_name}`, margin + 2, currentY)
+		const displayProgramName = getProgramDisplayName(program.program_code, program.program_name)
+		doc.text(`${programIndex + 1}. ${program.program_code} - ${displayProgramName}`, margin + 2, currentY)
 		currentY += 6
 
 		// Course table for this program
@@ -381,7 +383,8 @@ function generateBoardWiseContent(
 			doc.setFontSize(10)
 			doc.setFillColor(240, 240, 240)
 			doc.rect(margin, currentY - 4, pageWidth - 2 * margin, 7, 'F')
-			doc.text(`${programIndex + 1}. ${program.program_code} - ${program.program_name}`, margin + 2, currentY)
+			const displayProgramName = getProgramDisplayName(program.program_code, program.program_name)
+		doc.text(`${programIndex + 1}. ${program.program_code} - ${displayProgramName}`, margin + 2, currentY)
 			currentY += 6
 
 			// Course table for this program
