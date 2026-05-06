@@ -47,7 +47,14 @@ export async function GET(request: Request) {
 			)
 		}
 
-		// Get program details (optional) - try local programs table first, fallback to program_code
+		// Get institution details to access MyJKKN institution IDs
+		const { data: institution } = await supabase
+			.from('institutions')
+			.select('myjkkn_institution_ids')
+			.eq('id', institutionId)
+			.single()
+
+		// Get program details (optional) - try local programs table first, fallback to MyJKKN API
 		let program = null
 		if (programCode) {
 			const { data: programData } = await supabase
@@ -56,8 +63,40 @@ export async function GET(request: Request) {
 				.eq('program_code', programCode)
 				.single()
 
-			// If found in local table, use it; otherwise use program_code as name (MyJKKN pattern)
-			program = programData || { program_code: programCode, program_name: programCode }
+			if (programData) {
+				program = programData
+			} else {
+				// Fetch from MyJKKN API if not found locally
+				try {
+					const myjkknIds = institution?.myjkkn_institution_ids || []
+					if (myjkknIds.length > 0) {
+						// Fetch programs from MyJKKN for the first institution
+						const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'
+						const myjkknResponse = await fetch(
+							`${baseUrl}/api/myjkkn/programs?institution_id=${myjkknIds[0]}&is_active=true&limit=1000`
+						)
+						if (myjkknResponse.ok) {
+							const myjkknData = await myjkknResponse.json()
+							const programs = myjkknData.data || myjkknData || []
+							const foundProgram = programs.find((p: any) => {
+								const code = p.program_id || p.program_code
+								return code === programCode
+							})
+							if (foundProgram) {
+								program = {
+									program_code: programCode,
+									program_name: foundProgram.program_name || foundProgram.name || programCode
+								}
+							}
+						}
+					}
+				} catch (e) {
+					console.warn('Failed to fetch program from MyJKKN:', e)
+				}
+
+				// Final fallback: just use the program code if not found anywhere
+				program = program || { program_code: programCode, program_name: programCode }
+			}
 		}
 
 		// Get course details (optional)

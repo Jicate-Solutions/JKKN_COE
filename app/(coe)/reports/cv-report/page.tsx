@@ -345,53 +345,6 @@ export default function CvReportPage() {
 		}
 		setDownloading(true)
 		try {
-			let logoLeft: string | null = null
-			let logoRight: string | null = null
-
-			try {
-				// Try to fetch from PDF settings first
-				if (selectedInstitution?.institution_code) {
-					const logoRes = await fetch(`/api/pdf-settings?institution_code=${selectedInstitution.institution_code}`)
-					if (logoRes.ok) {
-						const logoData = await logoRes.json()
-						if (logoData?.logo_url) {
-							try {
-								logoLeft = await fetchImageAsBase64(logoData.logo_url)
-							} catch (e) {
-								console.warn('[cv-report] Failed to fetch custom left logo')
-							}
-						}
-						if (logoData?.secondary_logo_url) {
-							try {
-								logoRight = await fetchImageAsBase64(logoData.secondary_logo_url)
-							} catch (e) {
-								console.warn('[cv-report] Failed to fetch custom right logo')
-							}
-						}
-					}
-				}
-
-				// Use default logos if custom ones not available
-				if (!logoLeft) {
-					try {
-						const defaultLogoUrl = `${window.location.origin}/jkkn_logo.png`
-						logoLeft = await fetchImageAsBase64(defaultLogoUrl)
-					} catch (e) {
-						console.warn('[cv-report] Failed to load default left logo')
-					}
-				}
-				if (!logoRight) {
-					try {
-						const defaultLogoUrl = `${window.location.origin}/jkkncas_logo.png`
-						logoRight = await fetchImageAsBase64(defaultLogoUrl)
-					} catch (e) {
-						console.warn('[cv-report] Failed to load default right logo')
-					}
-				}
-			} catch (logoErr: any) {
-				console.warn('[cv-report] Error loading logos:', logoErr?.message || 'unknown error')
-			}
-
 			if (activeTab === 'pass-percentage') {
 				if (passPercentageRows.length === 0) {
 					toast({ title: 'No data', description: 'No pass percentage data to export.', variant: 'destructive' })
@@ -402,8 +355,6 @@ export default function CvReportPage() {
 					session: { name: selectedSession.session_name, code: selectedSession.session_code },
 					board: { code: selectedBoard.board_code, name: selectedBoard.board_name },
 					rows: passPercentageRows,
-					logoLeft,
-					logoRight,
 				})
 			} else if (activeTab === 'examiner') {
 				if (!examinerData) {
@@ -415,8 +366,6 @@ export default function CvReportPage() {
 					session: { name: selectedSession.session_name, code: selectedSession.session_code },
 					board: { code: selectedBoard.board_code, name: selectedBoard.board_name },
 					data: examinerData,
-					logoLeft,
-					logoRight,
 				})
 			} else if (activeTab === 'panel') {
 				if (!panelData) {
@@ -428,8 +377,6 @@ export default function CvReportPage() {
 					session: { name: selectedSession.session_name, code: selectedSession.session_code },
 					board: { code: selectedBoard.board_code, name: selectedBoard.board_name },
 					data: panelData,
-					logoLeft,
-					logoRight,
 				})
 			}
 			toast({ title: 'Downloaded', description: 'PDF generated successfully' })

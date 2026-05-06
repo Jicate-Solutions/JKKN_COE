@@ -1,0 +1,19 @@
+
+> jkkn-coe@0.1.0 dev
+> next dev
+
+⚠ Port 3000 is in use by process 28208, using available port 3002 instead.
+▲ Next.js 16.2.1 (Turbopack)
+- Local:         http://localhost:3002
+- Network:       http://192.10.3.231:3002
+- Environments: .env
+✓ Ready in 687ms
+⨯ Another next dev server is already running.
+
+- Local:        http://localhost:3000
+- PID:          28208
+- Dir:          D:\JKKN\Development\Appliaction\COE\JKKN_COE
+- Log:          .next\dev\logs\next-development.log
+
+Run taskkill /PID 28208 /F to stop it.
+[?25h

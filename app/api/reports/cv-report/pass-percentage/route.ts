@@ -34,7 +34,12 @@ export async function GET(request: Request) {
 			return NextResponse.json({ error: cErr.message }, { status: 500 })
 		}
 
-		if (!courses || courses.length === 0) return NextResponse.json([])
+		if (!courses || courses.length === 0) {
+			console.log('[cv-report/pass-percentage] No courses found for board_code:', boardCode)
+			return NextResponse.json([])
+		}
+
+		console.log('[cv-report/pass-percentage] Found', courses.length, 'courses for board:', boardCode)
 
 		const courseIds = courses.map(c => c.id)
 
@@ -46,6 +51,8 @@ export async function GET(request: Request) {
 			.in('course_id', courseIds)
 			.range(0, 99999)
 
+		console.log('[cv-report/pass-percentage] Found', regs?.length || 0, 'exam registrations')
+
 		const regCountByCourse = new Map<string, number>()
 		for (const r of regs || []) {
 			regCountByCourse.set(r.course_id as string, (regCountByCourse.get(r.course_id as string) || 0) + 1)
@@ -53,12 +60,13 @@ export async function GET(request: Request) {
 
 		const { data: marks, error: mErr } = await supabase
 			.from('final_marks')
-			.select('course_id, is_pass, pass_status, result_status')
+			.select('course_id, is_pass, pass_status')
 			.eq('institutions_id', institutionsId)
 			.eq('examination_session_id', sessionId)
 			.in('course_id', courseIds)
-			.eq('result_status', 'Published')
 			.range(0, 99999)
+
+		console.log('[cv-report/pass-percentage] Found', marks?.length || 0, 'final_marks rows')
 
 		if (mErr) {
 			console.error('[cv-report/pass-percentage] final_marks error', mErr)
@@ -78,23 +86,26 @@ export async function GET(request: Request) {
 			}
 		}
 
-		const rows = courses
-			.map((c: any) => {
-				const total = regCountByCourse.get(c.id) || 0
-				const appeared = appearedByCourse.get(c.id) || 0
-				const passed = passedByCourse.get(c.id) || 0
-				const pass_percentage = appeared > 0 ? Math.round((passed / appeared) * 1000) / 10 : 0
-				return {
-					semester: c.semester ?? '',
-					course_code: c.course_code,
-					course_name: c.course_name,
-					total_students: total,
-					appeared,
-					passed,
-					pass_percentage,
-					_order: c.course_order ?? 0,
-				}
-			})
+		const allRows = courses.map((c: any) => {
+			const total = regCountByCourse.get(c.id) || 0
+			const appeared = appearedByCourse.get(c.id) || 0
+			const passed = passedByCourse.get(c.id) || 0
+			const pass_percentage = appeared > 0 ? Math.round((passed / appeared) * 1000) / 10 : 0
+			return {
+				semester: c.semester ?? '',
+				course_code: c.course_code,
+				course_name: c.course_name,
+				total_students: total,
+				appeared,
+				passed,
+				pass_percentage,
+				_order: c.course_order ?? 0,
+			}
+		})
+
+		console.log('[cv-report/pass-percentage] Before filter:', allRows.length, 'rows')
+
+		const rows = allRows
 			.filter(r => r.total_students > 0 || r.appeared > 0)
 			.sort((a, b) => {
 				const semA = typeof a.semester === 'number' ? a.semester : parseInt(String(a.semester) || '0', 10) || 0
@@ -104,6 +115,8 @@ export async function GET(request: Request) {
 				return a.course_code.localeCompare(b.course_code)
 			})
 			.map(({ _order, ...rest }) => rest)
+
+		console.log('[cv-report/pass-percentage] After filter:', rows.length, 'rows returned')
 
 		return NextResponse.json(rows)
 	} catch (e: any) {

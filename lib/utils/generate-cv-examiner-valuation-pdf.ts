@@ -34,104 +34,114 @@ export interface CvExaminerValuationInput {
 }
 
 export async function downloadCvExaminerValuationPdf(input: CvExaminerValuationInput): Promise<void> {
-	const doc = new jsPDF('landscape', 'mm', 'a4')
-	const pageWidth = doc.internal.pageSize.getWidth()
-	const pageHeight = doc.internal.pageSize.getHeight()
-	const margin = 8
+	try {
+		console.log('[cv-examiner-valuation-pdf] Starting PDF generation')
+		const doc = new jsPDF('landscape', 'mm', 'a4')
+		const pageWidth = doc.internal.pageSize.getWidth()
+		const pageHeight = doc.internal.pageSize.getHeight()
+		const margin = 8
 
-	const subtitle = `UG-Valuation Report of the Examiner — ${input.data.board_name}`
+		const subtitle = `UG-Valuation Report of the Examiner — ${input.data.board_name}`
 
-	let y = drawCvReportHeader({
-		doc,
-		pageWidth,
-		startY: margin,
-		margin,
-		logoLeft: input.logoLeft,
-		logoRight: input.logoRight,
-		sessionName: input.session.name,
-		reportTitle: 'UG-VALUATION REPORT OF THE EXAMINER',
-		subtitle,
-		dateText: todayDateStr(),
-	})
+		let y = drawCvReportHeader({
+			doc,
+			pageWidth,
+			startY: margin,
+			margin,
+			logoLeft: input.logoLeft,
+			logoRight: input.logoRight,
+			sessionName: input.session.name,
+			reportTitle: 'UG-VALUATION REPORT OF THE EXAMINER',
+			subtitle,
+			dateText: todayDateStr(),
+		})
+		console.log('[cv-examiner-valuation-pdf] Header drawn at y:', y)
 
-	doc.setFont('times', 'bold')
-	doc.setFontSize(10)
-	doc.text(`Name of the Board: ${input.data.board_name}`, margin, y + 2)
-	doc.text(`Name of the Examiner: ${input.data.examiner_name}${input.data.examiner_designation ? ', ' + input.data.examiner_designation : ''}`, margin, y + 7)
-	y += 12
+		doc.setFont('times', 'bold')
+		doc.setFontSize(10)
+		doc.text(`Name of the Board: ${input.data.board_name}`, margin, y + 2)
+		doc.text(`Name of the Examiner: ${input.data.examiner_name}${input.data.examiner_designation ? ', ' + input.data.examiner_designation : ''}`, margin, y + 7)
+		y += 12
 
-	const head = [[
-		'S.No',
-		'Course Code',
-		'Bundle No.',
-		'Pocket No.',
-		'No. of papers valued',
-		'0-10 marks',
-		'11-20 marks',
-		'21 to 25 marks',
-		'26-29 marks',
-		'Above 30',
-		'No. of Pass',
-		'No. of Fail',
-		'Cumulative Total',
-	]]
+		const head = [[
+			'S.No',
+			'Course Code',
+			'Bundle No.',
+			'Pocket No.',
+			'No. of papers valued',
+			'0-10 marks',
+			'11-20 marks',
+			'21 to 25 marks',
+			'26-29 marks',
+			'Above 30',
+			'No. of Pass',
+			'No. of Fail',
+			'Cumulative Total',
+		]]
 
-	const body: any[] = input.data.rows.map(r => [
-		String(r.serial_number ?? ''),
-		String(r.course_code ?? ''),
-		String(r.bundle_no ?? ''),
-		String(r.pocket_no ?? ''),
-		String(r.papers_valued ?? 0),
-		r.band_0_10 ? String(r.band_0_10) : '-',
-		r.band_11_20 ? String(r.band_11_20) : '-',
-		r.band_21_25 ? String(r.band_21_25) : '-',
-		r.band_26_29 ? String(r.band_26_29) : '-',
-		r.above_30 ? String(r.above_30) : '-',
-		String(r.pass_count ?? 0),
-		String(r.fail_count ?? 0),
-		String(r.cumulative_total ?? 0),
-	])
+		const body: any[] = input.data.rows.map(r => [
+			String(r.serial_number ?? ''),
+			String(r.course_code ?? ''),
+			String(r.bundle_no ?? ''),
+			String(r.pocket_no ?? ''),
+			String(r.papers_valued ?? 0),
+			r.band_0_10 ? String(r.band_0_10) : '-',
+			r.band_11_20 ? String(r.band_11_20) : '-',
+			r.band_21_25 ? String(r.band_21_25) : '-',
+			r.band_26_29 ? String(r.band_26_29) : '-',
+			r.above_30 ? String(r.above_30) : '-',
+			String(r.pass_count ?? 0),
+			String(r.fail_count ?? 0),
+			String(r.cumulative_total ?? 0),
+		])
 
-	body.push([
-		{ content: 'Grand total', colSpan: 4, styles: { halign: 'right', fontStyle: 'bold' } },
-		{ content: String(input.data.totals.papers_valued), styles: { fontStyle: 'bold' } },
-		{ content: String(input.data.totals.band_0_10 || '-'), styles: { fontStyle: 'bold' } },
-		{ content: String(input.data.totals.band_11_20 || '-'), styles: { fontStyle: 'bold' } },
-		{ content: String(input.data.totals.band_21_25 || '-'), styles: { fontStyle: 'bold' } },
-		{ content: String(input.data.totals.band_26_29 || '-'), styles: { fontStyle: 'bold' } },
-		{ content: String(input.data.totals.above_30 || '-'), styles: { fontStyle: 'bold' } },
-		{ content: String(input.data.totals.pass_count), styles: { fontStyle: 'bold' } },
-		{ content: String(input.data.totals.fail_count), styles: { fontStyle: 'bold' } },
-		{ content: String(input.data.totals.cumulative_total), styles: { fontStyle: 'bold' } },
-	])
+		body.push([
+			{ content: 'Grand total', colSpan: 4, styles: { halign: 'right', fontStyle: 'bold' } },
+			{ content: String(input.data.totals.papers_valued), styles: { fontStyle: 'bold' } },
+			{ content: String(input.data.totals.band_0_10 || '-'), styles: { fontStyle: 'bold' } },
+			{ content: String(input.data.totals.band_11_20 || '-'), styles: { fontStyle: 'bold' } },
+			{ content: String(input.data.totals.band_21_25 || '-'), styles: { fontStyle: 'bold' } },
+			{ content: String(input.data.totals.band_26_29 || '-'), styles: { fontStyle: 'bold' } },
+			{ content: String(input.data.totals.above_30 || '-'), styles: { fontStyle: 'bold' } },
+			{ content: String(input.data.totals.pass_count), styles: { fontStyle: 'bold' } },
+			{ content: String(input.data.totals.fail_count), styles: { fontStyle: 'bold' } },
+			{ content: String(input.data.totals.cumulative_total), styles: { fontStyle: 'bold' } },
+		])
 
-	autoTable(doc, {
-		startY: y,
-		head: [head[0]] as any,
-		body,
-		theme: 'grid',
-		styles: { font: 'times', fontSize: 8.5, textColor: [0, 0, 0], lineColor: [0, 0, 0], lineWidth: 0.3, cellPadding: 1.2, halign: 'center', valign: 'middle' },
-		headStyles: { fontStyle: 'bold', fillColor: [240, 240, 240], textColor: [0, 0, 0], halign: 'center', valign: 'middle', minCellHeight: 12 },
-		margin: { left: margin, right: margin },
-	})
+		console.log('[cv-examiner-valuation-pdf] Creating table with', body.length, 'rows')
+		autoTable(doc, {
+			startY: y,
+			head: [head[0]] as any,
+			body,
+			theme: 'grid',
+			styles: { font: 'times', fontSize: 8.5, textColor: [0, 0, 0], lineColor: [0, 0, 0], lineWidth: 0.3, cellPadding: 1.2, halign: 'center', valign: 'middle' },
+			headStyles: { fontStyle: 'bold', fillColor: [240, 240, 240], textColor: [0, 0, 0], halign: 'center', valign: 'middle', minCellHeight: 12 },
+			margin: { left: margin, right: margin },
+		})
+		console.log('[cv-examiner-valuation-pdf] Table rendered')
 
-	const finalY = (doc as any).lastAutoTable.finalY + 18
+		const finalY = (doc as any).lastAutoTable.finalY + 18
 
-	const colWidth = (pageWidth - margin * 2) / 3
-	doc.setFont('times', 'normal')
-	doc.setFontSize(10)
-	doc.text('Name & Signature of the Examiner', margin + colWidth / 2, finalY, { align: 'center' })
-	doc.text('Name & Signature of the Chief', margin + colWidth + colWidth / 2, finalY, { align: 'center' })
-	doc.text('Signature of the CoE\nController of Examinations', margin + colWidth * 2 + colWidth / 2, finalY, { align: 'center' })
+		const colWidth = (pageWidth - margin * 2) / 3
+		doc.setFont('times', 'normal')
+		doc.setFontSize(10)
+		doc.text('Name & Signature of the Examiner', margin + colWidth / 2, finalY, { align: 'center' })
+		doc.text('Name & Signature of the Chief', margin + colWidth + colWidth / 2, finalY, { align: 'center' })
+		doc.text('Signature of the CoE\nController of Examinations', margin + colWidth * 2 + colWidth / 2, finalY, { align: 'center' })
 
-	drawCvReportFooter(doc, pageWidth, pageHeight, margin, 1, 1)
+		drawCvReportFooter(doc, pageWidth, pageHeight, margin, 1, 1)
+		console.log('[cv-examiner-valuation-pdf] Footer drawn')
 
-	const fileName = `CV_ExaminerValuation_${input.board.code}_${(input.data.examiner_name || 'examiner').replace(/[^a-zA-Z0-9]/g, '_')}_${new Date().toISOString().split('T')[0]}.pdf`
-	const blob = doc.output('blob')
-	const url = URL.createObjectURL(blob)
-	const a = document.createElement('a')
-	a.href = url
-	a.download = fileName
-	a.click()
-	URL.revokeObjectURL(url)
+		const fileName = `CV_ExaminerValuation_${input.board.code}_${(input.data.examiner_name || 'examiner').replace(/[^a-zA-Z0-9]/g, '_')}_${new Date().toISOString().split('T')[0]}.pdf`
+		const blob = doc.output('blob')
+		const url = URL.createObjectURL(blob)
+		const a = document.createElement('a')
+		a.href = url
+		a.download = fileName
+		a.click()
+		URL.revokeObjectURL(url)
+	} catch (error: any) {
+		console.error('[cv-examiner-valuation-pdf] Error:', error)
+		throw error
+	}
 }
