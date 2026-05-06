@@ -374,14 +374,16 @@ export default function CvReportPage() {
 				// Use default logos if custom ones not available
 				if (!logoLeft) {
 					try {
-						logoLeft = await fetchImageAsBase64('/jkkn_logo.png')
+						const defaultLogoUrl = `${window.location.origin}/jkkn_logo.png`
+						logoLeft = await fetchImageAsBase64(defaultLogoUrl)
 					} catch (e) {
 						console.warn('[cv-report] Failed to load default left logo')
 					}
 				}
 				if (!logoRight) {
 					try {
-						logoRight = await fetchImageAsBase64('/jkkncas_logo.png')
+						const defaultLogoUrl = `${window.location.origin}/jkkncas_logo.png`
+						logoRight = await fetchImageAsBase64(defaultLogoUrl)
 					} catch (e) {
 						console.warn('[cv-report] Failed to load default right logo')
 					}
