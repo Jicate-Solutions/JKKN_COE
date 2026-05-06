@@ -152,13 +152,13 @@ export async function GET(request: Request) {
 			examinerDesignation = (ext as any)?.designation || ''
 		}
 
-		// Get the courses + final_marks for distribution
+		// Get the courses + mark_entry for distribution
 		const myCourseIds = [...new Set(myPackets.map(p => p.course_id))] as string[]
-		let marks: Array<{ course_id: string; external_marks_obtained: number | null; pass_status: string | null }> = []
+		let marks: Array<{ course_id: string; marks_obtained: number | null }> = []
 		if (myCourseIds.length > 0) {
 			const { data } = await supabase
-				.from('final_marks')
-				.select('course_id, external_marks_obtained, pass_status')
+				.from('mark_entry')
+				.select('course_id, marks_obtained')
 				.eq('institutions_id', institutionsId)
 				.eq('examination_session_id', sessionId)
 				.in('course_id', myCourseIds)
@@ -189,7 +189,7 @@ export async function GET(request: Request) {
 
 			const dist = { band_0_10: 0, band_11_20: 0, band_21_25: 0, band_26_29: 0, above_30: 0, pass_count: 0, fail_count: 0 }
 			for (const m of slice) {
-				const v = Number(m.external_marks_obtained || 0)
+				const v = Number(m.marks_obtained || 0)
 				if (v <= 10) dist.band_0_10++
 				else if (v <= 20) dist.band_11_20++
 				else if (v <= 25) dist.band_21_25++
