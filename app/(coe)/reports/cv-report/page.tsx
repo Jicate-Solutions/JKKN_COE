@@ -349,11 +349,26 @@ export default function CvReportPage() {
 			let logoRight: string | null = null
 
 			if (selectedInstitution?.institution_code) {
-				const logoRes = await fetch(`/api/pdf-settings?institution_code=${selectedInstitution.institution_code}`)
-				if (logoRes.ok) {
-					const logoData = await logoRes.json()
-					if (logoData?.logo_url) logoLeft = await fetchImageAsBase64(logoData.logo_url)
-					if (logoData?.secondary_logo_url) logoRight = await fetchImageAsBase64(logoData.secondary_logo_url)
+				try {
+					console.log('[cv-report] Fetching logos for institution:', selectedInstitution.institution_code)
+					const logoRes = await fetch(`/api/pdf-settings?institution_code=${selectedInstitution.institution_code}`)
+					console.log('[cv-report] Logo API response status:', logoRes.status)
+					if (logoRes.ok) {
+						const logoData = await logoRes.json()
+						console.log('[cv-report] Logo data received:', { logo_url: !!logoData?.logo_url, secondary_logo_url: !!logoData?.secondary_logo_url })
+						if (logoData?.logo_url) {
+							logoLeft = await fetchImageAsBase64(logoData.logo_url)
+							console.log('[cv-report] Left logo converted, size:', logoLeft?.length)
+						}
+						if (logoData?.secondary_logo_url) {
+							logoRight = await fetchImageAsBase64(logoData.secondary_logo_url)
+							console.log('[cv-report] Right logo converted, size:', logoRight?.length)
+						}
+					} else {
+						console.warn('[cv-report] Logo API returned non-ok status:', logoRes.status)
+					}
+				} catch (logoErr: any) {
+					console.error('[cv-report] Error fetching logos:', logoErr)
 				}
 			}
 

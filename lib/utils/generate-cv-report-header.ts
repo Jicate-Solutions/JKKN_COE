@@ -24,11 +24,22 @@ export function drawCvReportHeader(opts: CvReportHeaderInput): number {
 	let y = startY
 
 	// Logos (16x16mm)
+	console.log('[cv-report-header] Logo check - logoLeft:', !!logoLeft, 'logoRight:', !!logoRight)
 	if (logoLeft) {
-		try { doc.addImage(logoLeft, 'PNG', margin, y, 16, 16) } catch (e) { console.warn('left logo:', e) }
+		try {
+			doc.addImage(logoLeft, 'PNG', margin, y, 16, 16)
+			console.log('[cv-report-header] Left logo added successfully')
+		} catch (e) {
+			console.warn('[cv-report-header] Left logo error:', e)
+		}
 	}
 	if (logoRight) {
-		try { doc.addImage(logoRight, 'PNG', pageWidth - margin - 16, y, 16, 16) } catch (e) { console.warn('right logo:', e) }
+		try {
+			doc.addImage(logoRight, 'PNG', pageWidth - margin - 16, y, 16, 16)
+			console.log('[cv-report-header] Right logo added successfully')
+		} catch (e) {
+			console.warn('[cv-report-header] Right logo error:', e)
+		}
 	}
 
 	doc.setFont('times', 'bold')
