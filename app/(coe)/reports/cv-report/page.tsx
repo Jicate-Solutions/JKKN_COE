@@ -52,7 +52,6 @@ import { useSessionSync } from '@/hooks/use-session-sync'
 import { downloadCvPassPercentagePdf } from '@/lib/utils/generate-cv-pass-percentage-pdf'
 import { downloadCvExaminerValuationPdf } from '@/lib/utils/generate-cv-examiner-valuation-pdf'
 import { downloadCvPanelOfExaminersPdf } from '@/lib/utils/generate-cv-panel-of-examiners-pdf'
-import { fetchImageAsBase64 } from '@/lib/utils/generate-semester-marksheet-pdf'
 
 interface Institution {
 	id: string
@@ -147,7 +146,7 @@ export default function CvReportPage() {
 		institutionId: contextInstitutionId,
 	} = useInstitutionFilter()
 
-	const { selectedSessionId, setSelectedSessionId, mustSelectSession } = useSessionSync()
+	const { selectedSessionId, setSelectedSessionId } = useSessionSync()
 
 	const [institutions, setInstitutions] = useState<Institution[]>([])
 	const [sessions, setSessions] = useState<Session[]>([])
@@ -339,17 +338,24 @@ export default function CvReportPage() {
 	}, [activeTab])
 
 	const handleDownloadPdf = useCallback(async () => {
+		console.log('[cv-report] Download clicked', { activeTab, selectedInstitution: !!selectedInstitution, selectedSession: !!selectedSession, selectedBoard: !!selectedBoard })
+
 		if (!selectedInstitution || !selectedSession || !selectedBoard) {
+			console.warn('[cv-report] Missing selections', { inst: !!selectedInstitution, sess: !!selectedSession, board: !!selectedBoard })
 			toast({ title: 'Missing selection', description: 'Select institution, session and board.', variant: 'destructive' })
 			return
 		}
 		setDownloading(true)
 		try {
+			console.log('[cv-report] Starting PDF download for tab:', activeTab)
 			if (activeTab === 'pass-percentage') {
 				if (passPercentageRows.length === 0) {
+					console.warn('[cv-report] No pass percentage data')
 					toast({ title: 'No data', description: 'No pass percentage data to export.', variant: 'destructive' })
+					setDownloading(false)
 					return
 				}
+				console.log('[cv-report] Generating pass percentage PDF with', passPercentageRows.length, 'rows')
 				await downloadCvPassPercentagePdf({
 					institution: { name: selectedInstitution.name, code: selectedInstitution.institution_code },
 					session: { name: selectedSession.session_name, code: selectedSession.session_code },
@@ -358,9 +364,12 @@ export default function CvReportPage() {
 				})
 			} else if (activeTab === 'examiner') {
 				if (!examinerData) {
+					console.warn('[cv-report] No examiner data')
 					toast({ title: 'No data', description: 'No examiner data to export.', variant: 'destructive' })
+					setDownloading(false)
 					return
 				}
+				console.log('[cv-report] Generating examiner valuation PDF')
 				await downloadCvExaminerValuationPdf({
 					institution: { name: selectedInstitution.name, code: selectedInstitution.institution_code },
 					session: { name: selectedSession.session_name, code: selectedSession.session_code },
@@ -369,9 +378,12 @@ export default function CvReportPage() {
 				})
 			} else if (activeTab === 'panel') {
 				if (!panelData) {
+					console.warn('[cv-report] No panel data')
 					toast({ title: 'No data', description: 'No panel data to export.', variant: 'destructive' })
+					setDownloading(false)
 					return
 				}
+				console.log('[cv-report] Generating panel of examiners PDF')
 				await downloadCvPanelOfExaminersPdf({
 					institution: { name: selectedInstitution.name, code: selectedInstitution.institution_code },
 					session: { name: selectedSession.session_name, code: selectedSession.session_code },
@@ -379,6 +391,7 @@ export default function CvReportPage() {
 					data: panelData,
 				})
 			}
+			console.log('[cv-report] PDF generation completed successfully')
 			toast({ title: 'Downloaded', description: 'PDF generated successfully' })
 		} catch (e: any) {
 			console.error('[cv-report] PDF generation failed', e)
@@ -705,7 +718,7 @@ export default function CvReportPage() {
 						<CardHeader>
 							<CardTitle className='text-base'>Panel of Examiners — {panelData?.board_name || selectedBoard?.board_name || ''}</CardTitle>
 							<CardDescription>
-								{panelData && panelData.chiefs.length > 0
+								{panelData && panelData.chiefs && panelData.chiefs.length > 0
 									? `${panelData.chiefs.length} Chief${panelData.chiefs.length > 1 ? 's' : ''}: ${panelData.chiefs.map(c => `${c.chief_name}${c.chief_designation ? ` (${c.chief_designation})` : ''}`).join(', ')}`
 									: 'Select a board to load.'}
 							</CardDescription>
