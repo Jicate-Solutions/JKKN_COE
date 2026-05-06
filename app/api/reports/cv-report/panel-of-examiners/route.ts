@@ -174,31 +174,26 @@ export async function GET(request: Request) {
 				return (a.pocket_no || '').localeCompare(b.pocket_no || '')
 			})
 
-			const mergedMap = new Map<string, any>()
-			for (const row of rows) {
+			const cumulativeMap = new Map<string, number>()
+			const mergedRows = rows.map((row, idx) => {
 				const key = `${row.examiner_name}|${row.course_code}`
-				if (mergedMap.has(key)) {
-					const existing = mergedMap.get(key)
-					existing.total_papers += row.total_papers
-					existing.pocket_no = (existing.pocket_no ? existing.pocket_no + ', ' : '') + row.pocket_no
-				} else {
-					mergedMap.set(key, { ...row })
+				const currentCumulative = (cumulativeMap.get(key) || 0) + row.total_papers
+				cumulativeMap.set(key, currentCumulative)
+
+				return {
+					serial_number: idx + 1,
+					examiner_name: row.examiner_name,
+					examiner_designation: row.examiner_designation,
+					examiner_institution: row.examiner_institution,
+					course_code: row.course_code,
+					bundle_no: row.bundle_no,
+					pocket_no: row.pocket_no,
+					papers_session: String(row.total_papers),
+					cumulative_total: currentCumulative,
 				}
-			}
+			})
 
-			const mergedRows = Array.from(mergedMap.values()).map((row, idx) => ({
-				serial_number: idx + 1,
-				examiner_name: row.examiner_name,
-				examiner_designation: row.examiner_designation,
-				examiner_institution: row.examiner_institution,
-				course_code: row.course_code,
-				bundle_no: row.bundle_no,
-				pocket_no: row.pocket_no,
-				papers_session: String(row.total_papers),
-				cumulative_total: row.total_papers,
-			}))
-
-			console.log(`[cv-report/panel] Chief ${chiefIdx + 1}: After merging, has ${mergedRows.length} examiner rows`)
+			console.log(`[cv-report/panel] Chief ${chiefIdx + 1}: Has ${mergedRows.length} examiner rows with running cumulative totals`)
 
 			return {
 				chief_name: chief.name,

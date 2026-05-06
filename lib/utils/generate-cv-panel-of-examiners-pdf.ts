@@ -35,125 +35,145 @@ export interface CvPanelOfExaminersInput {
 }
 
 export async function downloadCvPanelOfExaminersPdf(input: CvPanelOfExaminersInput): Promise<void> {
-	const doc = new jsPDF('landscape', 'mm', 'a4')
-	const pageWidth = doc.internal.pageSize.getWidth()
-	const pageHeight = doc.internal.pageSize.getHeight()
-	const margin = 8
+	try {
+		const doc = new jsPDF('landscape', 'mm', 'a4')
+		const pageWidth = doc.internal.pageSize.getWidth()
+		const pageHeight = doc.internal.pageSize.getHeight()
+		const margin = 8
 
-	const reportTitle = `${input.data.board_name} - Valuation - Panel of Examiners`
-	const dateText = input.data.valuation_from_date && input.data.valuation_to_date
-		? `${formatDate(input.data.valuation_from_date)} - ${formatDate(input.data.valuation_to_date)}`
-		: todayDateStr()
+		const reportTitle = `${input.data.board_name} - Valuation - Panel of Examiners`
+		const dateText = input.data.valuation_from_date && input.data.valuation_to_date
+			? `${formatDate(input.data.valuation_from_date)} - ${formatDate(input.data.valuation_to_date)}`
+			: todayDateStr()
 
-	const head = [[
-		'S.No',
-		'Name of the Internal/External Examiner',
-		'Course code',
-		'Allocated Bundle No.',
-		'Pocket No.',
-		'No. of papers / session',
-		'Cumulative total',
-	]]
+		const head = [[
+			'S.No',
+			'Name of the Internal/External Examiner',
+			'Course code',
+			'Allocated Bundle No.',
+			'Pocket No.',
+			'No. of papers / session',
+			'Cumulative total',
+		]]
 
-	const chiefs = input.data.chiefs || []
-	const totalChiefs = chiefs.length
+		const chiefs = input.data.chiefs || []
+		const totalChiefs = chiefs.length
 
-	console.log(`[cv-panel-pdf] Generating PDF with ${totalChiefs} chiefs`)
+		console.log(`[cv-panel-pdf] Generating PDF with ${totalChiefs} chiefs`)
 
-	for (let chiefIdx = 0; chiefIdx < totalChiefs; chiefIdx++) {
-		const chief = chiefs[chiefIdx]
-		console.log(`[cv-panel-pdf] Processing chief ${chiefIdx + 1}/${totalChiefs}: ${chief.chief_name} (${chief.rows.length} examiners)`)
+		for (let chiefIdx = 0; chiefIdx < totalChiefs; chiefIdx++) {
+			const chief = chiefs[chiefIdx]
+			console.log(`[cv-panel-pdf] Processing chief ${chiefIdx + 1}/${totalChiefs}: ${chief.chief_name} (${chief.rows.length} examiners)`)
 
-		// Add header for each chief
-		let y = drawCvReportHeader({
-			doc,
-			pageWidth,
-			startY: margin,
-			margin,
-			logoLeft: input.logoLeft,
-			logoRight: input.logoRight,
-			sessionName: input.session.name,
-			reportTitle: reportTitle.toUpperCase(),
-			subtitle: null,
-			dateText,
-		})
+			try {
+				// Add header for each chief
+				let y = drawCvReportHeader({
+					doc,
+					pageWidth,
+					startY: margin,
+					margin,
+					logoLeft: input.logoLeft,
+					logoRight: input.logoRight,
+					sessionName: input.session.name,
+					reportTitle: reportTitle.toUpperCase(),
+					subtitle: null,
+					dateText,
+				})
+				console.log(`[cv-panel-pdf] Header drawn, y position: ${y}`)
 
-		// Chief name and designation
-		if (chief.chief_name) {
-			doc.setFont('times', 'bold')
-			doc.setFontSize(10)
-			const chiefLine = `Name of the Chief: ${chief.chief_name}${chief.chief_designation ? ', ' + chief.chief_designation : ''}`
-			const lines = doc.splitTextToSize(chiefLine, pageWidth - margin * 2)
-			doc.text(lines, margin, y + 2)
-			y += 2 + lines.length * 5
+				// Chief name and designation
+				if (chief.chief_name) {
+					doc.setFont('times', 'bold')
+					doc.setFontSize(10)
+					const chiefLine = `Name of the Chief: ${chief.chief_name}${chief.chief_designation ? ', ' + chief.chief_designation : ''}`
+					const lines = doc.splitTextToSize(chiefLine, pageWidth - margin * 2)
+					doc.text(lines, margin, y + 2)
+					y += 2 + lines.length * 5
+					console.log(`[cv-panel-pdf] Chief text drawn, new y: ${y}`)
+				}
+
+				// Valuation date
+				if (input.data.valuation_from_date || input.data.valuation_to_date) {
+					doc.setFont('times', 'normal')
+					doc.setFontSize(10)
+					const valuationLabel = input.data.valuation_from_date && input.data.valuation_to_date
+						? `Valuation Date: ${formatDate(input.data.valuation_from_date)} - ${formatDate(input.data.valuation_to_date)}`
+						: `Valuation Date: ${formatDate(input.data.valuation_from_date || input.data.valuation_to_date || '')}`
+					doc.text(valuationLabel, margin, y + 2)
+					y += 6
+				} else {
+					y += 2
+				}
+
+				// Build table body for this chief
+				const body = chief.rows.map(r => [
+					String(r.serial_number ?? ''),
+					formatExaminerCell(r),
+					String(r.course_code ?? ''),
+					String(r.bundle_no ?? ''),
+					String(r.pocket_no ?? ''),
+					String(r.papers_session ?? ''),
+					String(r.cumulative_total ?? ''),
+				])
+
+				console.log(`[cv-panel-pdf] Creating table with ${body.length} rows`)
+				autoTable(doc, {
+					startY: y,
+					head,
+					body,
+					theme: 'grid',
+					styles: { font: 'times', fontSize: 9, textColor: [0, 0, 0], lineColor: [0, 0, 0], lineWidth: 0.3, cellPadding: 1.5, valign: 'middle' },
+					headStyles: { fontStyle: 'bold', fillColor: [240, 240, 240], textColor: [0, 0, 0], halign: 'center' },
+					columnStyles: {
+						0: { halign: 'center', cellWidth: 12 },
+						1: { halign: 'left', cellWidth: 90 },
+						2: { halign: 'center', cellWidth: 28 },
+						3: { halign: 'center', cellWidth: 30 },
+						4: { halign: 'center', cellWidth: 18 },
+						5: { halign: 'center' },
+						6: { halign: 'center', cellWidth: 28 },
+					},
+					margin: { left: margin, right: margin },
+				})
+				console.log(`[cv-panel-pdf] Table rendered`)
+
+				const finalY = (doc as any).lastAutoTable.finalY + 18
+
+				doc.setFont('times', 'normal')
+				doc.setFontSize(10)
+				doc.text('Signature of the Chairman', margin + 30, finalY, { align: 'center' })
+				doc.text('Signature of the CoE', pageWidth - margin - 30, finalY, { align: 'center' })
+				console.log(`[cv-panel-pdf] Signatures drawn`)
+
+				drawCvReportFooter(doc, pageWidth, pageHeight, margin, chiefIdx + 1, totalChiefs)
+				console.log(`[cv-panel-pdf] Footer drawn for chief ${chiefIdx + 1}/${totalChiefs}`)
+
+				// Add new page if not the last chief
+				if (chiefIdx < totalChiefs - 1) {
+					doc.addPage('landscape')
+					console.log(`[cv-panel-pdf] New page added`)
+				}
+			} catch (chiefError: any) {
+				console.error(`[cv-panel-pdf] Error processing chief ${chiefIdx + 1}:`, chiefError)
+				throw new Error(`Failed to generate chief ${chiefIdx + 1} page: ${chiefError?.message || 'Unknown error'}`)
+			}
 		}
 
-		// Valuation date
-		if (input.data.valuation_from_date || input.data.valuation_to_date) {
-			doc.setFont('times', 'normal')
-			doc.setFontSize(10)
-			const valuationLabel = input.data.valuation_from_date && input.data.valuation_to_date
-				? `Valuation Date: ${formatDate(input.data.valuation_from_date)} - ${formatDate(input.data.valuation_to_date)}`
-				: `Valuation Date: ${formatDate(input.data.valuation_from_date || input.data.valuation_to_date || '')}`
-			doc.text(valuationLabel, margin, y + 2)
-			y += 6
-		} else {
-			y += 2
-		}
-
-		// Build table body for this chief
-		const body = chief.rows.map(r => [
-			String(r.serial_number ?? ''),
-			formatExaminerCell(r),
-			String(r.course_code ?? ''),
-			String(r.bundle_no ?? ''),
-			String(r.pocket_no ?? ''),
-			String(r.papers_session ?? ''),
-			String(r.cumulative_total ?? ''),
-		])
-
-		autoTable(doc, {
-			startY: y,
-			head,
-			body,
-			theme: 'grid',
-			styles: { font: 'times', fontSize: 9, textColor: [0, 0, 0], lineColor: [0, 0, 0], lineWidth: 0.3, cellPadding: 1.5, valign: 'middle' },
-			headStyles: { fontStyle: 'bold', fillColor: [240, 240, 240], textColor: [0, 0, 0], halign: 'center' },
-			columnStyles: {
-				0: { halign: 'center', cellWidth: 12 },
-				1: { halign: 'left', cellWidth: 90 },
-				2: { halign: 'center', cellWidth: 28 },
-				3: { halign: 'center', cellWidth: 30 },
-				4: { halign: 'center', cellWidth: 18 },
-				5: { halign: 'center' },
-				6: { halign: 'center', cellWidth: 28 },
-			},
-			margin: { left: margin, right: margin },
-		})
-
-		const finalY = (doc as any).lastAutoTable.finalY + 18
-
-		doc.setFont('times', 'normal')
-		doc.setFontSize(10)
-		doc.text('Signature of the Chairman', margin + 30, finalY, { align: 'center' })
-		doc.text('Signature of the CoE', pageWidth - margin - 30, finalY, { align: 'center' })
-
-		drawCvReportFooter(doc, pageWidth, pageHeight, margin, chiefIdx + 1, totalChiefs)
-
-		// Add new page if not the last chief
-		if (chiefIdx < totalChiefs - 1) {
-			doc.addPage('landscape')
-		}
+		console.log(`[cv-panel-pdf] All chief pages completed, generating PDF...`)
+		const fileName = `CV_PanelOfExaminers_${input.board.code}_${input.session.code}_${new Date().toISOString().split('T')[0]}.pdf`
+		const blob = doc.output('blob')
+		console.log(`[cv-panel-pdf] Blob created, size: ${blob.size} bytes`)
+		const url = URL.createObjectURL(blob)
+		const a = document.createElement('a')
+		a.href = url
+		a.download = fileName
+		a.click()
+		URL.revokeObjectURL(url)
+		console.log(`[cv-panel-pdf] Download triggered for ${fileName}`)
+	} catch (error: any) {
+		console.error('[cv-panel-pdf] PDF generation failed:', error)
+		throw error
 	}
-
-	const fileName = `CV_PanelOfExaminers_${input.board.code}_${input.session.code}_${new Date().toISOString().split('T')[0]}.pdf`
-	const blob = doc.output('blob')
-	const url = URL.createObjectURL(blob)
-	const a = document.createElement('a')
-	a.href = url
-	a.download = fileName
-	a.click()
-	URL.revokeObjectURL(url)
 }
 
 function formatExaminerCell(r: CvPanelExaminerRow): string {
