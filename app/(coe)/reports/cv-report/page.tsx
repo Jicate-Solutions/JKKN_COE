@@ -338,11 +338,26 @@ export default function CvReportPage() {
 	}, [activeTab])
 
 	const handleDownloadPdf = useCallback(async () => {
-		console.log('[cv-report] Download clicked', { activeTab, selectedInstitution: !!selectedInstitution, selectedSession: !!selectedSession, selectedBoard: !!selectedBoard })
+		console.log('[cv-report] Download clicked', { activeTab, effectiveInstitutionId, selectedSession: !!selectedSession, selectedBoard: !!selectedBoard, selectedInstitution: !!selectedInstitution })
+
+		if (!effectiveInstitutionId) {
+			console.warn('[cv-report] Institution not selected', { inst: !!effectiveInstitutionId, mustSelect: mustSelectInstitution })
+			toast({ title: 'Institution required', description: mustSelectInstitution ? 'Select an institution from the filter.' : 'Institution context missing.', variant: 'destructive' })
+			return
+		}
+		if (!selectedSessionId) {
+			console.warn('[cv-report] Session not selected')
+			toast({ title: 'Session required', description: 'Select an examination session.', variant: 'destructive' })
+			return
+		}
+		if (!selectedBoardCode) {
+			console.warn('[cv-report] Board not selected')
+			toast({ title: 'Board required', description: 'Select a board.', variant: 'destructive' })
+			return
+		}
 
 		if (!selectedInstitution || !selectedSession || !selectedBoard) {
-			console.warn('[cv-report] Missing selections', { inst: !!selectedInstitution, sess: !!selectedSession, board: !!selectedBoard })
-			toast({ title: 'Missing selection', description: 'Select institution, session and board.', variant: 'destructive' })
+			console.warn('[cv-report] Memoized selections not ready yet', { inst: !!selectedInstitution, sess: !!selectedSession, board: !!selectedBoard })
 			return
 		}
 		setDownloading(true)
@@ -399,7 +414,7 @@ export default function CvReportPage() {
 		} finally {
 			setDownloading(false)
 		}
-	}, [activeTab, selectedInstitution, selectedSession, selectedBoard, passPercentageRows, examinerData, panelData, toast])
+	}, [activeTab, effectiveInstitutionId, selectedSessionId, selectedBoardCode, selectedInstitution, selectedSession, selectedBoard, passPercentageRows, examinerData, panelData, toast])
 
 	const passTotals = useMemo(() => {
 		const total = passPercentageRows.reduce((s, r) => s + (r.total_students || 0), 0)
@@ -582,7 +597,7 @@ export default function CvReportPage() {
 							<Users className='h-4 w-4' />CV Panel of Examiners
 						</TabsTrigger>
 					</TabsList>
-					<Button onClick={handleDownloadPdf} disabled={downloading || !selectedBoardCode}>
+					<Button onClick={handleDownloadPdf} disabled={downloading || !selectedBoardCode || !effectiveInstitutionId}>
 						{downloading ? <Loader2 className='mr-2 h-4 w-4 animate-spin' /> : <Download className='mr-2 h-4 w-4' />}
 						Download PDF
 					</Button>
