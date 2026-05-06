@@ -99,7 +99,7 @@ export async function GET(request: Request) {
 			const courseCode = courseCodeById.get(p.course_id as string) || ''
 			const chiefKey = p.chief_examiner_name || 'Unassigned'
 
-			console.log(`[cv-report/panel] Packet: course=${courseCode}, chief=${chiefKey}`)
+			console.log(`[cv-report/panel] Packet: course=${courseCode}, chief=${chiefKey}, pocket=${p.packet_no}, sheets=${p.total_sheets}`)
 
 			if (!chiefGroups.has(chiefKey)) {
 				console.log(`[cv-report/panel] Creating new chief group: ${chiefKey}`)
@@ -166,7 +166,7 @@ export async function GET(request: Request) {
 
 		const chiefs = Array.from(chiefGroups.values()).map((chief, chiefIdx) => {
 			const rows = chief.rows
-			console.log(`[cv-report/panel] Chief ${chiefIdx + 1}: ${chief.name} has ${rows.length} packet rows`)
+			console.log(`[cv-report/panel] Chief ${chiefIdx + 1}: ${chief.name} has ${rows.length} raw packet rows`)
 
 			rows.sort((a, b) => {
 				if (a.examiner_name !== b.examiner_name) return a.examiner_name.localeCompare(b.examiner_name)
@@ -174,26 +174,46 @@ export async function GET(request: Request) {
 				return (a.pocket_no || '').localeCompare(b.pocket_no || '')
 			})
 
-			const cumulativeMap = new Map<string, number>()
-			const mergedRows = rows.map((row, idx) => {
+			const mergedMap = new Map<string, any>()
+			const cumulativePerKey = new Map<string, number>()
+
+			for (const row of rows) {
 				const key = `${row.examiner_name}|${row.course_code}`
-				const currentCumulative = (cumulativeMap.get(key) || 0) + row.total_papers
-				cumulativeMap.set(key, currentCumulative)
+				const currentCumulative = (cumulativePerKey.get(key) || 0) + row.total_papers
+				cumulativePerKey.set(key, currentCumulative)
 
-				return {
-					serial_number: idx + 1,
-					examiner_name: row.examiner_name,
-					examiner_designation: row.examiner_designation,
-					examiner_institution: row.examiner_institution,
-					course_code: row.course_code,
-					bundle_no: row.bundle_no,
-					pocket_no: row.pocket_no,
-					papers_session: String(row.total_papers),
-					cumulative_total: currentCumulative,
+				if (!mergedMap.has(key)) {
+					mergedMap.set(key, {
+						examiner_name: row.examiner_name,
+						examiner_designation: row.examiner_designation,
+						examiner_institution: row.examiner_institution,
+						course_code: row.course_code,
+						bundle_no: row.bundle_no,
+						pockets: []
+					})
 				}
-			})
 
-			console.log(`[cv-report/panel] Chief ${chiefIdx + 1}: Has ${mergedRows.length} examiner rows with running cumulative totals`)
+				const merged = mergedMap.get(key)
+				merged.pockets.push({
+					pocket_no: row.pocket_no,
+					papers: row.total_papers,
+					cumulative: currentCumulative
+				})
+			}
+
+			const mergedRows = Array.from(mergedMap.values()).map((row, idx) => ({
+				serial_number: idx + 1,
+				examiner_name: row.examiner_name,
+				examiner_designation: row.examiner_designation,
+				examiner_institution: row.examiner_institution,
+				course_code: row.course_code,
+				bundle_no: row.bundle_no,
+				pocket_no: row.pockets.map((p: any) => p.pocket_no).join(', '),
+				papers_session: row.pockets.map((p: any) => p.papers).join(', '),
+				cumulative_total: row.pockets.map((p: any) => p.cumulative).join(', '),
+			}))
+
+			console.log(`[cv-report/panel] Chief ${chiefIdx + 1}: After merging, has ${mergedRows.length} examiner rows`)
 
 			return {
 				chief_name: chief.name,

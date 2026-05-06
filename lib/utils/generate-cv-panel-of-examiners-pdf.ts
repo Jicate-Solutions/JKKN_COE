@@ -11,7 +11,7 @@ export interface CvPanelExaminerRow {
 	bundle_no: string
 	pocket_no: string
 	papers_session: string
-	cumulative_total: number
+	cumulative_total: string | number
 }
 
 export interface CvPanelChief {
