@@ -128,15 +128,19 @@ export async function GET(request: Request) {
 
 			// External: examiner_id → set of dates
 			const externalDates = new Map<string, Set<string>>()
-			// Internal/chief/assistant: staff_id → { name, designation, dates }
-			const internalDates = new Map<string, { name: string; designation: string; dates: Set<string> }>()
+			// Internal/chief/assistant: each tracked separately so a staff member
+			// who serves in multiple roles gets a certificate per role
+			type StaffBucket = Map<string, { name: string; designation: string; dates: Set<string> }>
+			const internalDates: StaffBucket = new Map()
+			const chiefDates: StaffBucket = new Map()
+			const assistantDates: StaffBucket = new Map()
 
-			const addInternal = (staffId: string | null, name: string | null, designation: string | null, date: string) => {
+			const addStaff = (bucket: StaffBucket, staffId: string | null, name: string | null, designation: string | null, date: string) => {
 				if (!staffId) return
-				if (!internalDates.has(staffId)) {
-					internalDates.set(staffId, { name: name || '', designation: designation || '', dates: new Set() })
+				if (!bucket.has(staffId)) {
+					bucket.set(staffId, { name: name || '', designation: designation || '', dates: new Set() })
 				}
-				internalDates.get(staffId)!.dates.add(date)
+				bucket.get(staffId)!.dates.add(date)
 			}
 
 			for (const p of packets) {
@@ -148,9 +152,9 @@ export async function GET(request: Request) {
 					externalDates.get(p.external_examiner_id)!.add(date)
 				}
 
-				addInternal(p.internal_examiner_staff_id, p.internal_examiner_name, p.internal_examiner_designation, date)
-				addInternal(p.chief_examiner_staff_id, p.chief_examiner_name, p.chief_examiner_designation, date)
-				addInternal(p.assistant_examiner_staff_id, p.assistant_examiner_name, p.assistant_examiner_designation, date)
+				addStaff(internalDates, p.internal_examiner_staff_id, p.internal_examiner_name, p.internal_examiner_designation, date)
+				addStaff(chiefDates, p.chief_examiner_staff_id, p.chief_examiner_name, p.chief_examiner_designation, date)
+				addStaff(assistantDates, p.assistant_examiner_staff_id, p.assistant_examiner_name, p.assistant_examiner_designation, date)
 			}
 
 			// Look up external examiner profile data
@@ -191,25 +195,33 @@ export async function GET(request: Request) {
 				}
 			}).sort((a, b) => a.examiner_name.localeCompare(b.examiner_name))
 
-			const internalList = [...internalDates.entries()].map(([, val]) => {
-				const dates = [...val.dates].sort()
-				const fromDate = dates[0] || ''
-				const toDate = dates[dates.length - 1] || ''
+			const buildStaffList = (bucket: StaffBucket, type: 'Internal' | 'Chief' | 'Assistant') =>
+				[...bucket.entries()].map(([, val]) => {
+					const dates = [...val.dates].sort()
+					const fromDate = dates[0] || ''
+					const toDate = dates[dates.length - 1] || ''
 
-				return {
-					examiner_name: val.name || 'Unknown',
-					designation: val.designation || '',
-					department: '',
-					institution_name: '',
-					type: 'Internal' as const,
-					from_date: fromDate,
-					to_date: fromDate === toDate ? '' : toDate,
-					all_dates: dates,
-					total_days: dates.length,
-				}
-			}).sort((a, b) => a.examiner_name.localeCompare(b.examiner_name))
+					return {
+						examiner_name: val.name || 'Unknown',
+						designation: val.designation || '',
+						department: '',
+						institution_name: '',
+						type,
+						from_date: fromDate,
+						to_date: fromDate === toDate ? '' : toDate,
+						all_dates: dates,
+						total_days: dates.length,
+					}
+				}).sort((a, b) => a.examiner_name.localeCompare(b.examiner_name))
 
-			return NextResponse.json({ examiners: [...externalList, ...internalList] })
+			return NextResponse.json({
+				examiners: [
+					...externalList,
+					...buildStaffList(internalDates, 'Internal'),
+					...buildStaffList(chiefDates, 'Chief'),
+					...buildStaffList(assistantDates, 'Assistant'),
+				],
+			})
 		}
 
 		return NextResponse.json({ error: 'Invalid action' }, { status: 400 })

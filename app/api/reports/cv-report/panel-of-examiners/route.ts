@@ -93,11 +93,16 @@ export async function GET(request: Request) {
 		let valuationFromDate: string | null = null
 		let valuationToDate: string | null = null
 
+		console.log(`[cv-report/panel] Processing ${packets?.length || 0} packets for board ${boardCode}`)
+
 		for (const p of packets || []) {
 			const courseCode = courseCodeById.get(p.course_id as string) || ''
 			const chiefKey = p.chief_examiner_name || 'Unassigned'
 
+			console.log(`[cv-report/panel] Packet: course=${courseCode}, chief=${chiefKey}`)
+
 			if (!chiefGroups.has(chiefKey)) {
+				console.log(`[cv-report/panel] Creating new chief group: ${chiefKey}`)
 				chiefGroups.set(chiefKey, {
 					name: (p.chief_examiner_name as string) || '',
 					designation: (p.chief_examiner_designation as string) || '',
@@ -159,8 +164,10 @@ export async function GET(request: Request) {
 			valuationToDate = (valuationWindow as any).to_date
 		}
 
-		const chiefs = Array.from(chiefGroups.values()).map(chief => {
+		const chiefs = Array.from(chiefGroups.values()).map((chief, chiefIdx) => {
 			const rows = chief.rows
+			console.log(`[cv-report/panel] Chief ${chiefIdx + 1}: ${chief.name} has ${rows.length} packet rows`)
+
 			rows.sort((a, b) => {
 				if (a.examiner_name !== b.examiner_name) return a.examiner_name.localeCompare(b.examiner_name)
 				if (a.course_code !== b.course_code) return a.course_code.localeCompare(b.course_code)
@@ -179,22 +186,28 @@ export async function GET(request: Request) {
 				}
 			}
 
+			const mergedRows = Array.from(mergedMap.values()).map((row, idx) => ({
+				serial_number: idx + 1,
+				examiner_name: row.examiner_name,
+				examiner_designation: row.examiner_designation,
+				examiner_institution: row.examiner_institution,
+				course_code: row.course_code,
+				bundle_no: row.bundle_no,
+				pocket_no: row.pocket_no,
+				papers_session: String(row.total_papers),
+				cumulative_total: row.total_papers,
+			}))
+
+			console.log(`[cv-report/panel] Chief ${chiefIdx + 1}: After merging, has ${mergedRows.length} examiner rows`)
+
 			return {
 				chief_name: chief.name,
 				chief_designation: chief.designation,
-				rows: Array.from(mergedMap.values()).map((row, idx) => ({
-					serial_number: idx + 1,
-					examiner_name: row.examiner_name,
-					examiner_designation: row.examiner_designation,
-					examiner_institution: row.examiner_institution,
-					course_code: row.course_code,
-					bundle_no: row.bundle_no,
-					pocket_no: row.pocket_no,
-					papers_session: String(row.total_papers),
-					cumulative_total: row.total_papers,
-				}))
+				rows: mergedRows
 			}
 		})
+
+		console.log(`[cv-report/panel] Total chiefs: ${chiefs.length}`)
 
 		return NextResponse.json({
 			board_name: boardName,

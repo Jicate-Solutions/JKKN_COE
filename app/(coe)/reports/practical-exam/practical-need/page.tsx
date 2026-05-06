@@ -61,7 +61,7 @@ interface ExaminerCertData {
 	designation: string
 	department: string
 	institution_name: string
-	type: 'External' | 'Internal'
+	type: 'External' | 'Internal' | 'Chief' | 'Assistant'
 	from_date: string
 	to_date: string
 	all_dates?: string[]
@@ -146,7 +146,7 @@ export default function PracticalExamReportsPage() {
 	const [certSortDir, setCertSortDir] = useState<'asc' | 'desc'>('asc')
 
 	// Certificate type filter & sorting (Central Valuation)
-	const [cvCertTypeFilter, setCvCertTypeFilter] = useState<'all' | 'External' | 'Internal'>('all')
+	const [cvCertTypeFilter, setCvCertTypeFilter] = useState<'all' | 'External' | 'Internal' | 'Chief' | 'Assistant'>('all')
 	const [cvCertSortField, setCvCertSortField] = useState<'examiner_name' | 'type' | 'from_date' | 'to_date' | 'total_days'>('examiner_name')
 	const [cvCertSortDir, setCvCertSortDir] = useState<'asc' | 'desc'>('asc')
 
@@ -1166,6 +1166,12 @@ export default function PracticalExamReportsPage() {
 													<Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200 text-xs">
 														{cvExaminers.filter(e => e.type === 'Internal').length} Internal
 													</Badge>
+													<Badge variant="outline" className="bg-purple-50 text-purple-700 border-purple-200 text-xs">
+														{cvExaminers.filter(e => e.type === 'Chief').length} Chief
+													</Badge>
+													<Badge variant="outline" className="bg-teal-50 text-teal-700 border-teal-200 text-xs">
+														{cvExaminers.filter(e => e.type === 'Assistant').length} Assistant
+													</Badge>
 													{cvSelectedExaminerIds.size > 0 && (
 														<Badge className="bg-indigo-100 text-indigo-800 text-xs">
 															{cvSelectedExaminerIds.size} selected
@@ -1183,6 +1189,8 @@ export default function PracticalExamReportsPage() {
 																<SelectItem value="all" className="text-xs">All Types</SelectItem>
 																<SelectItem value="External" className="text-xs">External</SelectItem>
 																<SelectItem value="Internal" className="text-xs">Internal</SelectItem>
+																<SelectItem value="Chief" className="text-xs">Chief</SelectItem>
+																<SelectItem value="Assistant" className="text-xs">Assistant</SelectItem>
 															</SelectContent>
 														</Select>
 													</div>
@@ -1248,7 +1256,16 @@ export default function PracticalExamReportsPage() {
 																	<TableCell className="text-sm py-3 text-muted-foreground">{idx + 1}</TableCell>
 																	<TableCell className="text-sm py-3 font-semibold">{ex.examiner_name}</TableCell>
 																	<TableCell className="py-3">
-																		<Badge variant="outline" className={cn("text-xs", ex.type === 'External' ? 'bg-orange-50 text-orange-700 border-orange-200' : 'bg-blue-50 text-blue-700 border-blue-200')}>
+																		<Badge
+																			variant="outline"
+																			className={cn(
+																				"text-xs",
+																				ex.type === 'External' && 'bg-orange-50 text-orange-700 border-orange-200',
+																				ex.type === 'Internal' && 'bg-blue-50 text-blue-700 border-blue-200',
+																				ex.type === 'Chief' && 'bg-purple-50 text-purple-700 border-purple-200',
+																				ex.type === 'Assistant' && 'bg-teal-50 text-teal-700 border-teal-200',
+																			)}
+																		>
 																			{ex.type}
 																		</Badge>
 																	</TableCell>

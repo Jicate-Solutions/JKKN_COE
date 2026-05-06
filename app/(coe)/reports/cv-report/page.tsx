@@ -286,7 +286,13 @@ export default function CvReportPage() {
 				`/api/reports/cv-report/panel-of-examiners?institutions_id=${effectiveInstitutionId}&session_id=${selectedSessionId}&board_code=${selectedBoardCode}`
 			)
 			if (!r.ok) throw new Error('Failed')
-			setPanelData(await r.json())
+			const data = await r.json()
+			console.log('[cv-report/panel-ui] Loaded panel data:', {
+				board_name: data.board_name,
+				chiefs_count: data.chiefs?.length || 0,
+				chiefs: data.chiefs?.map((c: any) => ({ name: c.chief_name, examiner_rows: c.rows.length }))
+			})
+			setPanelData(data)
 		} catch {
 			toast({ title: 'Error', description: 'Failed to load panel of examiners', variant: 'destructive' })
 			setPanelData(null)

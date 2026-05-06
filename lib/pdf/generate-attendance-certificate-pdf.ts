@@ -9,7 +9,7 @@ export interface ExaminerCertificateData {
 	designation: string
 	department: string
 	institution_name: string
-	type: 'External' | 'Internal'
+	type: 'External' | 'Internal' | 'Chief' | 'Assistant'
 	from_date: string
 	to_date: string // empty if same as from_date
 	all_dates?: string[] // all individual dates (sorted)
@@ -138,8 +138,14 @@ function drawCertificateBody(
 	doc.setTextColor(0, 0, 0)
 	doc.setFontSize(fontSize)
 
-	// Build examiner details
-	const examinerTypeText = examiner.type === 'External' ? 'External' : 'Internal'
+	// Build examiner role phrase (e.g. "External examiner", "Chief Examiner")
+	const examinerRoleText: Record<ExaminerCertificateData['type'], string> = {
+		External: 'External examiner',
+		Internal: 'Internal examiner',
+		Chief: 'Chief Examiner',
+		Assistant: 'Assistant Examiner',
+	}
+	const roleText = examinerRoleText[examiner.type] || 'External examiner'
 
 	// Line 1: Name + Designation
 	const nameDesigParts = [examiner.examiner_name, examiner.designation].filter(Boolean)
@@ -211,7 +217,7 @@ function drawCertificateBody(
 
 	// Line: "has acted as the External examiner for <context> Examination(s) in our"
 	doc.setFont('times', 'normal')
-	const part1 = `has acted as the ${examinerTypeText} examiner for `
+	const part1 = `has acted as the ${roleText} for `
 	doc.text(part1, contentX, y)
 
 	let curX = contentX + doc.getTextWidth(part1)

@@ -58,8 +58,11 @@ export async function downloadCvPanelOfExaminersPdf(input: CvPanelOfExaminersInp
 	const chiefs = input.data.chiefs || []
 	const totalChiefs = chiefs.length
 
+	console.log(`[cv-panel-pdf] Generating PDF with ${totalChiefs} chiefs`)
+
 	for (let chiefIdx = 0; chiefIdx < totalChiefs; chiefIdx++) {
 		const chief = chiefs[chiefIdx]
+		console.log(`[cv-panel-pdf] Processing chief ${chiefIdx + 1}/${totalChiefs}: ${chief.chief_name} (${chief.rows.length} examiners)`)
 
 		// Add header for each chief
 		let y = drawCvReportHeader({
