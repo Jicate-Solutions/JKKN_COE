@@ -26,6 +26,7 @@ export interface CvExaminerValuationInput {
 		board_name: string
 		examiner_name: string
 		examiner_designation: string
+		course_level?: 'UG' | 'PG'
 		rows: CvExaminerValuationRow[]
 		totals: CvExaminerValuationRow
 	}
@@ -41,7 +42,8 @@ export async function downloadCvExaminerValuationPdf(input: CvExaminerValuationI
 		const pageHeight = doc.internal.pageSize.getHeight()
 		const margin = 8
 
-		const subtitle = `UG-Valuation Report of the Examiner — ${input.data.board_name}`
+		const level = input.data.course_level === 'PG' ? 'PG' : 'UG'
+		const subtitle = `${level}-Valuation Report of the Examiner — ${input.data.board_name}`
 
 		let y = drawCvReportHeader({
 			doc,
@@ -51,7 +53,7 @@ export async function downloadCvExaminerValuationPdf(input: CvExaminerValuationI
 			logoLeft: input.logoLeft,
 			logoRight: input.logoRight,
 			sessionName: input.session.name,
-			reportTitle: 'UG-VALUATION REPORT OF THE EXAMINER',
+			reportTitle: `${level}-VALUATION REPORT OF THE EXAMINER`,
 			subtitle,
 			dateText: todayDateStr(),
 		})
@@ -63,6 +65,7 @@ export async function downloadCvExaminerValuationPdf(input: CvExaminerValuationI
 		doc.text(`Name of the Examiner: ${input.data.examiner_name}${input.data.examiner_designation ? ', ' + input.data.examiner_designation : ''}`, margin, y + 7)
 		y += 12
 
+		const isPG = level === 'PG'
 		const head = [[
 			'S.No',
 			'Course Code',
@@ -71,9 +74,9 @@ export async function downloadCvExaminerValuationPdf(input: CvExaminerValuationI
 			'No. of papers valued',
 			'0-10 marks',
 			'11-20 marks',
-			'21 to 25 marks',
-			'26-29 marks',
-			'Above 30',
+			isPG ? '21 to 30 marks' : '21 to 25 marks',
+			isPG ? '31-39 marks' : '26-29 marks',
+			isPG ? 'Above 40' : 'Above 30',
 			'No. of Pass',
 			'No. of Fail',
 			'Cumulative Total',

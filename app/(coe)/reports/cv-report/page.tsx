@@ -100,6 +100,7 @@ interface ExaminerValuationData {
 	board_name: string
 	examiner_name: string
 	examiner_designation: string
+	course_level?: 'UG' | 'PG'
 	rows: ExaminerValuationRow[]
 	totals: ExaminerValuationRow
 }
@@ -721,9 +722,9 @@ export default function CvReportPage() {
 											<TableHead className='text-right'>Papers</TableHead>
 											<TableHead className='text-right'>0–10</TableHead>
 											<TableHead className='text-right'>11–20</TableHead>
-											<TableHead className='text-right'>21–25</TableHead>
-											<TableHead className='text-right'>26–29</TableHead>
-											<TableHead className='text-right'>Above 30</TableHead>
+											<TableHead className='text-right'>{examinerData?.course_level === 'PG' ? '21–30' : '21–25'}</TableHead>
+											<TableHead className='text-right'>{examinerData?.course_level === 'PG' ? '31–39' : '26–29'}</TableHead>
+											<TableHead className='text-right'>{examinerData?.course_level === 'PG' ? 'Above 40' : 'Above 30'}</TableHead>
 											<TableHead className='text-right'>Pass</TableHead>
 											<TableHead className='text-right'>Fail</TableHead>
 											<TableHead className='text-right'>Total</TableHead>

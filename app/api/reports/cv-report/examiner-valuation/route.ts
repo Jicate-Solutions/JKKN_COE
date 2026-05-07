@@ -14,9 +14,11 @@ import { getSupabaseServer } from '@/lib/supabase-server'
  * examiner_key format: "<type>:<id>" — e.g. "internal:STAFF123", "external:<uuid>", "chief:STAFFXYZ".
  */
 
-const PASS_THRESHOLD = 30
+const UG_PASS_THRESHOLD = 30
+const PG_PASS_THRESHOLD = 30
 
 type ExaminerType = 'internal' | 'external' | 'chief' | 'assistant'
+type CourseLevel = 'UG' | 'PG'
 
 function parseExaminerKey(key: string): { type: ExaminerType; id: string } | null {
 	const idx = key.indexOf(':')
@@ -44,12 +46,21 @@ export async function GET(request: Request) {
 
 		const { data: courses } = await supabase
 			.from('courses')
-			.select('id, course_code')
+			.select('id, course_code, course_level')
 			.eq('board_code', boardCode)
 			.range(0, 9999)
 
 		const courseIds = (courses || []).map((c: any) => c.id)
 		const courseCodeById = new Map((courses || []).map((c: any) => [c.id, c.course_code]))
+
+		const levelCounts = { UG: 0, PG: 0 }
+		for (const c of courses || []) {
+			const lvl = String((c as any).course_level || '').toUpperCase()
+			if (lvl === 'PG') levelCounts.PG++
+			else levelCounts.UG++
+		}
+		const courseLevel: CourseLevel = levelCounts.PG > levelCounts.UG ? 'PG' : 'UG'
+		const passThreshold = courseLevel === 'PG' ? PG_PASS_THRESHOLD : UG_PASS_THRESHOLD
 
 		if (courseIds.length === 0) {
 			if (action === 'list-examiners') return NextResponse.json([])
@@ -191,13 +202,21 @@ export async function GET(request: Request) {
 			const dist = { band_0_10: 0, band_11_20: 0, band_21_25: 0, band_26_29: 0, above_30: 0, pass_count: 0, fail_count: 0 }
 			for (const m of slice) {
 				const v = Number(m.total_marks_obtained || 0)
-				if (v <= 10) dist.band_0_10++
-				else if (v <= 20) dist.band_11_20++
-				else if (v <= 25) dist.band_21_25++
-				else if (v <= 29) dist.band_26_29++
-				else dist.above_30++
+				if (courseLevel === 'PG') {
+					if (v <= 10) dist.band_0_10++
+					else if (v <= 20) dist.band_11_20++
+					else if (v <= 30) dist.band_21_25++
+					else if (v <= 39) dist.band_26_29++
+					else dist.above_30++
+				} else {
+					if (v <= 10) dist.band_0_10++
+					else if (v <= 20) dist.band_11_20++
+					else if (v <= 25) dist.band_21_25++
+					else if (v <= 29) dist.band_26_29++
+					else dist.above_30++
+				}
 
-				if (v >= PASS_THRESHOLD) dist.pass_count++
+				if (v >= passThreshold) dist.pass_count++
 				else dist.fail_count++
 			}
 			const papers = p.total_sheets || 0
@@ -229,6 +248,7 @@ export async function GET(request: Request) {
 			board_name: boardName,
 			examiner_name: examinerName,
 			examiner_designation: examinerDesignation,
+			course_level: courseLevel,
 			rows,
 			totals,
 		})
