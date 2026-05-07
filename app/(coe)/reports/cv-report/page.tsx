@@ -369,6 +369,32 @@ export default function CvReportPage() {
 		setDownloading(true)
 		try {
 			console.log('[cv-report] Starting PDF download for tab:', activeTab)
+
+			let logoLeft = ''
+			let logoRight = ''
+			try {
+				const leftRes = await fetch('/jkkn_logo.png')
+				if (leftRes.ok) {
+					const blob = await leftRes.blob()
+					logoLeft = await new Promise<string>((resolve) => {
+						const reader = new FileReader()
+						reader.onloadend = () => resolve(reader.result as string)
+						reader.readAsDataURL(blob)
+					})
+				}
+				const rightRes = await fetch('/jkkncas_logo.png')
+				if (rightRes.ok) {
+					const blob = await rightRes.blob()
+					logoRight = await new Promise<string>((resolve) => {
+						const reader = new FileReader()
+						reader.onloadend = () => resolve(reader.result as string)
+						reader.readAsDataURL(blob)
+					})
+				}
+			} catch (e) {
+				console.warn('[cv-report] Logo not loaded:', e)
+			}
+
 			if (activeTab === 'pass-percentage') {
 				if (passPercentageRows.length === 0) {
 					console.warn('[cv-report] No pass percentage data')
@@ -382,6 +408,8 @@ export default function CvReportPage() {
 					session: { name: selectedSession.session_name, code: selectedSession.session_code },
 					board: { code: selectedBoard.board_code, name: selectedBoard.board_name },
 					rows: passPercentageRows,
+					logoLeft,
+					logoRight,
 				})
 			} else if (activeTab === 'examiner') {
 				if (!examinerData) {
@@ -396,6 +424,8 @@ export default function CvReportPage() {
 					session: { name: selectedSession.session_name, code: selectedSession.session_code },
 					board: { code: selectedBoard.board_code, name: selectedBoard.board_name },
 					data: examinerData,
+					logoLeft,
+					logoRight,
 				})
 			} else if (activeTab === 'panel') {
 				if (!panelData) {
@@ -410,6 +440,8 @@ export default function CvReportPage() {
 					session: { name: selectedSession.session_name, code: selectedSession.session_code },
 					board: { code: selectedBoard.board_code, name: selectedBoard.board_name },
 					data: panelData,
+					logoLeft,
+					logoRight,
 				})
 			}
 			console.log('[cv-report] PDF generation completed successfully')
@@ -523,7 +555,7 @@ export default function CvReportPage() {
 							<Popover open={boardOpen} onOpenChange={setBoardOpen}>
 								<PopoverTrigger asChild>
 									<Button variant='outline' role='combobox' className='w-full justify-between' disabled={!selectedSessionId}>
-										{selectedBoard?.board_name || 'Select board'}
+										{selectedBoard ? `${selectedBoard.board_code} - ${selectedBoard.board_name}` : 'Select board'}
 										<ChevronsUpDown className='ml-2 h-4 w-4 shrink-0 opacity-50' />
 									</Button>
 								</PopoverTrigger>
@@ -535,14 +567,14 @@ export default function CvReportPage() {
 											{boards.map(b => (
 												<CommandItem
 													key={b.board_code}
-													value={b.board_name}
+													value={`${b.board_code} - ${b.board_name}`}
 													onSelect={() => {
 														setSelectedBoardCode(b.board_code)
 														setBoardOpen(false)
 													}}
 												>
 													<Check className={cn('mr-2 h-4 w-4', selectedBoardCode === b.board_code ? 'opacity-100' : 'opacity-0')} />
-													{b.board_name}
+													{b.board_code} - {b.board_name}
 												</CommandItem>
 											))}
 										</CommandGroup>
@@ -749,7 +781,7 @@ export default function CvReportPage() {
 								<p className='text-muted-foreground text-sm'>Select a board first.</p>
 							) : loadingPanel ? (
 								<div className='flex items-center gap-2 text-muted-foreground text-sm'><Loader2 className='h-4 w-4 animate-spin' />Loading…</div>
-							) : !panelData || panelData.chiefs.length === 0 || panelData.chiefs.every(c => c.rows.length === 0) ? (
+							) : !panelData || !panelData.chiefs || panelData.chiefs.length === 0 || panelData.chiefs.every(c => c.rows.length === 0) ? (
 								<p className='text-muted-foreground text-sm'>No examiners assigned for this board.</p>
 							) : (
 								<div className='space-y-8'>
