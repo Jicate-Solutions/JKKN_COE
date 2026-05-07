@@ -307,8 +307,8 @@ export default function CvReportPage() {
 	}, [effectiveInstitutionId, selectedSessionId, selectedBoardCode, toast])
 
 	useEffect(() => {
-		if (isReady && mustSelectInstitution) loadInstitutions()
-	}, [isReady, mustSelectInstitution, loadInstitutions])
+		if (isReady) loadInstitutions()
+	}, [isReady, loadInstitutions])
 
 	useEffect(() => {
 		if (isReady && effectiveInstitutionId) loadSessions(effectiveInstitutionId)
