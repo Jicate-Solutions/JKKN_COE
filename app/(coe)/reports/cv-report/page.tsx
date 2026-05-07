@@ -198,6 +198,12 @@ export default function CvReportPage() {
 		}
 	}, [isReady, mustSelectInstitution, contextInstitutionId, selectedInstitutionId])
 
+	useEffect(() => {
+		if (isReady && mustSelectInstitution) {
+			setSelectedInstitutionId('')
+		}
+	}, [isReady, mustSelectInstitution, contextInstitutionId])
+
 	const loadInstitutions = useCallback(async () => {
 		try {
 			const url = appendToUrl('/api/pre-exam/examiner-allotment?action=institutions')
