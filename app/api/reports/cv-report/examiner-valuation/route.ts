@@ -14,8 +14,9 @@ import { getSupabaseServer } from '@/lib/supabase-server'
  * examiner_key format: "<type>:<id>" — e.g. "internal:STAFF123", "external:<uuid>", "chief:STAFFXYZ".
  */
 
-const UG_PASS_THRESHOLD = 30
-const PG_PASS_THRESHOLD = 38
+// Fallback thresholds when course's external_pass_mark is not configured
+const UG_PASS_THRESHOLD_FALLBACK = 30
+const PG_PASS_THRESHOLD_FALLBACK = 38
 
 type ExaminerType = 'internal' | 'external' | 'chief' | 'assistant'
 type CourseLevel = 'UG' | 'PG'
@@ -46,12 +47,19 @@ export async function GET(request: Request) {
 
 		const { data: courses } = await supabase
 			.from('courses')
-			.select('id, course_code, course_level')
+			.select('id, course_code, course_level, external_pass_mark')
 			.eq('board_code', boardCode)
 			.range(0, 9999)
 
 		const courseIds = (courses || []).map((c: any) => c.id)
 		const courseCodeById = new Map((courses || []).map((c: any) => [c.id, c.course_code]))
+		const passMarkByCourse = new Map<string, number>()
+		for (const c of courses || []) {
+			const lvl = String((c as any).course_level || '').toUpperCase()
+			const fallback = lvl === 'PG' ? PG_PASS_THRESHOLD_FALLBACK : UG_PASS_THRESHOLD_FALLBACK
+			const pm = Number((c as any).external_pass_mark)
+			passMarkByCourse.set((c as any).id as string, pm > 0 ? pm : fallback)
+		}
 
 		const levelCounts = { UG: 0, PG: 0 }
 		for (const c of courses || []) {
@@ -60,7 +68,6 @@ export async function GET(request: Request) {
 			else levelCounts.UG++
 		}
 		const courseLevel: CourseLevel = levelCounts.PG > levelCounts.UG ? 'PG' : 'UG'
-		const passThreshold = courseLevel === 'PG' ? PG_PASS_THRESHOLD : UG_PASS_THRESHOLD
 
 		if (courseIds.length === 0) {
 			if (action === 'list-examiners') return NextResponse.json([])
@@ -199,6 +206,7 @@ export async function GET(request: Request) {
 			const slice = allMarks.slice(consumed, consumed + (p.total_sheets || 0))
 			courseConsumed.set(courseId, consumed + (p.total_sheets || 0))
 
+			const coursePassMark = passMarkByCourse.get(courseId) ?? (courseLevel === 'PG' ? PG_PASS_THRESHOLD_FALLBACK : UG_PASS_THRESHOLD_FALLBACK)
 			const dist = { band_0_10: 0, band_11_20: 0, band_21_25: 0, band_26_29: 0, above_30: 0, pass_count: 0, fail_count: 0 }
 			for (const m of slice) {
 				const v = Number(m.total_marks_obtained || 0)
@@ -216,7 +224,7 @@ export async function GET(request: Request) {
 					else dist.above_30++
 				}
 
-				if (v >= passThreshold) dist.pass_count++
+				if (v >= coursePassMark) dist.pass_count++
 				else dist.fail_count++
 			}
 			const papers = p.total_sheets || 0
