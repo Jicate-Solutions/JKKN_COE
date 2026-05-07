@@ -30,10 +30,20 @@ export async function GET(request: Request) {
 
 		const supabase = getSupabaseServer()
 
-		// 1. Fetch courses for this board with external_pass_mark
+		// 1. Get board_type (UG/PG) from board table for fallback threshold
+		const { data: boardRow } = await supabase
+			.from('board')
+			.select('board_type')
+			.eq('board_code', boardCode)
+			.eq('institutions_id', institutionsId)
+			.maybeSingle()
+		const boardType = String((boardRow as any)?.board_type || 'UG').toUpperCase()
+		const fallbackPassMark = boardType === 'PG' ? 38 : 30
+
+		// 2. Fetch courses for this board with external_pass_mark
 		const { data: courses, error: cErr } = await supabase
 			.from('courses')
-			.select('id, course_code, course_name, course_level, external_pass_mark, semester, course_order')
+			.select('id, course_code, course_name, external_pass_mark')
 			.eq('board_code', boardCode)
 			.range(0, 9999)
 
@@ -52,10 +62,8 @@ export async function GET(request: Request) {
 		const courseIds = courses.map(c => c.id)
 		const passMarkByCourse = new Map<string, number>()
 		for (const c of courses) {
-			const lvl = String((c as any).course_level || '').toUpperCase()
-			const fallback = lvl === 'PG' ? 38 : 30
 			const pm = Number((c as any).external_pass_mark)
-			passMarkByCourse.set(c.id as string, pm > 0 ? pm : fallback)
+			passMarkByCourse.set(c.id as string, pm > 0 ? pm : fallbackPassMark)
 		}
 
 		// 2. Fetch exam_registrations → total_students
@@ -142,14 +150,13 @@ export async function GET(request: Request) {
 			const passed = passedByCourse.get(c.id) || 0
 			const pass_percentage = appeared > 0 ? Math.round((passed / appeared) * 1000) / 10 : 0
 			return {
-				semester: c.semester ?? '',
+				semester: '',
 				course_code: c.course_code,
 				course_name: c.course_name,
 				total_students: total,
 				appeared,
 				passed,
 				pass_percentage,
-				_order: c.course_order ?? 0,
 			}
 		})
 
@@ -157,14 +164,7 @@ export async function GET(request: Request) {
 
 		const rows = allRows
 			.filter(r => r.total_students > 0 || r.appeared > 0)
-			.sort((a, b) => {
-				const semA = typeof a.semester === 'number' ? a.semester : parseInt(String(a.semester) || '0', 10) || 0
-				const semB = typeof b.semester === 'number' ? b.semester : parseInt(String(b.semester) || '0', 10) || 0
-				if (semA !== semB) return semA - semB
-				if (a._order !== b._order) return a._order - b._order
-				return a.course_code.localeCompare(b.course_code)
-			})
-			.map(({ _order, ...rest }) => rest)
+			.sort((a, b) => a.course_code.localeCompare(b.course_code))
 
 		console.log('[cv-report/pass-percentage] After filter:', rows.length, 'rows returned')
 
