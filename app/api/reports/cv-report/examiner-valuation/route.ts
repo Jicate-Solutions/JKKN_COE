@@ -15,7 +15,7 @@ import { getSupabaseServer } from '@/lib/supabase-server'
  */
 
 const UG_PASS_THRESHOLD = 30
-const PG_PASS_THRESHOLD = 30
+const PG_PASS_THRESHOLD = 40
 
 type ExaminerType = 'internal' | 'external' | 'chief' | 'assistant'
 type CourseLevel = 'UG' | 'PG'
