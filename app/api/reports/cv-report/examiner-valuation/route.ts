@@ -45,29 +45,29 @@ export async function GET(request: Request) {
 
 		const supabase = getSupabaseServer()
 
+		// Determine UG/PG via board.board_type (courses table has no course_level column)
+		const { data: boardRow } = await supabase
+			.from('board')
+			.select('board_type, board_name')
+			.eq('board_code', boardCode)
+			.eq('institutions_id', institutionsId)
+			.maybeSingle()
+		const courseLevel: CourseLevel = String((boardRow as any)?.board_type || 'UG').toUpperCase() === 'PG' ? 'PG' : 'UG'
+
 		const { data: courses } = await supabase
 			.from('courses')
-			.select('id, course_code, course_level, external_pass_mark')
+			.select('id, course_code, external_pass_mark')
 			.eq('board_code', boardCode)
 			.range(0, 9999)
 
 		const courseIds = (courses || []).map((c: any) => c.id)
 		const courseCodeById = new Map((courses || []).map((c: any) => [c.id, c.course_code]))
 		const passMarkByCourse = new Map<string, number>()
+		const fallbackPassMark = courseLevel === 'PG' ? PG_PASS_THRESHOLD_FALLBACK : UG_PASS_THRESHOLD_FALLBACK
 		for (const c of courses || []) {
-			const lvl = String((c as any).course_level || '').toUpperCase()
-			const fallback = lvl === 'PG' ? PG_PASS_THRESHOLD_FALLBACK : UG_PASS_THRESHOLD_FALLBACK
 			const pm = Number((c as any).external_pass_mark)
-			passMarkByCourse.set((c as any).id as string, pm > 0 ? pm : fallback)
+			passMarkByCourse.set((c as any).id as string, pm > 0 ? pm : fallbackPassMark)
 		}
-
-		const levelCounts = { UG: 0, PG: 0 }
-		for (const c of courses || []) {
-			const lvl = String((c as any).course_level || '').toUpperCase()
-			if (lvl === 'PG') levelCounts.PG++
-			else levelCounts.UG++
-		}
-		const courseLevel: CourseLevel = levelCounts.PG > levelCounts.UG ? 'PG' : 'UG'
 
 		if (courseIds.length === 0) {
 			if (action === 'list-examiners') return NextResponse.json([])
@@ -249,7 +249,6 @@ export async function GET(request: Request) {
 			totals.cumulative_total += papers
 		}
 
-		const { data: boardRow } = await supabase.from('board').select('board_name').eq('board_code', boardCode).maybeSingle()
 		const boardName = (boardRow as any)?.board_name || boardCode
 
 		return NextResponse.json({
