@@ -61,7 +61,8 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
         annual_semester,
         registration_based,
         credit_included,
-        has_hall_ticket
+        has_hall_ticket,
+        courses_status
       `)
       .eq('id', id)
       .single()
@@ -122,6 +123,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
       registration_based: data.registration_based ?? false,
       credit_included: data.credit_included ?? true,
       has_hall_ticket: data.has_hall_ticket ?? true,
+      courses_status: data.courses_status ?? 'Pending',
     } : null
     return NextResponse.json(mapped)
   } catch (err) {
@@ -255,6 +257,16 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
     if (input.registration_based !== undefined) data.registration_based = Boolean(input.registration_based)
     if (input.credit_included !== undefined) data.credit_included = Boolean(input.credit_included)
     if (input.has_hall_ticket !== undefined) data.has_hall_ticket = Boolean(input.has_hall_ticket)
+    if (input.courses_status !== undefined) {
+      const ALLOWED_STATUSES = ['Pending', 'BOS Approved', 'Locked'] as const
+      const incoming = String(input.courses_status) as typeof ALLOWED_STATUSES[number]
+      if (!ALLOWED_STATUSES.includes(incoming)) {
+        return NextResponse.json({
+          error: `Invalid courses_status. Allowed values: ${ALLOWED_STATUSES.join(', ')}`
+        }, { status: 400 })
+      }
+      data.courses_status = incoming
+    }
 
     const { data: updated, error } = await supabase
       .from('courses')
@@ -355,6 +367,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
       registration_based: updated.registration_based ?? false,
       credit_included: updated.credit_included ?? true,
       has_hall_ticket: updated.has_hall_ticket ?? true,
+      courses_status: updated.courses_status ?? 'Pending',
     }
 
     return NextResponse.json(mapped)

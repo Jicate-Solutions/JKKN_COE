@@ -645,8 +645,8 @@ function addStudentMarksheetToDoc(
 	// UG: 14 columns with PART
 	// PG: 13 columns without PART (TITLE column gets extra width)
 	const colWidths = isPG
-		? [6, 18, 97, 6, 6, 6, 7, 7, 7, 7, 7, 7, 9]  // PG: 13 columns = 194mm (no PART)
-		: [6, 6, 18, 91, 6, 6, 6, 7, 7, 7, 7, 7, 7, 9]  // UG: 14 columns = 194mm (with PART)
+		? [6, 20, 95, 6, 6, 6, 7, 7, 7, 7, 7, 7, 9]  // PG: 13 columns = 190mm (no PART)
+		: [6, 6, 20, 89, 6, 6, 6, 7, 7, 7, 7, 7, 7, 9]  // UG: 14 columns = 190mm (with PART)
 
 	// ===== MANUALLY DRAW VERTICAL HEADER =====
 	const headerHeight = 25  // Total header height (two rows)
@@ -927,8 +927,8 @@ function addStudentMarksheetToDoc(
 			cellWidth: width,
 			// CODE and TITLE columns = left aligned; rest = center
 			halign: (i === courseCodeColIdx || i === courseTitleColIdx) ? 'left' : 'center',
-			// Enable text wrap for COURSE TITLE column
-			overflow: i === courseTitleColIdx ? 'linebreak' : 'ellipsize'
+			// Enable text wrap for COURSE CODE and COURSE TITLE columns (so long codes never truncate)
+			overflow: (i === courseCodeColIdx || i === courseTitleColIdx) ? 'linebreak' : 'ellipsize'
 		}
 	})
 

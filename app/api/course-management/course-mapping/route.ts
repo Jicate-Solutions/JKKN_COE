@@ -2,6 +2,16 @@ import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
 import { handleDeleteWithDependencyCheck } from '@/lib/delete-helpers'
 
+const ALLOWED_COURSE_MAPPING_STATUSES = ['Pending', 'BOS Approved', 'Locked'] as const
+type AllowedCourseMappingStatus = typeof ALLOWED_COURSE_MAPPING_STATUSES[number]
+
+function normalizeCourseMappingStatus(value: unknown): AllowedCourseMappingStatus | undefined {
+	if (value === undefined || value === null || value === '') return undefined
+	const v = String(value) as AllowedCourseMappingStatus
+	if (!ALLOWED_COURSE_MAPPING_STATUSES.includes(v)) return null as any
+	return v
+}
+
 // Helper function to filter out fields that don't belong to course_mapping table
 function filterCourseMappingFields(data: any) {
 	const {
@@ -178,6 +188,19 @@ export async function POST(request: Request) {
 					continue
 				}
 
+				if (mapping.courses_status !== undefined && mapping.courses_status !== null && mapping.courses_status !== '') {
+					const normalized = normalizeCourseMappingStatus(mapping.courses_status)
+					if (normalized === null) {
+						errors.push({
+							semester_code: mapping.semester_code,
+							course_id: mapping.course_id,
+							error: `Invalid courses_status. Allowed: ${ALLOWED_COURSE_MAPPING_STATUSES.join(', ')}`
+						})
+						continue
+					}
+					mapping.courses_status = normalized
+				}
+
 				validMappings.push(mapping)
 			}
 
@@ -351,6 +374,17 @@ export async function POST(request: Request) {
 			)
 		}
 
+		if (body.courses_status !== undefined && body.courses_status !== null && body.courses_status !== '') {
+			const normalized = normalizeCourseMappingStatus(body.courses_status)
+			if (normalized === null) {
+				return NextResponse.json(
+					{ error: `Invalid courses_status. Allowed: ${ALLOWED_COURSE_MAPPING_STATUSES.join(', ')}` },
+					{ status: 400 }
+				)
+			}
+			body.courses_status = normalized
+		}
+
 		// Lookup course_id from course_code if course_id not provided
 		let courseId = body.course_id
 		let courseCode = body.course_code
@@ -504,6 +538,17 @@ export async function PUT(request: Request) {
 		// Filter out mark fields that belong to courses table, not course_mapping
 		const { id, ...bodyWithoutId } = body
 		const updateData = filterCourseMappingFields(bodyWithoutId)
+
+		if (updateData.courses_status !== undefined && updateData.courses_status !== null && updateData.courses_status !== '') {
+			const normalized = normalizeCourseMappingStatus(updateData.courses_status)
+			if (normalized === null) {
+				return NextResponse.json(
+					{ error: `Invalid courses_status. Allowed: ${ALLOWED_COURSE_MAPPING_STATUSES.join(', ')}` },
+					{ status: 400 }
+				)
+			}
+			updateData.courses_status = normalized
+		}
 
 		// If course_id is being updated, fetch the new course_code
 		if (updateData.course_id) {

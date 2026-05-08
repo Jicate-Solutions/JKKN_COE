@@ -1,3 +1,13 @@
+// Workflow state of a course mapping
+// Default 'Pending'; once 'Locked' the UI must warn before allowing change.
+export type CourseMappingStatus = 'Pending' | 'BOS Approved' | 'Locked'
+
+export const COURSE_MAPPING_STATUS_OPTIONS: { value: CourseMappingStatus; label: string }[] = [
+	{ value: 'Pending', label: 'Pending' },
+	{ value: 'BOS Approved', label: 'BOS Approved' },
+	{ value: 'Locked', label: 'Locked' }
+]
+
 // Course Mapping type definitions
 export interface CourseMapping {
 	id?: string
@@ -20,6 +30,7 @@ export interface CourseMapping {
 	annual_semester?: boolean
 	registration_based?: boolean
 	is_active?: boolean
+	courses_status?: CourseMappingStatus
 	created_at?: string
 }
 

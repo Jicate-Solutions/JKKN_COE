@@ -1,3 +1,13 @@
+// Workflow state of a course definition
+// Default 'Pending'; once 'Locked' the UI must warn before allowing change.
+export type CourseStatus = 'Pending' | 'BOS Approved' | 'Locked'
+
+export const COURSE_STATUS_OPTIONS: { value: CourseStatus; label: string }[] = [
+	{ value: 'Pending', label: 'Pending' },
+	{ value: 'BOS Approved', label: 'BOS Approved' },
+	{ value: 'Locked', label: 'Locked' }
+]
+
 // Course type definition
 export interface Course {
 	id: string
@@ -55,6 +65,7 @@ export interface Course {
 	total_max_mark: number
 	annual_semester: boolean
 	registration_based: boolean
+	courses_status: CourseStatus
 	programs?: {
 		id: string
 		program_name: string

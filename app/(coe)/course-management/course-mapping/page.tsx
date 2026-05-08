@@ -28,6 +28,7 @@ import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, Command
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Check, ChevronsUpDown } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { COURSE_MAPPING_STATUS_OPTIONS, type CourseMappingStatus } from "@/types/course-mapping"
 
 type CourseMapping = {
 	id?: string
@@ -52,6 +53,7 @@ type CourseMapping = {
 	annual_semester?: boolean
 	registration_based?: boolean
 	is_active?: boolean
+	courses_status?: CourseMappingStatus
 	created_at?: string
 }
 
@@ -98,6 +100,14 @@ export default function CourseMappingPage() {
 		canSwitchInstitution,
 		currentInstitution
 	} = useInstitution()
+
+	// Locked-status change warning
+	const [lockedWarning, setLockedWarning] = useState<{
+		open: boolean
+		semesterIndex: number | null
+		rowIndex: number | null
+		targetValue: CourseMappingStatus | null
+	}>({ open: false, semesterIndex: null, rowIndex: null, targetValue: null })
 
 	// Parent form state
 	const [selectedInstitution, setSelectedInstitution] = useState("")
@@ -383,7 +393,8 @@ export default function CourseMappingPage() {
 							total_pass_mark: 40,
 							annual_semester: false,
 							registration_based: false,
-							is_active: true
+							is_active: true,
+							courses_status: 'Pending'
 						}],
 						isOpen: semesterMappings.length > 0
 					}
@@ -424,7 +435,8 @@ export default function CourseMappingPage() {
 			total_pass_mark: 40,
 			annual_semester: false,
 			registration_based: false,
-			is_active: true
+			is_active: true,
+			courses_status: 'Pending'
 		}
 
 		const updated = [...semesterTables]
@@ -1022,13 +1034,14 @@ export default function CourseMappingPage() {
 																		/>
 																	</div>
 																</TableHead>
+																<TableHead className="w-[150px] py-2 font-bold text-black dark:text-white">Course Status</TableHead>
 																<TableHead className="w-[80px] py-2 font-bold text-black dark:text-white">Action</TableHead>
 															</TableRow>
 														</TableHeader>
 														<TableBody>
 															{table.mappings.length === 0 ? (
 																<TableRow>
-																	<TableCell colSpan={18} className="text-center text-muted-foreground">
+																	<TableCell colSpan={19} className="text-center text-muted-foreground">
 																		No courses mapped. Click "Add Course" to start.
 																	</TableCell>
 																</TableRow>
@@ -1146,6 +1159,33 @@ export default function CourseMappingPage() {
 																			/>
 																		</TableCell>
 																		<TableCell className="py-3">
+																			{(() => {
+																				const current = (mapping.courses_status ?? 'Pending') as CourseMappingStatus
+																				return (
+																					<Select
+																						value={current}
+																						onValueChange={(v) => {
+																							const next = v as CourseMappingStatus
+																							if (current === 'Locked' && next !== 'Locked') {
+																								setLockedWarning({ open: true, semesterIndex: semIndex, rowIndex, targetValue: next })
+																								return
+																							}
+																							updateCourseRow(semIndex, rowIndex, 'courses_status', next)
+																						}}
+																					>
+																						<SelectTrigger className="h-9 text-sm">
+																							<SelectValue />
+																						</SelectTrigger>
+																						<SelectContent>
+																							{COURSE_MAPPING_STATUS_OPTIONS.map((opt) => (
+																								<SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
+																							))}
+																						</SelectContent>
+																					</Select>
+																				)
+																			})()}
+																		</TableCell>
+																		<TableCell className="py-3">
 																			<Button
 																				variant="ghost"
 																				size="sm"
@@ -1172,6 +1212,41 @@ export default function CourseMappingPage() {
 				</div>
 				<AppFooter />
 			</SidebarInset>
+
+			{/* Locked → other status warning */}
+			<AlertDialog
+				open={lockedWarning.open}
+				onOpenChange={(open) => { if (!open) setLockedWarning({ open: false, semesterIndex: null, rowIndex: null, targetValue: null }) }}
+			>
+				<AlertDialogContent>
+					<AlertDialogHeader>
+						<AlertDialogTitle className="text-amber-700">Change locked mapping status?</AlertDialogTitle>
+						<AlertDialogDescription>
+							This course mapping is currently <span className="font-semibold">Locked</span>. Changing it to{' '}
+							<span className="font-semibold">{lockedWarning.targetValue}</span> may unlock downstream
+							workflows (offerings, exam registrations, marks). Are you sure you want to continue?
+						</AlertDialogDescription>
+					</AlertDialogHeader>
+					<AlertDialogFooter>
+						<AlertDialogCancel>Cancel</AlertDialogCancel>
+						<AlertDialogAction
+							className="bg-amber-600 hover:bg-amber-700"
+							onClick={() => {
+								if (
+									lockedWarning.semesterIndex !== null &&
+									lockedWarning.rowIndex !== null &&
+									lockedWarning.targetValue
+								) {
+									updateCourseRow(lockedWarning.semesterIndex, lockedWarning.rowIndex, 'courses_status', lockedWarning.targetValue)
+								}
+								setLockedWarning({ open: false, semesterIndex: null, rowIndex: null, targetValue: null })
+							}}
+						>
+							Yes, change status
+						</AlertDialogAction>
+					</AlertDialogFooter>
+				</AlertDialogContent>
+			</AlertDialog>
 		</SidebarProvider>
 	)
 }

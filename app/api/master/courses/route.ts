@@ -74,7 +74,8 @@ export async function GET(req: NextRequest) {
         annual_semester,
         registration_based,
         credit_included,
-        has_hall_ticket
+        has_hall_ticket,
+        courses_status
       `, { count: 'exact' })
       .order('created_at', { ascending: false })
       .range(0, 9999) // Increase limit from default 1000 to 10000 rows
@@ -253,6 +254,7 @@ CREATE INDEX IF NOT EXISTS idx_courses_created_at ON courses(created_at);
       registration_based: row.registration_based ?? false,
       credit_included: row.credit_included ?? true,
       has_hall_ticket: row.has_hall_ticket ?? true,
+      courses_status: row.courses_status ?? 'Pending',
     }))
 
     return NextResponse.json(mapped)
@@ -273,6 +275,13 @@ export async function POST(req: NextRequest) {
     if (!input.institution_code || !input.regulation_code || !input.course_code || !input.course_title) {
       return NextResponse.json({
         error: 'Missing required fields: institution_code, regulation_code, course_code, course_title'
+      }, { status: 400 })
+    }
+
+    const ALLOWED_STATUSES = ['Pending', 'BOS Approved', 'Locked'] as const
+    if (input.courses_status !== undefined && !ALLOWED_STATUSES.includes(String(input.courses_status) as typeof ALLOWED_STATUSES[number])) {
+      return NextResponse.json({
+        error: `Invalid courses_status. Allowed values: ${ALLOWED_STATUSES.join(', ')}`
       }, { status: 400 })
     }
 
@@ -393,6 +402,7 @@ export async function POST(req: NextRequest) {
       registration_based: input.registration_based !== undefined ? Boolean(input.registration_based) : false,
       credit_included: input.credit_included !== undefined ? Boolean(input.credit_included) : true,
       has_hall_ticket: input.has_hall_ticket !== undefined ? Boolean(input.has_hall_ticket) : true,
+      courses_status: input.courses_status ? String(input.courses_status) : 'Pending',
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     }).select('*').single()

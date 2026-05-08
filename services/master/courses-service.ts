@@ -97,6 +97,7 @@ export async function createCourse(data: Partial<CourseFormData>): Promise<Cours
 		annual_semester: Boolean(data.annual_semester),
 		registration_based: Boolean(data.registration_based),
 		credit_included: data.credit_included !== undefined ? Boolean(data.credit_included) : true,
+		courses_status: data.courses_status || 'Pending',
 	}
 
 	const response = await fetch('/api/master/courses', {
@@ -163,6 +164,7 @@ export async function updateCourse(id: string, data: Partial<CourseFormData>): P
 		annual_semester: Boolean(data.annual_semester),
 		registration_based: Boolean(data.registration_based),
 		credit_included: data.credit_included !== undefined ? Boolean(data.credit_included) : true,
+		courses_status: data.courses_status,
 	}
 
 	const response = await fetch(`/api/master/courses/${id}`, {

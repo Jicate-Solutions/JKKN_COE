@@ -89,7 +89,8 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import XLSX from '@/lib/utils/excel-compat'
-import type { Course, CourseImportError, UploadSummary } from '@/types/courses'
+import type { Course, CourseImportError, UploadSummary, CourseStatus } from '@/types/courses'
+import { COURSE_STATUS_OPTIONS } from '@/types/courses'
 import {
   fetchCourses as fetchCoursesService,
   createCourse,
@@ -143,6 +144,13 @@ export default function CoursesPage() {
   const [statusFilter, setStatusFilter] = useState("all")
   const [typeFilter, setTypeFilter] = useState("all")
   const [evaluationTypeFilter, setEvaluationTypeFilter] = useState("all")
+  const [courseStatusFilter, setCourseStatusFilter] = useState<'all' | CourseStatus>('all')
+
+  // Warning dialog when changing courses_status away from 'Locked'
+  const [lockedWarning, setLockedWarning] = useState<{
+    open: boolean
+    targetValue: CourseStatus | null
+  }>({ open: false, targetValue: null })
   const [sortField, setSortField] = useState<'course_code' | 'course_title' | 'course_category' | 'credits' | 'exam_duration' | 'is_active' | 'qp_code' | null>(null)
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc')
 
@@ -213,6 +221,7 @@ export default function CoursesPage() {
     syllabus_pdf_url: '',
     description: '',
     is_active: true,
+    courses_status: 'Pending' as CourseStatus,
     // Required fields for marks and hours
     class_hours: '0',
     theory_hours: '0',
@@ -386,7 +395,8 @@ export default function CoursesPage() {
                              (statusFilter === "inactive" && !course.is_active)
         const matchesType = typeFilter === "all" || course.course_type === typeFilter
         const matchesEvaluationType = evaluationTypeFilter === "all" || course.evaluation_type === evaluationTypeFilter
-        return matchesSearch && matchesStatus && matchesType && matchesEvaluationType
+        const matchesCourseStatus = courseStatusFilter === 'all' || (course.courses_status ?? 'Pending') === courseStatusFilter
+        return matchesSearch && matchesStatus && matchesType && matchesEvaluationType && matchesCourseStatus
       })
 
     if (!sortField) return data
@@ -421,7 +431,7 @@ export default function CoursesPage() {
       if (aValue > bValue) return sortDirection === 'asc' ? 1 : -1
       return 0
     })
-  }, [courses, searchTerm, statusFilter, typeFilter, evaluationTypeFilter, sortField, sortDirection])
+  }, [courses, searchTerm, statusFilter, typeFilter, evaluationTypeFilter, courseStatusFilter, sortField, sortDirection])
 
   // Page size options
   const pageSizeOptions = useMemo(() => {
@@ -444,7 +454,7 @@ export default function CoursesPage() {
   }, [filteredCourses, effectivePerPage, currentPage])
 
   // Reset page when filters change
-  useEffect(() => setCurrentPage(1), [searchTerm, sortField, sortDirection, itemsPerPage, statusFilter, typeFilter, evaluationTypeFilter])
+  useEffect(() => setCurrentPage(1), [searchTerm, sortField, sortDirection, itemsPerPage, statusFilter, typeFilter, evaluationTypeFilter, courseStatusFilter])
 
   const getStatusBadgeVariant = (course: Course) => {
     return course.is_active ? "default" : "secondary"
@@ -500,6 +510,7 @@ export default function CoursesPage() {
       syllabus_pdf_url: '',
       description: '',
       is_active: true,
+      courses_status: 'Pending' as CourseStatus,
       // Required fields for marks and hours
       class_hours: '0',
       theory_hours: '0',
@@ -556,6 +567,7 @@ export default function CoursesPage() {
       syllabus_pdf_url: s(row.syllabus_pdf_url),
       description: s(row.description),
       is_active: row.is_active ?? true,
+      courses_status: (row.courses_status ?? 'Pending') as CourseStatus,
       // Required fields for marks and hours
       class_hours: String(row.class_hours ?? 0),
       theory_hours: String(row.theory_hours ?? 0),
@@ -1748,6 +1760,18 @@ export default function CoursesPage() {
                       </SelectContent>
                     </Select>
 
+                    <Select value={courseStatusFilter} onValueChange={(v) => setCourseStatusFilter(v as 'all' | CourseStatus)}>
+                      <SelectTrigger className="h-8 text-sm w-[150px]">
+                        <SelectValue placeholder="All Course Status" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All Course Status</SelectItem>
+                        {COURSE_STATUS_OPTIONS.map((opt) => (
+                          <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+
                     <div className="relative flex-1 max-w-sm">
                       <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                       <Input
@@ -1810,13 +1834,14 @@ export default function CoursesPage() {
                             <span className="ml-1">{getSortIcon('is_active')}</span>
                           </Button>
                         </TableHead>
+                        <TableHead className="text-xs font-semibold">Course Status</TableHead>
                         <TableHead className="text-center text-xs font-semibold">Actions</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
                       {loading ? (
                         <TableRow>
-                          <TableCell colSpan={mustSelectInstitution ? 9 : 8} className="h-24 text-center">
+                          <TableCell colSpan={mustSelectInstitution ? 10 : 9} className="h-24 text-center">
                             <div className="flex items-center justify-center gap-2 text-muted-foreground">
                               <RefreshCw className="h-5 w-5 animate-spin" />
                               <span className="text-sm">Loading courses...</span>
@@ -1847,6 +1872,19 @@ export default function CoursesPage() {
                                   {course.is_active ? "Active" : "Inactive"}
                                 </Badge>
                               </TableCell>
+                              <TableCell>
+                                {(() => {
+                                  const cs = (course.courses_status ?? 'Pending') as CourseStatus
+                                  const cls = cs === 'Locked'
+                                    ? 'bg-slate-200 text-slate-800 border-slate-300'
+                                    : cs === 'BOS Approved'
+                                      ? 'bg-blue-100 text-blue-700 border-blue-200'
+                                      : 'bg-amber-100 text-amber-700 border-amber-200'
+                                  return (
+                                    <Badge variant="outline" className={`text-xs ${cls}`}>{cs}</Badge>
+                                  )
+                                })()}
+                              </TableCell>
                               <TableCell className="text-center">
                                 <DropdownMenu>
                                   <DropdownMenuTrigger asChild>
@@ -1875,7 +1913,7 @@ export default function CoursesPage() {
                         </>
                         ) : (
                           <TableRow>
-                            <TableCell colSpan={mustSelectInstitution ? 9 : 8} className="h-24 text-center">
+                            <TableCell colSpan={mustSelectInstitution ? 10 : 9} className="h-24 text-center">
                               <div className="flex flex-col items-center gap-1 text-muted-foreground">
                                 <BookText className="h-8 w-8 opacity-20" />
                                 <span className="text-sm font-medium">No courses found</span>
@@ -2035,6 +2073,34 @@ export default function CoursesPage() {
               >
                 Try Again
               </Button>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+
+        {/* Locked → other status warning */}
+        <AlertDialog open={lockedWarning.open} onOpenChange={(open) => { if (!open) setLockedWarning({ open: false, targetValue: null }) }}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle className="text-amber-700">Change locked course status?</AlertDialogTitle>
+              <AlertDialogDescription>
+                This course is currently <span className="font-semibold">Locked</span>. Changing it to{' '}
+                <span className="font-semibold">{lockedWarning.targetValue}</span> may unlock downstream workflows
+                (mappings, exam configuration, marks). Are you sure you want to continue?
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                className="bg-amber-600 hover:bg-amber-700"
+                onClick={() => {
+                  if (lockedWarning.targetValue) {
+                    setFormData({ ...formData, courses_status: lockedWarning.targetValue })
+                  }
+                  setLockedWarning({ open: false, targetValue: null })
+                }}
+              >
+                Yes, change status
+              </AlertDialogAction>
             </AlertDialogFooter>
           </AlertDialogContent>
         </AlertDialog>
@@ -2485,12 +2551,39 @@ export default function CoursesPage() {
                     <span className={`text-sm font-medium ${formData.registration_based ? 'text-green-600' : 'text-gray-500'}`}>{formData.registration_based ? 'Yes' : 'No'}</span>
                   </div>
                 </div>
-                <div className="space-y-2 md:col-span-3">
+                <div className="space-y-2">
                   <Label className="text-sm font-semibold">Status</Label>
                   <div className="flex items-center gap-3">
                     <Switch checked={formData.is_active} onCheckedChange={(v) => setFormData({ ...formData, is_active: v })} />
                     <span className={`text-sm font-medium ${formData.is_active ? 'text-green-600' : 'text-red-500'}`}>{formData.is_active ? 'Active' : 'Inactive'}</span>
                   </div>
+                </div>
+                <div className="space-y-2 md:col-span-2">
+                  <Label className="text-sm font-semibold">Course Status</Label>
+                  <Select
+                    value={formData.courses_status}
+                    onValueChange={(v) => {
+                      const next = v as CourseStatus
+                      // If currently Locked and user is changing to anything else, show warning first
+                      if (formData.courses_status === 'Locked' && next !== 'Locked') {
+                        setLockedWarning({ open: true, targetValue: next })
+                        return
+                      }
+                      setFormData({ ...formData, courses_status: next })
+                    }}
+                  >
+                    <SelectTrigger className="h-10">
+                      <SelectValue placeholder="Select status" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {COURSE_STATUS_OPTIONS.map((opt) => (
+                        <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {formData.courses_status === 'Locked' && (
+                    <p className="text-xs text-amber-700">This course is Locked. Changing the status will require confirmation.</p>
+                  )}
                 </div>
               </div>
             </div>

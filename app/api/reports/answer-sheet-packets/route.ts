@@ -68,16 +68,23 @@ export async function GET(request: NextRequest) {
 		// Get all packet IDs to fetch dummy numbers
 		const packetIds = filteredPackets.map((p: any) => p.id)
 
-		// Batch fetch dummy numbers for all packets
+		// Batch fetch dummy numbers for all packets.
+		// Override Supabase's default 1000-row cap with a high .range() so a
+		// chunk of 500 packets at ~25 sheets each (~12.5k rows) is not truncated.
 		const allDummyNumbers: any[] = []
 		for (let i = 0; i < packetIds.length; i += 500) {
 			const chunk = packetIds.slice(i, i + 500)
-			const { data: dummyData } = await supabase
+			const { data: dummyData, error: dummyError } = await supabase
 				.from('student_dummy_numbers')
 				.select('packet_id, dummy_number')
 				.in('packet_id', chunk)
 				.order('dummy_number', { ascending: true })
+				.range(0, 99999)
 
+			if (dummyError) {
+				console.error('Error fetching dummy numbers:', dummyError)
+				continue
+			}
 			if (dummyData) {
 				allDummyNumbers.push(...dummyData)
 			}
