@@ -119,8 +119,11 @@ export function RoomSuggestionPanel({
 	// Rule 1 (Room Minimization) can be bypassed by the user when they have
 	// operational reasons to spread learners across more rooms (e.g. practical
 	// labs, seat-swap to cover adjacent buildings, per-floor invigilator limits).
-	// Rules 2 and 3 are hard blockers — they affect exam integrity.
+	// Rule 3 (Shared Course in C2) can be bypassed when the user has verified
+	// the column contains a single program (no cross-program adjacency risk).
+	// Rule 2 remains a hard blocker — it affects exam integrity.
 	const [skipRule1, setSkipRule1] = useState(false)
+	const [skipRule3, setSkipRule3] = useState(false)
 
 	// Rule validation — runs on every plan change
 	const allViolations = useMemo(
@@ -131,13 +134,36 @@ export function RoomSuggestionPanel({
 		() => allViolations.filter(v => v.rule.startsWith('Rule 1')),
 		[allViolations]
 	)
-	const hardViolations = useMemo(
-		() => allViolations.filter(v => !v.rule.startsWith('Rule 1')),
+	const rule3Violations = useMemo(
+		() => allViolations.filter(v => v.rule.startsWith('Rule 3')),
 		[allViolations]
 	)
-	const violations = skipRule1 ? hardViolations : allViolations
+	// "True" hard violations — neither Rule 1 nor Rule 3 (each has its own override block)
+	const trueHardViolations = useMemo(
+		() => allViolations.filter(v =>
+			!v.rule.startsWith('Rule 1') && !v.rule.startsWith('Rule 3')
+		),
+		[allViolations]
+	)
+	// Effective blocking set — disables Confirm. Rule 3 blocks unless skipped.
+	const hardViolations = useMemo(
+		() => [
+			...trueHardViolations,
+			...(skipRule3 ? [] : rule3Violations),
+		],
+		[trueHardViolations, rule3Violations, skipRule3]
+	)
+	const violations = useMemo(
+		() => [
+			...trueHardViolations,
+			...(skipRule1 ? [] : rule1Violations),
+			...(skipRule3 ? [] : rule3Violations),
+		],
+		[trueHardViolations, rule1Violations, rule3Violations, skipRule1, skipRule3]
+	)
 	const hasViolations = violations.length > 0
 	const hasHardViolations = hardViolations.length > 0
+	const hasTrueHardViolations = trueHardViolations.length > 0
 
 	const toggleExpand = (index: number) => {
 		setExpandedRooms(prev => {
@@ -439,24 +465,54 @@ export function RoomSuggestionPanel({
 					</div>
 				)}
 
-				{/* Rule violations (hard blockers — rules 2, 3, ...) */}
-				{hasHardViolations && (
+				{/* True hard violations (Rule 2 and others — never overridable) */}
+				{hasTrueHardViolations && (
 					<div className="rounded-lg border border-red-200 bg-red-50 p-3 space-y-1">
 						<div className="flex items-center gap-1.5">
 							<AlertTriangle className="h-4 w-4 text-red-600" />
 							<p className="text-xs font-semibold text-red-800">
-								{hardViolations.length} Rule Violation{hardViolations.length !== 1 ? 's' : ''} Detected
+								{trueHardViolations.length} Rule Violation{trueHardViolations.length !== 1 ? 's' : ''} Detected
 							</p>
 						</div>
-						{hardViolations.slice(0, 5).map((v, i) => (
+						{trueHardViolations.slice(0, 5).map((v, i) => (
 							<p key={i} className="text-[11px] text-red-700 pl-5">
 								<span className="font-medium">{v.room_code}</span>: {v.details}
 								<span className="text-red-500 ml-1">({v.rule})</span>
 							</p>
 						))}
-						{hardViolations.length > 5 && (
-							<p className="text-[10px] text-red-500 pl-5">+{hardViolations.length - 5} more</p>
+						{trueHardViolations.length > 5 && (
+							<p className="text-[10px] text-red-500 pl-5">+{trueHardViolations.length - 5} more</p>
 						)}
+					</div>
+				)}
+
+				{/* Rule 3 advisory — user can override after verifying single-program columns */}
+				{rule3Violations.length > 0 && (
+					<div className={`rounded-lg border p-3 space-y-2 ${
+						skipRule3
+							? 'border-amber-200 bg-amber-50'
+							: 'border-red-200 bg-red-50'
+					}`}>
+						<div className="flex items-center gap-1.5">
+							<AlertTriangle className={`h-4 w-4 ${skipRule3 ? 'text-amber-600' : 'text-red-600'}`} />
+							<p className={`text-xs font-semibold ${skipRule3 ? 'text-amber-800' : 'text-red-800'}`}>
+								Rule 3: Shared Course in C2 {skipRule3 ? '(Skipped by user)' : ''}
+							</p>
+						</div>
+						{rule3Violations.map((v, i) => (
+							<p key={i} className={`text-[11px] pl-5 ${skipRule3 ? 'text-amber-700' : 'text-red-700'}`}>
+								<span className="font-medium">{v.room_code}</span>: {v.details}
+							</p>
+						))}
+						<label className="flex items-center gap-2 pl-5 pt-1 cursor-pointer">
+							<Checkbox
+								checked={skipRule3}
+								onCheckedChange={(checked) => setSkipRule3(checked === true)}
+							/>
+							<span className="text-[11px] text-muted-foreground">
+								Skip Rule 3 — I have verified C2 contains a single program (no cross-program adjacency risk) or different course codes share the same question paper by design
+							</span>
+						</label>
 					</div>
 				)}
 
@@ -494,8 +550,11 @@ export function RoomSuggestionPanel({
 					<div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 flex items-center gap-2">
 						<ShieldCheck className="h-4 w-4 text-emerald-600" />
 						<p className="text-xs font-medium text-emerald-800">
-							{rule1Violations.length > 0 && skipRule1
-								? 'Rule 1 skipped by user. Rules 2 & 3 satisfied.'
+							{(rule1Violations.length > 0 && skipRule1) || (rule3Violations.length > 0 && skipRule3)
+								? `${[
+									rule1Violations.length > 0 && skipRule1 ? 'Rule 1' : null,
+									rule3Violations.length > 0 && skipRule3 ? 'Rule 3' : null,
+								].filter(Boolean).join(' & ')} skipped by user. Remaining rules satisfied.`
 								: 'All rules satisfied'}
 						</p>
 					</div>
