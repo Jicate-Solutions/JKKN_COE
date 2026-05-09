@@ -95,6 +95,7 @@ export async function GET(request: Request) {
 				.select('course_id, semester_code, course_order')
 				.in('course_id', batch)
 				.eq('is_active', true)
+				.range(0, 99999)
 			for (const cm of mappings || []) {
 				const cid = (cm as any).course_id as string
 				if (!semesterByCourseId.has(cid)) {
@@ -132,28 +133,12 @@ export async function GET(request: Request) {
 			examRegIds.push(r.id)
 		}
 
-		// 3. Fetch exam_attendance → appeared (attendance_status = 'Present')
-		const appearedByCourseId = new Map<string, number>()
-		for (let i = 0; i < examRegIds.length; i += BATCH_SIZE) {
-			const batch = examRegIds.slice(i, i + BATCH_SIZE)
-			const { data, error } = await supabase
-				.from('exam_attendance')
-				.select('exam_registration_id, course_id, attendance_status')
-				.in('exam_registration_id', batch)
-			if (error) {
-				console.error('[cv-report/pass-percentage] exam_attendance error', error)
-				continue
-			}
-			for (const a of data || []) {
-				const status = String((a as any).attendance_status || '').toLowerCase()
-				if (status === 'present') {
-					const cid = (a as any).course_id as string
-					appearedByCourseId.set(cid, (appearedByCourseId.get(cid) || 0) + 1)
-				}
-			}
-		}
-
-		console.log('[cv-report/pass-percentage] Appeared courses:', appearedByCourseId.size)
+		// 3. Appeared = registration / QP count.
+		//    Same source as the Exam Date Wise Registration/QP Count report:
+		//    COUNT(exam_registrations) per course_code in this institution + session.
+		//    (No exam_attendance lookup — every registered learner is treated as appeared,
+		//    matching the QP-count semantics used elsewhere in the COE reports.)
+		const appearedByCourseCode = new Map<string, number>(regCountByCourseCode)
 
 		// 4. Fetch marks_entry → passed (total_marks_obtained >= external_pass_mark)
 		const passedByCourseId = new Map<string, number>()
@@ -163,6 +148,7 @@ export async function GET(request: Request) {
 				.from('marks_entry')
 				.select('exam_registration_id, course_id, total_marks_obtained')
 				.in('exam_registration_id', batch)
+				.range(0, 99999)
 			if (error) {
 				console.error('[cv-report/pass-percentage] marks_entry error', error)
 				continue
@@ -182,7 +168,7 @@ export async function GET(request: Request) {
 		// 5. Build rows
 		const allRows = courses.map((c: any) => {
 			const total = regCountByCourseCode.get(c.course_code) || 0
-			const appeared = appearedByCourseId.get(c.id) || 0
+			const appeared = appearedByCourseCode.get(c.course_code) || 0
 			const passed = passedByCourseId.get(c.id) || 0
 			const pass_percentage = appeared > 0 ? Math.round((passed / appeared) * 1000) / 10 : 0
 			const semCode = semesterByCourseId.get(c.id) || ''

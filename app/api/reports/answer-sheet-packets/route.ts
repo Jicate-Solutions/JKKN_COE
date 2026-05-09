@@ -69,24 +69,34 @@ export async function GET(request: NextRequest) {
 		const packetIds = filteredPackets.map((p: any) => p.id)
 
 		// Batch fetch dummy numbers for all packets.
-		// Override Supabase's default 1000-row cap with a high .range() so a
-		// chunk of 500 packets at ~25 sheets each (~12.5k rows) is not truncated.
+		// Paginate explicitly so we are not subject to PostgREST's max-rows cap
+		// (default 1000 on Supabase). Smaller packet-id chunks plus per-chunk
+		// pagination guarantees every dummy number is returned, even with
+		// thousands of packets per session.
 		const allDummyNumbers: any[] = []
-		for (let i = 0; i < packetIds.length; i += 500) {
-			const chunk = packetIds.slice(i, i + 500)
-			const { data: dummyData, error: dummyError } = await supabase
-				.from('student_dummy_numbers')
-				.select('packet_id, dummy_number')
-				.in('packet_id', chunk)
-				.order('dummy_number', { ascending: true })
-				.range(0, 99999)
+		const PACKET_CHUNK = 100
+		const PAGE_SIZE = 1000
+		for (let i = 0; i < packetIds.length; i += PACKET_CHUNK) {
+			const chunk = packetIds.slice(i, i + PACKET_CHUNK)
+			let from = 0
+			// eslint-disable-next-line no-constant-condition
+			while (true) {
+				const { data: dummyData, error: dummyError } = await supabase
+					.from('student_dummy_numbers')
+					.select('packet_id, dummy_number')
+					.in('packet_id', chunk)
+					.order('dummy_number', { ascending: true })
+					.range(from, from + PAGE_SIZE - 1)
 
-			if (dummyError) {
-				console.error('Error fetching dummy numbers:', dummyError)
-				continue
-			}
-			if (dummyData) {
+				if (dummyError) {
+					console.error('Error fetching dummy numbers:', dummyError)
+					break
+				}
+				if (!dummyData || dummyData.length === 0) break
+
 				allDummyNumbers.push(...dummyData)
+				if (dummyData.length < PAGE_SIZE) break
+				from += PAGE_SIZE
 			}
 		}
 
