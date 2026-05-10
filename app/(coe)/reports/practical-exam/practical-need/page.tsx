@@ -56,6 +56,11 @@ interface LunchSummary {
 	total_persons: number
 }
 
+interface BoardRef {
+	board_code: string
+	board_name: string
+}
+
 interface ExaminerCertData {
 	examiner_name: string
 	designation: string
@@ -66,6 +71,7 @@ interface ExaminerCertData {
 	to_date: string
 	all_dates?: string[]
 	total_days: number
+	boards?: BoardRef[]
 }
 
 // ---------------------------------------------------------------------------
@@ -147,6 +153,8 @@ export default function PracticalExamReportsPage() {
 
 	// Certificate type filter & sorting (Central Valuation)
 	const [cvCertTypeFilter, setCvCertTypeFilter] = useState<'all' | 'External' | 'Internal' | 'Chief' | 'Assistant'>('all')
+	const [cvBoardFilter, setCvBoardFilter] = useState<string>('all')
+	const [cvAvailableBoards, setCvAvailableBoards] = useState<BoardRef[]>([])
 	const [cvCertSortField, setCvCertSortField] = useState<'examiner_name' | 'type' | 'from_date' | 'to_date' | 'total_days'>('examiner_name')
 	const [cvCertSortDir, setCvCertSortDir] = useState<'asc' | 'desc'>('asc')
 
@@ -196,6 +204,8 @@ export default function PracticalExamReportsPage() {
 		setCvExaminers([])
 		setCvSelectedExaminerIds(new Set())
 		setCvSelectAll(false)
+		setCvAvailableBoards([])
+		setCvBoardFilter('all')
 	}
 
 	const loadInstitutions = useCallback(async () => {
@@ -291,8 +301,10 @@ export default function PracticalExamReportsPage() {
 			if (!res.ok) throw new Error('Failed to load data')
 			const data = await res.json()
 			setCvExaminers(data.examiners || [])
+			setCvAvailableBoards(data.available_boards || [])
 			setCvSelectedExaminerIds(new Set())
 			setCvSelectAll(false)
+			setCvBoardFilter('all')
 		} catch {
 			toast({ title: '❌ Error', description: 'Failed to load CV examiner data', variant: 'destructive' })
 		} finally {
@@ -584,6 +596,7 @@ export default function PracticalExamReportsPage() {
 	const filteredCvExaminers = (() => {
 		let list = cvExaminers.map((e, i) => ({ ...e, _origIdx: i }))
 		if (cvCertTypeFilter !== 'all') list = list.filter(e => e.type === cvCertTypeFilter)
+		if (cvBoardFilter !== 'all') list = list.filter(e => e.boards?.some(b => b.board_code === cvBoardFilter))
 		list.sort((a, b) => {
 			let cmp = 0
 			if (cvCertSortField === 'examiner_name') cmp = a.examiner_name.localeCompare(b.examiner_name)
@@ -1194,6 +1207,22 @@ export default function PracticalExamReportsPage() {
 															</SelectContent>
 														</Select>
 													</div>
+													{cvAvailableBoards.length > 0 && (
+														<div className="space-y-1">
+															<Label className="text-xs font-medium">Board</Label>
+															<Select value={cvBoardFilter} onValueChange={(v) => { setCvBoardFilter(v); setCvSelectedExaminerIds(new Set()); setCvSelectAll(false) }}>
+																<SelectTrigger className="h-8 text-xs w-44">
+																	<SelectValue />
+																</SelectTrigger>
+																<SelectContent>
+																	<SelectItem value="all" className="text-xs">All Boards</SelectItem>
+																	{cvAvailableBoards.map(b => (
+																		<SelectItem key={b.board_code} value={b.board_code} className="text-xs">{b.board_name}</SelectItem>
+																	))}
+																</SelectContent>
+															</Select>
+														</div>
+													)}
 													<div className="flex-1" />
 													<Button onClick={handleDownloadCvCertPdf} disabled={downloadingPdf || cvSelectedExaminerIds.size === 0} className="bg-indigo-600 hover:bg-indigo-700 text-white h-8 text-xs">
 														{downloadingPdf ? <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> : <Download className="h-3.5 w-3.5 mr-1.5" />}
@@ -1233,6 +1262,7 @@ export default function PracticalExamReportsPage() {
 																	Type{cvSortIcon('type')}
 																</TableHead>
 																<TableHead className="text-white font-semibold text-sm">Institution / Department</TableHead>
+																<TableHead className="text-white font-semibold text-sm">Board</TableHead>
 																<TableHead className="text-white font-semibold text-sm text-center cursor-pointer select-none" onClick={() => handleCvCertSort('from_date')}>
 																	From{cvSortIcon('from_date')}
 																</TableHead>
@@ -1274,6 +1304,19 @@ export default function PracticalExamReportsPage() {
 																			? [ex.department, ex.institution_name].filter(Boolean).join(', ')
 																			: '-'
 																		}
+																	</TableCell>
+																	<TableCell className="py-3">
+																		{ex.boards && ex.boards.length > 0 ? (
+																			<div className="flex flex-wrap gap-1">
+																				{ex.boards.map(b => (
+																					<Badge key={b.board_code} variant="outline" className="text-xs bg-slate-50 text-slate-700 border-slate-200 whitespace-nowrap">
+																						{b.board_name}
+																					</Badge>
+																				))}
+																			</div>
+																		) : (
+																			<span className="text-muted-foreground text-sm">-</span>
+																		)}
 																	</TableCell>
 																	<TableCell className="text-sm py-3 text-center">{formatDate(ex.from_date)}</TableCell>
 																	<TableCell className="text-sm py-3 text-center">

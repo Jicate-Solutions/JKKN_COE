@@ -108,7 +108,7 @@ export async function GET(request: Request) {
 			const { data: packets, error: packetErr } = await supabase
 				.from('answer_sheet_packets')
 				.select(`
-					valuation_date,
+					course_id, valuation_date,
 					internal_examiner_staff_id, internal_examiner_name, internal_examiner_designation,
 					chief_examiner_staff_id, chief_examiner_name, chief_examiner_designation,
 					assistant_examiner_staff_id, assistant_examiner_name, assistant_examiner_designation,
@@ -123,38 +123,70 @@ export async function GET(request: Request) {
 			if (packetErr) throw packetErr
 
 			if (!packets || packets.length === 0) {
-				return NextResponse.json({ examiners: [] })
+				return NextResponse.json({ examiners: [], available_boards: [] })
 			}
 
-			// External: examiner_id → set of dates
+			// Resolve course_id → board_code → board_name
+			const distinctCourseIds = [...new Set(packets.map(p => p.course_id as string).filter(Boolean))]
+			const courseToBoardCode = new Map<string, string>()
+			if (distinctCourseIds.length > 0) {
+				const { data: courses } = await supabase
+					.from('courses')
+					.select('id, board_code')
+					.in('id', distinctCourseIds)
+				for (const c of courses || []) {
+					if (c.board_code) courseToBoardCode.set(c.id as string, c.board_code as string)
+				}
+			}
+			const distinctBoardCodes = [...new Set([...courseToBoardCode.values()])]
+			const boardNameByCode = new Map<string, string>()
+			if (distinctBoardCodes.length > 0) {
+				const { data: boardRows } = await supabase
+					.from('board')
+					.select('board_code, board_name')
+					.in('board_code', distinctBoardCodes)
+				for (const b of boardRows || []) {
+					if (b.board_code) boardNameByCode.set(b.board_code as string, (b.board_name as string) || b.board_code as string)
+				}
+			}
+
+			// External: examiner_id → set of dates & board codes
 			const externalDates = new Map<string, Set<string>>()
+			const externalBoards = new Map<string, Set<string>>()
 			// Internal/chief/assistant: each tracked separately so a staff member
 			// who serves in multiple roles gets a certificate per role
-			type StaffBucket = Map<string, { name: string; designation: string; dates: Set<string> }>
+			type StaffBucket = Map<string, { name: string; designation: string; dates: Set<string>; boards: Set<string> }>
 			const internalDates: StaffBucket = new Map()
 			const chiefDates: StaffBucket = new Map()
 			const assistantDates: StaffBucket = new Map()
 
-			const addStaff = (bucket: StaffBucket, staffId: string | null, name: string | null, designation: string | null, date: string) => {
+			const addStaff = (bucket: StaffBucket, staffId: string | null, name: string | null, designation: string | null, date: string, boardCode: string | undefined) => {
 				if (!staffId) return
 				if (!bucket.has(staffId)) {
-					bucket.set(staffId, { name: name || '', designation: designation || '', dates: new Set() })
+					bucket.set(staffId, { name: name || '', designation: designation || '', dates: new Set(), boards: new Set() })
 				}
-				bucket.get(staffId)!.dates.add(date)
+				const entry = bucket.get(staffId)!
+				entry.dates.add(date)
+				if (boardCode) entry.boards.add(boardCode)
 			}
 
 			for (const p of packets) {
 				const date = p.valuation_date as string
 				if (!date) continue
+				const boardCode = courseToBoardCode.get(p.course_id as string)
 
 				if (p.external_examiner_id) {
-					if (!externalDates.has(p.external_examiner_id)) externalDates.set(p.external_examiner_id, new Set())
+					if (!externalDates.has(p.external_examiner_id)) {
+						externalDates.set(p.external_examiner_id, new Set())
+						externalBoards.set(p.external_examiner_id, new Set())
+					}
 					externalDates.get(p.external_examiner_id)!.add(date)
+					if (boardCode) externalBoards.get(p.external_examiner_id)!.add(boardCode)
 				}
 
-				addStaff(internalDates, p.internal_examiner_staff_id, p.internal_examiner_name, p.internal_examiner_designation, date)
-				addStaff(chiefDates, p.chief_examiner_staff_id, p.chief_examiner_name, p.chief_examiner_designation, date)
-				addStaff(assistantDates, p.assistant_examiner_staff_id, p.assistant_examiner_name, p.assistant_examiner_designation, date)
+				addStaff(internalDates, p.internal_examiner_staff_id, p.internal_examiner_name, p.internal_examiner_designation, date, boardCode)
+				addStaff(chiefDates, p.chief_examiner_staff_id, p.chief_examiner_name, p.chief_examiner_designation, date, boardCode)
+				addStaff(assistantDates, p.assistant_examiner_staff_id, p.assistant_examiner_name, p.assistant_examiner_designation, date, boardCode)
 			}
 
 			// Look up external examiner profile data
@@ -176,6 +208,9 @@ export async function GET(request: Request) {
 				}
 			}
 
+			const toBoardList = (codes: Set<string>) =>
+				[...codes].sort().map(code => ({ board_code: code, board_name: boardNameByCode.get(code) || code }))
+
 			const externalList = externalIds.map(id => {
 				const detail = examinerDetails.get(id)
 				const dates = [...(externalDates.get(id) || [])].sort()
@@ -192,6 +227,7 @@ export async function GET(request: Request) {
 					to_date: fromDate === toDate ? '' : toDate,
 					all_dates: dates,
 					total_days: dates.length,
+					boards: toBoardList(externalBoards.get(id) || new Set()),
 				}
 			}).sort((a, b) => a.examiner_name.localeCompare(b.examiner_name))
 
@@ -211,17 +247,31 @@ export async function GET(request: Request) {
 						to_date: fromDate === toDate ? '' : toDate,
 						all_dates: dates,
 						total_days: dates.length,
+						boards: toBoardList(val.boards),
 					}
 				}).sort((a, b) => a.examiner_name.localeCompare(b.examiner_name))
 
-			return NextResponse.json({
-				examiners: [
-					...externalList,
-					...buildStaffList(internalDates, 'Internal'),
-					...buildStaffList(chiefDates, 'Chief'),
-					...buildStaffList(assistantDates, 'Assistant'),
-				],
-			})
+			const allExaminers = [
+				...externalList,
+				...buildStaffList(internalDates, 'Internal'),
+				...buildStaffList(chiefDates, 'Chief'),
+				...buildStaffList(assistantDates, 'Assistant'),
+			]
+
+			// Collect all distinct boards present across all examiners
+			const seenBoardCodes = new Set<string>()
+			const available_boards: { board_code: string; board_name: string }[] = []
+			for (const ex of allExaminers) {
+				for (const b of ex.boards) {
+					if (!seenBoardCodes.has(b.board_code)) {
+						seenBoardCodes.add(b.board_code)
+						available_boards.push(b)
+					}
+				}
+			}
+			available_boards.sort((a, b) => a.board_code.localeCompare(b.board_code))
+
+			return NextResponse.json({ examiners: allExaminers, available_boards })
 		}
 
 		return NextResponse.json({ error: 'Invalid action' }, { status: 400 })
