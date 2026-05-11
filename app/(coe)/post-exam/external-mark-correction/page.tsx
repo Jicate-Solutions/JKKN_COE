@@ -20,7 +20,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { useToast } from '@/hooks/common/use-toast'
 import { useInstitutionFilter } from '@/hooks/use-institution-filter'
 import { useSessionSync } from '@/hooks/use-session-sync'
-import { Edit3, Check, ChevronsUpDown, History, Save, AlertTriangle, Download, FileText, Search, Loader2 } from 'lucide-react'
+import { Edit3, Check, ChevronsUpDown, History, Save, AlertTriangle, Search, Loader2 } from 'lucide-react'
 import { numberToWords } from '@/services/post-exam/external-mark-entry-service'
 import { cn } from '@/lib/utils'
 import { useAuth } from '@/lib/auth/auth-context-parent'
@@ -30,13 +30,12 @@ interface Institution {
 	id: string
 	name: string
 	institution_code: string
-	institution_name?: string
 }
 
 interface ExamSession {
 	id: string
-	session_code: string
 	session_name: string
+	session_code: string
 }
 
 interface Course {
@@ -47,23 +46,17 @@ interface Course {
 
 interface Student {
 	id: string
+	marks_entry_id: string
 	student_dummy_id: string
 	dummy_number: string
 	exam_registration_id: string
-	register_number?: string
-	program_id: string | null
+	register_number: string
 	total_marks_obtained: number | null
 	total_marks_in_words: string
 	remarks: string
 	marks_out_of: number
-	source?: string
-}
-
-interface CourseDetails {
-	subject_code: string
-	subject_name: string
-	maximum_marks: number
-	minimum_pass_marks: number
+	source: string
+	external_pass_mark: number
 }
 
 interface CorrectionHistory {
@@ -74,23 +67,15 @@ interface CorrectionHistory {
 	correction_reason: string
 	correction_type: string
 	corrected_at: string
-	users: {
-		full_name: string
-		email: string
-	}
+	users: { full_name: string; email: string }
 }
 
 export default function ExternalMarkCorrectionPage() {
 	const { toast } = useToast()
 	const { user } = useAuth()
 
-	// Institution filter hook
-	const {
-		isReady,
-		appendToUrl,
-		mustSelectInstitution,
-		institutionId
-	} = useInstitutionFilter()
+	const { isReady, appendToUrl, mustSelectInstitution, institutionId } = useInstitutionFilter()
+	const { selectedSessionId, setSelectedSessionId, mustSelectSession } = useSessionSync()
 
 	// Dropdown data
 	const [institutions, setInstitutions] = useState<Institution[]>([])
@@ -99,27 +84,27 @@ export default function ExternalMarkCorrectionPage() {
 
 	// Selected values
 	const [selectedInstitutionId, setSelectedInstitutionId] = useState<string>('')
-	const { selectedSessionId, setSelectedSessionId, mustSelectSession } = useSessionSync()
 	const [selectedCourseId, setSelectedCourseId] = useState<string>('')
-	const [registerNumber, setRegisterNumber] = useState<string>('')
+	const [searchValue, setSearchValue] = useState<string>('')
 
-	// Combobox open states
+	// Combobox states
 	const [institutionOpen, setInstitutionOpen] = useState(false)
 	const [courseOpen, setCourseOpen] = useState(false)
 	const [courseSearchQuery, setCourseSearchQuery] = useState('')
 
-	// Students and course details
+	// Results
 	const [students, setStudents] = useState<Student[]>([])
-	const [courseDetails, setCourseDetails] = useState<CourseDetails | null>(null)
+	const [courseDetails, setCourseDetails] = useState<{ subject_code: string; subject_name: string; maximum_marks: number; minimum_pass_marks: number } | null>(null)
+	const [searchedBy, setSearchedBy] = useState<'dummy' | 'register' | null>(null)
 
-	// Loading states
+	// Loading
 	const [loadingInstitutions, setLoadingInstitutions] = useState(false)
 	const [loadingSessions, setLoadingSessions] = useState(false)
 	const [loadingCourses, setLoadingCourses] = useState(false)
 	const [loadingStudents, setLoadingStudents] = useState(false)
 	const [saving, setSaving] = useState(false)
 
-	// Edit dialog state
+	// Edit dialog
 	const [editDialogOpen, setEditDialogOpen] = useState(false)
 	const [selectedStudent, setSelectedStudent] = useState<Student | null>(null)
 	const [newMarks, setNewMarks] = useState<string>('')
@@ -127,57 +112,49 @@ export default function ExternalMarkCorrectionPage() {
 	const [correctionType, setCorrectionType] = useState<string>('')
 	const [referenceNumber, setReferenceNumber] = useState<string>('')
 
-	// History dialog state
+	// History dialog
 	const [historyDialogOpen, setHistoryDialogOpen] = useState(false)
 	const [correctionHistory, setCorrectionHistory] = useState<CorrectionHistory[]>([])
 	const [loadingHistory, setLoadingHistory] = useState(false)
 
-	// Load institutions when context is ready
 	useEffect(() => {
-		if (isReady) {
-			loadInstitutions()
-		}
+		if (isReady) loadInstitutions()
 	}, [isReady])
 
-	// Auto-select institution for normal users
 	useEffect(() => {
 		if (isReady && !mustSelectInstitution && institutionId && !selectedInstitutionId) {
 			setSelectedInstitutionId(institutionId)
 		}
 	}, [isReady, mustSelectInstitution, institutionId, selectedInstitutionId])
 
-	// Load sessions when institution is selected
 	useEffect(() => {
 		if (selectedInstitutionId) {
 			loadSessions(selectedInstitutionId)
-			// Reset dependent fields
 			setSelectedSessionId('')
 			setExamSessions([])
 			setCourses([])
 			setSelectedCourseId('')
-			setRegisterNumber('')
+			setSearchValue('')
 			setStudents([])
 			setCourseDetails(null)
 		}
 	}, [selectedInstitutionId])
 
-	// Load courses when session is selected
 	useEffect(() => {
 		if (selectedInstitutionId && selectedSessionId) {
 			loadCourses(selectedInstitutionId, selectedSessionId)
-			// Reset dependent fields
 			setSelectedCourseId('')
-			setRegisterNumber('')
+			setSearchValue('')
 			setStudents([])
 			setCourseDetails(null)
 		}
 	}, [selectedSessionId])
 
-	// Clear results when course changes
 	useEffect(() => {
-		setRegisterNumber('')
+		setSearchValue('')
 		setStudents([])
 		setCourseDetails(null)
+		setSearchedBy(null)
 	}, [selectedCourseId])
 
 	const loadInstitutions = useCallback(async () => {
@@ -185,20 +162,15 @@ export default function ExternalMarkCorrectionPage() {
 			setLoadingInstitutions(true)
 			const url = appendToUrl('/api/post-exam/external-marks-correction?action=institutions')
 			const response = await fetch(url)
-			if (!response.ok) throw new Error('Failed to load institutions')
+			if (!response.ok) throw new Error()
 			const data = await response.json()
-			setInstitutions(data.map((inst: any) => ({
-				id: inst.id,
-				name: inst.name || inst.institution_name,
-				institution_code: inst.institution_code,
-				institution_name: inst.institution_name || inst.name
+			setInstitutions(data.map((i: any) => ({
+				id: i.id,
+				name: i.name || i.institution_name,
+				institution_code: i.institution_code
 			})))
 		} catch {
-			toast({
-				title: "❌ Error",
-				description: "Failed to load institutions",
-				variant: "destructive",
-			})
+			toast({ title: '❌ Error', description: 'Failed to load institutions', variant: 'destructive' })
 		} finally {
 			setLoadingInstitutions(false)
 		}
@@ -207,19 +179,11 @@ export default function ExternalMarkCorrectionPage() {
 	const loadSessions = async (instId: string) => {
 		try {
 			setLoadingSessions(true)
-			setExamSessions([])
-			const response = await fetch(
-				`/api/post-exam/external-marks-correction?action=sessions&institutionId=${instId}`
-			)
-			if (!response.ok) throw new Error('Failed to load sessions')
-			const data = await response.json()
-			setExamSessions(data)
+			const res = await fetch(`/api/post-exam/external-marks-correction?action=sessions&institutionId=${instId}`)
+			if (!res.ok) throw new Error()
+			setExamSessions(await res.json())
 		} catch {
-			toast({
-				title: "❌ Error",
-				description: "Failed to load exam sessions",
-				variant: "destructive",
-			})
+			toast({ title: '❌ Error', description: 'Failed to load exam sessions', variant: 'destructive' })
 		} finally {
 			setLoadingSessions(false)
 		}
@@ -229,38 +193,25 @@ export default function ExternalMarkCorrectionPage() {
 		try {
 			setLoadingCourses(true)
 			setCourses([])
-			const response = await fetch(
+			const res = await fetch(
 				`/api/post-exam/external-marks-correction?action=courses&institutionId=${instId}&sessionId=${sessionId}`
 			)
-			if (!response.ok) throw new Error('Failed to load courses')
-			const data = await response.json()
+			if (!res.ok) throw new Error()
+			const data = await res.json()
 			setCourses(data)
-
 			if (data.length === 0) {
-				toast({
-					title: "⚠️ No Courses",
-					description: "No marks entries found for this session",
-					variant: "destructive",
-				})
+				toast({ title: '⚠️ No Courses', description: 'No marks entries found for this session', variant: 'destructive' })
 			}
 		} catch {
-			toast({
-				title: "❌ Error",
-				description: "Failed to load courses",
-				variant: "destructive",
-			})
+			toast({ title: '❌ Error', description: 'Failed to load courses', variant: 'destructive' })
 		} finally {
 			setLoadingCourses(false)
 		}
 	}
 
-	const searchByRegisterNumber = async () => {
-		if (!selectedCourseId || !registerNumber.trim()) {
-			toast({
-				title: "⚠️ Selection Required",
-				description: "Please select course and enter register number",
-				variant: "destructive",
-			})
+	const handleSearch = async () => {
+		if (!selectedCourseId || !searchValue.trim()) {
+			toast({ title: '⚠️ Required', description: 'Please select a course and enter a dummy or register number', variant: 'destructive' })
 			return
 		}
 
@@ -268,53 +219,34 @@ export default function ExternalMarkCorrectionPage() {
 			setLoadingStudents(true)
 			setStudents([])
 			setCourseDetails(null)
+			setSearchedBy(null)
 
 			const effectiveInstitutionId = selectedInstitutionId || institutionId
-			const response = await fetch(
-				`/api/post-exam/external-marks-correction?action=searchByRegister&` +
-				`institutionId=${effectiveInstitutionId}&` +
-				`sessionId=${selectedSessionId}&` +
-				`courseId=${selectedCourseId}&` +
-				`registerNumber=${encodeURIComponent(registerNumber.trim())}`
+			const res = await fetch(
+				`/api/post-exam/external-marks-correction?action=searchByDummyOrRegister&` +
+				`institutionId=${effectiveInstitutionId}&sessionId=${selectedSessionId}&courseId=${selectedCourseId}&searchValue=${encodeURIComponent(searchValue.trim())}`
 			)
 
-			if (!response.ok) {
-				const error = await response.json()
-				throw new Error(error.error || 'Failed to search learner')
-			}
-
-			const data = await response.json()
+			if (!res.ok) throw new Error('Failed to search')
+			const data = await res.json()
 
 			if (!data.students || data.students.length === 0) {
-				toast({
-					title: "⚠️ No Results",
-					description: `No marks entry found for register number "${registerNumber}"`,
-					variant: "destructive",
-				})
+				toast({ title: '⚠️ No Results', description: `No marks entry found for "${searchValue}"`, variant: 'destructive' })
 				return
 			}
 
-			// Map students with marks entry IDs
-			const studentsWithMarks = data.students.map((student: any) => ({
-				...student,
-				id: student.marks_entry_id || student.student_dummy_id,
-				marks_out_of: data.course_details?.maximum_marks || 100
-			}))
+			setStudents(data.students.map((s: any) => ({ ...s, id: s.marks_entry_id || s.student_dummy_id })))
+			setCourseDetails(data.course_details || null)
+			setSearchedBy(data.searched_by || null)
 
-			setStudents(studentsWithMarks)
-			setCourseDetails(data.course_details)
-
+			const byLabel = data.searched_by === 'dummy' ? 'dummy number' : 'register number'
 			toast({
-				title: "✅ Learner Found",
-				description: `Found ${data.students.length} entry for register number "${registerNumber}"`,
-				className: "bg-green-50 border-green-200 text-green-800",
+				title: '✅ Found',
+				description: `Found ${data.students.length} entry by ${byLabel}`,
+				className: 'bg-green-50 border-green-200 text-green-800',
 			})
 		} catch (error) {
-			toast({
-				title: "❌ Error",
-				description: error instanceof Error ? error.message : 'Failed to search',
-				variant: "destructive",
-			})
+			toast({ title: '❌ Error', description: error instanceof Error ? error.message : 'Failed to search', variant: 'destructive' })
 		} finally {
 			setLoadingStudents(false)
 		}
@@ -333,78 +265,45 @@ export default function ExternalMarkCorrectionPage() {
 		setSelectedStudent(student)
 		setHistoryDialogOpen(true)
 		setLoadingHistory(true)
-
 		try {
-			const response = await fetch(
-				`/api/post-exam/external-marks-correction?action=history&marksEntryId=${student.id}`
-			)
-			if (!response.ok) throw new Error('Failed to load history')
-			const data = await response.json()
-			setCorrectionHistory(data)
+			const res = await fetch(`/api/post-exam/external-marks-correction?action=history&marksEntryId=${student.id}`)
+			if (!res.ok) throw new Error()
+			setCorrectionHistory(await res.json())
 		} catch {
-			toast({
-				title: "❌ Error",
-				description: "Failed to load correction history",
-				variant: "destructive",
-			})
+			toast({ title: '❌ Error', description: 'Failed to load correction history', variant: 'destructive' })
 		} finally {
 			setLoadingHistory(false)
 		}
 	}
 
 	const handleSaveCorrection = async () => {
-		if (!selectedStudent || !courseDetails) return
+		if (!selectedStudent) return
 
-		// Validation
 		const newMarksNum = parseFloat(newMarks)
 		if (isNaN(newMarksNum) || newMarksNum < 0) {
-			toast({
-				title: "❌ Invalid Marks",
-				description: "Please enter valid marks",
-				variant: "destructive",
-			})
+			toast({ title: '❌ Invalid Marks', description: 'Please enter valid marks', variant: 'destructive' })
 			return
 		}
-
-		if (newMarksNum > courseDetails.maximum_marks) {
-			toast({
-				title: "❌ Invalid Marks",
-				description: `Marks cannot exceed ${courseDetails.maximum_marks}`,
-				variant: "destructive",
-			})
+		if (newMarksNum > selectedStudent.marks_out_of) {
+			toast({ title: '❌ Invalid Marks', description: `Marks cannot exceed ${selectedStudent.marks_out_of}`, variant: 'destructive' })
 			return
 		}
-
 		if (newMarksNum === selectedStudent.total_marks_obtained) {
-			toast({
-				title: "⚠️ No Change",
-				description: "New marks must be different from current marks",
-				variant: "destructive",
-			})
+			toast({ title: '⚠️ No Change', description: 'New marks must be different from current marks', variant: 'destructive' })
 			return
 		}
-
 		if (!correctionReason.trim()) {
-			toast({
-				title: "⚠️ Reason Required",
-				description: "Please provide a reason for correction",
-				variant: "destructive",
-			})
+			toast({ title: '⚠️ Reason Required', description: 'Please provide a reason for correction', variant: 'destructive' })
 			return
 		}
-
 		if (!correctionType) {
-			toast({
-				title: "⚠️ Type Required",
-				description: "Please select correction type",
-				variant: "destructive",
-			})
+			toast({ title: '⚠️ Type Required', description: 'Please select correction type', variant: 'destructive' })
 			return
 		}
 
 		try {
 			setSaving(true)
-			const response = await fetch('/api/post-exam/external-marks-correction', {
+			const res = await fetch('/api/post-exam/external-marks-correction', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({
@@ -418,92 +317,33 @@ export default function ExternalMarkCorrectionPage() {
 				})
 			})
 
-			if (!response.ok) {
-				const error = await response.json()
-				throw new Error(error.error || 'Failed to save correction')
+			if (!res.ok) {
+				const err = await res.json()
+				throw new Error(err.error || 'Failed to save correction')
 			}
 
+			const displayId = selectedStudent.dummy_number || selectedStudent.register_number || searchValue
 			toast({
-				title: "✅ Correction Saved",
-				description: `Marks for ${selectedStudent.dummy_number || registerNumber} updated from ${selectedStudent.total_marks_obtained} to ${newMarksNum}`,
-				className: "bg-green-50 border-green-200 text-green-800",
+				title: '✅ Correction Saved',
+				description: `Marks for ${displayId} updated from ${selectedStudent.total_marks_obtained} to ${newMarksNum}`,
+				className: 'bg-green-50 border-green-200 text-green-800',
 			})
 
 			setEditDialogOpen(false)
-
-			// Refresh students data by re-searching
-			searchByRegisterNumber()
-
+			handleSearch()
 		} catch (error) {
-			toast({
-				title: "❌ Save Failed",
-				description: error instanceof Error ? error.message : 'Failed to save correction',
-				variant: "destructive",
-			})
+			toast({ title: '❌ Save Failed', description: error instanceof Error ? error.message : 'Failed to save correction', variant: 'destructive' })
 		} finally {
 			setSaving(false)
 		}
 	}
 
-	const generatePDF = async () => {
-		if (!courseDetails || students.length === 0) return
+	const filteredCourses = courses.filter((c) => {
+		if (!courseSearchQuery.trim()) return true
+		const q = courseSearchQuery.toLowerCase()
+		return c.course_code.toLowerCase().includes(q) || c.course_name.toLowerCase().includes(q)
+	})
 
-		try {
-			const { generateExternalMarksPDF } = await import('@/lib/utils/generate-external-marks-pdf')
-
-			// Look up bundle number for this institution/session/course
-			let bundleNo = ''
-			if (selectedInstitutionId && selectedSessionId && selectedCourseId) {
-				try {
-					const params = new URLSearchParams({
-						institutions_id: selectedInstitutionId,
-						examination_session_id: selectedSessionId,
-						course_id: selectedCourseId
-					})
-					const res = await fetch(`/api/post-exam/bundle-numbers?${params.toString()}`)
-					if (res.ok) {
-						const json = await res.json()
-						if (json?.bundle_number != null) bundleNo = String(json.bundle_number)
-					}
-				} catch (e) {
-					console.warn('Bundle number lookup failed:', e)
-				}
-			}
-
-			const pdfData = {
-				subject_code: courseDetails.subject_code,
-				subject_name: courseDetails.subject_name,
-				register_number: registerNumber,
-				bundle_no: bundleNo,
-				maximum_marks: courseDetails.maximum_marks,
-				minimum_pass_marks: courseDetails.minimum_pass_marks,
-				exam_date: '',
-				students: students.map(s => ({
-					register_number: s.register_number || registerNumber,
-					dummy_number: s.dummy_number,
-					total_marks_obtained: s.total_marks_obtained,
-					total_marks_in_words: s.total_marks_in_words,
-					remarks: s.remarks
-				}))
-			}
-
-			const fileName = generateExternalMarksPDF(pdfData as any)
-
-			toast({
-				title: "✅ PDF Downloaded",
-				description: `Marks sheet saved as ${fileName}`,
-				className: "bg-green-50 border-green-200 text-green-800",
-			})
-		} catch (error) {
-			toast({
-				title: "❌ PDF Generation Failed",
-				description: error instanceof Error ? error.message : 'Failed to generate PDF',
-				variant: "destructive",
-			})
-		}
-	}
-
-	// Determine grid columns based on institution visibility
 	const gridCols = mustSelectInstitution ? 'lg:grid-cols-4' : 'lg:grid-cols-3'
 
 	return (
@@ -513,64 +353,50 @@ export default function ExternalMarkCorrectionPage() {
 				<AppHeader />
 
 				<div className="flex-1 p-4 space-y-4 overflow-auto">
-					{/* Breadcrumb */}
 					<Breadcrumb>
 						<BreadcrumbList>
 							<BreadcrumbItem>
-								<BreadcrumbLink asChild>
-									<Link href="/dashboard">Dashboard</Link>
-								</BreadcrumbLink>
+								<BreadcrumbLink asChild><Link href="/dashboard">Dashboard</Link></BreadcrumbLink>
 							</BreadcrumbItem>
 							<BreadcrumbSeparator />
 							<BreadcrumbItem>
-								<BreadcrumbLink asChild>
-									<Link href="#">Post-Exam</Link>
-								</BreadcrumbLink>
+								<BreadcrumbLink asChild><Link href="#">Post-Exam</Link></BreadcrumbLink>
 							</BreadcrumbItem>
 							<BreadcrumbSeparator />
-							<BreadcrumbItem>
-								<BreadcrumbPage>External Mark Correction</BreadcrumbPage>
-							</BreadcrumbItem>
+							<BreadcrumbItem><BreadcrumbPage>External Mark Correction</BreadcrumbPage></BreadcrumbItem>
 						</BreadcrumbList>
 					</Breadcrumb>
 
-					{/* Page Header */}
 					<div className="flex items-center gap-3">
 						<div className="h-10 w-10 rounded-lg bg-amber-100 dark:bg-amber-900/30 flex items-center justify-center">
 							<Edit3 className="h-5 w-5 text-amber-600 dark:text-amber-400" />
 						</div>
 						<div>
-							<h1 className="text-xl font-bold text-slate-900 dark:text-slate-100 font-grotesk">
-								External Mark Correction
-							</h1>
+							<h1 className="text-xl font-bold text-slate-900 dark:text-slate-100 font-grotesk">External Mark Correction</h1>
 							<p className="text-slate-500 dark:text-slate-400 text-sm">
-								Correct external marks (Theory & Practical) by learner register number
+								Correct external marks (Theory & Practical) by dummy number or register number
 							</p>
 						</div>
 					</div>
 
-					{/* Cascading Dropdowns - Flow: Institution -> Exam Session -> Course -> Register Number */}
+					{/* Cascading Filters */}
 					<Card className="shadow-sm">
 						<CardContent className="p-3">
-							<div className={cn("grid grid-cols-1 md:grid-cols-2 gap-3", gridCols)}>
+							<div className={cn('grid grid-cols-1 md:grid-cols-2 gap-3', gridCols)}>
 
-								{/* Institution - Only show for super_admin with "All Institutions" */}
+								{/* Institution */}
 								{mustSelectInstitution && (
 									<div className="space-y-1.5">
 										<Label className="text-xs font-medium">Institution <span className="text-red-500">*</span></Label>
 										<Popover open={institutionOpen} onOpenChange={setInstitutionOpen}>
 											<PopoverTrigger asChild>
-												<Button
-													variant="outline"
-													role="combobox"
-													aria-expanded={institutionOpen}
+												<Button variant="outline" role="combobox" aria-expanded={institutionOpen}
 													className="w-full justify-between h-9 text-left text-xs truncate"
-													disabled={loadingInstitutions}
-												>
+													disabled={loadingInstitutions}>
 													<span className="flex-1 pr-2 truncate">
 														{selectedInstitutionId
-															? institutions.find((inst) => inst.id === selectedInstitutionId)?.name
-															: loadingInstitutions ? "Loading..." : "Select institution..."}
+															? institutions.find((i) => i.id === selectedInstitutionId)?.name
+															: loadingInstitutions ? 'Loading...' : 'Select institution...'}
 													</span>
 													<ChevronsUpDown className="h-3.5 w-3.5 shrink-0 opacity-50" />
 												</Button>
@@ -582,16 +408,10 @@ export default function ExternalMarkCorrectionPage() {
 														<CommandEmpty className="text-xs py-4">No institution found.</CommandEmpty>
 														<CommandGroup className="max-h-56 overflow-auto">
 															{institutions.map((inst) => (
-																<CommandItem
-																	key={inst.id}
-																	value={`${inst.institution_code} ${inst.name}`}
-																	onSelect={() => {
-																		setSelectedInstitutionId(inst.id)
-																		setInstitutionOpen(false)
-																	}}
-																	className="py-2 text-xs"
-																>
-																	<Check className={cn("mr-2 h-3.5 w-3.5 shrink-0", selectedInstitutionId === inst.id ? "opacity-100" : "opacity-0")} />
+																<CommandItem key={inst.id} value={`${inst.institution_code} ${inst.name}`}
+																	onSelect={() => { setSelectedInstitutionId(inst.id); setInstitutionOpen(false) }}
+																	className="py-2 text-xs">
+																	<Check className={cn('mr-2 h-3.5 w-3.5 shrink-0', selectedInstitutionId === inst.id ? 'opacity-100' : 'opacity-0')} />
 																	<span className="flex-1 line-clamp-2">{inst.institution_code} - {inst.name}</span>
 																</CommandItem>
 															))}
@@ -605,58 +425,42 @@ export default function ExternalMarkCorrectionPage() {
 
 								{/* Exam Session */}
 								{mustSelectSession && (
-								<div className="space-y-1.5">
-									<Label className="text-xs font-medium">Exam Session <span className="text-red-500">*</span></Label>
-									<Select
-										value={selectedSessionId}
-										onValueChange={setSelectedSessionId}
-										disabled={loadingSessions || !selectedInstitutionId}
-									>
-										<SelectTrigger className="h-9 text-xs">
-											<SelectValue placeholder={
-												!selectedInstitutionId
-													? "Select institution first..."
-													: loadingSessions
-														? "Loading sessions..."
-														: examSessions.length === 0
-															? "No sessions found"
-															: "Select exam session..."
-											} />
-										</SelectTrigger>
-										<SelectContent>
-											{examSessions.map((session) => (
-												<SelectItem key={session.id} value={session.id} className="text-xs">
-													{session.session_name}
-												</SelectItem>
-											))}
-										</SelectContent>
-									</Select>
-								</div>
+									<div className="space-y-1.5">
+										<Label className="text-xs font-medium">Exam Session <span className="text-red-500">*</span></Label>
+										<Select value={selectedSessionId} onValueChange={setSelectedSessionId}
+											disabled={loadingSessions || !selectedInstitutionId}>
+											<SelectTrigger className="h-9 text-xs">
+												<SelectValue placeholder={
+													!selectedInstitutionId ? 'Select institution first...'
+														: loadingSessions ? 'Loading sessions...'
+															: examSessions.length === 0 ? 'No sessions found'
+																: 'Select exam session...'
+												} />
+											</SelectTrigger>
+											<SelectContent>
+												{examSessions.map((s) => (
+													<SelectItem key={s.id} value={s.id} className="text-xs">{s.session_name}</SelectItem>
+												))}
+											</SelectContent>
+										</Select>
+									</div>
 								)}
 
-								{/* Course Combobox */}
+								{/* Course */}
 								<div className="space-y-1.5">
 									<Label className="text-xs font-medium">Course <span className="text-red-500">*</span></Label>
-									<Popover open={courseOpen} onOpenChange={(open) => {
-										setCourseOpen(open)
-										if (!open) setCourseSearchQuery('')
-									}}>
+									<Popover open={courseOpen} onOpenChange={(open) => { setCourseOpen(open); if (!open) setCourseSearchQuery('') }}>
 										<PopoverTrigger asChild>
-											<Button
-												variant="outline"
-												role="combobox"
-												aria-expanded={courseOpen}
+											<Button variant="outline" role="combobox" aria-expanded={courseOpen}
 												className="w-full justify-between h-9 text-left text-xs truncate font-normal"
-												disabled={!selectedSessionId || loadingCourses}
-											>
+												disabled={!selectedSessionId || loadingCourses}>
 												{!selectedSessionId ? (
 													<span className="text-muted-foreground">Select session first...</span>
 												) : loadingCourses ? (
 													<span className="text-muted-foreground">Loading courses...</span>
 												) : selectedCourseId ? (
 													<span className="truncate">
-														{courses.find((c) => c.id === selectedCourseId)?.course_code}
-														{' - '}
+														{courses.find((c) => c.id === selectedCourseId)?.course_code}{' - '}
 														{courses.find((c) => c.id === selectedCourseId)?.course_name}
 													</span>
 												) : (
@@ -667,44 +471,24 @@ export default function ExternalMarkCorrectionPage() {
 										</PopoverTrigger>
 										<PopoverContent className="w-[400px] p-0" align="start">
 											<Command shouldFilter={false}>
-												<CommandInput
-													placeholder="Search course code or name..."
-													className="h-9 text-xs"
-													value={courseSearchQuery}
-													onValueChange={setCourseSearchQuery}
-												/>
+												<CommandInput placeholder="Search course code or name..." className="h-9 text-xs"
+													value={courseSearchQuery} onValueChange={setCourseSearchQuery} />
 												<CommandList>
 													<CommandEmpty className="text-xs py-4">
-														{courses.length === 0 ? "No courses with marks entries found." : "No course found."}
+														{courses.length === 0 ? 'No courses with marks entries found.' : 'No course found.'}
 													</CommandEmpty>
 													<CommandGroup className="max-h-56 overflow-auto">
-														{courses
-															.filter((course) => {
-																if (!courseSearchQuery.trim()) return true
-																const q = courseSearchQuery.toLowerCase()
-																return (
-																	course.course_code.toLowerCase().includes(q) ||
-																	course.course_name.toLowerCase().includes(q)
-																)
-															})
-															.map((course) => (
-																<CommandItem
-																	key={course.id}
-																	value={`${course.course_code} ${course.course_name}`}
-																	onSelect={() => {
-																		setSelectedCourseId(course.id)
-																		setCourseOpen(false)
-																		setCourseSearchQuery('')
-																	}}
-																	className="py-2 text-xs"
-																>
-																	<Check className={cn("mr-2 h-3.5 w-3.5 shrink-0", selectedCourseId === course.id ? "opacity-100" : "opacity-0")} />
-																	<div className="flex flex-col">
-																		<span className="font-medium">{course.course_code}</span>
-																		<span className="text-xs text-muted-foreground">{course.course_name}</span>
-																	</div>
-																</CommandItem>
-															))}
+														{filteredCourses.map((course) => (
+															<CommandItem key={course.id} value={`${course.course_code} ${course.course_name}`}
+																onSelect={() => { setSelectedCourseId(course.id); setCourseOpen(false); setCourseSearchQuery('') }}
+																className="py-2 text-xs">
+																<Check className={cn('mr-2 h-3.5 w-3.5 shrink-0', selectedCourseId === course.id ? 'opacity-100' : 'opacity-0')} />
+																<div className="flex flex-col">
+																	<span className="font-medium">{course.course_code}</span>
+																	<span className="text-xs text-muted-foreground">{course.course_name}</span>
+																</div>
+															</CommandItem>
+														))}
 													</CommandGroup>
 												</CommandList>
 											</Command>
@@ -712,38 +496,24 @@ export default function ExternalMarkCorrectionPage() {
 									</Popover>
 								</div>
 
-								{/* Learner Register Number Input */}
+								{/* Dummy Number / Register Number */}
 								<div className="space-y-1.5">
-									<Label className="text-xs font-medium">Learner Register Number <span className="text-red-500">*</span></Label>
+									<Label className="text-xs font-medium">Dummy Number / Register Number <span className="text-red-500">*</span></Label>
 									<div className="flex gap-2">
 										<Input
-											placeholder={!selectedCourseId ? "Select course first..." : "Enter register number..."}
-											value={registerNumber}
-											onChange={(e) => setRegisterNumber(e.target.value.toUpperCase())}
-											onKeyDown={(e) => {
-												if (e.key === 'Enter' && registerNumber.trim() && selectedCourseId) {
-													searchByRegisterNumber()
-												}
-											}}
+											placeholder={!selectedCourseId ? 'Select course first...' : 'Enter dummy no. or register no...'}
+											value={searchValue}
+											onChange={(e) => setSearchValue(e.target.value.toUpperCase())}
+											onKeyDown={(e) => { if (e.key === 'Enter' && searchValue.trim() && selectedCourseId) handleSearch() }}
 											disabled={!selectedCourseId}
 											className="h-9 text-xs uppercase"
 										/>
-										<Button
-											onClick={searchByRegisterNumber}
-											disabled={!selectedCourseId || !registerNumber.trim() || loadingStudents}
-											className="bg-amber-600 hover:bg-amber-700 text-white h-9 text-xs shrink-0"
-										>
-											{loadingStudents ? (
-												<>
-													<Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
-													Searching...
-												</>
-											) : (
-												<>
-													<Search className="h-3.5 w-3.5 mr-1.5" />
-													Search
-												</>
-											)}
+										<Button onClick={handleSearch}
+											disabled={!selectedCourseId || !searchValue.trim() || loadingStudents}
+											className="bg-amber-600 hover:bg-amber-700 text-white h-9 text-xs shrink-0">
+											{loadingStudents
+												? <><Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />Searching...</>
+												: <><Search className="h-3.5 w-3.5 mr-1.5" />Search</>}
 										</Button>
 									</div>
 								</div>
@@ -751,56 +521,56 @@ export default function ExternalMarkCorrectionPage() {
 						</CardContent>
 					</Card>
 
-					{/* Course Details & Table */}
+					{/* Results */}
 					{courseDetails && students.length > 0 && (
 						<>
-							{/* Course Info Card */}
+							{/* Course Info */}
 							<Card className="shadow-sm">
 								<CardContent className="p-3">
-									<div className="flex items-center justify-between flex-wrap gap-3">
-										<div className="flex items-center gap-6 text-sm flex-wrap">
+									<div className="flex items-center gap-6 text-sm flex-wrap">
+										<div>
+											<span className="text-muted-foreground">Course:</span>{' '}
+											<span className="font-semibold">{courseDetails.subject_code} - {courseDetails.subject_name}</span>
+										</div>
+										{students[0]?.dummy_number && (
 											<div>
-												<span className="text-muted-foreground">Course:</span>{' '}
-												<span className="font-semibold">{courseDetails.subject_code} - {courseDetails.subject_name}</span>
+												<span className="text-muted-foreground">Dummy No:</span>{' '}
+												<span className="font-semibold">{students[0].dummy_number}</span>
 											</div>
+										)}
+										{students[0]?.register_number && (
 											<div>
 												<span className="text-muted-foreground">Register No:</span>{' '}
-												<span className="font-semibold">{registerNumber}</span>
+												<span className="font-semibold">{students[0].register_number}</span>
 											</div>
-											<Badge variant="outline" className="text-sm font-semibold">
-												Max: {courseDetails.maximum_marks} | Pass: {courseDetails.minimum_pass_marks}
+										)}
+										<Badge variant="outline" className="font-semibold">
+											Max: {courseDetails.maximum_marks} | Pass: {courseDetails.minimum_pass_marks}
+										</Badge>
+										{searchedBy && (
+											<Badge variant="outline" className="text-xs bg-blue-50 text-blue-700 border-blue-200">
+												Found by {searchedBy === 'dummy' ? 'Dummy No' : 'Register No'}
 											</Badge>
-										</div>
-										<Button
-											onClick={generatePDF}
-											variant="outline"
-											size="sm"
-											className="h-8 text-xs"
-										>
-											<Download className="h-3.5 w-3.5 mr-1.5" />
-											Download PDF
-										</Button>
+										)}
 									</div>
 								</CardContent>
 							</Card>
 
-							{/* Learner Marks Table */}
+							{/* Marks Table */}
 							<Card className="shadow-md">
 								<CardHeader className="pb-3">
 									<CardTitle className="flex items-center gap-2 font-grotesk text-base">
 										<div className="h-2 w-2 rounded-full bg-amber-500"></div>
-										Marks Entry for {registerNumber}
+										Marks Entry for {students[0]?.dummy_number || students[0]?.register_number || searchValue}
 									</CardTitle>
-									<CardDescription className="text-xs">
-										Click Edit to correct marks or History to view correction log
-									</CardDescription>
+									<CardDescription className="text-xs">Click Edit to correct marks or History to view correction log</CardDescription>
 								</CardHeader>
 								<CardContent className="pt-0">
 									<div className="border rounded-lg">
 										<Table>
 											<TableHeader>
 												<TableRow className="bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-600 hover:to-orange-600">
-													<TableHead className="w-12 text-white font-semibold text-sm">#</TableHead>
+													<TableHead className="w-10 text-white font-semibold text-sm">#</TableHead>
 													<TableHead className="text-white font-semibold text-sm">Register No</TableHead>
 													<TableHead className="text-white font-semibold text-sm">Dummy No</TableHead>
 													<TableHead className="text-white font-semibold text-sm">Marks</TableHead>
@@ -814,58 +584,34 @@ export default function ExternalMarkCorrectionPage() {
 												{students.map((student, index) => (
 													<TableRow key={student.id} className="hover:bg-amber-50/50 dark:hover:bg-amber-900/10">
 														<TableCell className="text-sm py-3 text-muted-foreground">{index + 1}</TableCell>
-														<TableCell className="font-semibold text-sm py-3">{student.register_number || registerNumber}</TableCell>
+														<TableCell className="font-semibold text-sm py-3">{student.register_number || '-'}</TableCell>
 														<TableCell className="text-sm py-3 text-muted-foreground">{student.dummy_number || '-'}</TableCell>
 														<TableCell className="text-sm py-3 font-semibold">{student.total_marks_obtained ?? '-'}</TableCell>
 														<TableCell className="text-sm py-3 text-muted-foreground">{student.total_marks_in_words || '-'}</TableCell>
 														<TableCell className="py-3">
-															<Badge
-																variant="outline"
-																className={cn(
-																	"text-xs",
-																	student.source === 'Bulk Upload'
-																		? "bg-blue-50 text-blue-700 border-blue-200"
-																		: "bg-slate-50 text-slate-700 border-slate-200"
-																)}
-															>
+															<Badge variant="outline" className={cn('text-xs',
+																student.source === 'Bulk Upload' ? 'bg-blue-50 text-blue-700 border-blue-200' : 'bg-slate-50 text-slate-700 border-slate-200')}>
 																{student.source || 'Manual'}
 															</Badge>
 														</TableCell>
 														<TableCell className="py-3">
 															{student.total_marks_obtained !== null && (
-																<Badge
-																	className={cn(
-																		"text-xs",
-																		student.total_marks_obtained >= (courseDetails?.minimum_pass_marks || 0)
-																			? "bg-green-100 text-green-800"
-																			: "bg-red-100 text-red-800"
-																	)}
-																>
+																<Badge className={cn('text-xs',
+																	student.total_marks_obtained >= (courseDetails?.minimum_pass_marks || 0)
+																		? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800')}>
 																	{student.total_marks_obtained >= (courseDetails?.minimum_pass_marks || 0) ? 'PASS' : 'FAIL'}
 																</Badge>
 															)}
 														</TableCell>
 														<TableCell className="py-3">
 															<div className="flex gap-1">
-																<Button
-																	size="sm"
-																	variant="outline"
-																	onClick={() => handleEditClick(student)}
-																	className="h-7 text-xs"
-																	disabled={student.total_marks_obtained === null}
-																>
-																	<Edit3 className="h-3 w-3 mr-1" />
-																	Edit
+																<Button size="sm" variant="outline" onClick={() => handleEditClick(student)}
+																	className="h-7 text-xs" disabled={student.total_marks_obtained === null}>
+																	<Edit3 className="h-3 w-3 mr-1" />Edit
 																</Button>
-																<Button
-																	size="sm"
-																	variant="ghost"
-																	onClick={() => handleViewHistory(student)}
-																	className="h-7 text-xs"
-																	disabled={student.total_marks_obtained === null}
-																>
-																	<History className="h-3 w-3 mr-1" />
-																	History
+																<Button size="sm" variant="ghost" onClick={() => handleViewHistory(student)}
+																	className="h-7 text-xs" disabled={student.total_marks_obtained === null}>
+																	<History className="h-3 w-3 mr-1" />History
 																</Button>
 															</div>
 														</TableCell>
@@ -888,14 +634,13 @@ export default function ExternalMarkCorrectionPage() {
 				<DialogContent className="sm:max-w-[500px] max-h-[90vh] overflow-y-auto">
 					<DialogHeader>
 						<DialogTitle className="flex items-center gap-2">
-							<Edit3 className="h-5 w-5 text-amber-600" />
-							Correct Marks
+							<Edit3 className="h-5 w-5 text-amber-600" />Correct Marks
 						</DialogTitle>
 						<DialogDescription>
 							{selectedStudent && (
 								<span>
-									Register No: <strong>{selectedStudent.register_number || registerNumber}</strong> |
-									Dummy No: <strong>{selectedStudent.dummy_number || '-'}</strong> |
+									Register No: <strong>{selectedStudent.register_number || '-'}</strong> |{' '}
+									Dummy No: <strong>{selectedStudent.dummy_number || '-'}</strong> |{' '}
 									Course: <strong>{courseDetails?.subject_code}</strong>
 								</span>
 							)}
@@ -903,39 +648,20 @@ export default function ExternalMarkCorrectionPage() {
 					</DialogHeader>
 
 					<div className="space-y-4 py-4">
-						{/* Current vs New Marks */}
 						<div className="grid grid-cols-2 gap-4">
 							<div className="space-y-2">
 								<Label className="text-sm">Current Marks</Label>
-								<Input
-									value={selectedStudent?.total_marks_obtained ?? ''}
-									disabled
-									className="bg-muted"
-								/>
+								<Input value={selectedStudent?.total_marks_obtained ?? ''} disabled className="bg-muted" />
 							</div>
 							<div className="space-y-2">
 								<Label className="text-sm">New Marks <span className="text-red-500">*</span></Label>
-								<Input
-									type="text"
-									inputMode="numeric"
-									value={newMarks}
-									onChange={(e) => {
-										const val = e.target.value
-										if (val === '' || /^\d*\.?\d*$/.test(val)) {
-											setNewMarks(val)
-										}
-									}}
-									placeholder="Enter new marks"
-								/>
-								{courseDetails && (
-									<p className="text-xs text-muted-foreground">
-										Max: {courseDetails.maximum_marks}
-									</p>
-								)}
+								<Input type="text" inputMode="numeric" value={newMarks}
+									onChange={(e) => { const v = e.target.value; if (v === '' || /^\d*\.?\d*$/.test(v)) setNewMarks(v) }}
+									placeholder="Enter new marks" />
+								{selectedStudent && <p className="text-xs text-muted-foreground">Max: {selectedStudent.marks_out_of}</p>}
 							</div>
 						</div>
 
-						{/* Marks in Words Preview */}
 						{newMarks && !isNaN(parseFloat(newMarks)) && (
 							<div className="p-2 bg-muted rounded-md">
 								<p className="text-xs text-muted-foreground">Marks in words:</p>
@@ -943,13 +669,10 @@ export default function ExternalMarkCorrectionPage() {
 							</div>
 						)}
 
-						{/* Correction Type */}
 						<div className="space-y-2">
 							<Label className="text-sm">Correction Type <span className="text-red-500">*</span></Label>
 							<Select value={correctionType} onValueChange={setCorrectionType}>
-								<SelectTrigger>
-									<SelectValue placeholder="Select correction type" />
-								</SelectTrigger>
+								<SelectTrigger><SelectValue placeholder="Select correction type" /></SelectTrigger>
 								<SelectContent>
 									<SelectItem value="Data Entry Error">Data Entry Error</SelectItem>
 									<SelectItem value="Revaluation">Revaluation</SelectItem>
@@ -961,35 +684,23 @@ export default function ExternalMarkCorrectionPage() {
 							</Select>
 						</div>
 
-						{/* Correction Reason */}
 						<div className="space-y-2">
 							<Label className="text-sm">Reason for Correction <span className="text-red-500">*</span></Label>
-							<Textarea
-								value={correctionReason}
-								onChange={(e) => setCorrectionReason(e.target.value)}
-								placeholder="Explain why this correction is needed..."
-								rows={3}
-							/>
+							<Textarea value={correctionReason} onChange={(e) => setCorrectionReason(e.target.value)}
+								placeholder="Explain why this correction is needed..." rows={3} />
 						</div>
 
-						{/* Reference Number */}
 						<div className="space-y-2">
 							<Label className="text-sm">Reference Number (Optional)</Label>
-							<Input
-								value={referenceNumber}
-								onChange={(e) => setReferenceNumber(e.target.value)}
-								placeholder="Application/Request reference"
-							/>
+							<Input value={referenceNumber} onChange={(e) => setReferenceNumber(e.target.value)}
+								placeholder="Application/Request reference" />
 						</div>
 
-						{/* Warning */}
 						<div className="p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg">
 							<div className="flex items-start gap-2">
 								<AlertTriangle className="h-4 w-4 text-amber-600 dark:text-amber-400 mt-0.5" />
 								<div>
-									<p className="text-sm font-medium text-amber-800 dark:text-amber-200">
-										Audit Trail Notice
-									</p>
+									<p className="text-sm font-medium text-amber-800 dark:text-amber-200">Audit Trail Notice</p>
 									<p className="text-xs text-amber-700 dark:text-amber-300 mt-1">
 										This correction will be logged with your user ID, timestamp, and reason for audit compliance.
 									</p>
@@ -999,16 +710,9 @@ export default function ExternalMarkCorrectionPage() {
 					</div>
 
 					<DialogFooter>
-						<Button variant="outline" onClick={() => setEditDialogOpen(false)}>
-							Cancel
-						</Button>
-						<Button
-							onClick={handleSaveCorrection}
-							disabled={saving}
-							className="bg-amber-600 hover:bg-amber-700"
-						>
-							<Save className="h-4 w-4 mr-2" />
-							{saving ? 'Saving...' : 'Save Correction'}
+						<Button variant="outline" onClick={() => setEditDialogOpen(false)}>Cancel</Button>
+						<Button onClick={handleSaveCorrection} disabled={saving} className="bg-amber-600 hover:bg-amber-700">
+							<Save className="h-4 w-4 mr-2" />{saving ? 'Saving...' : 'Save Correction'}
 						</Button>
 					</DialogFooter>
 				</DialogContent>
@@ -1019,14 +723,13 @@ export default function ExternalMarkCorrectionPage() {
 				<DialogContent className="sm:max-w-[600px]">
 					<DialogHeader>
 						<DialogTitle className="flex items-center gap-2">
-							<History className="h-5 w-5 text-blue-600" />
-							Correction History
+							<History className="h-5 w-5 text-blue-600" />Correction History
 						</DialogTitle>
 						<DialogDescription>
 							{selectedStudent && (
 								<span>
-									Register No: <strong>{selectedStudent.register_number || registerNumber}</strong> |
-									Dummy No: <strong>{selectedStudent.dummy_number || '-'}</strong> |
+									Register No: <strong>{selectedStudent.register_number || '-'}</strong> |{' '}
+									Dummy No: <strong>{selectedStudent.dummy_number || '-'}</strong> |{' '}
 									Current Marks: <strong>{selectedStudent.total_marks_obtained}</strong>
 								</span>
 							)}
@@ -1037,35 +740,21 @@ export default function ExternalMarkCorrectionPage() {
 						{loadingHistory ? (
 							<div className="text-center py-8 text-muted-foreground">Loading history...</div>
 						) : correctionHistory.length === 0 ? (
-							<div className="text-center py-8 text-muted-foreground">
-								No correction history found
-							</div>
+							<div className="text-center py-8 text-muted-foreground">No correction history found</div>
 						) : (
 							<div className="space-y-3 max-h-[400px] overflow-y-auto">
-								{correctionHistory.map((history) => (
-									<div key={history.id} className="p-3 border rounded-lg">
-										<div className="flex items-center justify-between mb-2">
-											<div className="flex items-center gap-2">
-												<Badge variant="outline" className="text-xs">
-													{history.correction_type}
-												</Badge>
-												<span className={cn(
-													"text-sm font-semibold",
-													history.marks_difference > 0 ? "text-green-600" : "text-red-600"
-												)}>
-													{history.old_marks} → {history.new_marks}
-													<span className="ml-1">
-														({history.marks_difference > 0 ? '+' : ''}{history.marks_difference})
-													</span>
-												</span>
-											</div>
+								{correctionHistory.map((h) => (
+									<div key={h.id} className="p-3 border rounded-lg">
+										<div className="flex items-center gap-2 mb-2">
+											<Badge variant="outline" className="text-xs">{h.correction_type}</Badge>
+											<span className={cn('text-sm font-semibold', h.marks_difference > 0 ? 'text-green-600' : 'text-red-600')}>
+												{h.old_marks} → {h.new_marks}
+												<span className="ml-1">({h.marks_difference > 0 ? '+' : ''}{h.marks_difference})</span>
+											</span>
 										</div>
-										<p className="text-sm text-muted-foreground mb-2">
-											{history.correction_reason}
-										</p>
+										<p className="text-sm text-muted-foreground mb-2">{h.correction_reason}</p>
 										<div className="text-xs text-muted-foreground">
-											By: {history.users?.full_name || 'Unknown'} |{' '}
-											{new Date(history.corrected_at).toLocaleString()}
+											By: {h.users?.full_name || 'Unknown'} | {new Date(h.corrected_at).toLocaleString()}
 										</div>
 									</div>
 								))}
@@ -1074,9 +763,7 @@ export default function ExternalMarkCorrectionPage() {
 					</div>
 
 					<DialogFooter>
-						<Button variant="outline" onClick={() => setHistoryDialogOpen(false)}>
-							Close
-						</Button>
+						<Button variant="outline" onClick={() => setHistoryDialogOpen(false)}>Close</Button>
 					</DialogFooter>
 				</DialogContent>
 			</Dialog>

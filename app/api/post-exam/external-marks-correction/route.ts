@@ -57,6 +57,7 @@ export async function GET(request: NextRequest) {
 		if (action === 'courses') {
 			const institutionId = searchParams.get('institutionId')
 			const sessionId = searchParams.get('sessionId')
+			const courseType = searchParams.get('courseType') // 'theory' | 'practical'
 
 			// Use filter institution ID if no specific institutionId provided
 			const effectiveInstitutionId = institutionId || filterInstitutionsId
@@ -64,14 +65,14 @@ export async function GET(request: NextRequest) {
 				return NextResponse.json({ error: 'Institution and Session IDs required' }, { status: 400 })
 			}
 
-			// OPTIMIZED: Use RPC or raw SQL to get DISTINCT course_ids first,
-			// then fetch course details only for those unique IDs
-			// Step 1: Get distinct course_ids efficiently
+			// Get distinct course_ids from marks_entry for this institution.
+			// We intentionally do NOT filter by sessionId here because practical
+			// marks entries sometimes have a different examination_session_id than
+			// the selected theory session. The session filter is applied at search time.
 			const { data: distinctCourseIds, error: distinctError } = await supabase
 				.from('marks_entry')
 				.select('course_id')
 				.eq('institutions_id', effectiveInstitutionId)
-				.eq('examination_session_id', sessionId)
 				.not('course_id', 'is', null)
 
 			if (distinctError) throw distinctError
@@ -84,11 +85,19 @@ export async function GET(request: NextRequest) {
 			}
 
 			// Step 2: Fetch course details only for unique course IDs
-			const { data: courses, error: coursesError } = await supabase
+			let coursesQuery = supabase
 				.from('courses')
-				.select('id, course_code, course_name')
+				.select('id, course_code, course_name, course_type')
 				.in('id', uniqueCourseIds)
-				.order('course_code')
+
+			// Apply course type filter based on tab
+			if (courseType === 'theory') {
+				coursesQuery = coursesQuery.ilike('course_type', 'theory')
+			} else if (courseType === 'practical') {
+				coursesQuery = coursesQuery.not('course_type', 'ilike', 'theory')
+			}
+
+			const { data: courses, error: coursesError } = await coursesQuery.order('course_code')
 
 			if (coursesError) throw coursesError
 
@@ -593,6 +602,225 @@ export async function GET(request: NextRequest) {
 			return NextResponse.json(data)
 		}
 
+		// Get all distinct dummy numbers for a course/session/institution
+		if (action === 'dummyNumbers') {
+			const institutionId = searchParams.get('institutionId')
+			const sessionId = searchParams.get('sessionId')
+			const courseId = searchParams.get('courseId')
+
+			const effectiveInstitutionId = institutionId || filterInstitutionsId
+			if (!effectiveInstitutionId || !sessionId || !courseId) {
+				return NextResponse.json({ error: 'Institution, Session, Course IDs required' }, { status: 400 })
+			}
+
+			const { data, error } = await supabase
+				.from('marks_entry')
+				.select('dummy_number')
+				.eq('institutions_id', effectiveInstitutionId)
+				.eq('examination_session_id', sessionId)
+				.eq('course_id', courseId)
+				.not('dummy_number', 'is', null)
+				.order('dummy_number')
+
+			if (error) throw error
+
+			const uniqueDummyNumbers = [...new Set((data || []).map((d: any) => d.dummy_number).filter(Boolean))]
+			return NextResponse.json(uniqueDummyNumbers)
+		}
+
+		// Search marks entries by dummy number (Theory tab)
+		if (action === 'searchByDummyNumber') {
+			const institutionId = searchParams.get('institutionId')
+			const sessionId = searchParams.get('sessionId')
+			const courseId = searchParams.get('courseId')
+			const dummyNumber = searchParams.get('dummyNumber')
+
+			const effectiveInstitutionId = institutionId || filterInstitutionsId
+			if (!effectiveInstitutionId || !sessionId || !courseId || !dummyNumber) {
+				return NextResponse.json({ error: 'All parameters required' }, { status: 400 })
+			}
+
+			const { data: marksEntries, error: marksError } = await supabase
+				.from('marks_entry')
+				.select(`
+					id,
+					dummy_number,
+					total_marks_obtained,
+					total_marks_in_words,
+					evaluator_remarks,
+					marks_out_of,
+					source,
+					student_dummy_number_id,
+					exam_registration_id,
+					exam_registrations!exam_registration_id (
+						id,
+						stu_register_no,
+						course_offering_id,
+						course_offerings:course_offering_id (
+							program_id
+						)
+					)
+				`)
+				.eq('institutions_id', effectiveInstitutionId)
+				.eq('examination_session_id', sessionId)
+				.eq('course_id', courseId)
+				.eq('dummy_number', dummyNumber)
+				.eq('is_active', true)
+
+			if (marksError) throw marksError
+
+			const { data: courseData } = await supabase
+				.from('courses')
+				.select('course_code, course_name, external_max_mark, external_pass_mark')
+				.eq('id', courseId)
+				.single()
+
+			const students = (marksEntries || []).map((entry: any) => {
+				const examReg = entry.exam_registrations as any
+				const courseOffering = examReg?.course_offerings as any
+				return {
+					student_dummy_id: entry.student_dummy_number_id,
+					dummy_number: entry.dummy_number,
+					exam_registration_id: entry.exam_registration_id,
+					register_number: examReg?.stu_register_no || '',
+					program_id: courseOffering?.program_id || null,
+					marks_entry_id: entry.id,
+					total_marks_obtained: entry.total_marks_obtained ?? null,
+					total_marks_in_words: entry.total_marks_in_words || '',
+					remarks: entry.evaluator_remarks || '',
+					marks_out_of: entry.marks_out_of || courseData?.external_max_mark || 100,
+					source: entry.source || 'Manual Entry'
+				}
+			})
+
+			return NextResponse.json({
+				students,
+				course_details: courseData ? {
+					subject_code: courseData.course_code || '',
+					subject_name: courseData.course_name || '',
+					maximum_marks: courseData.external_max_mark || 100,
+					minimum_pass_marks: courseData.external_pass_mark || 40
+				} : null
+			})
+		}
+
+		// Search by dummy number OR register number — filtered by institution + session + course
+		if (action === 'searchByDummyOrRegister') {
+			const institutionId = searchParams.get('institutionId')
+			const sessionId = searchParams.get('sessionId')
+			const courseId = searchParams.get('courseId')
+			const searchVal = searchParams.get('searchValue')
+
+			const effectiveInstitutionId = institutionId || filterInstitutionsId
+			if (!effectiveInstitutionId || !searchVal) {
+				return NextResponse.json({ error: 'Institution ID and search value required' }, { status: 400 })
+			}
+
+			const baseSelect = `
+				id,
+				dummy_number,
+				total_marks_obtained,
+				total_marks_in_words,
+				evaluator_remarks,
+				marks_out_of,
+				source,
+				student_dummy_number_id,
+				exam_registration_id,
+				courses:course_id (
+					course_code,
+					course_name,
+					external_max_mark,
+					external_pass_mark
+				),
+				examination_sessions:examination_session_id (
+					session_name
+				),
+				exam_registrations!exam_registration_id (
+					id,
+					stu_register_no
+				)
+			`
+
+			const buildQuery = () => {
+				let q = supabase
+					.from('marks_entry')
+					.select(baseSelect)
+					.eq('institutions_id', effectiveInstitutionId)
+					.eq('is_active', true)
+				if (sessionId) q = q.eq('examination_session_id', sessionId)
+				if (courseId) q = q.eq('course_id', courseId)
+				return q
+			}
+
+			// Try dummy number first (exact match)
+			const { data: byDummy, error: dummyErr } = await buildQuery()
+				.eq('dummy_number', searchVal.trim().toUpperCase())
+
+			if (dummyErr) throw dummyErr
+
+			let matchedEntries: any[] = byDummy || []
+			let searchedBy: 'dummy' | 'register' = 'dummy'
+
+			// If no dummy match, try register number
+			if (matchedEntries.length === 0) {
+				const { data: allEntries, error: regErr } = await buildQuery().range(0, 9999)
+
+				if (regErr) throw regErr
+
+				matchedEntries = (allEntries || []).filter((entry: any) => {
+					const examReg = entry.exam_registrations as any
+					return examReg?.stu_register_no?.toLowerCase() === searchVal.trim().toLowerCase()
+				})
+				searchedBy = 'register'
+			}
+
+			// Fetch course details if courseId provided
+			let courseDetails = null
+			if (courseId) {
+				const { data: cd } = await supabase
+					.from('courses')
+					.select('course_code, course_name, external_max_mark, external_pass_mark')
+					.eq('id', courseId)
+					.single()
+				if (cd) {
+					courseDetails = {
+						subject_code: cd.course_code || '',
+						subject_name: cd.course_name || '',
+						maximum_marks: cd.external_max_mark || 100,
+						minimum_pass_marks: cd.external_pass_mark || 40
+					}
+				}
+			}
+
+			const students = matchedEntries.map((entry: any) => {
+				const examReg = entry.exam_registrations as any
+				const course = entry.courses as any
+				const session = entry.examination_sessions as any
+				return {
+					marks_entry_id: entry.id,
+					student_dummy_id: entry.student_dummy_number_id,
+					dummy_number: entry.dummy_number,
+					exam_registration_id: entry.exam_registration_id,
+					register_number: examReg?.stu_register_no || '',
+					total_marks_obtained: entry.total_marks_obtained ?? null,
+					total_marks_in_words: entry.total_marks_in_words || '',
+					remarks: entry.evaluator_remarks || '',
+					marks_out_of: entry.marks_out_of || course?.external_max_mark || 100,
+					source: entry.source || 'Manual Entry',
+					course_code: course?.course_code || '',
+					course_name: course?.course_name || '',
+					external_pass_mark: course?.external_pass_mark || 40,
+					session_name: session?.session_name || ''
+				}
+			})
+
+			return NextResponse.json({
+				students,
+				searched_by: searchedBy,
+				course_details: courseDetails
+			})
+		}
+
 		return NextResponse.json({ error: 'Invalid action' }, { status: 400 })
 
 	} catch (error) {
@@ -642,14 +870,15 @@ export async function POST(request: NextRequest) {
 		}
 
 		// Check if marks are actually different
-		if (originalEntry.total_marks_obtained === new_marks) {
+		if (originalEntry.total_marks_obtained !== null && originalEntry.total_marks_obtained === new_marks) {
 			return NextResponse.json({ error: 'New marks must be different from current marks' }, { status: 400 })
 		}
 
 		// Validate new marks against maximum
-		if (new_marks > originalEntry.marks_out_of) {
+		const maxMarks = originalEntry.marks_out_of || 100
+		if (new_marks > maxMarks) {
 			return NextResponse.json({
-				error: `Marks cannot exceed maximum (${originalEntry.marks_out_of})`
+				error: `Marks cannot exceed maximum (${maxMarks})`
 			}, { status: 400 })
 		}
 
@@ -673,7 +902,7 @@ export async function POST(request: NextRequest) {
 				correction_reason,
 				correction_type,
 				reference_number: reference_number || null,
-				approval_status: 'Approved', // Auto-approve for authorized users
+				approval_status: 'Approved',
 				corrected_by: corrected_by || null
 			})
 			.select()

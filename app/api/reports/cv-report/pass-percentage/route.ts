@@ -16,6 +16,26 @@ import { getSupabaseServer } from '@/lib/supabase-server'
  */
 
 const BATCH_SIZE = 1000
+// Smaller batch for `.in('exam_registration_id', batch)` queries — large IN
+// clauses (1000 UUIDs ≈ 37KB) blow past PostgREST's URL length limit and the
+// query silently truncates. The attendance/QP-count reports use 200 too.
+const IN_BATCH_SIZE = 200
+// Max concurrent Supabase calls — prevents overwhelming the connection pool
+const CONCURRENCY = 8
+
+/** Run async tasks with bounded concurrency instead of serially. */
+async function runBatches<T>(tasks: Array<() => PromiseLike<T>>, concurrency = CONCURRENCY): Promise<T[]> {
+	const results: T[] = new Array(tasks.length)
+	let idx = 0
+	async function worker() {
+		while (idx < tasks.length) {
+			const i = idx++
+			results[i] = await tasks[i]()
+		}
+	}
+	await Promise.all(Array.from({ length: Math.min(concurrency, tasks.length) }, worker))
+	return results
+}
 
 const ROMAN: Record<number, string> = {
 	1: 'I', 2: 'II', 3: 'III', 4: 'IV', 5: 'V',
@@ -85,17 +105,22 @@ export async function GET(request: Request) {
 			passMarkByCourseCode.set((c as any).course_code as string, passMark)
 		}
 
-		// 1b. Fetch semester_code + course_order from course_mapping per course
+		// 1b. Fetch semester_code + course_order from course_mapping — parallel batches
 		const semesterByCourseId = new Map<string, string>()
 		const orderByCourseId = new Map<string, number>()
-		for (let i = 0; i < courseIds.length; i += BATCH_SIZE) {
-			const batch = courseIds.slice(i, i + BATCH_SIZE)
-			const { data: mappings } = await supabase
+		const cmBatches = Array.from(
+			{ length: Math.ceil(courseIds.length / BATCH_SIZE) },
+			(_, i) => courseIds.slice(i * BATCH_SIZE, (i + 1) * BATCH_SIZE),
+		)
+		const cmResults = await runBatches(cmBatches.map(batch => () =>
+			supabase
 				.from('course_mapping')
 				.select('course_id, semester_code, course_order')
 				.in('course_id', batch)
 				.eq('is_active', true)
 				.range(0, 99999)
+		))
+		for (const { data: mappings } of cmResults) {
 			for (const cm of mappings || []) {
 				const cid = (cm as any).course_id as string
 				if (!semesterByCourseId.has(cid)) {
@@ -105,61 +130,106 @@ export async function GET(request: Request) {
 			}
 		}
 
-		// 2. Fetch exam_registrations → total_students (filter by course_code)
-		const allRegs: Array<{ id: string; course_code: string }> = []
-		for (let offset = 0; ; offset += BATCH_SIZE) {
-			const { data, error } = await supabase
-				.from('exam_registrations')
-				.select('id, course_code')
-				.eq('institutions_id', institutionsId)
-				.eq('examination_session_id', sessionId)
-				.in('course_code', courseCodes)
-				.range(offset, offset + BATCH_SIZE - 1)
-			if (error) {
-				console.error('[cv-report/pass-percentage] exam_registrations error', error)
-				return NextResponse.json({ error: error.message }, { status: 500 })
+		// 2. Fetch exam_registrations — first page gets total count, remaining pages in parallel
+		const firstPage = await supabase
+			.from('exam_registrations')
+			.select('id, course_code', { count: 'exact', head: false })
+			.eq('institutions_id', institutionsId)
+			.eq('examination_session_id', sessionId)
+			.in('course_code', courseCodes)
+			.range(0, BATCH_SIZE - 1)
+		if (firstPage.error) {
+			console.error('[cv-report/pass-percentage] exam_registrations error', firstPage.error)
+			return NextResponse.json({ error: firstPage.error.message }, { status: 500 })
+		}
+		const allRegs: Array<{ id: string; course_code: string }> = [...((firstPage.data as any) || [])]
+		const totalRegs = firstPage.count ?? 0
+		if (totalRegs > BATCH_SIZE) {
+			const pageCount = Math.ceil(totalRegs / BATCH_SIZE)
+			const pageResults = await runBatches(
+				Array.from({ length: pageCount - 1 }, (_, i) => {
+					const offset = (i + 1) * BATCH_SIZE
+					return () => supabase
+						.from('exam_registrations')
+						.select('id, course_code')
+						.eq('institutions_id', institutionsId)
+						.eq('examination_session_id', sessionId)
+						.in('course_code', courseCodes)
+						.range(offset, offset + BATCH_SIZE - 1)
+				})
+			)
+			for (const { data, error } of pageResults) {
+				if (error) {
+					console.error('[cv-report/pass-percentage] exam_registrations page error', error)
+					continue
+				}
+				allRegs.push(...(data as any || []))
 			}
-			if (!data || data.length === 0) break
-			allRegs.push(...(data as any))
-			if (data.length < BATCH_SIZE) break
 		}
 
 		console.log('[cv-report/pass-percentage] Found', allRegs.length, 'exam registrations')
 
 		const regCountByCourseCode = new Map<string, number>()
 		const examRegIds: string[] = []
+		const courseCodeByRegId = new Map<string, string>()
 		for (const r of allRegs) {
 			regCountByCourseCode.set(r.course_code, (regCountByCourseCode.get(r.course_code) || 0) + 1)
 			examRegIds.push(r.id)
+			courseCodeByRegId.set(r.id, r.course_code)
 		}
 
-		// 3. Appeared = registration / QP count.
-		//    Same source as the Exam Date Wise Registration/QP Count report:
-		//    COUNT(exam_registrations) per course_code in this institution + session.
-		//    (No exam_attendance lookup — every registered learner is treated as appeared,
-		//    matching the QP-count semantics used elsewhere in the COE reports.)
-		const appearedByCourseCode = new Map<string, number>(regCountByCourseCode)
-
-		// 4. Fetch marks_entry → passed (total_marks_obtained >= external_pass_mark)
-		const passedByCourseId = new Map<string, number>()
-		for (let i = 0; i < examRegIds.length; i += BATCH_SIZE) {
-			const batch = examRegIds.slice(i, i + BATCH_SIZE)
-			const { data, error } = await supabase
-				.from('marks_entry')
-				.select('exam_registration_id, course_id, total_marks_obtained')
-				.in('exam_registration_id', batch)
-				.range(0, 99999)
-			if (error) {
-				console.error('[cv-report/pass-percentage] marks_entry error', error)
-				continue
+		// 3. Appeared — parallel IN batches (IN_BATCH_SIZE=200 avoids PostgREST URL length limit)
+		const presentRegIdsAll = new Set<string>()
+		const attendanceResults = await runBatches(
+			Array.from(
+				{ length: Math.ceil(examRegIds.length / IN_BATCH_SIZE) },
+				(_, i) => {
+					const batch = examRegIds.slice(i * IN_BATCH_SIZE, (i + 1) * IN_BATCH_SIZE)
+					return () => supabase
+						.from('exam_attendance')
+						.select('exam_registration_id, attendance_status')
+						.in('exam_registration_id', batch)
+						.range(0, 99999)
+				},
+			)
+		)
+		for (const { data, error } of attendanceResults) {
+			if (error) { console.error('[cv-report/pass-percentage] exam_attendance error', error); continue }
+			for (const a of data || []) {
+				if (String((a as any).attendance_status || '').toLowerCase() === 'present')
+					presentRegIdsAll.add((a as any).exam_registration_id as string)
 			}
+		}
+		const appearedByCourseCode = new Map<string, number>()
+		for (const regId of presentRegIdsAll) {
+			const code = courseCodeByRegId.get(regId)
+			if (code) appearedByCourseCode.set(code, (appearedByCourseCode.get(code) || 0) + 1)
+		}
+
+		console.log('[cv-report/pass-percentage] Appeared courses:', appearedByCourseCode.size)
+
+		// 4. Marks — parallel IN batches (IN_BATCH_SIZE=200 for same URL-length reason)
+		const passedByCourseId = new Map<string, number>()
+		const marksResults = await runBatches(
+			Array.from(
+				{ length: Math.ceil(examRegIds.length / IN_BATCH_SIZE) },
+				(_, i) => {
+					const batch = examRegIds.slice(i * IN_BATCH_SIZE, (i + 1) * IN_BATCH_SIZE)
+					return () => supabase
+						.from('marks_entry')
+						.select('exam_registration_id, course_id, total_marks_obtained')
+						.in('exam_registration_id', batch)
+						.range(0, 99999)
+				},
+			)
+		)
+		for (const { data, error } of marksResults) {
+			if (error) { console.error('[cv-report/pass-percentage] marks_entry error', error); continue }
 			for (const m of data || []) {
 				const cid = (m as any).course_id as string
 				const v = Number((m as any).total_marks_obtained || 0)
 				const passMark = passMarkByCourseId.get(cid) ?? fallbackPassMark
-				if (v >= passMark) {
-					passedByCourseId.set(cid, (passedByCourseId.get(cid) || 0) + 1)
-				}
+				if (v >= passMark) passedByCourseId.set(cid, (passedByCourseId.get(cid) || 0) + 1)
 			}
 		}
 
