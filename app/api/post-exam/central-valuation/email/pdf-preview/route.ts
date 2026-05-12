@@ -40,7 +40,7 @@ export async function GET(request: Request) {
 		.single()
 
 	const { data: board } = boardCode
-		? await supabase.from('board').select('board_name').eq('board_code', boardCode).maybeSingle()
+		? await supabase.from('board').select('board_name, board_type').eq('board_code', boardCode).maybeSingle()
 		: { data: null }
 
 	const settings = await getPdfSettingsWithFallback(inst?.institution_code || '', 'default')
@@ -204,6 +204,7 @@ export async function GET(request: Request) {
 		examiner_mobile: examinerMobile,
 		board_name: board?.board_name || boardCode || '',
 		board_code: boardCode || '',
+		board_type: board?.board_type || '',
 		exam_session_name: session?.session_name || '',
 		valuation_date_range: dateRange,
 		courses: courseEntries,

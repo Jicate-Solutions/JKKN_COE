@@ -47,6 +47,7 @@ export interface CentralValuationAppointmentData {
 	/* Central Valuation specifics */
 	board_name: string
 	board_code: string
+	board_type?: string
 	exam_session_name: string
 	valuation_date_range?: string  // e.g. "15.11.2025"
 	courses: CentralValuationCourseEntry[]

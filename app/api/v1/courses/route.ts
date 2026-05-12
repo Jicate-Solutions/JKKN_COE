@@ -16,6 +16,7 @@ export const GET = withExternalAuth(async (request: Request, context: ExternalAp
 		const courseCode = searchParams.get('course_code')
 		const search = searchParams.get('search')
 		const isActive = searchParams.get('is_active')
+		const coursesStatus = searchParams.get('courses_status')
 
 		let query = supabase
 			.from('courses')
@@ -72,7 +73,8 @@ export const GET = withExternalAuth(async (request: Request, context: ExternalAp
 				annual_semester,
 				registration_based,
 				credit_included,
-				has_hall_ticket
+				has_hall_ticket,
+				courses_status
 			`, { count: 'exact' })
 			.order('created_at', { ascending: false })
 			.range(0, 9999)
@@ -94,6 +96,9 @@ export const GET = withExternalAuth(async (request: Request, context: ExternalAp
 		}
 		if (isActive !== null) {
 			query = query.eq('status', isActive === 'true')
+		}
+		if (coursesStatus) {
+			query = query.eq('courses_status', coursesStatus)
 		}
 
 		const { data, error } = await query
@@ -235,6 +240,7 @@ export const POST = withExternalAuth(async (request: Request, context: ExternalA
 			registration_based: body.registration_based ?? false,
 			credit_included: body.credit_included !== false,
 			has_hall_ticket: body.has_hall_ticket !== false,
+			courses_status: body.courses_status ?? 'Pending',
 		}).select('*').single()
 
 		if (error) {

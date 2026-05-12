@@ -17,6 +17,7 @@ export const API_MODULES = [
 	'timetables',
 	'courses',
 	'course-mapping',
+	'boards',
 	'bos-meetings',
 	'bos-compositions',
 	'bos-experts',

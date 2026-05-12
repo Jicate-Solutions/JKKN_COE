@@ -47,7 +47,7 @@ export async function POST(request: Request) {
 		.eq('id', examination_session_id)
 		.single()
 	const { data: board } = board_code
-		? await supabase.from('board').select('board_name').eq('board_code', board_code).maybeSingle()
+		? await supabase.from('board').select('board_name, board_type').eq('board_code', board_code).maybeSingle()
 		: { data: null }
 
 	// Mirrors the practical-allotment email config:
@@ -250,6 +250,7 @@ async function processOne(supabase: any, args: {
 		examiner_mobile: examinerMobile,
 		board_name: board?.board_name || board_code || '',
 		board_code: board_code || '',
+		board_type: board?.board_type || '',
 		exam_session_name: session?.session_name || '',
 		valuation_date_range: dateRange,
 		courses: courseEntries,

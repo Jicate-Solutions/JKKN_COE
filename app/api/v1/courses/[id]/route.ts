@@ -57,7 +57,8 @@ const COURSE_SELECT = `
 	annual_semester,
 	registration_based,
 	credit_included,
-	has_hall_ticket
+	has_hall_ticket,
+	courses_status
 `
 
 function checkInstitutionAccess(context: ExternalApiContext, institutionsId: string | null): boolean {
@@ -169,6 +170,7 @@ export const PUT = withExternalAuth(async (request: Request, context: ExternalAp
 			registration_based: 'registration_based',
 			credit_included: 'credit_included',
 			has_hall_ticket: 'has_hall_ticket',
+			courses_status: 'courses_status',
 		}
 
 		for (const [apiField, dbField] of Object.entries(fieldMap)) {

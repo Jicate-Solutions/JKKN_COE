@@ -333,7 +333,7 @@ export function buildCentralValuationAppointmentHtml(
 
 		<p class="body-paragraph">
 			I am pleased to inform you that you have been appointed as an ${roleLabel}
-			for the ${boardLabel ? `UG-${boardLabel} Board` : 'UG Board'} semester valuation for the ${sessionFormatted.body}
+			for the ${boardLabel ? `${data.board_type || 'UG'}-${boardLabel} Board` : `${data.board_type || 'UG'} Board`} semester valuation for the ${sessionFormatted.body}
 			Examinations, scheduled to be held on ${valuationDates}. You are requested to report
 			to the Office of the Controller of Examinations at 9:30 a.m.
 		</p>
