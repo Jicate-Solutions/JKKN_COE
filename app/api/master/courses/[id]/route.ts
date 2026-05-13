@@ -22,6 +22,8 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
         display_code,
         course_category,
         course_type,
+        course_level,
+        course_type_code,
         course_part_master,
         credit,
         split_credit,
@@ -82,6 +84,8 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
       display_code: data.display_code,
       course_category: data.course_category,
       course_type: data.course_type,
+      course_level: data.course_level ?? null,
+      course_type_code: data.course_type_code ?? null,
       course_part_master: data.course_part_master,
       credits: data.credit,
       split_credit: data.split_credit,
@@ -218,6 +222,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
     if (input.display_code !== undefined) data.display_code = input.display_code ? String(input.display_code) : null
     if (input.course_category !== undefined && input.course_category) data.course_category = String(input.course_category)
     if (input.course_type !== undefined) data.course_type = input.course_type ? String(input.course_type) : null
+    if (input.course_level !== undefined) data.course_level = input.course_level ? String(input.course_level) : null
     if (input.course_part_master !== undefined && input.course_part_master) data.course_part_master = String(input.course_part_master)
     if (input.credits !== undefined) data.credit = Number(input.credits)
     if (input.split_credit !== undefined) data.split_credit = Boolean(input.split_credit)
@@ -327,6 +332,8 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
       display_code: updated.display_code,
       course_category: updated.course_category,
       course_type: updated.course_type,
+      course_level: updated.course_level ?? null,
+      course_type_code: updated.course_type_code ?? null,
       course_part_master: updated.course_part_master,
       credits: updated.credit ?? 0,
       split_credit: updated.split_credit,

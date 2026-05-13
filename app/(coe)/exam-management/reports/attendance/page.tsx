@@ -10,11 +10,12 @@ import { Breadcrumb, BreadcrumbItem, BreadcrumbLink, BreadcrumbList, BreadcrumbP
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
+import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { useToast } from "@/hooks/common/use-toast"
-import { Loader2, FileSpreadsheet, FileText, Calendar, Check, ChevronsUpDown, X, Package, UserX } from "lucide-react"
+import { Loader2, FileSpreadsheet, FileText, Calendar, Check, ChevronsUpDown, X, Package, UserX, Save } from "lucide-react"
 import { cn } from "@/lib/utils"
 import Link from "next/link"
 import { generateStudentAttendanceSheetPDF } from "@/lib/utils/generate-student-attendance-sheet-pdf"
@@ -97,6 +98,13 @@ export default function AttendanceReportsPage() {
 	const [generatingBundle, setGeneratingBundle] = useState(false)
 	const [generatingAbsentList, setGeneratingAbsentList] = useState(false)
 
+	// Bundle Cover - configurable max students per bundle (default 60, per-institution)
+	const DEFAULT_STUDENTS_PER_BUNDLE = 60
+	const [studentsPerBundle, setStudentsPerBundle] = useState<number>(DEFAULT_STUDENTS_PER_BUNDLE)
+	const [savedStudentsPerBundle, setSavedStudentsPerBundle] = useState<number>(DEFAULT_STUDENTS_PER_BUNDLE)
+	const [loadingBundleSetting, setLoadingBundleSetting] = useState(false)
+	const [savingBundleSetting, setSavingBundleSetting] = useState(false)
+
 	// Popover open states for searchable dropdowns
 	const [institutionOpen, setInstitutionOpen] = useState(false)
 	const [sessionOpen, setSessionOpen] = useState(false)
@@ -157,10 +165,73 @@ export default function AttendanceReportsPage() {
 			setPrograms([])
 			setCourses([])
 			fetchSessions(selectedInstitutionId)
+			fetchBundleSetting(selectedInstitutionId)
 		} else {
 			setSessions([])
+			setStudentsPerBundle(DEFAULT_STUDENTS_PER_BUNDLE)
+			setSavedStudentsPerBundle(DEFAULT_STUDENTS_PER_BUNDLE)
 		}
 	}, [selectedInstitutionId])
+
+	const fetchBundleSetting = async (institutionId: string) => {
+		try {
+			setLoadingBundleSetting(true)
+			const res = await fetch(`/api/v1/exam-settings?institution_id=${institutionId}`)
+			if (res.ok) {
+				const data = await res.json()
+				const value = Number(data?.students_per_bundle) || DEFAULT_STUDENTS_PER_BUNDLE
+				setStudentsPerBundle(value)
+				setSavedStudentsPerBundle(value)
+			}
+		} catch (error) {
+			console.error('Error fetching bundle setting:', error)
+		} finally {
+			setLoadingBundleSetting(false)
+		}
+	}
+
+	const handleSaveBundleSetting = async () => {
+		if (!selectedInstitutionId) return
+		if (!Number.isInteger(studentsPerBundle) || studentsPerBundle <= 0 || studentsPerBundle > 500) {
+			toast({
+				title: "⚠️ Invalid Value",
+				description: "Max per bundle must be an integer between 1 and 500.",
+				variant: "destructive",
+			})
+			return
+		}
+		try {
+			setSavingBundleSetting(true)
+			const res = await fetch('/api/v1/exam-settings', {
+				method: 'PUT',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					institutions_id: selectedInstitutionId,
+					students_per_bundle: studentsPerBundle
+				})
+			})
+			if (!res.ok) {
+				const err = await res.json().catch(() => ({}))
+				throw new Error(err.error || 'Failed to save setting')
+			}
+			setSavedStudentsPerBundle(studentsPerBundle)
+			toast({
+				title: "✅ Default Saved",
+				description: `Bundle size of ${studentsPerBundle} saved for this institution.`,
+				className: "bg-green-50 border-green-200 text-green-800",
+				duration: 4000,
+			})
+		} catch (error) {
+			const message = error instanceof Error ? error.message : 'Failed to save setting'
+			toast({
+				title: "❌ Save Failed",
+				description: message,
+				variant: "destructive",
+			})
+		} finally {
+			setSavingBundleSetting(false)
+		}
+	}
 
 	const fetchSessions = async (institutionId: string) => {
 		try {
@@ -547,16 +618,20 @@ export default function AttendanceReportsPage() {
 			}
 
 			// Generate single combined PDF for all subjects (merged by date+session)
+			const effectiveBundleSize = Number.isInteger(studentsPerBundle) && studentsPerBundle > 0
+				? studentsPerBundle
+				: DEFAULT_STUDENTS_PER_BUNDLE
 			const fileName = generateBundleCoverPDF({
 				bundles: responseData.bundles,
 				logoImage: logoBase64,
-				rightLogoImage: rightLogoBase64
+				rightLogoImage: rightLogoBase64,
+				studentsPerBundle: effectiveBundleSize
 			})
 
 			// Calculate total bundles across all subjects
 			let totalBundlesGenerated = 0
 			responseData.bundles.forEach((bundleData: any) => {
-				const bundlesForSubject = Math.ceil(bundleData.students.length / 60)
+				const bundlesForSubject = Math.ceil(bundleData.students.length / effectiveBundleSize)
 				totalBundlesGenerated += bundlesForSubject
 			})
 
@@ -1141,7 +1216,54 @@ export default function AttendanceReportsPage() {
 									</div>
 								</div>
 							</CardHeader>
-							<CardContent className="p-3 flex-1 flex items-end">
+							<CardContent className="p-3 flex-1 flex flex-col justify-end gap-2">
+								<div className="space-y-1">
+									<Label htmlFor="students-per-bundle" className="text-[11px] font-medium flex items-center justify-between">
+										<span>Max per Bundle</span>
+										{savedStudentsPerBundle !== studentsPerBundle && (
+											<span className="text-[10px] text-amber-600">unsaved override</span>
+										)}
+									</Label>
+									<div className="flex items-center gap-1">
+										<Input
+											id="students-per-bundle"
+											type="number"
+											min={1}
+											max={500}
+											value={studentsPerBundle}
+											onChange={(e) => {
+												const v = parseInt(e.target.value, 10)
+												setStudentsPerBundle(Number.isNaN(v) ? 0 : v)
+											}}
+											disabled={!selectedInstitutionId || loadingBundleSetting}
+											className="h-8 text-xs"
+											placeholder="60"
+										/>
+										<Button
+											type="button"
+											variant="outline"
+											size="icon"
+											onClick={handleSaveBundleSetting}
+											disabled={
+												!selectedInstitutionId ||
+												savingBundleSetting ||
+												loadingBundleSetting ||
+												savedStudentsPerBundle === studentsPerBundle
+											}
+											title="Save as default for this institution"
+											className="h-8 w-8 flex-shrink-0"
+										>
+											{savingBundleSetting ? (
+												<Loader2 className="h-3 w-3 animate-spin" />
+											) : (
+												<Save className="h-3 w-3" />
+											)}
+										</Button>
+									</div>
+									<p className="text-[10px] text-muted-foreground">
+										Default: {savedStudentsPerBundle}. Change & generate to override once, or save as default.
+									</p>
+								</div>
 								<Button
 									onClick={handleGenerateBundle}
 									disabled={generatingBundle || !selectedInstitutionId || !selectedSessionId || !selectedExamDate || !selectedSessionType}

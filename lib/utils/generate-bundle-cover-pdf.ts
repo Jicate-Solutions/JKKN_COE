@@ -23,18 +23,22 @@ interface BundleCoverPDFData {
 	bundles: BundleCoverData[]
 	logoImage?: string
 	rightLogoImage?: string
+	studentsPerBundle?: number
 }
 
-const STUDENTS_PER_BUNDLE = 60
+const DEFAULT_STUDENTS_PER_BUNDLE = 60
 const COLUMNS_PER_ROW = 6
 const ROWS_PER_COLUMN = 10
 
 /**
  * Generates Answer Sheet Bundle Cover PDFs
- * Each bundle contains up to 60 students
+ * Each bundle contains up to `studentsPerBundle` students (default 60, configurable per institution)
  * Multiple subjects are merged into a single PDF (one PDF per date+session)
  */
 export function generateBundleCoverPDF(data: BundleCoverPDFData): string {
+	const studentsPerBundle = data.studentsPerBundle && data.studentsPerBundle > 0
+		? data.studentsPerBundle
+		: DEFAULT_STUDENTS_PER_BUNDLE
 	// Create a single PDF document for all subjects
 	const doc = new jsPDF('landscape', 'mm', 'a4')
 	const pageWidth = doc.internal.pageSize.getWidth()
@@ -45,10 +49,10 @@ export function generateBundleCoverPDF(data: BundleCoverPDFData): string {
 
 	// Process each subject
 	data.bundles.forEach((subjectData) => {
-		// Split students into bundles of 60 for this subject
+		// Split students into bundles of `studentsPerBundle` for this subject
 		const bundlesForSubject: StudentAttendance[][] = []
-		for (let i = 0; i < subjectData.students.length; i += STUDENTS_PER_BUNDLE) {
-			bundlesForSubject.push(subjectData.students.slice(i, i + STUDENTS_PER_BUNDLE))
+		for (let i = 0; i < subjectData.students.length; i += studentsPerBundle) {
+			bundlesForSubject.push(subjectData.students.slice(i, i + studentsPerBundle))
 		}
 
 		bundlesForSubject.forEach((bundleStudents, bundleIndex) => {
@@ -193,14 +197,15 @@ export function generateBundleCoverPDF(data: BundleCoverPDFData): string {
 			const presentCount = bundleStudents.filter(s => s.attendance === 'PRESENT').length
 			const absentCount = bundleStudents.filter(s => s.attendance === 'ABSENT').length
 
-			// Prepare table data (6 columns per row, 10 rows per column)
+			// Prepare table data (6 columns per row, rows scale with bundle size)
+			const rowsPerColumn = Math.max(ROWS_PER_COLUMN, Math.ceil(studentsPerBundle / COLUMNS_PER_ROW))
 			const tableData: any[][] = []
 
-			for (let row = 0; row < ROWS_PER_COLUMN; row++) {
+			for (let row = 0; row < rowsPerColumn; row++) {
 				const rowData: string[] = []
 
 				for (let col = 0; col < COLUMNS_PER_ROW; col++) {
-					const studentIndex = col * ROWS_PER_COLUMN + row
+					const studentIndex = col * rowsPerColumn + row
 
 					if (studentIndex < bundleStudents.length) {
 						const student = bundleStudents[studentIndex]

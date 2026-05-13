@@ -22,11 +22,13 @@ async function getSessionByToken(supabase: ReturnType<typeof getSupabaseServer>,
 
 	// Lookup session by session_token (which is the access_token)
 	// Use limit(1) instead of .single() — duplicate active sessions can exist
+	// Filter out expired sessions so zombie rows don't attribute logs to stale users
 	const { data: sessions } = await supabase
 		.from('sessions')
 		.select('id, user_id')
 		.eq('session_token', accessToken)
 		.eq('is_active', true)
+		.gt('expires_at', new Date().toISOString())
 		.order('created_at', { ascending: false })
 		.limit(1)
 

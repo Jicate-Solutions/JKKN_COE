@@ -78,6 +78,7 @@ export function generateCourseTemplate(referenceData: CourseReferenceData): Exce
 		'Annual Semester*',         // 43
 		'Registration Based*',      // 44
 		'Status',                   // 45
+		'Course Level',             // 46  (optional — I..XX, combined with display_code → course_type_code)
 	]
 
 	const sampleRow = [
@@ -126,6 +127,7 @@ export function generateCourseTemplate(referenceData: CourseReferenceData): Exce
 		'FALSE',                         // Annual Semester*
 		'FALSE',                         // Registration Based*
 		'TRUE',                          // Status (active)
+		'I',                             // Course Level (optional — I..XX)
 	]
 
 	// Create Course Master worksheet
@@ -193,6 +195,7 @@ export function generateCourseTemplate(referenceData: CourseReferenceData): Exce
 		18,  // 43 Annual Semester*
 		20,  // 44 Registration Based*
 		10,  // 45 Status
+		12,  // 46 Course Level
 	]
 
 	courseMasterSheet.columns = columnWidths.map((width, index) => ({
@@ -325,6 +328,12 @@ export function generateCourseTemplate(referenceData: CourseReferenceData): Exce
 	// Col 18: Result Type
 	addInlineDropdown(18, ['Mark', 'Status', 'comment', 'credit'],
 		'Invalid Result Type', 'Select: Mark, Status, comment, or credit')
+
+	// Col 46: Course Level (Roman numerals I..XX, optional)
+	addInlineDropdown(46, [
+		'I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X',
+		'XI', 'XII', 'XIII', 'XIV', 'XV', 'XVI', 'XVII', 'XVIII', 'XIX', 'XX'
+	], 'Invalid Course Level', 'Select a Roman numeral I..XX (optional)')
 
 	// --- Boolean dropdowns (TRUE/FALSE) ---
 	const booleanColumns = [
@@ -463,6 +472,20 @@ export function generateCourseTemplate(referenceData: CourseReferenceData): Exce
 	]
 	courseTypes.forEach(([value, desc]) => {
 		referenceRows.push(['Course Type', value, desc])
+	})
+
+	// COURSE LEVEL Section
+	addSection('═══ COURSE LEVEL ═══')
+	addTableHeaders('Category', 'Value', 'Description')
+	const courseLevels: [string, string][] = [
+		['I', 'Level I'], ['II', 'Level II'], ['III', 'Level III'], ['IV', 'Level IV'],
+		['V', 'Level V'], ['VI', 'Level VI'], ['VII', 'Level VII'], ['VIII', 'Level VIII'],
+		['IX', 'Level IX'], ['X', 'Level X'], ['XI', 'Level XI'], ['XII', 'Level XII'],
+		['XIII', 'Level XIII'], ['XIV', 'Level XIV'], ['XV', 'Level XV'], ['XVI', 'Level XVI'],
+		['XVII', 'Level XVII'], ['XVIII', 'Level XVIII'], ['XIX', 'Level XIX'], ['XX', 'Level XX']
+	]
+	courseLevels.forEach(([value, desc]) => {
+		referenceRows.push(['Course Level', value, desc])
 	})
 
 	// COURSE PART MASTER Section

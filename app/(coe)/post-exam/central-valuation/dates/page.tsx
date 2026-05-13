@@ -928,7 +928,7 @@ export default function CentralValuationDatesPage() {
 												>
 													<span className="flex-1 pr-2 truncate">
 														{courseBoardCode
-															? (boards.find(b => b.board_code === courseBoardCode)?.board_name || courseBoardCode)
+															? (() => { const b = boards.find(b => b.board_code === courseBoardCode); return b ? `${b.board_code}-${b.board_name}` : courseBoardCode })()
 															: boardsWithWindow.length === 0
 																? 'Set a board window first'
 																: 'Select board'}
@@ -953,7 +953,7 @@ export default function CentralValuationDatesPage() {
 															>
 																<Check className={cn('mr-2 h-3.5 w-3.5 shrink-0', courseBoardCode === b.board_code ? 'opacity-100' : 'opacity-0')} />
 																<span className="flex-1">
-																	{b.board_name}
+																	{b.board_code}-{b.board_name}
 																	<span className="text-muted-foreground ml-1">({b.window?.from_date} → {b.window?.to_date})</span>
 																</span>
 															</CommandItem>

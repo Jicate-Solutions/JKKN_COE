@@ -339,7 +339,7 @@ export default function CentralValuationExaminerPage() {
 								<PopoverTrigger asChild>
 									<Button variant="outline" role="combobox" className="w-full justify-between h-9 text-xs" disabled={!selectedSessionId}>
 										<span className="flex-1 pr-2 truncate">
-											{selectedBoardCode ? boards.find(b => b.board_code === selectedBoardCode)?.board_name : 'Select board'}
+											{selectedBoardCode ? (() => { const b = boards.find(b => b.board_code === selectedBoardCode); return b ? `${b.board_code}-${b.board_name}` : selectedBoardCode })() : 'Select board'}
 										</span>
 										<ChevronsUpDown className="h-3.5 w-3.5 opacity-50" />
 									</Button>
@@ -350,9 +350,9 @@ export default function CentralValuationExaminerPage() {
 										<CommandEmpty>No board.</CommandEmpty>
 										<CommandGroup className="max-h-56 overflow-auto">
 											{boards.map(b => (
-												<CommandItem key={b.board_code} onSelect={() => { setSelectedBoardCode(b.board_code); setBoardOpen(false) }} className="py-2 text-xs">
+												<CommandItem key={b.board_code} value={`${b.board_code} ${b.board_name}`} onSelect={() => { setSelectedBoardCode(b.board_code); setBoardOpen(false) }} className="py-2 text-xs">
 													<Check className={cn('mr-2 h-3.5 w-3.5', selectedBoardCode === b.board_code ? 'opacity-100' : 'opacity-0')} />
-													{b.board_name}
+													{b.board_code}-{b.board_name}
 												</CommandItem>
 											))}
 										</CommandGroup>

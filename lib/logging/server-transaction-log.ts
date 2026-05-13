@@ -35,6 +35,7 @@ async function resolveSession(supabase: ReturnType<typeof getSupabaseServer>) {
 			.select('id, user_id')
 			.eq('session_token', accessToken)
 			.eq('is_active', true)
+			.gt('expires_at', new Date().toISOString())
 			.order('created_at', { ascending: false })
 			.limit(1)
 

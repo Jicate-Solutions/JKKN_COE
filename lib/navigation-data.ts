@@ -78,6 +78,13 @@ export interface NavSubItem {
 	title: string
 	url: string
 	icon?: LucideIcon
+	/**
+	 * DB-driven page permission name (e.g. 'page.post_exam.external_mark_entry.view').
+	 * When set, sidebar visibility is controlled by hasPermission() — change
+	 * access via /users/role-permissions, no code change required.
+	 */
+	permission?: string
+	/** Legacy role-based gate. Used as fallback when `permission` is not set. */
 	coe_roles?: string[]
 }
 
@@ -86,6 +93,8 @@ export interface NavItem {
 	url: string
 	icon?: LucideIcon
 	isActive?: boolean
+	/** DB-driven permission for top-level items (e.g. Dashboard). */
+	permission?: string
 	coe_roles: string[]
 	items?: NavSubItem[]
 }
@@ -103,18 +112,15 @@ export interface FlatNavItem {
 /**
  * Main Navigation Data with Role-Based Access Control (RBAC)
  *
- * Role Hierarchy:
- * - super_admin: Full system access (all institutions)
- * - coe: Controller of Examination (institution-specific)
- * - deputy_coe: Deputy Controller (institution-specific)
- * - coe_office: COE Office Staff (limited access)
- * - faculty_coe: Faculty member
- * - admin: System administrator
+ * Visibility model (after step 2):
+ *   - If a sub-item has a `permission`, visibility = hasPermission(permission).
+ *   - Else legacy fallback: empty/missing coe_roles = visible to all roles;
+ *     otherwise hasAnyRole(coe_roles).
+ *   - Group `coe_roles` still gate the parent menu. (Future step: drop these
+ *     in favor of "visible if any child is visible".)
  *
- * Access Control:
- * - Empty roles array [] = Available to ALL authenticated users
- * - Specified roles = Only users with ANY of those roles can access
- * - Sub-items can have their own role restrictions for granular control
+ * To grant a role access to a page: go to /users/role-permissions and tick
+ * the `page.<...>.view` permission for that role. No code change needed.
  */
 export const navMain: NavItem[] = [
 	{
@@ -122,6 +128,7 @@ export const navMain: NavItem[] = [
 		url: '/dashboard',
 		icon: Home,
 		isActive: true,
+		permission: 'page.dashboard.view',
 		coe_roles: [],
 	},
 	{
@@ -131,11 +138,11 @@ export const navMain: NavItem[] = [
 		isActive: false,
 		coe_roles: ['admin', 'super_admin'],
 		items: [
-			{ title: 'Role Management', url: '/admin/role-management', icon: ShieldCheck },
-			{ title: 'Roles', url: '/users/roles', icon: Shield },
-			{ title: 'Permissions', url: '/users/permissions', icon: Key },
-			{ title: 'Role Permission', url: '/users/role-permissions', icon: LibraryBig },
-			{ title: 'User Log Activity', url: '/admin/user-log-activity', icon: ScrollText },
+			{ title: 'Role Management', url: '/admin/role-management', icon: ShieldCheck, permission: 'page.admin.role_management.view' },
+			{ title: 'Roles', url: '/users/roles', icon: Shield, permission: 'page.users.roles.view' },
+			{ title: 'Permissions', url: '/users/permissions', icon: Key, permission: 'page.users.permissions.view' },
+			{ title: 'Role Permission', url: '/users/role-permissions', icon: LibraryBig, permission: 'page.users.role_permissions.view' },
+			{ title: 'User Log Activity', url: '/admin/user-log-activity', icon: ScrollText, permission: 'page.admin.user_log_activity.view' },
 		],
 	},
 	{
@@ -145,23 +152,23 @@ export const navMain: NavItem[] = [
 		isActive: false,
 		coe_roles: ['super_admin'],
 		items: [
-			{ title: 'Institutions', url: '/master/institutions', icon: School },
-			{ title: 'Degree', url: '/master/degrees', icon: GraduationCap },
-			{ title: 'Department', url: '/master/departments-myjkkn', icon: Grid2X2 },
-			{ title: 'Program', url: '/master/programs-myjkkn', icon: GraduationCap },
-			{ title: 'Semester', url: '/master/semesters-myjkkn', icon: CalendarCheck2 },
-			{ title: 'Academic Year', url: '/master/academic-years', icon: Calendar },
-			{ title: 'Batch', url: '/master/batches', icon: SquareStack },
-			{ title: 'Regulations', url: '/master/regulations-myjkkn', icon: LibraryBig },
-			{ title: 'Section', url: '/master/sections', icon: Shapes },
-			{ title: 'Board', url: '/master/boards', icon: Shapes },
-			{ title: 'PDF Settings', url: '/master/pdf-settings', icon: FileText },
-			{ title: 'SMTP Configuration', url: '/master/smtp-config', icon: Mail },
-			{ title: 'MyJKKN API Explorer', url: '/test-myjkkn-api', icon: Globe },
+			{ title: 'Institutions', url: '/master/institutions', icon: School, permission: 'page.master.institutions.view' },
+			{ title: 'Degree', url: '/master/degrees', icon: GraduationCap, permission: 'page.master.degrees.view' },
+			{ title: 'Department', url: '/master/departments-myjkkn', icon: Grid2X2, permission: 'page.master.departments_myjkkn.view' },
+			{ title: 'Program', url: '/master/programs-myjkkn', icon: GraduationCap, permission: 'page.master.programs_myjkkn.view' },
+			{ title: 'Semester', url: '/master/semesters-myjkkn', icon: CalendarCheck2, permission: 'page.master.semesters_myjkkn.view' },
+			{ title: 'Academic Year', url: '/master/academic-years', icon: Calendar, permission: 'page.master.academic_years.view' },
+			{ title: 'Batch', url: '/master/batches', icon: SquareStack, permission: 'page.master.batches.view' },
+			{ title: 'Regulations', url: '/master/regulations-myjkkn', icon: LibraryBig, permission: 'page.master.regulations_myjkkn.view' },
+			{ title: 'Section', url: '/master/sections', icon: Shapes, permission: 'page.master.sections.view' },
+			{ title: 'Board', url: '/master/boards', icon: Shapes, permission: 'page.master.boards.view' },
+			{ title: 'PDF Settings', url: '/master/pdf-settings', icon: FileText, permission: 'page.master.pdf_settings.view' },
+			{ title: 'SMTP Configuration', url: '/master/smtp-config', icon: Mail, permission: 'page.master.smtp_config.view' },
+			{ title: 'MyJKKN API Explorer', url: '/test-myjkkn-api', icon: Globe, permission: 'page.test_myjkkn_api.view' },
 			{ title: 'Grade Card Report', url: '#', icon: FileText },
 			{ title: 'Hall', url: '#', icon: Shapes },
 			{ title: 'QP Template', url: '#', icon: NotepadText },
-			{ title: 'COE Calendar', url: '/pre-exam/coe-calendar', icon: CalendarDays },
+			{ title: 'COE Calendar', url: '/pre-exam/coe-calendar', icon: CalendarDays, permission: 'page.pre_exam.coe_calendar.view' },
 			{ title: 'Fee Details', url: '#', icon: Tags },
 			{ title: 'Fee Structure', url: '#', icon: CreditCard },
 			{ title: 'Moderation Mark Setup', url: '#', icon: ListChecks },
@@ -174,9 +181,9 @@ export const navMain: NavItem[] = [
 		isActive: false,
 		coe_roles: ['super_admin', 'coe', 'coe_office'],
 		items: [
-			{ title: 'Courses', url: '/master/courses', icon: BookText },
-			{ title: 'Course Mapping', url: '/course-management/course-mapping-index', icon: TableProperties },
-			{ title: 'Course Offering', url: '/course-management/course-offering', icon: BookText },
+			{ title: 'Courses', url: '/master/courses', icon: BookText, permission: 'page.master.courses.view' },
+			{ title: 'Course Mapping', url: '/course-management/course-mapping-index', icon: TableProperties, permission: 'page.course_management.course_mapping_index.view' },
+			{ title: 'Course Offering', url: '/course-management/course-offering', icon: BookText, permission: 'page.course_management.course_offering.view' },
 		],
 	},
 	{
@@ -185,7 +192,7 @@ export const navMain: NavItem[] = [
 		icon: GraduationCap,
 		coe_roles: ['super_admin', 'coe'],
 		items: [
-			{ title: 'Learner Directory', url: '/users/learners-myjkkn', icon: GraduationCap },
+			{ title: 'Learner Directory', url: '/users/learners-myjkkn', icon: GraduationCap, permission: 'page.users.learners_myjkkn.view' },
 			{ title: 'Learner Promotion', url: '#' },
 		],
 	},
@@ -195,15 +202,15 @@ export const navMain: NavItem[] = [
 		icon: Database,
 		coe_roles: ['super_admin', 'coe'],
 		items: [
-			{ title: 'Grades', url: '/grading/grades', icon: BookText },
-			{ title: 'Grade System', url: '/grading/grade-system', icon: CalendarDays },
-			{ title: 'Generate Final Marks', url: '/grading/generate-final-marks', icon: Calculator },
-			{ title: 'Semester Results', url: '/grading/semester-results', icon: BarChart3 },
-			{ title: 'Learner Arrears', url: '/grading/learner-backlogs', icon: AlertTriangle },
-			{ title: 'Galley Report', url: '/grading/galley-report/report', icon: FileText },
-			{ title: 'Test GPA Workflow', url: '/grading/test-gpa-workflow', icon: TestTube },
-			{ title: 'Comment Grade Entry', url: '/marks-management/comment-grades', icon: MessageSquare },
-			{ title: 'Credit Entry', url: '/marks-management/credit-entry', icon: Award },
+			{ title: 'Grades', url: '/grading/grades', icon: BookText, permission: 'page.grading.grades.view' },
+			{ title: 'Grade System', url: '/grading/grade-system', icon: CalendarDays, permission: 'page.grading.grade_system.view' },
+			{ title: 'Generate Final Marks', url: '/grading/generate-final-marks', icon: Calculator, permission: 'page.grading.generate_final_marks.view' },
+			{ title: 'Semester Results', url: '/grading/semester-results', icon: BarChart3, permission: 'page.grading.semester_results.view' },
+			{ title: 'Learner Arrears', url: '/grading/learner-backlogs', icon: AlertTriangle, permission: 'page.grading.learner_backlogs.view' },
+			{ title: 'Galley Report', url: '/grading/galley-report/report', icon: FileText, permission: 'page.grading.galley_report.report.view' },
+			{ title: 'Test GPA Workflow', url: '/grading/test-gpa-workflow', icon: TestTube, permission: 'page.grading.test_gpa_workflow.view' },
+			{ title: 'Comment Grade Entry', url: '/marks-management/comment-grades', icon: MessageSquare, permission: 'page.marks_management.comment_grades.view' },
+			{ title: 'Credit Entry', url: '/marks-management/credit-entry', icon: Award, permission: 'page.marks_management.credit_entry.view' },
 		],
 	},
 	{
@@ -212,21 +219,21 @@ export const navMain: NavItem[] = [
 		icon: CalendarClock,
 		coe_roles: ['super_admin', 'coe', 'coe_office_1'],
 		items: [
-			{ title: 'Exam Types', url: '/exam-management/exam-types', icon: Tags, coe_roles: ['super_admin', 'coe'] },
-			{ title: 'Examination Sessions', url: '/exam-management/examination-sessions', icon: CalendarDays, coe_roles: ['super_admin', 'coe'] },
-			{ title: 'Exam Registrations', url: '/exam-management/exam-registrations', icon: UserPlus, coe_roles: ['super_admin', 'coe'] },
-			{ title: 'Registration Lookup', url: '/exam-management/exam-registrations/lookup', icon: Search, coe_roles: ['super_admin', 'coe'] },
-			{ title: 'Exam Timetable', url: '/exam-management/exam-timetables', icon: Calendar, coe_roles: ['super_admin', 'coe'] },
-			{ title: 'Validate Timetable', url: '/exam-management/validate-timetable', icon: ShieldCheck, coe_roles: ['super_admin', 'coe'] },
-			{ title: 'Hall Tickets', url: '/pre-exam/hall-tickets', icon: Ticket, coe_roles: ['super_admin', 'coe'] },
-			{ title: 'Exam Attendance Sheet', url: '/pre-exam/exam-attendance-sheet', icon: ClipboardList, coe_roles: ['super_admin', 'coe', 'coe_office_1'] },
-			{ title: 'Practical Allotment', url: '/pre-exam/practical-allotment', icon: FlaskConical, coe_roles: ['super_admin', 'coe'] },
-			{ title: 'Bulk Internal Marks', url: '/pre-exam/bulk-internal-marks', icon: FileText, coe_roles: ['super_admin', 'coe'] },
-			{ title: 'CIA Entry Setting', url: '/pre-exam/internal-mark-entry-setting', icon: Settings2, coe_roles: ['super_admin', 'coe'] },
-			{ title: 'Mark Conversion Rules', url: '/pre-exam/mark-conversion-rules', icon: Scale, coe_roles: ['super_admin', 'coe'] },
-			{ title: 'Internal Mark Entry', url: '/pre-exam/internal-mark-entry', icon: Edit, coe_roles: ['super_admin', 'coe'] },
-			{ title: 'Internal Mark Report', url: '/pre-exam/internal-mark-report', icon: FileText, coe_roles: ['super_admin', 'coe'] },
-			{ title: 'COE Calendar', url: '/pre-exam/coe-calendar', icon: CalendarDays, coe_roles: ['super_admin', 'coe'] },
+			{ title: 'Exam Types', url: '/exam-management/exam-types', icon: Tags, permission: 'page.exam_management.exam_types.view' },
+			{ title: 'Examination Sessions', url: '/exam-management/examination-sessions', icon: CalendarDays, permission: 'page.exam_management.examination_sessions.view' },
+			{ title: 'Exam Registrations', url: '/exam-management/exam-registrations', icon: UserPlus, permission: 'page.exam_management.exam_registrations.view' },
+			{ title: 'Registration Lookup', url: '/exam-management/exam-registrations/lookup', icon: Search, permission: 'page.exam_management.exam_registrations.lookup.view' },
+			{ title: 'Exam Timetable', url: '/exam-management/exam-timetables', icon: Calendar, permission: 'page.exam_management.exam_timetables.view' },
+			{ title: 'Validate Timetable', url: '/exam-management/validate-timetable', icon: ShieldCheck, permission: 'page.exam_management.validate_timetable.view' },
+			{ title: 'Hall Tickets', url: '/pre-exam/hall-tickets', icon: Ticket, permission: 'page.pre_exam.hall_tickets.view' },
+			{ title: 'Exam Attendance Sheet', url: '/pre-exam/exam-attendance-sheet', icon: ClipboardList, permission: 'page.pre_exam.exam_attendance_sheet.view' },
+			{ title: 'Practical Allotment', url: '/pre-exam/practical-allotment', icon: FlaskConical, permission: 'page.pre_exam.practical_allotment.view' },
+			{ title: 'Bulk Internal Marks', url: '/pre-exam/bulk-internal-marks', icon: FileText, permission: 'page.pre_exam.bulk_internal_marks.view' },
+			{ title: 'CIA Entry Setting', url: '/pre-exam/internal-mark-entry-setting', icon: Settings2, permission: 'page.pre_exam.internal_mark_entry_setting.view' },
+			{ title: 'Mark Conversion Rules', url: '/pre-exam/mark-conversion-rules', icon: Scale, permission: 'page.pre_exam.mark_conversion_rules.view' },
+			{ title: 'Internal Mark Entry', url: '/pre-exam/internal-mark-entry', icon: Edit, permission: 'page.pre_exam.internal_mark_entry.view' },
+			{ title: 'Internal Mark Report', url: '/pre-exam/internal-mark-report', icon: FileText, permission: 'page.pre_exam.internal_mark_report.view' },
+			{ title: 'COE Calendar', url: '/pre-exam/coe-calendar', icon: CalendarDays, permission: 'page.pre_exam.coe_calendar.view' },
 		],
 	},
 	{
@@ -235,11 +242,11 @@ export const navMain: NavItem[] = [
 		icon: Percent,
 		coe_roles: ['super_admin', 'coe'],
 		items: [
-			{ title: 'Assessment Patterns', url: '/pre-exam/internal-mark-setting', icon: Settings2 },
-			{ title: 'Eligibility Rules', url: '/pre-exam/internal-mark-setting/eligibility-rules', icon: Shield },
-			{ title: 'Passing Rules', url: '/pre-exam/internal-mark-setting/passing-rules', icon: Target },
-			{ title: 'Course Associations', url: '/pre-exam/internal-mark-setting/course-associations', icon: Link2 },
-			{ title: 'Program Associations', url: '/pre-exam/internal-mark-setting/program-associations', icon: Layers },
+			{ title: 'Assessment Patterns', url: '/pre-exam/internal-mark-setting', icon: Settings2, permission: 'page.pre_exam.internal_mark_setting.view' },
+			{ title: 'Eligibility Rules', url: '/pre-exam/internal-mark-setting/eligibility-rules', icon: Shield, permission: 'page.pre_exam.internal_mark_setting.eligibility_rules.view' },
+			{ title: 'Passing Rules', url: '/pre-exam/internal-mark-setting/passing-rules', icon: Target, permission: 'page.pre_exam.internal_mark_setting.passing_rules.view' },
+			{ title: 'Course Associations', url: '/pre-exam/internal-mark-setting/course-associations', icon: Link2, permission: 'page.pre_exam.internal_mark_setting.course_associations.view' },
+			{ title: 'Program Associations', url: '/pre-exam/internal-mark-setting/program-associations', icon: Layers, permission: 'page.pre_exam.internal_mark_setting.program_associations.view' },
 		],
 	},
 	{
@@ -248,10 +255,10 @@ export const navMain: NavItem[] = [
 		icon: Play,
 		coe_roles: ['super_admin', 'coe', 'coe_mark_entry', 'coe_office_1'],
 		items: [
-			{ title: 'Exam Attendance', url: '/exam-management/exam-attendance', icon: ClipboardCheck, coe_roles: ['super_admin', 'coe', 'coe_office_1'] },
-			{ title: 'Practical Attendance', url: '/exam-management/practical-attendance', icon: ClipboardCheck, coe_roles: [] },
-			{ title: 'Attendance Correction', url: '/exam-management/attendance-correction', icon: Edit, coe_roles: ['super_admin', 'coe', 'coe_office_1'] },
-			{ title: 'Exam Rooms', url: '/exam-management/exam-rooms', icon: Shapes, coe_roles: ['super_admin', 'coe'] },
+			{ title: 'Exam Attendance', url: '/exam-management/exam-attendance', icon: ClipboardCheck, permission: 'page.exam_management.exam_attendance.view' },
+			{ title: 'Practical Attendance', url: '/exam-management/practical-attendance', icon: ClipboardCheck, permission: 'page.exam_management.practical_attendance.view' },
+			{ title: 'Attendance Correction', url: '/exam-management/attendance-correction', icon: Edit, permission: 'page.exam_management.attendance_correction.view' },
+			{ title: 'Exam Rooms', url: '/exam-management/exam-rooms', icon: Shapes, permission: 'page.exam_management.exam_rooms.view' },
 		],
 	},
 	{
@@ -260,9 +267,9 @@ export const navMain: NavItem[] = [
 		icon: GraduationCap,
 		coe_roles: ['super_admin', 'coe', 'deputy_coe'],
 		items: [
-			{ title: 'Internal Examiners', url: '/exam-management/examiners/internal', icon: GraduationCap },
-			{ title: 'Examiner Panel', url: '/exam-management/examiners', icon: Users },
-			{ title: 'Send Appointment', url: '/exam-management/examiners/send-email', icon: FileText },
+			{ title: 'Internal Examiners', url: '/exam-management/examiners/internal', icon: GraduationCap, permission: 'page.exam_management.examiners.internal.view' },
+			{ title: 'Examiner Panel', url: '/exam-management/examiners', icon: Users, permission: 'page.exam_management.examiners.view' },
+			{ title: 'Send Appointment', url: '/exam-management/examiners/send-email', icon: FileText, permission: 'page.exam_management.examiners.send_email.view' },
 		],
 	},
 	{
@@ -271,15 +278,15 @@ export const navMain: NavItem[] = [
 		icon: CheckSquare,
 		coe_roles: ['super_admin', 'coe', 'coe_mark_entry', 'coe_office_1'],
 		items: [
-			{ title: 'Dummy Numbers', url: '/utilities/dummy-numbers', icon: Hash, coe_roles: ['super_admin', 'coe'] },
-			{ title: 'Answer Sheet Packets', url: '/post-exam/answer-sheet-packets', icon: Package, coe_roles: ['super_admin', 'coe'] },
-			{ title: 'Central Valuation', url: '/post-exam/central-valuation/dates', icon: ClipboardCheck, coe_roles: ['super_admin', 'coe'] },
-			{ title: 'Attendance Bulk Upload', url: '/post-exam/exam-attendance-bulk', icon: ClipboardCheck, coe_roles: ['super_admin', 'coe'] },
-			{ title: 'External Mark Entry', url: '/post-exam/external-mark-entry', icon: FileText, coe_roles: ['super_admin', 'coe', 'coe_mark_entry', 'coe_office_1'] },
-			{ title: 'External Mark Bulk Upload', url: '/post-exam/external-mark-bulk-upload', icon: FileText, coe_roles: ['super_admin', 'coe'] },
-			{ title: 'External Mark Correction', url: '/post-exam/external-mark-correction', icon: Edit, coe_roles: ['super_admin', 'coe', 'coe_mark_entry', 'coe_office_1'] },
-			{ title: 'Practical Mark Entry', url: '/post-exam/practical-mark-entry', icon: FlaskConical, coe_roles: ['super_admin', 'coe', 'coe_mark_entry', 'coe_office_1'] },
-			{ title: 'Foil Sheet Download', url: '/post-exam/foil-sheet-download', icon: Download, coe_roles: ['super_admin', 'coe', 'admin'] },
+			{ title: 'Dummy Numbers', url: '/utilities/dummy-numbers', icon: Hash, permission: 'page.utilities.dummy_numbers.view' },
+			{ title: 'Answer Sheet Packets', url: '/post-exam/answer-sheet-packets', icon: Package, permission: 'page.post_exam.answer_sheet_packets.view' },
+			{ title: 'Central Valuation', url: '/post-exam/central-valuation/dates', icon: ClipboardCheck, permission: 'page.post_exam.central_valuation.dates.view' },
+			{ title: 'Attendance Bulk Upload', url: '/post-exam/exam-attendance-bulk', icon: ClipboardCheck, permission: 'page.post_exam.exam_attendance_bulk.view' },
+			{ title: 'External Mark Entry', url: '/post-exam/external-mark-entry', icon: FileText, permission: 'page.post_exam.external_mark_entry.view' },
+			{ title: 'External Mark Bulk Upload', url: '/post-exam/external-mark-bulk-upload', icon: FileText, permission: 'page.post_exam.external_mark_bulk_upload.view' },
+			{ title: 'External Mark Correction', url: '/post-exam/external-mark-correction', icon: Edit, permission: 'page.post_exam.external_mark_correction.view' },
+			{ title: 'Practical Mark Entry', url: '/post-exam/practical-mark-entry', icon: FlaskConical, permission: 'page.post_exam.practical_mark_entry.view' },
+			{ title: 'Foil Sheet Download', url: '/post-exam/foil-sheet-download', icon: Download, permission: 'page.post_exam.foil_sheet_download.view' },
 		],
 	},
 	{
@@ -288,12 +295,12 @@ export const navMain: NavItem[] = [
 		icon: RefreshCcw,
 		coe_roles: ['super_admin', 'coe'],
 		items: [
-			{ title: 'Create Revaluation', url: '/revaluation-management/create', icon: FilePlus },
-			{ title: 'All Applications', url: '/revaluation-management?tab=applications', icon: List },
-			{ title: 'Bulk Application', url: '/revaluation-management?tab=bulk-application', icon: Users },
-			{ title: 'Payment Status', url: '/revaluation-management?tab=payment-status', icon: CreditCard },
-			{ title: 'Marks Entry', url: '/revaluation-management?tab=marks-entry', icon: Edit },
-			{ title: 'Results Publishing', url: '/revaluation-management?tab=results', icon: CheckSquare },
+			{ title: 'Create Revaluation', url: '/revaluation-management/create', icon: FilePlus, permission: 'page.revaluation_management.create.view' },
+			{ title: 'All Applications', url: '/revaluation-management?tab=applications', icon: List, permission: 'page.revaluation_management.view' },
+			{ title: 'Bulk Application', url: '/revaluation-management?tab=bulk-application', icon: Users, permission: 'page.revaluation_management.view' },
+			{ title: 'Payment Status', url: '/revaluation-management?tab=payment-status', icon: CreditCard, permission: 'page.revaluation_management.view' },
+			{ title: 'Marks Entry', url: '/revaluation-management?tab=marks-entry', icon: Edit, permission: 'page.revaluation_management.view' },
+			{ title: 'Results Publishing', url: '/revaluation-management?tab=results', icon: CheckSquare, permission: 'page.revaluation_management.view' },
 		],
 	},
 	{
@@ -302,7 +309,7 @@ export const navMain: NavItem[] = [
 		icon: ClipboardList,
 		coe_roles: ['super_admin', 'coe'],
 		items: [
-			{ title: 'Student Strength', url: '/reports/pre-exam/student-strength', icon: Users },
+			{ title: 'Student Strength', url: '/reports/pre-exam/student-strength', icon: Users, permission: 'page.reports.pre_exam.student_strength.view' },
 		],
 	},
 	{
@@ -311,16 +318,16 @@ export const navMain: NavItem[] = [
 		icon: PieChart,
 		coe_roles: ['super_admin', 'coe', 'nad_coordinator', 'coe_office_1'],
 		items: [
-			{ title: 'Comprehensive Reports', url: '/reports/comprehensive', icon: BarChart3, coe_roles: ['super_admin', 'coe'] },
-			{ title: 'Exam Reports Summary', url: '/reports/exam-registration-reports', icon: ClipboardCheck, coe_roles: ['super_admin', 'coe'] },
-			{ title: 'Attendance Report', url: '/exam-management/reports/attendance', icon: PieChart, coe_roles: ['super_admin', 'coe', 'coe_office_1'] },
-			{ title: 'Course Count Report', url: '/exam-management/reports/course-count', icon: Calculator, coe_roles: ['super_admin', 'coe'] },
-			{ title: 'Marksheet Distribution', url: '/reports/marksheet-distribution', icon: FileText, coe_roles: ['super_admin', 'coe'] },
-			{ title: 'Semester Marksheet', url: '/reports/semester-marksheet', icon: FileText, coe_roles: ['super_admin', 'coe'] },
-			{ title: 'Practical Exam Reports', url: '/reports/practical-exam/practical-need', icon: FlaskConical, coe_roles: ['super_admin', 'coe'] },
-			{ title: 'CV Report', url: '/reports/cv-report', icon: ClipboardCheck, coe_roles: ['super_admin', 'coe'] },
-			{ title: 'Dummy Number Report', url: '/reports/dummy-numbers', icon: Hash, coe_roles: ['super_admin', 'coe'] },
-			{ title: 'NAD Report', url: '/reports/nad', icon: Shield, coe_roles: ['super_admin', 'coe', 'deputy_coe', 'nad_coordinator'] },
+			{ title: 'Comprehensive Reports', url: '/reports/comprehensive', icon: BarChart3, permission: 'page.reports.comprehensive.view' },
+			{ title: 'Exam Reports Summary', url: '/reports/exam-registration-reports', icon: ClipboardCheck, permission: 'page.reports.exam_registration_reports.view' },
+			{ title: 'Attendance Report', url: '/exam-management/reports/attendance', icon: PieChart, permission: 'page.exam_management.reports.attendance.view' },
+			{ title: 'Course Count Report', url: '/exam-management/reports/course-count', icon: Calculator, permission: 'page.exam_management.reports.course_count.view' },
+			{ title: 'Marksheet Distribution', url: '/reports/marksheet-distribution', icon: FileText, permission: 'page.reports.marksheet_distribution.view' },
+			{ title: 'Semester Marksheet', url: '/reports/semester-marksheet', icon: FileText, permission: 'page.reports.semester_marksheet.view' },
+			{ title: 'Practical Exam Reports', url: '/reports/practical-exam/practical-need', icon: FlaskConical, permission: 'page.reports.practical_exam.practical_need.view' },
+			{ title: 'CV Report', url: '/reports/cv-report', icon: ClipboardCheck, permission: 'page.reports.cv_report.view' },
+			{ title: 'Dummy Number Report', url: '/reports/dummy-numbers', icon: Hash, permission: 'page.reports.dummy_numbers.view' },
+			{ title: 'NAD Report', url: '/reports/nad', icon: Shield, permission: 'page.reports.nad.view' },
 		],
 	},
 	{
@@ -329,11 +336,11 @@ export const navMain: NavItem[] = [
 		icon: BarChart3,
 		coe_roles: ['super_admin', 'coe', 'deputy_coe'],
 		items: [
-			{ title: 'Dashboard', url: '/result/dashboard', icon: PieChart },
-			{ title: 'College Analysis', url: '/result/dashboard?tab=college', icon: School, coe_roles: ['super_admin', 'coe', 'deputy_coe'] },
-			{ title: 'Program Analysis', url: '/result/dashboard?tab=program', icon: GraduationCap, coe_roles: ['super_admin', 'coe', 'deputy_coe'] },
-			{ title: 'Subject Analysis', url: '/result/dashboard?tab=subject', icon: BookText, coe_roles: ['super_admin', 'coe', 'deputy_coe'] },
-			{ title: 'NAAC Reports', url: '/result/dashboard?tab=naac', icon: FileText, coe_roles: ['super_admin', 'coe', 'deputy_coe'] },
+			{ title: 'Dashboard', url: '/result/dashboard', icon: PieChart, permission: 'page.result.dashboard.view' },
+			{ title: 'College Analysis', url: '/result/dashboard?tab=college', icon: School, permission: 'page.result.dashboard.view' },
+			{ title: 'Program Analysis', url: '/result/dashboard?tab=program', icon: GraduationCap, permission: 'page.result.dashboard.view' },
+			{ title: 'Subject Analysis', url: '/result/dashboard?tab=subject', icon: BookText, permission: 'page.result.dashboard.view' },
+			{ title: 'NAAC Reports', url: '/result/dashboard?tab=naac', icon: FileText, permission: 'page.result.dashboard.view' },
 		],
 	},
 	{
@@ -343,29 +350,99 @@ export const navMain: NavItem[] = [
 		isActive: false,
 		coe_roles: ['admin', 'super_admin'],
 		items: [
-			{ title: 'Overview', url: '/developer-portal', icon: LayoutDashboard },
-			{ title: 'Applications', url: '/developer-portal/applications', icon: AppWindow },
-			{ title: 'Audit Logs', url: '/developer-portal/audit-logs', icon: ScrollText },
+			{ title: 'Overview', url: '/developer-portal', icon: LayoutDashboard, permission: 'page.developer_portal.view' },
+			{ title: 'Applications', url: '/developer-portal/applications', icon: AppWindow, permission: 'page.developer_portal.applications.view' },
+			{ title: 'Audit Logs', url: '/developer-portal/audit-logs', icon: ScrollText, permission: 'page.developer_portal.audit_logs.view' },
 		],
 	},
 ]
 
 /**
+ * Map of (pathname → permission) for every nav route that declares one.
+ * Sorted by path length descending so `getPermissionForPath()` can do
+ * a longest-prefix match for nested routes (e.g. `/post-exam/central-valuation/dates/123`
+ * resolves to the permission of `/post-exam/central-valuation/dates`).
+ */
+const pagePermissionMap: Array<{ path: string; permission: string }> = (() => {
+	const entries: Array<{ path: string; permission: string }> = []
+	for (const group of navMain) {
+		if (group.url && group.url !== '#' && group.permission) {
+			entries.push({ path: group.url.split('?')[0], permission: group.permission })
+		}
+		if (!group.items) continue
+		for (const sub of group.items) {
+			if (sub.url && sub.url !== '#' && sub.permission) {
+				entries.push({ path: sub.url.split('?')[0], permission: sub.permission })
+			}
+		}
+	}
+	// Dedupe (a few items share the same URL — keep the first occurrence)
+	const seen = new Set<string>()
+	const unique = entries.filter(e => {
+		if (seen.has(e.path)) return false
+		seen.add(e.path)
+		return true
+	})
+	return unique.sort((a, b) => b.path.length - a.path.length)
+})()
+
+/**
+ * Returns the page-level permission required to view a given route, or
+ * `undefined` for unlisted routes (e.g. `/unauthorized`, `/favorites`,
+ * dynamic detail pages without their own nav entry).
+ *
+ * Used by the (coe) layout's PagePermissionGate to enforce URL-level
+ * authorization — so users who guess a URL still get blocked even if the
+ * sidebar doesn't show them the link.
+ */
+export function getPermissionForPath(pathname: string): string | undefined {
+	const cleanPath = pathname.split('?')[0]
+	for (const entry of pagePermissionMap) {
+		if (cleanPath === entry.path || cleanPath.startsWith(entry.path + '/')) {
+			return entry.permission
+		}
+	}
+	return undefined
+}
+
+/**
  * Flatten the navigation tree into a searchable list of pages.
  * Filters out placeholder links (url === '#').
+ *
+ * Visibility resolution per item:
+ *   1. If `permission` is set, use hasPermission().
+ *   2. Else if `coe_roles` is set and non-empty, use hasAnyRole().
+ *   3. Else visible to all authenticated users.
  */
 export function getFlatNavItems(
 	items: NavItem[],
-	hasAnyRole: (roles: string[]) => boolean
+	hasAnyRole: (roles: string[]) => boolean,
+	hasPermission: (permission: string) => boolean
 ): FlatNavItem[] {
 	const flat: FlatNavItem[] = []
 
-	for (const group of items) {
-		// Check group-level access
-		if (group.coe_roles.length > 0 && !hasAnyRole(group.coe_roles)) continue
+	// Super admin sees everything regardless of permission cache state.
+	const isSuperAdmin = hasAnyRole(['super_admin'])
 
-		// Top-level pages (no sub-items)
+	const isVisible = (node: { permission?: string; coe_roles?: string[] }): boolean => {
+		if (isSuperAdmin) return true
+		// Preferred: DB-driven permission check
+		if (node.permission && hasPermission(node.permission)) return true
+		// Legacy fallback: role check (covers users whose permissions JSONB cache
+		// hasn't been refreshed since the page-permission migration)
+		if (node.coe_roles) {
+			if (node.coe_roles.length === 0) return true
+			if (hasAnyRole(node.coe_roles)) return true
+		}
+		// No permission AND no coe_roles → treat as public
+		if (!node.permission && !node.coe_roles) return true
+		return false
+	}
+
+	for (const group of items) {
+		// Top-level pages (no sub-items): direct visibility check
 		if (!group.items || group.items.length === 0) {
+			if (!isVisible(group)) continue
 			if (group.url && group.url !== '#') {
 				flat.push({
 					title: group.title,
@@ -377,10 +454,10 @@ export function getFlatNavItems(
 			continue
 		}
 
-		// Sub-items
+		// Groups: no group-level gate — rely entirely on per-sub-item permission.
 		for (const sub of group.items) {
 			if (sub.url === '#') continue
-			if (sub.coe_roles && sub.coe_roles.length > 0 && !hasAnyRole(sub.coe_roles)) continue
+			if (!isVisible(sub)) continue
 			flat.push({
 				title: sub.title,
 				url: sub.url,

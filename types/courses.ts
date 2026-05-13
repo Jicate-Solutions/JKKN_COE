@@ -8,6 +8,26 @@ export const COURSE_STATUS_OPTIONS: { value: CourseStatus; label: string }[] = [
 	{ value: 'Locked', label: 'Locked' }
 ]
 
+// Roman numerals I..XX — stored in courses.course_level. Combined with
+// course_info.display_code by a DB trigger to form courses.course_type_code.
+export const COURSE_LEVELS = [
+	'I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X',
+	'XI', 'XII', 'XIII', 'XIV', 'XV', 'XVI', 'XVII', 'XVIII', 'XIX', 'XX',
+] as const
+export type CourseLevel = typeof COURSE_LEVELS[number]
+
+// Row from `course_info` master table that drives the Course Type dropdown.
+export interface CourseInfo {
+	id: string
+	course_type: string
+	display_code: string
+	description?: string | null
+	sort_order: number
+	status: boolean
+	created_at: string
+	updated_at: string
+}
+
 // Course type definition
 export interface Course {
 	id: string
@@ -23,6 +43,8 @@ export interface Course {
 	display_code?: string
 	course_category?: string
 	course_type: string
+	course_level?: string | null
+	course_type_code?: string | null
 	course_part_master?: string
 	credits: number
 	split_credit?: boolean
@@ -47,7 +69,6 @@ export interface Course {
 	has_hall_ticket?: boolean
 	syllabus_pdf_url?: string
 	description?: string
-	course_level: string
 	is_active: boolean
 	created_at: string
 	updated_at: string

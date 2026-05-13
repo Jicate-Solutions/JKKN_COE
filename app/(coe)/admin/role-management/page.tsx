@@ -6,6 +6,7 @@ import { AppHeader } from '@/components/layout/app-header'
 import { AppFooter } from '@/components/layout/app-footer'
 import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar'
 import { useInstitutionFilter } from '@/hooks/use-institution-filter'
+import { useApiFetch } from '@/lib/auth/use-api-fetch'
 import {
 	Breadcrumb,
 	BreadcrumbItem,
@@ -121,6 +122,7 @@ function getInitials(name: string | null | undefined, email: string): string {
 
 export default function RoleManagementPage() {
 	const { toast } = useToast()
+	const apiFetch = useApiFetch()
 
 	// Institution filter
 	const {
@@ -167,7 +169,7 @@ export default function RoleManagementPage() {
 				const sep = url.includes('?') ? '&' : '?'
 				url = `${url}${sep}search=${encodeURIComponent(usersSearch.trim())}`
 			}
-			const response = await fetch(url)
+			const response = await apiFetch(url)
 			if (!response.ok) {
 				const errorBody = await response.json().catch(() => ({}))
 				throw new Error(errorBody.error || `Failed to fetch users (${response.status})`)
@@ -186,16 +188,26 @@ export default function RoleManagementPage() {
 		} finally {
 			setUsersLoading(false)
 		}
-	}, [usersSearch, toast, isReady, appendToUrl])
+	}, [usersSearch, toast, isReady, appendToUrl, apiFetch])
 
 	const fetchAvailableRoles = async () => {
 		try {
-			const response = await fetch('/api/admin/role-management/roles')
-			if (!response.ok) throw new Error('Failed to fetch roles')
+			const response = await apiFetch('/api/admin/role-management/roles')
+			if (!response.ok) {
+				const errorBody = await response.json().catch(() => ({}))
+				throw new Error(errorBody.error || `Failed to fetch roles (${response.status})`)
+			}
 			const data = await response.json()
 			setAvailableRoles(data)
 		} catch (error) {
 			console.error('Error fetching roles:', error)
+			const message = error instanceof Error ? error.message : 'Could not load available roles.'
+			toast({
+				title: 'Failed to load roles',
+				description: message,
+				variant: 'destructive',
+				className: 'bg-red-50 border-red-200 text-red-800 dark:bg-red-900/20 dark:border-red-800 dark:text-red-200',
+			})
 		}
 	}
 
@@ -208,7 +220,7 @@ export default function RoleManagementPage() {
 		try {
 			setMyjkknLoading(true)
 			setMyjkknSearched(true)
-			const response = await fetch(
+			const response = await apiFetch(
 				`/api/admin/role-management/search-myjkkn?search=${encodeURIComponent(query.trim())}`
 			)
 			if (!response.ok) throw new Error('Search failed')
@@ -226,7 +238,7 @@ export default function RoleManagementPage() {
 		} finally {
 			setMyjkknLoading(false)
 		}
-	}, [toast])
+	}, [toast, apiFetch])
 
 	// Initial load — wait for institution filter to be ready
 	useEffect(() => {
@@ -305,7 +317,7 @@ export default function RoleManagementPage() {
 
 			// Assign new roles
 			if (rolesToAdd.length > 0) {
-				const response = await fetch('/api/admin/role-management/assign', {
+				const response = await apiFetch('/api/admin/role-management/assign', {
 					method: 'POST',
 					headers: { 'Content-Type': 'application/json' },
 					body: JSON.stringify({
@@ -326,7 +338,7 @@ export default function RoleManagementPage() {
 			// Revoke removed roles
 			if (rolesToRevoke.length > 0 && existingUser) {
 				for (const roleName of rolesToRevoke) {
-					await fetch('/api/admin/role-management/revoke', {
+					await apiFetch('/api/admin/role-management/revoke', {
 						method: 'POST',
 						headers: { 'Content-Type': 'application/json' },
 						body: JSON.stringify({ user_id: existingUser.id, role_name: roleName }),
@@ -361,7 +373,7 @@ export default function RoleManagementPage() {
 		const key = `${user.id}:${userRoleId}`
 		try {
 			setRevokingKey(key)
-			const response = await fetch('/api/admin/role-management/revoke', {
+			const response = await apiFetch('/api/admin/role-management/revoke', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({ user_id: user.id, role_name: roleName }),
@@ -409,7 +421,7 @@ export default function RoleManagementPage() {
 
 		try {
 			setDeletingUserId(user.id)
-			const response = await fetch('/api/admin/role-management/remove-user', {
+			const response = await apiFetch('/api/admin/role-management/remove-user', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({ user_id: user.id }),

@@ -1217,7 +1217,7 @@ export default function PracticalExamReportsPage() {
 																<SelectContent>
 																	<SelectItem value="all" className="text-xs">All Boards</SelectItem>
 																	{cvAvailableBoards.map(b => (
-																		<SelectItem key={b.board_code} value={b.board_code} className="text-xs">{b.board_name}</SelectItem>
+																		<SelectItem key={b.board_code} value={b.board_code} className="text-xs">{b.board_code}-{b.board_name}</SelectItem>
 																	))}
 																</SelectContent>
 															</Select>

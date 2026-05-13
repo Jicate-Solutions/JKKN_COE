@@ -80,15 +80,15 @@ function CommandMenuDialog({
 	setOpen: (open: boolean) => void
 }) {
 	const router = useRouter()
-	const { user, hasAnyRole } = useAuth()
+	const { user, hasAnyRole, hasPermission } = useAuth()
 	const { favorites, isFavorite, toggleFavorite } = useFavorites()
 
 	// Build flat, role-filtered list of all navigable pages
 	// Depend on user object to recompute whenever auth state settles
 	const allItems = React.useMemo(
-		() => getFlatNavItems(navMain, hasAnyRole),
+		() => getFlatNavItems(navMain, hasAnyRole, hasPermission),
 		// eslint-disable-next-line react-hooks/exhaustive-deps
-		[hasAnyRole, user]
+		[hasAnyRole, hasPermission, user]
 	)
 
 	// Group items by their section

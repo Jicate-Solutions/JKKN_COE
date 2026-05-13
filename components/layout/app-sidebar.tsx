@@ -25,7 +25,7 @@ import {
 } from "@/components/ui/sidebar"
 
 export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
-	const { user, hasAnyRole } = useAuth()
+	const { user, hasAnyRole, hasPermission } = useAuth()
 	const { toggleSidebar, state } = useSidebar()
 	const isCollapsed = state === "collapsed"
 	const { setOpen } = useCommandMenu()
@@ -34,26 +34,50 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
 	// Build flat items for resolving favorite URLs to full nav items
 	// Depend on user to recompute whenever auth state settles
 	const flatItems = React.useMemo(
-		() => getFlatNavItems(navMain, hasAnyRole),
+		() => getFlatNavItems(navMain, hasAnyRole, hasPermission),
 		// eslint-disable-next-line react-hooks/exhaustive-deps
-		[hasAnyRole, user]
+		[hasAnyRole, hasPermission, user]
 	)
 
-	// Filter navigation items based on current user's roles
+	// Filter navigation items: prefer DB-driven `permission`, fall back to `coe_roles`.
+	// Groups (items with children) are visible iff at least one real-URL child is visible —
+	// so role/permission management is 100% DB-driven via /users/role-permissions.
 	const filteredNavItems = React.useMemo(() => {
+		// Super admin sees everything (their permissions cache may be stale, but
+		// they're authorized at the server via is_super_admin short-circuit).
+		const isSuperAdmin = user?.is_super_admin === true || hasAnyRole(['super_admin'])
+
+		const isVisible = (node: { permission?: string; coe_roles?: string[] }): boolean => {
+			if (isSuperAdmin) return true
+			// Preferred: DB-driven permission check
+			if (node.permission && hasPermission(node.permission)) return true
+			// Legacy fallback: role check (covers users whose permissions JSONB cache
+			// hasn't been refreshed since the page-permission migration)
+			if (node.coe_roles) {
+				if (node.coe_roles.length === 0) return true
+				if (hasAnyRole(node.coe_roles)) return true
+			}
+			// No permission AND no coe_roles → treat as public
+			if (!node.permission && !node.coe_roles) return true
+			return false
+		}
+
 		const roleFiltered = navMain
-			.filter(item => {
-				if (!item.coe_roles || item.coe_roles.length === 0) return true
-				return hasAnyRole(item.coe_roles)
-			})
 			.map(item => {
-				if (!item.items) return item
+				// Top-level item (no children): direct visibility check
+				if (!item.items || item.items.length === 0) {
+					return isVisible(item) ? item : null
+				}
+				// Group: filter children; keep '#' placeholders alongside any visible siblings
 				const filteredItems = item.items.filter((sub: any) => {
-					if (!sub.coe_roles || sub.coe_roles.length === 0) return true
-					return hasAnyRole(sub.coe_roles)
+					if (sub.url === '#') return true
+					return isVisible(sub)
 				})
+				const hasRealVisible = filteredItems.some((s: any) => s.url !== '#')
+				if (!hasRealVisible) return null
 				return { ...item, items: filteredItems }
 			})
+			.filter((g): g is NonNullable<typeof g> => g !== null)
 
 		// Build Favorites group from starred URLs and insert before Dashboard
 		if (favorites.length > 0) {
@@ -84,7 +108,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
 
 		return roleFiltered
 	// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [hasAnyRole, user, favorites, flatItems])
+	}, [hasAnyRole, hasPermission, user, favorites, flatItems])
 
 	return (
 		<Sidebar collapsible="icon" {...props}>

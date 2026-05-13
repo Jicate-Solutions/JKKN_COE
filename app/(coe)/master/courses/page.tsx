@@ -89,8 +89,8 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import XLSX from '@/lib/utils/excel-compat'
-import type { Course, CourseImportError, UploadSummary, CourseStatus } from '@/types/courses'
-import { COURSE_STATUS_OPTIONS } from '@/types/courses'
+import type { Course, CourseImportError, UploadSummary, CourseStatus, CourseInfo } from '@/types/courses'
+import { COURSE_STATUS_OPTIONS, COURSE_LEVELS } from '@/types/courses'
 import {
   fetchCourses as fetchCoursesService,
   createCourse,
@@ -101,12 +101,14 @@ import {
   fetchRegulationsForCourse,
   fetchDepartmentsForCourse,
   fetchBoardsForCourse,
+  fetchCourseInfo,
 } from '@/services/master/courses-service'
 import { useInstitutionFilter } from '@/hooks/use-institution-filter'
 
-// Single source of truth for all course types — used by the filter dropdown,
-// the Add/Edit Course form, and the Excel import validator. Keep them in sync.
-const COURSE_TYPES = [
+// Fallback list of course types — used only if the course_info API call fails.
+// In normal operation, this dropdown is populated from the public.course_info
+// master table (see /api/master/course-info). Keep this list as a safety net.
+const COURSE_TYPES_FALLBACK = [
   'Ability Enhancement', 'Additional Credit course', 'Advance learner course',
   'Audit Course', 'Bridge course', 'Core Practical', 'Core',
   'Discipline Specific elective Practical', 'Discipline Specific elective',
@@ -169,6 +171,18 @@ export default function CoursesPage() {
   const [departmentsSrc, setDepartmentsSrc] = useState<Array<{ id: string, department_code: string, department_name?: string }>>([])
   const [regulations, setRegulations] = useState<Array<{ id: string, regulation_code: string, regulation_name?: string, effective_year?: number }>>([])
   const [boardsSrc, setBoardsSrc] = useState<Array<{ id: string, board_code: string, board_name?: string }>>([])
+  const [courseInfoList, setCourseInfoList] = useState<CourseInfo[]>([])
+  // Active course type names — sourced from course_info table, falls back to legacy hardcoded list.
+  const COURSE_TYPES: string[] = courseInfoList.length > 0
+    ? courseInfoList.map(ci => ci.course_type)
+    : (COURSE_TYPES_FALLBACK as unknown as string[])
+  // Lookup: course_type -> display_code (used to render live preview of course_type_code)
+  const displayCodeByType = courseInfoList.reduce<Record<string, string>>((acc, ci) => {
+    acc[ci.course_type] = ci.display_code
+    return acc
+  }, {})
+  const [levelFilter, setLevelFilter] = useState('all')
+  const [courseInfoLoading, setCourseInfoLoading] = useState(false)
   const [codesLoading, setCodesLoading] = useState(false)
   const [regulationsLoading, setRegulationsLoading] = useState(false)
   const [departmentsLoading, setDepartmentsLoading] = useState(false)
@@ -196,6 +210,7 @@ export default function CoursesPage() {
     display_code: '',
     course_category: '',
     course_type: '',
+    course_level: '',
     course_part_master: '',
     credits: '',
     split_credit: false,
@@ -299,6 +314,18 @@ export default function CoursesPage() {
         setCodesLoading(false)
       }
     })()
+    // Load course_info master list (drives Course Type dropdown)
+    ;(async () => {
+      try {
+        setCourseInfoLoading(true)
+        const data = await fetchCourseInfo()
+        setCourseInfoList(data)
+      } catch (e) {
+        console.error('Error loading course_info:', e)
+      } finally {
+        setCourseInfoLoading(false)
+      }
+    })()
   }, [institutionFilter, shouldFilter, isReady]) // Re-fetch when institution changes
 
   // Fetch regulations, departments, and boards in PARALLEL when institution changes
@@ -394,9 +421,10 @@ export default function CoursesPage() {
                              (statusFilter === "active" && course.is_active) ||
                              (statusFilter === "inactive" && !course.is_active)
         const matchesType = typeFilter === "all" || course.course_type === typeFilter
+        const matchesLevel = levelFilter === "all" || (course.course_level ?? '') === levelFilter
         const matchesEvaluationType = evaluationTypeFilter === "all" || course.evaluation_type === evaluationTypeFilter
         const matchesCourseStatus = courseStatusFilter === 'all' || (course.courses_status ?? 'Pending') === courseStatusFilter
-        return matchesSearch && matchesStatus && matchesType && matchesEvaluationType && matchesCourseStatus
+        return matchesSearch && matchesStatus && matchesType && matchesLevel && matchesEvaluationType && matchesCourseStatus
       })
 
     if (!sortField) return data
@@ -431,7 +459,7 @@ export default function CoursesPage() {
       if (aValue > bValue) return sortDirection === 'asc' ? 1 : -1
       return 0
     })
-  }, [courses, searchTerm, statusFilter, typeFilter, evaluationTypeFilter, courseStatusFilter, sortField, sortDirection])
+  }, [courses, searchTerm, statusFilter, typeFilter, levelFilter, evaluationTypeFilter, courseStatusFilter, sortField, sortDirection])
 
   // Page size options
   const pageSizeOptions = useMemo(() => {
@@ -454,7 +482,7 @@ export default function CoursesPage() {
   }, [filteredCourses, effectivePerPage, currentPage])
 
   // Reset page when filters change
-  useEffect(() => setCurrentPage(1), [searchTerm, sortField, sortDirection, itemsPerPage, statusFilter, typeFilter, evaluationTypeFilter, courseStatusFilter])
+  useEffect(() => setCurrentPage(1), [searchTerm, sortField, sortDirection, itemsPerPage, statusFilter, typeFilter, levelFilter, evaluationTypeFilter, courseStatusFilter])
 
   const getStatusBadgeVariant = (course: Course) => {
     return course.is_active ? "default" : "secondary"
@@ -485,6 +513,7 @@ export default function CoursesPage() {
       display_code: '',
       course_category: '',
       course_type: '',
+      course_level: '',
       course_part_master: '',
       credits: '',
       split_credit: false,
@@ -542,6 +571,7 @@ export default function CoursesPage() {
       display_code: s(row.display_code) || s(row.course_code),
       course_category: s(row.course_category),
       course_type: s(row.course_type),
+      course_level: s(row.course_level),
       course_part_master: s(row.course_part_master),
       credits: String(row.credits ?? '0'),
       split_credit: Boolean(row.split_credit) || false,
@@ -800,6 +830,8 @@ export default function CoursesPage() {
       'Display Code': c.display_code || '',
       'Course Category': c.course_category || '',
       'Course Type': c.course_type || '',
+      'Course Level': c.course_level || '',
+      'Course Type Code': c.course_type_code || '',
       'Part': c.course_part_master || '',
       'Credit': c.credits || 0,
       'Split Credit': c.split_credit ? 'TRUE' : 'FALSE',
@@ -861,6 +893,8 @@ export default function CoursesPage() {
       display_code: c.display_code || '',
       course_category: c.course_category || '',
       course_type: c.course_type || '',
+      course_level: c.course_level || '',
+      course_type_code: c.course_type_code || '',
       course_part_master: c.course_part_master || '',
       credits: c.credits || 0,
       split_credit: c.split_credit || false,
@@ -1005,6 +1039,7 @@ export default function CoursesPage() {
             display_code: str(row['Display Code*'] || row['Display Code'] || row.display_code),
             course_category: str(row['Course Category*'] || row['Course Category'] || row.course_category),
             course_type: str(row['Course Type'] || row.course_type),
+            course_level: str(row['Course Level'] || row.course_level),
             course_part_master: str(row['Course Part Master'] || row['Part'] || row.course_part_master),
             credits: Number(row['Credit'] || row.credits) || 0,
             split_credit: typeof row.split_credit === 'boolean' ? row.split_credit : String(row['Split Credit'] || row['Split Credit (TRUE/FALSE)'] || '').toUpperCase() === 'TRUE',
@@ -1063,9 +1098,13 @@ export default function CoursesPage() {
             validationErrors.push('Result type must be Mark, Status, comment, or credit')
           }
 
-          // Validate course_type against the shared COURSE_TYPES constant (single source of truth)
-          if (payload.course_type && !(COURSE_TYPES as readonly string[]).includes(payload.course_type)) {
-            validationErrors.push(`Invalid course type. Must be one of: ${COURSE_TYPES.join(', ')}`)
+          // Validate course_type against course_info master list (loaded at runtime).
+          if (payload.course_type && COURSE_TYPES.length > 0 && !COURSE_TYPES.includes(payload.course_type)) {
+            validationErrors.push(`Invalid course type "${payload.course_type}". Must be one of the defined course types.`)
+          }
+          // Validate course_level (optional, but must be a valid Roman numeral I..XX)
+          if (payload.course_level && !(COURSE_LEVELS as readonly string[]).includes(payload.course_level)) {
+            validationErrors.push(`Invalid course level "${payload.course_level}". Must be one of: ${COURSE_LEVELS.join(', ')}`)
           }
 
           if (payload.course_code && !/^[A-Za-z0-9\-_]+$/.test(payload.course_code)) {
@@ -1327,6 +1366,9 @@ export default function CoursesPage() {
           }
           if (row['Course Type'] || row.course_type) {
             payload.course_type = row['Course Type'] || row.course_type
+          }
+          if (row['Course Level'] || row.course_level) {
+            payload.course_level = row['Course Level'] || row.course_level
           }
           if (row['Course Part Master'] || row['Part'] || row.course_part_master) {
             payload.course_part_master = row['Course Part Master'] || row['Part'] || row.course_part_master
@@ -1746,6 +1788,18 @@ export default function CoursesPage() {
                       </SelectContent>
                     </Select>
 
+                    <Select value={levelFilter} onValueChange={setLevelFilter}>
+                      <SelectTrigger className="h-8 text-sm w-[120px]">
+                        <SelectValue placeholder="All Levels" />
+                      </SelectTrigger>
+                      <SelectContent className="max-h-[400px]">
+                        <SelectItem value="all">All Levels</SelectItem>
+                        {COURSE_LEVELS.map((l) => (
+                          <SelectItem key={l} value={l}>{l}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+
                     <Select value={evaluationTypeFilter} onValueChange={setEvaluationTypeFilter}>
                       <SelectTrigger className="h-8 text-sm w-[130px]">
                         <SelectValue placeholder="All Evaluations" />
@@ -1814,6 +1868,9 @@ export default function CoursesPage() {
                           </Button>
                         </TableHead>
                         <TableHead className="text-xs font-semibold">
+                          Course Type Code
+                        </TableHead>
+                        <TableHead className="text-xs font-semibold">
                           <Button variant="ghost" size="sm" onClick={() => handleSort('credits')} className="px-2 transition-colors">
                             Credit
                             <span className="ml-1">{getSortIcon('credits')}</span>
@@ -1841,7 +1898,7 @@ export default function CoursesPage() {
                     <TableBody>
                       {loading ? (
                         <TableRow>
-                          <TableCell colSpan={mustSelectInstitution ? 10 : 9} className="h-24 text-center">
+                          <TableCell colSpan={mustSelectInstitution ? 11 : 10} className="h-24 text-center">
                             <div className="flex items-center justify-center gap-2 text-muted-foreground">
                               <RefreshCw className="h-5 w-5 animate-spin" />
                               <span className="text-sm">Loading courses...</span>
@@ -1860,6 +1917,7 @@ export default function CoursesPage() {
                               <TableCell className="font-medium text-sm">{course.course_code}</TableCell>
                               <TableCell className="text-sm">{course.course_title}</TableCell>
                               <TableCell className="text-sm">{course.course_category || '-'}</TableCell>
+                              <TableCell className="text-sm font-mono">{course.course_type_code || '-'}</TableCell>
                               <TableCell className="text-sm">{course.credits}</TableCell>
                               <TableCell className="text-sm">{course.qp_code || '-'}</TableCell>
                               <TableCell>
@@ -1913,7 +1971,7 @@ export default function CoursesPage() {
                         </>
                         ) : (
                           <TableRow>
-                            <TableCell colSpan={mustSelectInstitution ? 10 : 9} className="h-24 text-center">
+                            <TableCell colSpan={mustSelectInstitution ? 11 : 10} className="h-24 text-center">
                               <div className="flex flex-col items-center gap-1 text-muted-foreground">
                                 <BookText className="h-8 w-8 opacity-20" />
                                 <span className="text-sm font-medium">No courses found</span>
@@ -2251,11 +2309,35 @@ export default function CoursesPage() {
                     value={formData.course_type}
                     onValueChange={(v) => setFormData({ ...formData, course_type: v })}
                     options={toSearchableOptions(COURSE_TYPES as unknown as string[])}
-                    placeholder="Select type"
+                    placeholder={courseInfoLoading ? 'Loading types...' : 'Select type'}
                     searchPlaceholder="Search course types..."
                     clearable
                     wrapText
                   />
+                </div>
+                <div className="space-y-2">
+                  <Label className="text-sm font-semibold">Course Level</Label>
+                  <SearchableSelect
+                    value={formData.course_level}
+                    onValueChange={(v) => setFormData({ ...formData, course_level: v })}
+                    options={toSearchableOptions(COURSE_LEVELS as unknown as string[])}
+                    placeholder="Select level (optional)"
+                    searchPlaceholder="Search levels..."
+                    clearable
+                    wrapText
+                  />
+                  {(formData.course_type || formData.course_level) && (
+                    <p className="text-xs text-muted-foreground">
+                      Course Type Code:{' '}
+                      <span className="font-mono font-semibold text-foreground">
+                        {(() => {
+                          const code = displayCodeByType[formData.course_type] || formData.course_type
+                          if (!code) return '—'
+                          return formData.course_level ? `${code}-${formData.course_level}` : code
+                        })()}
+                      </span>
+                    </p>
+                  )}
                 </div>
                 <div className="space-y-2">
                   <Label className="text-sm font-semibold">Part</Label>

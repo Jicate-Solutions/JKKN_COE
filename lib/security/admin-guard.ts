@@ -59,17 +59,32 @@ export function withAdminAuth(handler: AdminHandler, options?: AdminAuthOptions)
 				)
 			}
 
-			// 2. Look up session by access_token to get user_id
+			// 2. Look up session by access_token. We fetch without filtering on
+			// is_active/expires_at so we can distinguish revoked vs expired vs
+			// unknown — the client uses the code to decide whether to refresh.
 			const { data: session } = await supabase
 				.from('sessions')
-				.select('user_id')
+				.select('user_id, is_active, expires_at')
 				.eq('session_token', accessToken)
-				.eq('is_active', true)
-				.single()
+				.maybeSingle()
 
 			if (!session) {
 				return NextResponse.json(
-					{ error: 'Invalid or expired session' },
+					{ error: 'Invalid session', code: 'INVALID_SESSION' },
+					{ status: 401 }
+				)
+			}
+
+			if (!session.is_active) {
+				return NextResponse.json(
+					{ error: 'Session revoked', code: 'SESSION_REVOKED' },
+					{ status: 401 }
+				)
+			}
+
+			if (session.expires_at && new Date(session.expires_at) <= new Date()) {
+				return NextResponse.json(
+					{ error: 'Session expired', code: 'SESSION_EXPIRED' },
 					{ status: 401 }
 				)
 			}

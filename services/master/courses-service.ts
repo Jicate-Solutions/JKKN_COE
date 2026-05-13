@@ -1,4 +1,23 @@
-import type { Course, CourseFormData } from '@/types/courses'
+import type { Course, CourseFormData, CourseInfo } from '@/types/courses'
+
+/**
+ * Fetch course_info rows that drive the Course Type dropdown.
+ * Returns only active rows ordered by sort_order, course_type.
+ */
+export async function fetchCourseInfo(): Promise<CourseInfo[]> {
+	try {
+		const res = await fetch('/api/master/course-info?status=active')
+		if (!res.ok) {
+			console.error('fetchCourseInfo failed:', res.status)
+			return []
+		}
+		const data = await res.json()
+		return Array.isArray(data) ? data : []
+	} catch (err) {
+		console.error('fetchCourseInfo error:', err)
+		return []
+	}
+}
 
 /**
  * Fetch courses with optional institution filtering

@@ -362,14 +362,14 @@ function AddFavoritesSection({
 // ═══════════════════════════════════════════════════════════════════
 export default function FavoritesPage() {
 	const { toast } = useToast()
-	const { user, hasAnyRole } = useAuth()
+	const { user, hasAnyRole, hasPermission } = useAuth()
 	const { favorites, loading, isFavorite, toggleFavorite, removeFavorite, reorderFavorites } = useFavorites()
 	const [viewMode, setViewMode] = useState<'list' | 'grid'>('list')
 
 	const flatItems = useMemo(
-		() => getFlatNavItems(navMain, hasAnyRole),
+		() => getFlatNavItems(navMain, hasAnyRole, hasPermission),
 		// eslint-disable-next-line react-hooks/exhaustive-deps
-		[hasAnyRole, user]
+		[hasAnyRole, hasPermission, user]
 	)
 	const navItemMap = useMemo(() => {
 		const map = new Map<string, FlatNavItem>()
