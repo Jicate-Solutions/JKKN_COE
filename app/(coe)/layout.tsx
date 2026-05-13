@@ -1,6 +1,6 @@
 'use client'
 
-import { ReactNode, useEffect, useRef } from 'react'
+import { ReactNode, useEffect, useRef, useState } from 'react'
 import { usePathname } from 'next/navigation'
 import Link from 'next/link'
 import { ProtectedRoute } from '@/components/common/protected-route'
@@ -210,25 +210,41 @@ function PageAccessDenied({ permission }: { permission: string }) {
  */
 function PagePermissionGate({ children }: { children: ReactNode }) {
 	const pathname = usePathname()
-	const { user, hasPermission, hasAnyRole, loading } = useAuth()
+	const { user, hasPermission, hasAnyRole, refreshPermissions, loading } = useAuth()
+	const [verifying, setVerifying] = useState(false)
+	// Track whether we've already tried a refresh for the current path so we
+	// don't loop refresh → still denied → refresh again.
+	const verifiedPathRef = useRef<string | null>(null)
+
+	const requiredPermission = getPermissionForPath(pathname)
+	const isSuperAdmin = user?.is_super_admin === true || hasAnyRole(['super_admin'])
+	const passes =
+		isSuperAdmin ||
+		!requiredPermission ||
+		hasPermission(requiredPermission)
+
+	// If we're about to block the user, give the stale permissions cache one
+	// chance to refresh from the DB before showing the access-denied screen.
+	useEffect(() => {
+		if (!user) return
+		if (passes) return
+		if (verifiedPathRef.current === pathname) return
+		verifiedPathRef.current = pathname
+		setVerifying(true)
+		refreshPermissions().finally(() => setVerifying(false))
+	}, [user, passes, pathname, refreshPermissions])
 
 	// Wait until auth settles to avoid a flash-of-denied during initial load
 	if (loading || !user) return <>{children}</>
-
-	// Super admin always allowed (server enforces this via is_super_admin too)
-	if (user.is_super_admin === true || hasAnyRole(['super_admin'])) {
-		return <>{children}</>
+	if (passes) return <>{children}</>
+	if (verifying) {
+		return (
+			<div className="flex items-center justify-center min-h-[60vh]">
+				<div className="animate-spin rounded-full h-10 w-10 border-b-2 border-primary" />
+			</div>
+		)
 	}
-
-	const requiredPermission = getPermissionForPath(pathname)
-
-	// Unlisted route → no permission required at this layer (API routes can
-	// still enforce their own checks)
-	if (!requiredPermission) return <>{children}</>
-
-	if (hasPermission(requiredPermission)) return <>{children}</>
-
-	return <PageAccessDenied permission={requiredPermission} />
+	return <PageAccessDenied permission={requiredPermission!} />
 }
 
 export default function AuthenticatedLayout({
@@ -250,7 +266,7 @@ export default function AuthenticatedLayout({
 				<CommandMenuProvider>
 					<InstitutionProvider>
 						<ExaminationSessionProvider>
-							<PagePermissionGate>{children}</PagePermissionGate>
+							{children}
 						</ExaminationSessionProvider>
 					</InstitutionProvider>
 				</CommandMenuProvider>

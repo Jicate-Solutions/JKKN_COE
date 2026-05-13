@@ -3,6 +3,7 @@ import { getSupabaseServer } from '@/lib/supabase-server'
 import { sendEmail, getEmailTemplate, replacePlaceholders } from '@/lib/services/email-service'
 import { generateCentralValuationAppointmentPdf } from '@/lib/pdf/central-valuation-appointment-letter'
 import { getPdfSettingsWithFallback } from '@/lib/pdf/settings-service'
+import { lookupStaffProfileExtras } from '@/lib/central-valuation/staff-profile-lookup'
 import type {
 	CentralValuationAppointmentData,
 	CentralValuationCourseEntry,
@@ -145,6 +146,12 @@ async function processOne(supabase: any, args: {
 		examinerMobile = first[staffFields[1]] || undefined
 		examinerDesignation = first[staffFields[2]] || undefined
 		examinerEmail = first[staffFields[3]] || undefined
+
+		// Enrich from MyJKKN staff profile (department + institution names)
+		const extras = await lookupStaffProfileExtras(examiner_key)
+		if (extras.department) examinerDepartment = extras.department
+		if (extras.institution) examinerInstitution = extras.institution
+		if (!examinerDesignation && extras.designation) examinerDesignation = extras.designation
 	} else {
 		const { data: ext } = await supabase
 			.from('examiners')

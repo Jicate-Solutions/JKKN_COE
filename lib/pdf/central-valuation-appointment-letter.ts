@@ -317,9 +317,9 @@ export function buildCentralValuationAppointmentHtml(
 		<div class="address-block">
 			<p>To</p>
 			<p style="padding-left: 24pt;">${data.examiner_name},</p>
-			${data.examiner_designation ? `<p style="padding-left: 24pt;">${data.examiner_designation},</p>` : ''}
-			${data.examiner_department ? `<p style="padding-left: 24pt;">${/^department of/i.test(data.examiner_department) ? data.examiner_department : `Department of ${data.examiner_department}`},</p>` : ''}
 			${data.examiner_institution ? `<p style="padding-left: 24pt;">${data.examiner_institution},</p>` : ''}
+			${data.examiner_department ? `<p style="padding-left: 24pt;">${/^department of/i.test(data.examiner_department) ? data.examiner_department : `Department of ${data.examiner_department}`},</p>` : ''}
+			${data.examiner_designation ? `<p style="padding-left: 24pt;">${data.examiner_designation},</p>` : ''}
 			${data.examiner_address ? `<p style="padding-left: 24pt;">${data.examiner_address}.</p>` : ''}
 			${data.examiner_mobile ? `<p style="padding-left: 24pt;">Mobile: ${data.examiner_mobile}</p>` : ''}
 		</div>

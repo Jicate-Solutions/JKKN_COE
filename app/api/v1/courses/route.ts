@@ -17,6 +17,9 @@ export const GET = withExternalAuth(async (request: Request, context: ExternalAp
 		const search = searchParams.get('search')
 		const isActive = searchParams.get('is_active')
 		const coursesStatus = searchParams.get('courses_status')
+		const courseType = searchParams.get('course_type')
+		const courseLevel = searchParams.get('course_level')
+		const courseTypeCode = searchParams.get('course_type_code')
 
 		let query = supabase
 			.from('courses')
@@ -101,6 +104,15 @@ export const GET = withExternalAuth(async (request: Request, context: ExternalAp
 		}
 		if (coursesStatus) {
 			query = query.eq('courses_status', coursesStatus)
+		}
+		if (courseType) {
+			query = query.eq('course_type', courseType)
+		}
+		if (courseLevel) {
+			query = query.eq('course_level', courseLevel)
+		}
+		if (courseTypeCode) {
+			query = query.eq('course_type_code', courseTypeCode)
 		}
 
 		const { data, error } = await query

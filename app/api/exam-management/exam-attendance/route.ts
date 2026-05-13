@@ -33,29 +33,21 @@ export async function GET(request: Request) {
 
 			const courseId = courseData.id
 
-			// Step 2: Get exam_timetable_id (program is validated via exam_registrations)
-			const { data: timetableData, error: timetableError } = await supabase
-				.from('exam_timetables')
-				.select('id')
-				.eq('institutions_id', institution_id)
-				.eq('examination_session_id', examination_session_id)
-				.eq('course_id', courseId)
-				.eq('exam_date', exam_date)
-				.eq('session', session)
-				.eq('is_published', true)
-				.maybeSingle()
+			// Step 2: Find timetable row(s) for this course/date/session, then disambiguate by program
+			const timetableId = await resolveTimetableId(supabase, {
+				institution_id, examination_session_id, course_id: courseId,
+				exam_date, session, program_code, course_code,
+			})
 
-			if (timetableError) {
-				console.error('Error finding exam timetable:', timetableError)
-				return NextResponse.json({ error: 'Failed to find exam timetable', details: timetableError }, { status: 500 })
+			if (timetableId === 'error') {
+				return NextResponse.json({ error: 'Failed to find exam timetable' }, { status: 500 })
 			}
 
-			if (!timetableData) {
+			if (!timetableId) {
 				console.log('No exam timetable found')
 				return NextResponse.json({ exists: false, data: [] })
 			}
 
-			const timetableId = timetableData.id
 			console.log('Found exam timetable:', timetableId)
 
 			// Step 3: Check if attendance records exist for this program (using program_code)
@@ -99,7 +91,7 @@ export async function GET(request: Request) {
 		if (mode === 'list' && institution_id && examination_session_id && course_code && exam_date && session && program_code) {
 			console.log('Fetching student list with params:', { institution_id, examination_session_id, course_code, exam_date, session, program_code })
 
-			// Step 1: Get course_id from course_code (for exam_timetable lookup)
+			// Step 1: Get course_id from course_code
 			const { data: courseData, error: courseError } = await supabase
 				.from('courses')
 				.select('id')
@@ -112,31 +104,22 @@ export async function GET(request: Request) {
 			}
 
 			const courseId = courseData.id
-			console.log('Course ID found:', courseId)
 
-			// Step 2: Get exam_timetable_id (without program filter - program validated via exam_registrations)
-			const { data: timetableData, error: timetableError } = await supabase
-				.from('exam_timetables')
-				.select('id')
-				.eq('institutions_id', institution_id)
-				.eq('examination_session_id', examination_session_id)
-				.eq('course_id', courseId)
-				.eq('exam_date', exam_date)
-				.eq('session', session)
-				.eq('is_published', true)
-				.maybeSingle()
+			// Step 2: Resolve timetable row scoped to this program (disambiguates duplicates)
+			const timetableId = await resolveTimetableId(supabase, {
+				institution_id, examination_session_id, course_id: courseId,
+				exam_date, session, program_code, course_code,
+			})
 
-			if (timetableError) {
-				console.error('Error checking exam timetable:', timetableError)
-				return NextResponse.json({ error: 'Failed to verify exam schedule', details: timetableError }, { status: 500 })
+			if (timetableId === 'error') {
+				return NextResponse.json({ error: 'Failed to verify exam schedule' }, { status: 500 })
 			}
 
-			if (!timetableData) {
+			if (!timetableId) {
 				console.log('No published exam timetable found for these criteria')
 				return NextResponse.json({ error: 'No exam scheduled for this course on the selected date and session', details: 'Check exam timetable settings' }, { status: 404 })
 			}
 
-			const timetableId = timetableData.id
 			console.log('Exam timetable verified:', timetableId)
 
 			// Step 3: Check if attendance already exists (join with exam_registrations, using program_code)
@@ -298,43 +281,30 @@ export async function POST(request: Request) {
 
 		const courseId = courseData.id
 
-		// Step 2: Get exam_timetable_id (using program_code directly, no program_id lookup needed)
-		console.log('Looking up exam timetable with criteria:', {
-			institutions_id: body.institutions_id,
+		// Step 2: Resolve timetable row scoped to this program (disambiguates duplicates)
+		const timetableId = await resolveTimetableId(supabase, {
+			institution_id: body.institutions_id,
 			examination_session_id: body.exam_session_code,
 			course_id: courseId,
 			exam_date: body.exam_date,
 			session: body.session_code,
-			is_published: true,
+			program_code: body.program_code,
+			course_code: body.course_code,
 		})
 
-		const { data: timetableData, error: timetableError } = await supabase
-			.from('exam_timetables')
-			.select('id')
-			.eq('institutions_id', body.institutions_id)
-			.eq('examination_session_id', body.exam_session_code)
-			.eq('course_id', courseId)
-			.eq('exam_date', body.exam_date)
-			.eq('session', body.session_code)
-			.eq('is_published', true)
-			.maybeSingle()
-
-		if (timetableError) {
-			console.error('Timetable lookup error:', timetableError)
+		if (timetableId === 'error') {
 			return NextResponse.json({
-				error: 'Failed to lookup exam timetable: ' + timetableError.message,
-				details: timetableError
+				error: 'Failed to lookup exam timetable.'
 			}, { status: 500 })
 		}
 
-		if (!timetableData) {
+		if (!timetableId) {
 			console.error('No exam timetable found for the given criteria')
 			return NextResponse.json({
 				error: 'Exam timetable not found. Please ensure the exam is scheduled and published for this date and session.'
 			}, { status: 404 })
 		}
 
-		const timetableId = timetableData.id
 		console.log('Exam timetable ID resolved:', timetableId)
 
 		// Step 3: Check if attendance already exists for this program (using program_code)
@@ -433,4 +403,70 @@ export async function PUT(request: Request) {
 		console.error('Exam attendance PUT error:', e)
 		return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
 	}
+}
+
+/**
+ * Find the exam_timetable row for a (course, date, session, institution, examination_session)
+ * and disambiguate to this program when multiple rows match.
+ *
+ * Same course can have timetable rows under different programs' course_offerings on the same
+ * date/session. We pick the row whose course_offering_id maps to (program_code, course_code).
+ * Falls back to the single matching row if only one exists.
+ *
+ * Returns: timetable_id string, null (not found), or 'error' on failure.
+ */
+async function resolveTimetableId(
+	supabase: ReturnType<typeof getSupabaseServer>,
+	params: {
+		institution_id: string
+		examination_session_id: string
+		course_id: string
+		exam_date: string
+		session: string
+		program_code: string
+		course_code: string
+	}
+): Promise<string | null | 'error'> {
+	const { data: rows, error } = await supabase
+		.from('exam_timetables')
+		.select('id, course_offering_id')
+		.eq('institutions_id', params.institution_id)
+		.eq('examination_session_id', params.examination_session_id)
+		.eq('course_id', params.course_id)
+		.eq('exam_date', params.exam_date)
+		.eq('session', params.session)
+		.eq('is_published', true)
+
+	if (error) {
+		console.error('resolveTimetableId: query failed:', error)
+		return 'error'
+	}
+
+	if (!rows || rows.length === 0) return null
+	if (rows.length === 1) return rows[0].id
+
+	console.log(`resolveTimetableId: ${rows.length} candidate rows, disambiguating by program_code=${params.program_code}`)
+
+	// Multiple rows — disambiguate by matching course_offering_id to this program's offering
+	const offeringIds = rows.map((r: any) => r.course_offering_id).filter(Boolean)
+	if (offeringIds.length === 0) {
+		// All rows lack course_offering_id; cannot disambiguate — pick first
+		console.warn('resolveTimetableId: no course_offering_id on any candidate row; picking first')
+		return rows[0].id
+	}
+
+	const { data: offerings } = await supabase
+		.from('course_offerings')
+		.select('id')
+		.in('id', offeringIds)
+		.eq('program_code', params.program_code)
+		.eq('course_code', params.course_code)
+
+	const matchedOfferingIds = new Set((offerings || []).map((o: any) => o.id))
+	const match = rows.find((r: any) => r.course_offering_id && matchedOfferingIds.has(r.course_offering_id))
+	if (match) return match.id
+
+	// No offering-based match — fall back to first row to preserve prior behavior
+	console.warn('resolveTimetableId: no offering match for program; falling back to first candidate')
+	return rows[0].id
 }

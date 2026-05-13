@@ -238,7 +238,6 @@ CREATE INDEX IF NOT EXISTS idx_courses_created_at ON courses(created_at);
       fee_exception: row.fee_exception,
       syllabus_pdf_url: row.syllabus_pdf_url,
       description: row.description,
-      course_level: 'Beginner', // not available; provide a default
       is_active: row.status ?? true,
       created_at: row.created_at,
       updated_at: row.updated_at,

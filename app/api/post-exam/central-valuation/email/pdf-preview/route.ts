@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
 import { generateCentralValuationAppointmentPdf } from '@/lib/pdf/central-valuation-appointment-letter'
 import { getPdfSettingsWithFallback } from '@/lib/pdf/settings-service'
+import { lookupStaffProfileExtras } from '@/lib/central-valuation/staff-profile-lookup'
 import type {
 	CentralValuationAppointmentData,
 	CentralValuationCourseEntry,
@@ -107,6 +108,12 @@ export async function GET(request: Request) {
 		examinerMobile = first[staffFields[1]] || undefined
 		examinerDesignation = first[staffFields[2]] || undefined
 		examinerEmail = first[staffFields[3]] || undefined
+
+		// Enrich from MyJKKN staff profile (department + institution names)
+		const extras = await lookupStaffProfileExtras(examinerKey)
+		if (extras.department) examinerDepartment = extras.department
+		if (extras.institution) examinerInstitution = extras.institution
+		if (!examinerDesignation && extras.designation) examinerDesignation = extras.designation
 	} else {
 		const { data: ext } = await supabase
 			.from('examiners')
