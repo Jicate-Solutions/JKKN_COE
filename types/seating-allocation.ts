@@ -5,6 +5,24 @@
 /** Seating strategy options */
 export type SeatingStrategy = 'institution-standard' | 'smart-mixing' | 'strict' | 'manual'
 
+/** Rule toggles for the seating allocator.
+ *  Default: every rule enabled (original algorithm behaviour). */
+export interface SeatingRules {
+	rule_1_minimize_rooms: boolean
+	rule_2_same_program_separation: boolean
+	rule_3_shared_course_c2: boolean
+	rule_4_room_continuity: boolean
+	rule_5_equal_distribution: boolean
+}
+
+export const DEFAULT_SEATING_RULES: SeatingRules = {
+	rule_1_minimize_rooms: true,
+	rule_2_same_program_separation: true,
+	rule_3_shared_course_c2: true,
+	rule_4_room_continuity: true,
+	rule_5_equal_distribution: true,
+}
+
 /** Program type classification */
 export type ProgramType = 'UG' | 'PG'
 

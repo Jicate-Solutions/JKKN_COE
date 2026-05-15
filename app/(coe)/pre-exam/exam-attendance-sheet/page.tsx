@@ -29,6 +29,7 @@ import {
 import { generateExamAttendanceSheetPDF } from "@/lib/utils/generate-exam-attendance-sheet-pdf"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { SeatingArrangementTab } from '@/components/pre-exam/seating-arrangement-tab'
+import type { SeatingRoom } from '@/types/seating-allocation'
 
 interface ExaminationSession {
 	id: string
@@ -69,6 +70,15 @@ export default function ExamAttendanceSheetPage() {
 	const [selectedBatchIds, setSelectedBatchIds] = useState<Set<string>>(new Set())
 	const [batchSearch, setBatchSearch] = useState('')
 
+	// Rooms (used by seating arrangement tab — fetched at parent so the
+	// "Start From Room" dropdown can sit in the top filter row)
+	const [rooms, setRooms] = useState<SeatingRoom[]>([])
+	const [loadingRooms, setLoadingRooms] = useState(false)
+	const [startingRoomId, setStartingRoomId] = useState<string>('') // empty = start from first room
+
+	// Active tab — the Start From Room dropdown is only meaningful for seating
+	const [activeTab, setActiveTab] = useState<string>('attendance-sheet')
+
 	// Loading states
 	const [loadingSessions, setLoadingSessions] = useState(false)
 	const [loadingDates, setLoadingDates] = useState(false)
@@ -81,7 +91,7 @@ export default function ExamAttendanceSheetPage() {
 	const [sessionOpen, setSessionOpen] = useState(false)
 	const [examDateOpen, setExamDateOpen] = useState(false)
 
-	// When global institution changes → reset and load sessions
+	// When global institution changes → reset and load sessions + rooms
 	useEffect(() => {
 		// Reset all downstream selections
 		setSelectedSessionId("")
@@ -90,9 +100,12 @@ export default function ExamAttendanceSheetPage() {
 		setSessions([])
 		setExamDates([])
 		setSessionTypes([])
+		setRooms([])
+		setStartingRoomId('')
 
 		if (isReady && institutionId) {
 			loadSessions(institutionId)
+			loadRooms(institutionId)
 		}
 	}, [isReady, institutionId])
 
@@ -105,6 +118,21 @@ export default function ExamAttendanceSheetPage() {
 			console.error('Error fetching sessions:', error)
 		} finally {
 			setLoadingSessions(false)
+		}
+	}
+
+	const loadRooms = async (instId: string) => {
+		try {
+			setLoadingRooms(true)
+			const res = await fetch(`/api/pre-exam/seating/rooms?institutions_id=${instId}`)
+			if (!res.ok) throw new Error('Failed to fetch rooms')
+			const data: SeatingRoom[] = await res.json()
+			setRooms(Array.isArray(data) ? data : [])
+		} catch (error) {
+			console.error('Error fetching rooms:', error)
+			setRooms([])
+		} finally {
+			setLoadingRooms(false)
 		}
 	}
 
@@ -369,7 +397,7 @@ export default function ExamAttendanceSheetPage() {
 
 					{/* Tabs — only show when institution is selected */}
 					{!needsInstitution && (
-						<Tabs defaultValue="attendance-sheet" className="flex flex-col gap-4">
+						<Tabs value={activeTab} onValueChange={setActiveTab} className="flex flex-col gap-4">
 							<TabsList
 								className="w-fit h-11 rounded-xl border border-slate-200/70 bg-gradient-to-r from-indigo-50 via-white to-sky-50 p-1.5 shadow-sm"
 							>
@@ -397,7 +425,11 @@ export default function ExamAttendanceSheetPage() {
 									<CardTitle className="text-base">Select Exam Details</CardTitle>
 								</CardHeader>
 								<CardContent>
-									<div className={cn("grid grid-cols-1 md:grid-cols-3 gap-4", generating && "opacity-50 pointer-events-none")}>
+									<div className={cn(
+									"grid grid-cols-1 gap-4",
+									activeTab === 'seating-arrangement' ? "md:grid-cols-2 lg:grid-cols-4" : "md:grid-cols-3",
+									generating && "opacity-50 pointer-events-none"
+								)}>
 										{/* Exam Session Dropdown */}
 										{mustSelectSession && (
 										<div className="space-y-2">
@@ -516,6 +548,31 @@ export default function ExamAttendanceSheetPage() {
 												</SelectContent>
 											</Select>
 										</div>
+
+										{/* Start From Room — only for seating tab.
+										    Rooms before the chosen room are skipped for roll-number allotment. */}
+										{activeTab === 'seating-arrangement' && (
+											<div className="space-y-2">
+												<Label>Start From Room</Label>
+												<Select
+													value={startingRoomId || '__auto__'}
+													onValueChange={(v) => setStartingRoomId(v === '__auto__' ? '' : v)}
+													disabled={!institutionId || loadingRooms || generating}
+												>
+													<SelectTrigger className="w-full">
+														<SelectValue placeholder={loadingRooms ? "Loading..." : "Auto (first room)"} />
+													</SelectTrigger>
+													<SelectContent>
+														<SelectItem value="__auto__">Auto (first room)</SelectItem>
+														{rooms.map(r => (
+															<SelectItem key={r.id} value={r.id}>
+																{r.room_code}{r.building ? ` — ${r.building}${r.floor ? `, Floor ${r.floor}` : ''}` : ''}
+															</SelectItem>
+														))}
+													</SelectContent>
+												</Select>
+											</div>
+										)}
 									</div>
 								</CardContent>
 							</Card>
@@ -638,6 +695,8 @@ export default function ExamAttendanceSheetPage() {
 									sessionType={selectedSessionType}
 									sessionName={sessions.find(s => s.id === selectedSessionId)?.session_name || ''}
 									isFormComplete={isFormComplete}
+									rooms={rooms}
+									startingRoomId={startingRoomId}
 								/>
 							</TabsContent>
 						</Tabs>

@@ -195,11 +195,38 @@ export async function GET(request: Request) {
 			console.log('Registered students found:', registeredStudents?.length || 0)
 
 			if (!registeredStudents || registeredStudents.length === 0) {
+				// Diagnostic probe — find out WHY: are there registrations at all (any fee_paid),
+				// and what was excluded by the fee_paid=true filter?
+				const { data: anyRegs } = await supabase
+					.from('exam_registrations')
+					.select('stu_register_no, student_name, fee_paid, is_regular')
+					.eq('institutions_id', institution_id)
+					.eq('examination_session_id', examination_session_id)
+					.eq('program_code', program_code)
+					.eq('course_code', course_code)
+					.order('stu_register_no', { ascending: true })
+
+				const totalRegs = anyRegs?.length || 0
+				const unpaidCount = (anyRegs || []).filter((r: any) => !r.fee_paid).length
+
+				console.log(`Diagnostic: ${totalRegs} total registrations for this filter; ${unpaidCount} have fee_paid=false`)
+
+				let userMessage = 'No registered students found for this exam.'
+				if (totalRegs > 0 && unpaidCount === totalRegs) {
+					userMessage = `${totalRegs} student(s) registered for this course, but none have fee_paid = true. Update fee status to load them.`
+				} else if (totalRegs === 0) {
+					userMessage = `No exam_registrations rows exist for program ${program_code} + course ${course_code} in this session. Check that registrations were created.`
+				}
+
 				return NextResponse.json({
-					error: 'No registered students found for this exam',
-					details: 'Check exam_registrations for students with fee_paid = true',
+					error: userMessage,
 					step: 'exam_registrations_fetch',
-					filters: { institution_id, examination_session_id, program_code, course_code, fee_paid: true }
+					filters: { institution_id, examination_session_id, program_code, course_code, fee_paid: true },
+					diagnostic: {
+						total_registrations_ignoring_fee_paid: totalRegs,
+						unpaid_count: unpaidCount,
+						sample: (anyRegs || []).slice(0, 5)
+					}
 				}, { status: 404 })
 			}
 
@@ -393,12 +420,92 @@ export async function POST(request: Request) {
 	}
 }
 
-// PUT: Update exam attendance (if needed in future)
+// PUT: Update existing attendance records (super_admin only).
+// Body: { editor_email: string, attendance_records: [{ exam_registration_id, is_absent, remarks }] }
+// Server re-verifies super_admin from DB; the client claim is not trusted.
 export async function PUT(request: Request) {
 	try {
+		const body = await request.json()
+		const editorEmail: string | undefined = body.editor_email
+		const records: any[] = body.attendance_records || []
+
+		if (!editorEmail) {
+			return NextResponse.json({ error: 'editor_email is required' }, { status: 400 })
+		}
+		if (!Array.isArray(records) || records.length === 0) {
+			return NextResponse.json({ error: 'attendance_records array is required' }, { status: 400 })
+		}
+
+		const supabase = getSupabaseServer()
+
+		// Server-side super_admin verification — do NOT trust client-provided flag
+		const { data: editor, error: editorError } = await supabase
+			.from('users')
+			.select('id, is_super_admin, role')
+			.eq('email', editorEmail)
+			.maybeSingle()
+
+		if (editorError || !editor) {
+			console.error('PUT exam_attendance: editor lookup failed:', editorError)
+			return NextResponse.json({ error: 'Editor not found' }, { status: 403 })
+		}
+
+		const isSuperAdmin = editor.is_super_admin === true || editor.role === 'super_admin'
+		if (!isSuperAdmin) {
+			return NextResponse.json({ error: 'Only super_admin can edit recorded attendance' }, { status: 403 })
+		}
+
+		const editorId = editor.id
+		const nowISO = new Date().toISOString()
+
+		// Update each record by exam_registration_id (unique with exam_timetable_id constraint).
+		// We let the trigger update updated_at; we set verified_by + verified_at as the audit pair.
+		const updates = records.map((r: any) => ({
+			exam_registration_id: r.exam_registration_id as string,
+			is_absent: !!r.is_absent,
+			attendance_status: r.is_absent ? 'Absent' : 'Present',
+			remarks: typeof r.remarks === 'string' ? r.remarks : null,
+		}))
+
+		let updatedCount = 0
+		const errors: any[] = []
+
+		for (const u of updates) {
+			const { error: updErr, count } = await supabase
+				.from('exam_attendance')
+				.update({
+					is_absent: u.is_absent,
+					attendance_status: u.attendance_status,
+					remarks: u.remarks,
+					verified_by: editorId,
+					verified_at: nowISO,
+				}, { count: 'exact' })
+				.eq('exam_registration_id', u.exam_registration_id)
+
+			if (updErr) {
+				console.error('PUT exam_attendance: row update failed:', u.exam_registration_id, updErr)
+				errors.push({ exam_registration_id: u.exam_registration_id, error: updErr.message })
+			} else {
+				updatedCount += count || 0
+			}
+		}
+
+		console.log(`PUT exam_attendance: ${updatedCount} rows updated by super_admin ${editorEmail} (${editorId}). Errors: ${errors.length}`)
+
+		if (errors.length > 0) {
+			return NextResponse.json({
+				success: false,
+				records_updated: updatedCount,
+				errors,
+			}, { status: 207 }) // 207 Multi-Status — partial success
+		}
+
 		return NextResponse.json({
-			error: 'Attendance records cannot be modified once saved'
-		}, { status: 403 })
+			success: true,
+			records_updated: updatedCount,
+			edited_by: editorEmail,
+			edited_at: nowISO,
+		})
 	} catch (e) {
 		console.error('Exam attendance PUT error:', e)
 		return NextResponse.json({ error: 'Internal server error' }, { status: 500 })

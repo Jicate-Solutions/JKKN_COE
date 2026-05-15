@@ -23,7 +23,9 @@ import type {
 	RoomColumnPlan,
 	CourseCategory,
 	ProgramType,
+	SeatingRules,
 } from '@/types/seating-allocation'
+import { DEFAULT_SEATING_RULES } from '@/types/seating-allocation'
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -149,9 +151,11 @@ function remaining(q: ProgramQueue): number {
  * Check if a program is allowed in a given column number.
  * Rule 3: programs with shared courses → C1 or C3 only (NEVER C2)
  * PG without shared courses → prefer C2 but allowed anywhere
+ *
+ * When Rule 3 is disabled, all programs are allowed in any column.
  */
-function isColumnAllowed(q: ProgramQueue, colNum: number): boolean {
-	if (q.has_shared_course && colNum === 2) return false
+function isColumnAllowed(q: ProgramQueue, colNum: number, rule3Enabled: boolean): boolean {
+	if (rule3Enabled && q.has_shared_course && colNum === 2) return false
 	return true
 }
 
@@ -194,7 +198,8 @@ function countAvailableRows(
  */
 export function autoAssignColumns(
 	students: SeatingStudent[],
-	rooms: SeatingRoom[]
+	rooms: SeatingRoom[],
+	rules: SeatingRules = DEFAULT_SEATING_RULES
 ): RoomColumnPlan[] {
 	const sortedRooms = [...rooms].sort((a, b) => a.room_order - b.room_order)
 	const totalStudents = students.length
@@ -202,14 +207,23 @@ export function autoAssignColumns(
 	// ── Pre-planning: calculate minimum rooms needed and target per room ──
 	const roomMaxCaps = sortedRooms.map(r => r.max_exam_capacity || r.exam_capacity)
 
-	let cumulativeCap = 0
-	let minRoomsNeeded = sortedRooms.length
-	for (let i = 0; i < sortedRooms.length; i++) {
-		cumulativeCap += roomMaxCaps[i]
-		if (cumulativeCap >= totalStudents) {
-			minRoomsNeeded = i + 1
-			break
+	// Rule 1 (Minimize Rooms): when ON, pack rooms by computing min rooms needed
+	// and using ceil(students / minRooms) as the per-room target — earlier rooms
+	// fill before later rooms open. When OFF, spread students across all rooms
+	// equally so no room is preferred.
+	let minRoomsNeeded: number
+	if (rules.rule_1_minimize_rooms) {
+		let cumulativeCap = 0
+		minRoomsNeeded = sortedRooms.length
+		for (let i = 0; i < sortedRooms.length; i++) {
+			cumulativeCap += roomMaxCaps[i]
+			if (cumulativeCap >= totalStudents) {
+				minRoomsNeeded = i + 1
+				break
+			}
 		}
+	} else {
+		minRoomsNeeded = sortedRooms.length
 	}
 
 	const targetPerRoom = minRoomsNeeded > 0
@@ -217,18 +231,20 @@ export function autoAssignColumns(
 		: totalStudents
 
 	const queues = buildProgramQueues(students)
-	let plans = runAllocationPass(sortedRooms, queues, totalStudents, targetPerRoom)
+	let plans = runAllocationPass(sortedRooms, queues, totalStudents, targetPerRoom, rules)
 
 	// ── Rule 5: Equal distribution — avoid sparse last room ──
-	const usedPlans = plans.filter(p => p.total_seats > 0)
-	if (usedPlans.length >= 2) {
-		const lastUsed = usedPlans[usedPlans.length - 1]
-		const sparseThreshold = Math.max(Math.ceil(targetPerRoom * 0.4), 5)
-		if (lastUsed.total_seats <= sparseThreshold) {
-			// Re-run using hardMax as per-room target so earlier rooms absorb more students
-			const hardMaxTarget = Math.max(...roomMaxCaps)
-			queues.forEach(q => { q.cursor = 0 })
-			plans = runAllocationPass(sortedRooms, queues, totalStudents, hardMaxTarget)
+	if (rules.rule_5_equal_distribution) {
+		const usedPlans = plans.filter(p => p.total_seats > 0)
+		if (usedPlans.length >= 2) {
+			const lastUsed = usedPlans[usedPlans.length - 1]
+			const sparseThreshold = Math.max(Math.ceil(targetPerRoom * 0.4), 5)
+			if (lastUsed.total_seats <= sparseThreshold) {
+				// Re-run using hardMax as per-room target so earlier rooms absorb more students
+				const hardMaxTarget = Math.max(...roomMaxCaps)
+				queues.forEach(q => { q.cursor = 0 })
+				plans = runAllocationPass(sortedRooms, queues, totalStudents, hardMaxTarget, rules)
+			}
 		}
 	}
 
@@ -243,7 +259,8 @@ function runAllocationPass(
 	sortedRooms: SeatingRoom[],
 	queues: ProgramQueue[],
 	totalStudents: number,
-	perRoomTarget: number
+	perRoomTarget: number,
+	rules: SeatingRules
 ): RoomColumnPlan[] {
 	let totalAssigned = 0
 	const plans: RoomColumnPlan[] = []
@@ -288,10 +305,13 @@ function runAllocationPass(
 				for (let qi = 0; qi < queues.length; qi++) {
 					const q = queues[qi]
 					if (remaining(q) <= 0) continue
-					if (!isColumnAllowed(q, colNum)) continue
-					if (rowPrograms.get(rowCursor)!.has(q.program_code)) continue
+					if (!isColumnAllowed(q, colNum, rules.rule_3_shared_course_c2)) continue
+					// Rule 2: when ON, skip programs already in this row (cross-column conflict).
+					if (rules.rule_2_same_program_separation && rowPrograms.get(rowCursor)!.has(q.program_code)) continue
 
-					const available = countAvailableRows(q.program_code, rowCursor, maxRows, rowPrograms)
+					const available = rules.rule_2_same_program_separation
+						? countAvailableRows(q.program_code, rowCursor, maxRows, rowPrograms)
+						: (maxRows - rowCursor)
 					const canFill = Math.min(remaining(q), available, maxSeats - roomSeated)
 					if (canFill <= 0) continue
 
@@ -299,7 +319,7 @@ function runAllocationPass(
 					let score = canFill * 100 + remaining(q)
 					// Rule 4: huge bonus for programs that were in the previous room —
 					// ensures the program finishes before a new program starts.
-					if (prevRoomPrograms.has(q.program_code)) score += 1_000_000
+					if (rules.rule_4_room_continuity && prevRoomPrograms.has(q.program_code)) score += 1_000_000
 					if (score > bestScore) {
 						bestScore = score
 						bestIdx = qi
@@ -319,7 +339,8 @@ function runAllocationPass(
 					roomSeated < maxSeats &&
 					q.cursor < q.students.length
 				) {
-					if (rowPrograms.get(rowCursor)!.has(q.program_code)) break
+					// Rule 2: when ON, stop the block if same program is already at this row.
+					if (rules.rule_2_same_program_separation && rowPrograms.get(rowCursor)!.has(q.program_code)) break
 
 					rowPrograms.get(rowCursor)!.add(q.program_code)
 					q.cursor++
@@ -378,7 +399,8 @@ function runAllocationPass(
  */
 export function validateAllocation(
 	plans: RoomColumnPlan[],
-	students: SeatingStudent[]
+	students: SeatingStudent[],
+	rules: SeatingRules = DEFAULT_SEATING_RULES
 ): AllocationViolation[] {
 	const violations: AllocationViolation[] = []
 	const sharedCourses = detectSharedCourses(students)
@@ -407,50 +429,53 @@ export function validateAllocation(
 		}
 
 		// Rule 2: same program must NOT be in the same row across columns
-		for (let r = 0; r < room.rows; r++) {
-			const programsInRow = new Set<string>()
-			for (let c = 1; c <= room.columns; c++) {
-				const blocks = colRows.get(c) || []
-				for (const block of blocks) {
-					if (r >= block.start && r <= block.end) {
-						if (programsInRow.has(block.program_code)) {
-							violations.push({
-								rule: 'Rule 2: Same Program in Same Row',
-								room_code: room.room_code,
-								details: `${block.program_code} in multiple columns at Row ${r + 1}`,
-							})
+		if (rules.rule_2_same_program_separation) {
+			for (let r = 0; r < room.rows; r++) {
+				const programsInRow = new Set<string>()
+				for (let c = 1; c <= room.columns; c++) {
+					const blocks = colRows.get(c) || []
+					for (const block of blocks) {
+						if (r >= block.start && r <= block.end) {
+							if (programsInRow.has(block.program_code)) {
+								violations.push({
+									rule: 'Rule 2: Same Program in Same Row',
+									room_code: room.room_code,
+									details: `${block.program_code} in multiple columns at Row ${r + 1}`,
+								})
+							}
+							programsInRow.add(block.program_code)
 						}
-						programsInRow.add(block.program_code)
 					}
 				}
 			}
 		}
 
 		// Rule 3: shared course codes must NOT be in C2
-		for (const col of columns) {
-			if (col.column_number === 2 && sharedCourses.has(col.course_code)) {
-				violations.push({
-					rule: 'Rule 3: Shared Course in C2',
-					room_code: room.room_code,
-					details: `Shared course ${col.course_code} (${col.program_code}) placed in C2`,
-				})
+		if (rules.rule_3_shared_course_c2) {
+			for (const col of columns) {
+				if (col.column_number === 2 && sharedCourses.has(col.course_code)) {
+					violations.push({
+						rule: 'Rule 3: Shared Course in C2',
+						room_code: room.room_code,
+						details: `Shared course ${col.course_code} (${col.program_code}) placed in C2`,
+					})
+				}
 			}
 		}
 	}
 
 	// Rule 1: check if rooms could be reduced
-	const usedRooms = plans.filter(p => p.total_seats > 0).length
-	const totalCapacity = plans
-		.filter(p => p.total_seats > 0)
-		.reduce((sum, p) => sum + p.room.exam_capacity, 0)
-	const totalSeated = plans.reduce((sum, p) => sum + p.total_seats, 0)
-	const minRoomsNeeded = Math.ceil(totalSeated / Math.max(...plans.map(p => p.room.exam_capacity), 1))
-	if (usedRooms > minRoomsNeeded + 1) {
-		violations.push({
-			rule: 'Rule 1: Room Minimization',
-			room_code: 'All',
-			details: `Using ${usedRooms} rooms but ${minRoomsNeeded} may suffice. Consider packing tighter.`,
-		})
+	if (rules.rule_1_minimize_rooms) {
+		const usedRooms = plans.filter(p => p.total_seats > 0).length
+		const totalSeated = plans.reduce((sum, p) => sum + p.total_seats, 0)
+		const minRoomsNeeded = Math.ceil(totalSeated / Math.max(...plans.map(p => p.room.exam_capacity), 1))
+		if (usedRooms > minRoomsNeeded + 1) {
+			violations.push({
+				rule: 'Rule 1: Room Minimization',
+				room_code: 'All',
+				details: `Using ${usedRooms} rooms but ${minRoomsNeeded} may suffice. Consider packing tighter.`,
+			})
+		}
 	}
 
 	return violations

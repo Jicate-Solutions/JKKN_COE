@@ -27,7 +27,10 @@ import type {
 	RoomSuggestion,
 	RoomColumnPlan,
 	SeatingAllocationResult,
+	SeatingRules,
 } from '@/types/seating-allocation'
+import { DEFAULT_SEATING_RULES } from '@/types/seating-allocation'
+import { SeatingRulesPanel } from './seating-rules-panel'
 
 interface SeatingArrangementTabProps {
 	institutionId: string
@@ -36,6 +39,8 @@ interface SeatingArrangementTabProps {
 	sessionType: string // FN or AN
 	sessionName: string // e.g. "APRIL - MAY 2026"
 	isFormComplete: boolean
+	rooms: SeatingRoom[]
+	startingRoomId: string // '' = start from first; otherwise rooms before this id are skipped
 }
 
 type Step = 'idle' | 'summary' | 'rooms' | 'generated' | 'saved'
@@ -54,12 +59,14 @@ export function SeatingArrangementTab({
 	sessionType,
 	sessionName,
 	isFormComplete,
+	rooms,
+	startingRoomId,
 }: SeatingArrangementTabProps) {
 	const { toast } = useToast()
 
-	// Data
+	// Data — rooms come from parent so the global Start From Room dropdown
+	// can filter them consistently.
 	const [students, setStudents] = useState<SeatingStudent[]>([])
-	const [rooms, setRooms] = useState<SeatingRoom[]>([])
 
 	// UI state
 	const [loading, setLoading] = useState(false)
@@ -69,6 +76,28 @@ export function SeatingArrangementTab({
 	const [roomSuggestions, setRoomSuggestions] = useState<RoomSuggestion[]>([])
 	const [columnPlans, setColumnPlans] = useState<RoomColumnPlan[]>([])
 	const [allocation, setAllocation] = useState<SeatingAllocationResult | null>(null)
+
+	// Seating rules — loaded from institution settings; user can override per allocation.
+	const [rules, setRules] = useState<SeatingRules>(DEFAULT_SEATING_RULES)
+
+	// Load institution rule defaults when institution changes
+	useEffect(() => {
+		if (!institutionId) return
+		fetch(`/api/pre-exam/seating/settings?institutions_id=${institutionId}`)
+			.then(res => res.ok ? res.json() : null)
+			.then(data => {
+				if (data && typeof data === 'object') {
+					setRules({
+						rule_1_minimize_rooms: data.rule_1_minimize_rooms !== false,
+						rule_2_same_program_separation: data.rule_2_same_program_separation !== false,
+						rule_3_shared_course_c2: data.rule_3_shared_course_c2 !== false,
+						rule_4_room_continuity: data.rule_4_room_continuity !== false,
+						rule_5_equal_distribution: data.rule_5_equal_distribution !== false,
+					})
+				}
+			})
+			.catch(err => console.error('Load seating rules error:', err))
+	}, [institutionId])
 
 	// Auto-load learners & rooms when all filters are complete (no click needed)
 	useEffect(() => {
@@ -87,6 +116,15 @@ export function SeatingArrangementTab({
 		return map
 	}, [students])
 
+	// Rooms sliced from the chosen "Start From Room" onward (by room_order).
+	// Empty startingRoomId → all rooms are used.
+	const effectiveRooms = useMemo(() => {
+		if (!startingRoomId) return rooms
+		const ordered = [...rooms].sort((a, b) => a.room_order - b.room_order)
+		const startIdx = ordered.findIndex(r => r.id === startingRoomId)
+		return startIdx >= 0 ? ordered.slice(startIdx) : ordered
+	}, [rooms, startingRoomId])
+
 	// Computed: summary stats
 	const summaryStats = useMemo(() => {
 		const programs = new Set(students.map(s => s.program_code))
@@ -99,10 +137,10 @@ export function SeatingArrangementTab({
 			totalStudents: students.length,
 			totalPrograms: programs.size,
 			totalSubjects: subjects.size,
-			totalRooms: rooms.length,
+			totalRooms: effectiveRooms.length,
 			programCounts,
 		}
-	}, [students, rooms])
+	}, [students, effectiveRooms])
 
 	// --- Handlers ---
 
@@ -116,18 +154,13 @@ export function SeatingArrangementTab({
 				session: sessionType,
 			})
 
-			const [studentsRes, roomsRes] = await Promise.all([
-				fetch(`/api/pre-exam/seating/students?${params}`),
-				fetch(`/api/pre-exam/seating/rooms?institutions_id=${institutionId}`),
-			])
+			const studentsRes = await fetch(`/api/pre-exam/seating/students?${params}`)
 
-			if (!studentsRes.ok || !roomsRes.ok) {
+			if (!studentsRes.ok) {
 				throw new Error('Failed to fetch data')
 			}
 
 			const studentsData = await studentsRes.json()
-			const roomsData: SeatingRoom[] = await roomsRes.json()
-
 			const fetchedStudents: SeatingStudent[] = studentsData.students || []
 
 			if (fetchedStudents.length === 0) {
@@ -141,12 +174,11 @@ export function SeatingArrangementTab({
 			}
 
 			setStudents(fetchedStudents)
-			setRooms(roomsData)
 			setStep('summary')
 
 			toast({
 				title: '✅ Data Loaded',
-				description: `${fetchedStudents.length} learners and ${roomsData.length} rooms loaded.`,
+				description: `${fetchedStudents.length} learners and ${rooms.length} rooms loaded.`,
 				className: 'bg-green-50 border-green-200 text-green-800',
 			})
 		} catch (err) {
@@ -159,14 +191,17 @@ export function SeatingArrangementTab({
 		} finally {
 			setLoading(false)
 		}
-	}, [institutionId, examinationSessionId, examDate, sessionType, toast])
+	}, [institutionId, examinationSessionId, examDate, sessionType, rooms.length, toast])
 
 	const handleProceedToRooms = useCallback(() => {
-		// Auto-assign courses to room columns based on program_type rules
-		const plans = autoAssignColumns(students, rooms)
+		// Auto-assign courses to room columns based on program_type rules.
+		// effectiveRooms applies the Start From Room filter so rooms before the
+		// chosen starting room are skipped for roll-number allotment.
+		// rules applies user/institution-level rule toggles.
+		const plans = autoAssignColumns(students, effectiveRooms, rules)
 		setColumnPlans(plans)
 		setStep('rooms')
-	}, [rooms, students])
+	}, [effectiveRooms, students, rules])
 
 	const handleGenerate = useCallback(async (confirmedPlans: RoomColumnPlan[]) => {
 		setLoading(true)
@@ -430,6 +465,14 @@ export function SeatingArrangementTab({
 							{STRATEGY_DESCRIPTIONS[strategy]}
 						</p>
 
+						{/* Allocation rules — collapsible. User can override institution defaults
+						    per allocation, or save the changed toggles back as the institution default. */}
+						<SeatingRulesPanel
+							institutionId={institutionId}
+							rules={rules}
+							onChange={setRules}
+						/>
+
 						<div className="flex justify-end">
 							<Button onClick={handleProceedToRooms} className="w-full sm:w-auto">
 								Select Rooms
@@ -447,6 +490,7 @@ export function SeatingArrangementTab({
 				columnPlans={columnPlans}
 				students={students}
 				totalStudents={students.length}
+				rules={rules}
 				onConfirm={handleGenerate}
 				onCancel={() => setStep('summary')}
 			/>

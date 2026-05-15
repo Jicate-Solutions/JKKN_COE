@@ -8,13 +8,15 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { ChevronDown, ChevronRight, AlertTriangle, ShieldCheck } from 'lucide-react'
-import type { SeatingStudent, RoomColumnPlan, ColumnAssignment, CourseGroup } from '@/types/seating-allocation'
+import type { SeatingStudent, RoomColumnPlan, ColumnAssignment, CourseGroup, SeatingRules } from '@/types/seating-allocation'
+import { DEFAULT_SEATING_RULES } from '@/types/seating-allocation'
 import { buildCourseGroups, validateAllocation, type AllocationViolation } from '@/lib/seating/column-allocator'
 
 interface RoomSuggestionPanelProps {
 	columnPlans: RoomColumnPlan[]
 	students: SeatingStudent[]
 	totalStudents: number
+	rules?: SeatingRules
 	onConfirm: (plans: RoomColumnPlan[]) => void
 	onCancel: () => void
 }
@@ -60,6 +62,7 @@ export function RoomSuggestionPanel({
 	columnPlans,
 	students,
 	totalStudents,
+	rules = DEFAULT_SEATING_RULES,
 	onConfirm,
 	onCancel,
 }: RoomSuggestionPanelProps) {
@@ -125,10 +128,10 @@ export function RoomSuggestionPanel({
 	const [skipRule1, setSkipRule1] = useState(false)
 	const [skipRule3, setSkipRule3] = useState(false)
 
-	// Rule validation — runs on every plan change
+	// Rule validation — runs on every plan change, honours the user's rule toggles
 	const allViolations = useMemo(
-		() => validateAllocation(plans, students),
-		[plans, students]
+		() => validateAllocation(plans, students, rules),
+		[plans, students, rules]
 	)
 	const rule1Violations = useMemo(
 		() => allViolations.filter(v => v.rule.startsWith('Rule 1')),

@@ -606,7 +606,11 @@ export async function POST(request: Request) {
 		}
 
 		// Split records: update existing, insert new
-		// Check which students already have marks for this course + session + round
+		// Check which students already have marks for this course + session + round.
+		// No is_active filter — the unique constraint
+		// (student_id, course_offering_id, examination_session_id, cia_round)
+		// covers soft-deleted rows too, so we must route them to UPDATE instead
+		// of INSERT (the update payload sets is_active=true, reactivating the row).
 		const studentIdsToCheck = records.map((r: any) => r.student_id)
 		const coId = records[0]?.course_offering_id
 		const { data: existingRows } = await supabase
@@ -615,7 +619,6 @@ export async function POST(request: Request) {
 			.eq('course_offering_id', coId)
 			.eq('examination_session_id', examination_session_id)
 			.eq('cia_round', Number(cia_round) || 1)
-			.eq('is_active', true)
 			.in('student_id', studentIdsToCheck)
 
 		const existingMap = new Map((existingRows || []).map(r => [r.student_id, r.id]))

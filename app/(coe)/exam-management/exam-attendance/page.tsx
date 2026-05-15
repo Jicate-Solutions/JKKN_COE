@@ -29,6 +29,8 @@ import { useInstitutionFilter } from '@/hooks/use-institution-filter'
 import { useSessionSync } from '@/hooks/use-session-sync'
 // MyJKKN API integration hook for fetching programs
 import { useMyJKKNInstitutionFilter } from '@/hooks/use-myjkkn-institution-filter'
+// Auth for super_admin date-picker unlock
+import { useAuth } from '@/lib/auth/auth-context-parent'
 
 // Type imports
 import type {
@@ -49,10 +51,13 @@ import {
 	checkAttendance,
 	loadStudents,
 	saveAttendance as saveAttendanceService,
+	updateAttendance as updateAttendanceService,
 } from '@/services/exam-management/exam-attendance-service'
 
 export default function ExamAttendancePage() {
 	const { toast } = useToast()
+	const { user, hasAnyRole } = useAuth()
+	const isSuperAdmin = user?.is_super_admin === true || hasAnyRole(['super_admin'])
 
 	// Institution filter hook - handles role-based institution access
 	const {
@@ -91,6 +96,9 @@ export default function ExamAttendancePage() {
 	const [loadingStudents, setLoadingStudents] = useState(false)
 	const [saving, setSaving] = useState(false)
 	const [isViewMode, setIsViewMode] = useState(false)
+	const [isEditing, setIsEditing] = useState(false) // super_admin edit mode toggle
+	// Auto-clear edit mode whenever we leave view mode (filter/course change resets everything)
+	useEffect(() => { if (!isViewMode) setIsEditing(false) }, [isViewMode])
 	const [showStudentList, setShowStudentList] = useState(false)
 	const [generatingPDF, setGeneratingPDF] = useState(false)
 
@@ -542,9 +550,12 @@ export default function ExamAttendancePage() {
 		}
 	}
 
+	// Lock condition: view mode active AND super_admin isn't actively editing
+	const inputsLocked = isViewMode && !isEditing
+
 	// Toggle individual student attendance
 	const handleToggleAttendance = (index: number) => {
-		if (isViewMode) return
+		if (inputsLocked) return
 
 		const updated = [...attendanceRecords]
 		updated[index].is_present = !updated[index].is_present
@@ -555,7 +566,7 @@ export default function ExamAttendancePage() {
 
 	// Select all as present
 	const handleSelectAllPresent = () => {
-		if (isViewMode) return
+		if (inputsLocked) return
 
 		const updated = attendanceRecords.map(record => ({
 			...record,
@@ -574,7 +585,7 @@ export default function ExamAttendancePage() {
 
 	// Update remarks
 	const handleRemarksChange = (index: number, remarks: string) => {
-		if (isViewMode) return
+		if (inputsLocked) return
 
 		const updated = [...attendanceRecords]
 		updated[index].remarks = remarks
@@ -650,7 +661,41 @@ export default function ExamAttendancePage() {
 		}
 	}
 
-	
+	// Super-admin: update existing attendance via PUT
+	const handleUpdateAttendance = async () => {
+		if (!isSuperAdmin) return
+		if (!user?.email) {
+			toast({ title: '❌ Update Failed', description: 'Editor email missing.', variant: 'destructive' })
+			return
+		}
+		try {
+			setSaving(true)
+			const payload = {
+				editor_email: user.email,
+				attendance_records: attendanceRecords.map((r: any) => ({
+					exam_registration_id: r.exam_registration_id,
+					is_absent: !r.is_present,
+					remarks: r.remarks || null,
+				})),
+			}
+			const result = await updateAttendanceService(payload)
+			toast({
+				title: '✅ Attendance Updated',
+				description: `${result.records_updated} record(s) updated.`,
+				className: 'bg-green-50 border-green-200 text-green-800',
+				duration: 5000,
+			})
+			setIsEditing(false)
+			setIsViewMode(true)
+		} catch (error) {
+			const msg = error instanceof Error ? error.message : 'Failed to update attendance'
+			toast({ title: '❌ Update Failed', description: msg, variant: 'destructive', duration: 8000 })
+		} finally {
+			setSaving(false)
+		}
+	}
+
+
 	// Get display values for header
 	const selectedInstitution = institutions.find(i => i.id === selectedInstitutionId)
 	const selectedSession = sessions.find(s => s.id === selectedSessionId)
@@ -978,19 +1023,42 @@ export default function ExamAttendancePage() {
 									</Popover>
 								</div>
 
-								{/* 4. Exam Date */}
+								{/* 4. Exam Date — super_admin can pick any date; others locked to today */}
 								{selectedProgramCode && (
 									<div className="space-y-1">
 										<Label htmlFor="exam_date" className="text-xs font-medium">
 											Exam Date <span className="text-red-500">*</span>
+											{isSuperAdmin && (
+												<span className="ml-1 text-[10px] font-normal text-amber-600">(admin override)</span>
+											)}
 										</Label>
-										<Input
-											id="exam_date"
-											type="text"
-											value={selectedExamDate ? new Date(selectedExamDate).toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' }).split('/').join('-') : ''}
-											disabled
-											className="h-7 text-xs bg-muted"
-										/>
+										{isSuperAdmin ? (
+											<Input
+												id="exam_date"
+												type="date"
+												value={selectedExamDate}
+												onChange={(e) => {
+													setSelectedExamDate(e.target.value)
+													setSelectedSessionType("")
+													setSelectedCourseCode("")
+													setSessionTypes([])
+													setCourses([])
+													setStudents([])
+													setAttendanceRecords([])
+													setShowStudentList(false)
+													setIsViewMode(false)
+												}}
+												className="h-7 text-xs"
+											/>
+										) : (
+											<Input
+												id="exam_date"
+												type="text"
+												value={selectedExamDate ? new Date(selectedExamDate).toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' }).split('/').join('-') : ''}
+												disabled
+												className="h-7 text-xs bg-muted"
+											/>
+										)}
 									</div>
 								)}
 
@@ -1201,12 +1269,20 @@ export default function ExamAttendancePage() {
 											</p>
 										</div>
 									</div>
-									{!isViewMode && (
-										<Button onClick={handleSelectAllPresent} variant="outline" size="sm" className="h-7 px-2 text-xs">
-											<CheckCircle className="h-3 w-3 mr-1" />
-											Mark All Present
-										</Button>
-									)}
+									<div className="flex items-center gap-2">
+										{(!isViewMode || isEditing) && (
+											<Button onClick={handleSelectAllPresent} variant="outline" size="sm" className="h-7 px-2 text-xs">
+												<CheckCircle className="h-3 w-3 mr-1" />
+												Mark All Present
+											</Button>
+										)}
+										{isViewMode && !isEditing && isSuperAdmin && (
+											<Button onClick={() => setIsEditing(true)} variant="outline" size="sm" className="h-7 px-2 text-xs border-amber-500 text-amber-700 hover:bg-amber-50">
+												<AlertTriangle className="h-3 w-3 mr-1" />
+												Edit (admin)
+											</Button>
+										)}
+									</div>
 								</div>
 							</CardHeader>
 							<CardContent className="pt-4 p-3">
@@ -1234,7 +1310,7 @@ export default function ExamAttendancePage() {
 																<Checkbox
 																	checked={record.is_present}
 																	onCheckedChange={() => handleToggleAttendance(index)}
-																	disabled={isViewMode}
+																	disabled={isViewMode && !isEditing}
 																/>
 															</div>
 														</TableCell>
@@ -1254,7 +1330,7 @@ export default function ExamAttendancePage() {
 																value={record.remarks}
 																onChange={(e) => handleRemarksChange(index, e.target.value)}
 																placeholder="Optional remarks"
-																disabled={isViewMode}
+																disabled={isViewMode && !isEditing}
 																className="h-7 text-xs"
 															/>
 														</TableCell>
@@ -1277,6 +1353,26 @@ export default function ExamAttendancePage() {
 												<>
 													<CheckCircle className="h-3 w-3 mr-1" />
 													Save
+												</>
+											)}
+										</Button>
+									</div>
+								)}
+								{isViewMode && isEditing && (
+									<div className="flex justify-end gap-2 mt-4 pt-4 border-t">
+										<Button onClick={() => setIsEditing(false)} variant="outline" disabled={saving} size="sm" className="h-8 px-3 text-xs">
+											Cancel
+										</Button>
+										<Button onClick={handleUpdateAttendance} disabled={saving} size="sm" className="h-8 px-3 text-xs bg-amber-600 hover:bg-amber-700">
+											{saving ? (
+												<>
+													<Loader2 className="h-3 w-3 mr-1 animate-spin" />
+													Updating...
+												</>
+											) : (
+												<>
+													<CheckCircle className="h-3 w-3 mr-1" />
+													Update (admin)
 												</>
 											)}
 										</Button>

@@ -223,3 +223,31 @@ export async function saveAttendance(payload: {
 	const successData = await res.json()
 	console.log('Save attendance success:', successData)
 }
+
+/**
+ * Update existing attendance records (super_admin only).
+ * Server re-verifies super_admin via DB lookup on editor_email.
+ */
+export async function updateAttendance(payload: {
+	editor_email: string
+	attendance_records: { exam_registration_id: string; is_absent: boolean; remarks?: string | null }[]
+}): Promise<{ success: boolean; records_updated: number; edited_at: string }> {
+	const res = await fetch('/api/exam-management/exam-attendance', {
+		method: 'PUT',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify(payload),
+	})
+
+	const responseText = await res.text()
+	let data: any = {}
+	try {
+		data = JSON.parse(responseText)
+	} catch {
+		data = { error: responseText || `HTTP ${res.status}` }
+	}
+
+	if (!res.ok) {
+		throw new Error(data.error || 'Failed to update attendance')
+	}
+	return data
+}

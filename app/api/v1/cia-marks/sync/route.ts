@@ -259,13 +259,16 @@ export const POST = withExternalAuth(async (request: Request, ctx: ExternalApiCo
 	const sessionIds = [...new Set(lookupKeys.map(k => k.session_id))]
 	const coIds = [...new Set(lookupKeys.map(k => k.course_offering_id))]
 
+	// Look up existing rows WITHOUT the is_active filter — the unique constraint
+	// (student_id, course_offering_id, examination_session_id, cia_round) covers
+	// soft-deleted rows too, so an is_active=false row would still trigger 23505
+	// on insert. Routing those to UPDATE lets the update reactivate the row.
 	const { data: existingRows } = await supabase
 		.from('cia_marks')
 		.select('student_id, course_offering_id, examination_session_id, cia_round')
 		.in('student_id', studentIds)
 		.in('course_offering_id', coIds)
 		.in('examination_session_id', sessionIds)
-		.eq('is_active', true)
 
 	const existingSet = new Set(
 		(existingRows || []).map(r => `${r.student_id}|${r.course_offering_id}|${r.examination_session_id}|${r.cia_round}`)
@@ -317,6 +320,9 @@ export const POST = withExternalAuth(async (request: Request, ctx: ExternalApiCo
 		const { student_id, course_offering_id, examination_session_id, cia_round, institutions_id, exam_registration_id, is_active, created_by, ...updateFields } = record as any
 		// Re-resolve updated_by from caller's UUID; created_by destructured out so original is preserved.
 		updateFields.updated_by = resolveAuditUser(updateFields.updated_by)
+		// Update is keyed by the unique constraint columns only — no is_active
+		// filter, so a soft-deleted row gets reactivated (record.is_active was
+		// forced to true in the validation pass above).
 		const { error } = await supabase
 			.from('cia_marks')
 			.update(updateFields)
@@ -324,7 +330,6 @@ export const POST = withExternalAuth(async (request: Request, ctx: ExternalApiCo
 			.eq('course_offering_id', course_offering_id)
 			.eq('examination_session_id', examination_session_id)
 			.eq('cia_round', cia_round)
-			.eq('is_active', true)
 
 		const idx = results.findIndex(r => r.student_id === student_id && r.status !== 'error')
 		if (error) {
