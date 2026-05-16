@@ -31,6 +31,40 @@ const HEADER_ACCESS_KEY = 'x-api-key-id'
 const HEADER_SECRET_KEY = 'x-api-secret'
 
 // =====================================================
+// CORS configuration
+// =====================================================
+
+// External v1 API accepts requests from any origin — API key auth is the
+// security boundary, not browser origin. Browser-based child apps trigger
+// OPTIONS preflight; we answer it here so the real request can go through.
+const CORS_ALLOWED_HEADERS = [
+	'Content-Type',
+	'X-API-Key-Id',
+	'X-API-Secret',
+	'X-Signature',
+	'X-Timestamp',
+].join(', ')
+
+const CORS_ALLOWED_METHODS = 'GET, POST, PUT, PATCH, DELETE, OPTIONS'
+
+const CORS_EXPOSED_HEADERS = [
+	'X-Request-Id',
+	'X-RateLimit-Limit',
+	'X-RateLimit-Remaining',
+].join(', ')
+
+function addCorsHeaders(response: NextResponse, request: Request): NextResponse {
+	const origin = request.headers.get('origin') || '*'
+	response.headers.set('Access-Control-Allow-Origin', origin === '*' ? '*' : origin)
+	response.headers.set('Access-Control-Allow-Methods', CORS_ALLOWED_METHODS)
+	response.headers.set('Access-Control-Allow-Headers', CORS_ALLOWED_HEADERS)
+	response.headers.set('Access-Control-Expose-Headers', CORS_EXPOSED_HEADERS)
+	response.headers.set('Access-Control-Max-Age', '86400')
+	response.headers.set('Vary', 'Origin')
+	return response
+}
+
+// =====================================================
 // authenticateExternalApi
 // =====================================================
 
@@ -174,6 +208,16 @@ export function withExternalAuth(handler: ExternalApiHandler) {
 		let accessKeyId: string | null = null
 		let requestId = generateSecureRandom(16)
 
+		// Short-circuit CORS preflight — browsers send OPTIONS before any
+		// cross-origin request with custom headers (X-API-Key-Id etc.).
+		// Without this, the real GET/POST is blocked by the browser and
+		// the server-side log shows nothing useful.
+		if (request.method === 'OPTIONS') {
+			const preflight = new NextResponse(null, { status: 204 })
+			addCorsHeaders(preflight, request)
+			return addSecurityHeaders(preflight, requestId)
+		}
+
 		try {
 			// Authenticate
 			const authResult = await authenticateExternalApi(request)
@@ -199,6 +243,7 @@ export function withExternalAuth(handler: ExternalApiHandler) {
 				return addSecurityHeaders(
 					NextResponse.json(authResult.error, { status: authResult.status }),
 					requestId,
+					request,
 				)
 			}
 
@@ -223,7 +268,7 @@ export function withExternalAuth(handler: ExternalApiHandler) {
 					user_agent: request.headers.get('user-agent'),
 					error_message: 'Rate limit exceeded',
 				})
-				return addSecurityHeaders(rateLimitResponse, requestId)
+				return addSecurityHeaders(rateLimitResponse, requestId, request)
 			}
 
 			// Call the actual handler
@@ -248,7 +293,7 @@ export function withExternalAuth(handler: ExternalApiHandler) {
 				user_agent: request.headers.get('user-agent'),
 			})
 
-			return addSecurityHeaders(response, requestId)
+			return addSecurityHeaders(response, requestId, request)
 		} catch (err) {
 			const errorMessage = err instanceof Error ? err.message : 'Internal server error'
 			console.error('[withExternalAuth] Unhandled error:', err)
@@ -277,17 +322,39 @@ export function withExternalAuth(handler: ExternalApiHandler) {
 			return addSecurityHeaders(
 				NextResponse.json(errorResponse, { status: 500 }),
 				requestId,
+				request,
 			)
 		}
 	}
 }
 
 /**
- * Adds standard security headers to the response.
+ * Adds standard security headers + CORS headers to the response.
+ * CORS is mandatory here because v1 is an external API consumed by
+ * browser-based child apps.
  */
-function addSecurityHeaders(response: NextResponse, requestId: string): NextResponse {
+function addSecurityHeaders(response: NextResponse, requestId: string, request?: Request): NextResponse {
 	response.headers.set('X-Request-Id', requestId)
 	response.headers.set('X-Content-Type-Options', 'nosniff')
 	response.headers.set('X-Frame-Options', 'DENY')
+	if (request) addCorsHeaders(response, request)
 	return response
 }
+
+// =====================================================
+// Reusable OPTIONS handler for v1 routes
+// =====================================================
+
+/**
+ * Shared OPTIONS handler for CORS preflight. Re-export from any v1 route:
+ *
+ *   import { corsOptionsHandler } from '@/lib/api-auth/middleware'
+ *   export const OPTIONS = corsOptionsHandler
+ *
+ * The withExternalAuth wrapper short-circuits OPTIONS internally, so the
+ * inner noop is never executed — it exists only so Next.js registers an
+ * OPTIONS handler on the route.
+ */
+export const corsOptionsHandler = withExternalAuth(
+	async () => new NextResponse(null, { status: 204 }),
+)

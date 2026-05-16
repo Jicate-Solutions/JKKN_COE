@@ -18,12 +18,13 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Checkbox } from "@/components/ui/checkbox"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import BundleNumbersTab from "./bundle-numbers-tab"
+import ProgramWiseTab from "./program-wise-tab"
 import { useToast } from "@/hooks/common/use-toast"
 import { useInstitutionFilter } from "@/hooks/use-institution-filter"
 import { useSessionSync } from "@/hooks/use-session-sync"
 import { useExaminationSession } from "@/context/examination-session-context"
 import Link from "next/link"
-import { Package, Search, ChevronLeft, ChevronRight, ArrowUpDown, ArrowUp, ArrowDown, RefreshCw, Trash2, FileSpreadsheet, Sparkles, XCircle, CheckCircle, ChevronsUpDown } from "lucide-react"
+import { Package, Search, ChevronLeft, ChevronRight, ArrowUpDown, ArrowUp, ArrowDown, RefreshCw, Trash2, FileSpreadsheet, Sparkles, XCircle, CheckCircle, ChevronsUpDown, GraduationCap } from "lucide-react"
 
 // Import types
 import type { AnswerSheetPacket, PacketDetailView, Institution, ExaminationSession, Course, PacketStatus } from "@/types/answer-sheet-packets"
@@ -632,6 +633,10 @@ export default function AnswerSheetPacketsPage() {
 							<TabsTrigger value="packets">
 								<Package className="h-4 w-4 mr-2" />
 								Packets
+							</TabsTrigger>
+							<TabsTrigger value="program-wise">
+								<GraduationCap className="h-4 w-4 mr-2" />
+								Program-wise Packets
 							</TabsTrigger>
 							<TabsTrigger value="bundle-numbers">
 								<Sparkles className="h-4 w-4 mr-2" />
@@ -1360,6 +1365,10 @@ export default function AnswerSheetPacketsPage() {
 							)}
 						</CardContent>
 					</Card>
+						</TabsContent>
+
+						<TabsContent value="program-wise" className="mt-0">
+							<ProgramWiseTab />
 						</TabsContent>
 
 						<TabsContent value="bundle-numbers" className="mt-0">

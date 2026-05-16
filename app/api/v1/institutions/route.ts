@@ -1,7 +1,10 @@
 import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
-import { withExternalAuth } from '@/lib/api-auth/middleware'
+import { withExternalAuth, corsOptionsHandler } from '@/lib/api-auth/middleware'
 import type { ExternalApiContext } from '@/types/api-management'
+
+// CORS preflight for browser-based child apps
+export const OPTIONS = corsOptionsHandler
 
 /**
  * GET /api/v1/institutions
