@@ -137,6 +137,7 @@ const COURSE_TYPES_FALLBACK = [
   'Lab Integrated Theory',
   'Department Intro Course',
   'Total Contact Period',
+  'Professional Competency Skill',
 ] as const
 
 export default function CoursesPage() {

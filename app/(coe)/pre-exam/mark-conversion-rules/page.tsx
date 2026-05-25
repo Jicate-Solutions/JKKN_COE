@@ -28,6 +28,7 @@ import { cn } from "@/lib/utils"
 import {
 	Loader2, MoreHorizontal, Eye, PlusCircle, RefreshCw, Search, Scale,
 	Calendar, Shield, ListChecks, Trash2, Save, ChevronLeft, ChevronRight,
+	Plus, X, Settings2, Zap,
 } from "lucide-react"
 import type {
 	MarkConversionRule, AttendanceSlab, ComponentRule, RoundRule, FinalRule,
@@ -36,6 +37,35 @@ import { AttendanceSlabEditor } from "@/components/cia/attendance-slab-editor"
 import { ComponentRuleEditor } from "@/components/cia/component-rule-editor"
 import { RoundRuleEditor } from "@/components/cia/round-rule-editor"
 import { FinalRuleEditor } from "@/components/cia/final-rule-editor"
+
+// ─── Quick Setup constants ───
+// Dropdown options for the simpler row-based editor.
+// 'cia_1'..'cia_3' are meta-codes resolved by the runner to per-round totals from cia_marks.
+const QUICK_COMPONENT_OPTIONS: Array<{ code: string; label: string; group: string }> = [
+	{ code: 'cia_1', label: 'CIA-1 (Round Total)', group: 'CIA Rounds' },
+	{ code: 'cia_2', label: 'CIA-2 (Round Total)', group: 'CIA Rounds' },
+	{ code: 'cia_3', label: 'CIA-3 (Round Total)', group: 'CIA Rounds' },
+	{ code: 'test_1', label: 'Test 1', group: 'Components' },
+	{ code: 'test_2', label: 'Test 2', group: 'Components' },
+	{ code: 'test_3', label: 'Test 3', group: 'Components' },
+	{ code: 'assignment', label: 'Assignment', group: 'Components' },
+	{ code: 'quiz', label: 'Quiz', group: 'Components' },
+	{ code: 'mid_term', label: 'Mid Term', group: 'Components' },
+	{ code: 'attendance', label: 'Attendance', group: 'Components' },
+	{ code: 'lab', label: 'Lab', group: 'Components' },
+	{ code: 'project', label: 'Project', group: 'Components' },
+	{ code: 'seminar', label: 'Seminar', group: 'Components' },
+	{ code: 'viva', label: 'Viva', group: 'Components' },
+	{ code: 'presentation', label: 'Presentation', group: 'Components' },
+	{ code: 'other', label: 'Other', group: 'Components' },
+]
+
+interface QuickRow {
+	code: string         // component code (from dropdown or custom)
+	custom?: boolean     // user-entered code outside the standard list
+	raw_out_of: number
+	converts_to: number
+}
 
 interface Institution {
 	id: string
@@ -106,6 +136,19 @@ export default function MarkConversionRulesPage() {
 	const [regulationFilter, setRegulationFilter] = useState("all")
 	const [currentPage, setCurrentPage] = useState(1)
 	const [itemsPerPage, setItemsPerPage] = useState(10)
+
+	// Quick Setup mode (simpler row-based UI)
+	const [quickMode, setQuickMode] = useState(true)
+	const [showAdvanced, setShowAdvanced] = useState(false)
+	const [quickRows, setQuickRows] = useState<QuickRow[]>([])
+	// Rule-level scaling mode: 'auto' scales to course max; 'none' uses raw total
+	// (best for mark/1 pass-through across courses with different internal_max_mark).
+	const [quickScaleMode, setQuickScaleMode] = useState<'auto' | 'none'>('none')
+
+	const quickTotalConvertsTo = useMemo(
+		() => quickRows.reduce((s, r) => s + (Number(r.converts_to) || 0), 0),
+		[quickRows],
+	)
 
 	// ===== Data fetching =====
 	useEffect(() => {
@@ -205,12 +248,40 @@ export default function MarkConversionRulesPage() {
 	const definedRounds = Object.keys(form.round_rules)
 
 	// ===== Form handlers =====
-	const resetForm = () => { setForm(emptyForm()); setEditingId(null) }
+	const resetForm = () => {
+		setForm(emptyForm())
+		setEditingId(null)
+		setQuickRows([])
+		setQuickMode(true)
+		setShowAdvanced(false)
+	}
 
 	const openCreate = () => {
 		resetForm()
 		setForm(prev => ({ ...prev, institutions_id: effectiveInstitutionId }))
 		setSheetOpen(true)
+	}
+
+	// Detect if a saved rule was produced by the simpler Quick Setup shape:
+	// exactly one round, formula = 'sum', and every round component appears in component_rules.
+	const detectQuickShape = (rule: MarkConversionRule): QuickRow[] | null => {
+		const rounds = Object.keys(rule.round_rules || {})
+		if (rounds.length !== 1) return null
+		if (rule.final_rule?.formula !== 'sum') return null
+		const onlyRound = rule.round_rules[rounds[0]]
+		if (!onlyRound) return null
+		const rows: QuickRow[] = []
+		for (const code of onlyRound.components) {
+			const cr = rule.component_rules?.[code]
+			if (!cr || cr.raw_out_of == null || cr.converts_to == null) return null
+			rows.push({
+				code,
+				custom: !QUICK_COMPONENT_OPTIONS.some(o => o.code === code),
+				raw_out_of: cr.raw_out_of,
+				converts_to: cr.converts_to,
+			})
+		}
+		return rows
 	}
 
 	const openEdit = (r: MarkConversionRule) => {
@@ -227,8 +298,68 @@ export default function MarkConversionRulesPage() {
 			round_rules: r.round_rules || {},
 			final_rule: r.final_rule || { formula: 'average', rounds: [], compare_to: 'course.internal_max_marks' },
 		})
+		// Attempt to load into Quick Setup; if the shape doesn't match, fall back to Advanced.
+		const detected = detectQuickShape(r)
+		if (detected) {
+			setQuickRows(detected)
+			setQuickMode(true)
+			setShowAdvanced(false)
+			setQuickScaleMode((r.final_rule?.scale_mode as 'auto' | 'none') ?? 'none')
+		} else {
+			setQuickRows([])
+			setQuickMode(false)
+			setShowAdvanced(true)
+		}
 		if (r.institutions_id) fetchRegulationsForInstitution(r.institutions_id)
 		setSheetOpen(true)
+	}
+
+	// Translate Quick Setup rows → form.component_rules / round_rules / final_rule
+	// before save. One synthetic round "Components" holds all rows; runner reads it.
+	const syncQuickToForm = () => {
+		const component_rules: Record<string, ComponentRule> = {}
+		const codes: string[] = []
+		let total = 0
+		for (const r of quickRows) {
+			if (!r.code) continue
+			component_rules[r.code] = {
+				raw_out_of: Number(r.raw_out_of) || 0,
+				converts_to: Number(r.converts_to) || 0,
+			}
+			codes.push(r.code)
+			total += Number(r.converts_to) || 0
+		}
+		const round_rules: Record<string, RoundRule> = {
+			Components: { components: codes, cap_total: total },
+		}
+		const final_rule: FinalRule = {
+			formula: 'sum',
+			rounds: ['Components'],
+			compare_to: 'course.internal_max_marks',
+			scale_mode: quickScaleMode,
+		}
+		setForm(prev => ({ ...prev, component_rules, round_rules, final_rule }))
+		return { component_rules, round_rules, final_rule }
+	}
+
+	// Pass-through (÷1): raw_out_of = converts_to so the formula divisor is 1.
+	// Use for marks that should flow through without scaling (most common per user request).
+	const setRowPassThrough = (idx: number) => {
+		setQuickRows(prev => prev.map((r, i) => {
+			if (i !== idx) return r
+			const v = Number(r.raw_out_of) || Number(r.converts_to) || 1
+			return { ...r, raw_out_of: v, converts_to: v }
+		}))
+	}
+
+	const addQuickRow = () => {
+		setQuickRows(prev => [...prev, { code: '', raw_out_of: 100, converts_to: 0 }])
+	}
+	const removeQuickRow = (idx: number) => {
+		setQuickRows(prev => prev.filter((_, i) => i !== idx))
+	}
+	const updateQuickRow = (idx: number, patch: Partial<QuickRow>) => {
+		setQuickRows(prev => prev.map((r, i) => (i === idx ? { ...r, ...patch } : r)))
 	}
 
 	const handleFormInstitutionChange = (val: string) => {
@@ -258,6 +389,24 @@ export default function MarkConversionRulesPage() {
 		const institution = institutions.find(i => i.id === formInstitutionId)
 		if (!institution) { toast({ title: '❌ Institution not found', variant: 'destructive' }); return }
 
+		// Quick-mode validation + translate to advanced JSON shape
+		let quickPayload: { component_rules: Record<string, ComponentRule>; round_rules: Record<string, RoundRule>; final_rule: FinalRule } | null = null
+		if (quickMode) {
+			if (quickRows.length === 0) {
+				toast({ title: '❌ Add at least one conversion row', variant: 'destructive' })
+				return
+			}
+			const seen = new Set<string>()
+			for (const r of quickRows) {
+				if (!r.code) { toast({ title: '❌ Every row needs a component', variant: 'destructive' }); return }
+				if (seen.has(r.code)) { toast({ title: `❌ Duplicate component: ${r.code}`, variant: 'destructive' }); return }
+				seen.add(r.code)
+				if (!(Number(r.raw_out_of) > 0)) { toast({ title: `❌ ${r.code}: raw out-of must be > 0`, variant: 'destructive' }); return }
+				if (!(Number(r.converts_to) > 0)) { toast({ title: `❌ ${r.code}: converts-to must be > 0`, variant: 'destructive' }); return }
+			}
+			quickPayload = syncQuickToForm()
+		}
+
 		try {
 			setSaving(true)
 			const reg = regulations.find(r => r.regulation_code === form.regulation_code)
@@ -270,9 +419,9 @@ export default function MarkConversionRulesPage() {
 				rule_name: form.rule_name.trim(),
 				description: form.description?.trim() || null,
 				attendance_slabs: form.attendance_slabs,
-				component_rules: form.component_rules,
-				round_rules: form.round_rules,
-				final_rule: form.final_rule,
+				component_rules: quickPayload?.component_rules ?? form.component_rules,
+				round_rules: quickPayload?.round_rules ?? form.round_rules,
+				final_rule: quickPayload?.final_rule ?? form.final_rule,
 				created_by: user?.id,
 				...(editingId ? { id: editingId } : {}),
 			}
@@ -666,10 +815,37 @@ export default function MarkConversionRulesPage() {
 								</div>
 							</section>
 
-							{/* Section 2: Attendance Slabs */}
+							{/* Mode toggle: Quick Setup vs Advanced */}
+							<div className="flex items-center gap-2 p-3 rounded-md border bg-muted/30">
+								<Button
+									type="button"
+									variant={quickMode ? 'default' : 'outline'}
+									size="sm"
+									className="h-8"
+									onClick={() => { setQuickMode(true); setShowAdvanced(false) }}
+								>
+									<Zap className="h-3.5 w-3.5 mr-1.5" />Quick Setup
+								</Button>
+								<Button
+									type="button"
+									variant={!quickMode ? 'default' : 'outline'}
+									size="sm"
+									className="h-8"
+									onClick={() => { setQuickMode(false); setShowAdvanced(true) }}
+								>
+									<Settings2 className="h-3.5 w-3.5 mr-1.5" />Advanced (Multi-Round / Slabs)
+								</Button>
+								<span className="text-xs text-muted-foreground ml-2">
+									{quickMode
+										? 'Add a row per component. Sum of "Converts To" should equal the course internal max.'
+										: 'Edit round_rules / component_rules / final_rule JSON shape directly.'}
+								</span>
+							</div>
+
+							{/* Section 2: Attendance Slabs (shared by both modes) */}
 							<section className="space-y-4">
 								<h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-									Attendance Slabs
+									Attendance Slabs <span className="font-normal normal-case text-foreground/60">(optional — used when a component row uses slabs)</span>
 								</h3>
 								<AttendanceSlabEditor
 									value={form.attendance_slabs}
@@ -677,41 +853,199 @@ export default function MarkConversionRulesPage() {
 								/>
 							</section>
 
-							{/* Section 3: Component Scaling */}
-							<section className="space-y-4">
-								<h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-									Component Scaling
-								</h3>
-								<ComponentRuleEditor
-									value={form.component_rules}
-									onChange={rules => setForm(prev => ({ ...prev, component_rules: rules }))}
-								/>
-							</section>
+							{/* ===== Quick Setup ===== */}
+							{quickMode && (
+								<section className="space-y-3">
+									<div className="flex items-center justify-between flex-wrap gap-2">
+										<h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+											Conversion Rows
+										</h3>
+										<div className="flex items-center gap-2">
+											<Label className="text-xs font-semibold">Course-max behavior:</Label>
+											<Select value={quickScaleMode} onValueChange={v => setQuickScaleMode(v as 'auto' | 'none')}>
+												<SelectTrigger className="h-8 w-[230px] text-xs"><SelectValue /></SelectTrigger>
+												<SelectContent>
+													<SelectItem value="none">No scaling — use as-is (mark/1)</SelectItem>
+													<SelectItem value="auto">Auto-scale to course max</SelectItem>
+												</SelectContent>
+											</Select>
+											<Button variant="outline" size="sm" className="h-8" onClick={addQuickRow}>
+												<Plus className="h-3.5 w-3.5 mr-1.5" />Add Row
+											</Button>
+										</div>
+									</div>
+									<p className="text-xs text-muted-foreground -mt-1">
+										<strong>No scaling</strong>: same rule serves theory (max 25), practical (max 40) — value flows through unchanged, capped at course max.
+										&nbsp;·&nbsp;
+										<strong>Auto-scale</strong>: rule Σ scales proportionally to each course&apos;s max.
+									</p>
 
-							{/* Section 4: Round Rules */}
-							<section className="space-y-4">
-								<h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-									Round Rules
-								</h3>
-								<RoundRuleEditor
-									availableComponents={enabledComponents}
-									value={form.round_rules}
-									onChange={rules => setForm(prev => ({ ...prev, round_rules: rules }))}
-								/>
-							</section>
+									<div className="rounded-md border">
+										<Table>
+											<TableHeader>
+												<TableRow>
+													<TableHead className="text-xs w-[40%]">Component</TableHead>
+													<TableHead className="text-xs text-center">Raw Out Of</TableHead>
+													<TableHead className="text-xs text-center">Converts To</TableHead>
+													<TableHead className="text-xs text-center">Formula</TableHead>
+													<TableHead className="w-[40px]"></TableHead>
+												</TableRow>
+											</TableHeader>
+											<TableBody>
+												{quickRows.length === 0 ? (
+													<TableRow>
+														<TableCell colSpan={5} className="text-center py-6 text-muted-foreground text-xs">
+															No rows. Click <strong>Add Row</strong> to start.
+														</TableCell>
+													</TableRow>
+												) : quickRows.map((row, idx) => {
+													const isKnown = QUICK_COMPONENT_OPTIONS.some(o => o.code === row.code)
+													return (
+														<TableRow key={idx}>
+															<TableCell>
+																<div className="flex flex-col gap-1">
+																	<Select
+																		value={row.custom ? '__custom__' : (isKnown ? row.code : '')}
+																		onValueChange={v => {
+																			if (v === '__custom__') {
+																				updateQuickRow(idx, { custom: true, code: '' })
+																			} else {
+																				updateQuickRow(idx, { custom: false, code: v })
+																			}
+																		}}
+																	>
+																		<SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Select component" /></SelectTrigger>
+																		<SelectContent>
+																			<div className="px-2 py-1 text-[10px] font-semibold text-muted-foreground uppercase">CIA Rounds</div>
+																			{QUICK_COMPONENT_OPTIONS.filter(o => o.group === 'CIA Rounds').map(o => (
+																				<SelectItem key={o.code} value={o.code}>{o.label}</SelectItem>
+																			))}
+																			<div className="px-2 py-1 text-[10px] font-semibold text-muted-foreground uppercase">Components</div>
+																			{QUICK_COMPONENT_OPTIONS.filter(o => o.group === 'Components').map(o => (
+																				<SelectItem key={o.code} value={o.code}>{o.label}</SelectItem>
+																			))}
+																			<SelectItem value="__custom__">Custom code...</SelectItem>
+																		</SelectContent>
+																	</Select>
+																	{row.custom && (
+																		<Input
+																			value={row.code}
+																			onChange={e => updateQuickRow(idx, { code: e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, '_') })}
+																			placeholder="e.g., ai_tools_usage"
+																			className="h-7 text-xs font-mono"
+																		/>
+																	)}
+																</div>
+															</TableCell>
+															<TableCell className="text-center">
+																<Input
+																	type="number"
+																	step="any"
+																	min={0}
+																	value={row.raw_out_of || ''}
+																	onChange={e => updateQuickRow(idx, { raw_out_of: Number(e.target.value) || 0 })}
+																	className="h-8 w-20 text-xs text-center mx-auto"
+																	placeholder="e.g. 100"
+																/>
+															</TableCell>
+															<TableCell className="text-center">
+																<Input
+																	type="number"
+																	step="any"
+																	min={0}
+																	value={row.converts_to || ''}
+																	onChange={e => updateQuickRow(idx, { converts_to: Number(e.target.value) || 0 })}
+																	className="h-8 w-20 text-xs text-center mx-auto"
+																	placeholder="e.g. 10"
+																/>
+															</TableCell>
+															<TableCell className="text-center">
+																<div className="flex items-center justify-center gap-1">
+																	<span className="text-xs text-muted-foreground font-mono">
+																		{row.raw_out_of > 0 && row.converts_to > 0
+																			? `÷ ${(row.raw_out_of / row.converts_to).toFixed(2)}`
+																			: '—'}
+																	</span>
+																	<Button
+																		type="button"
+																		variant={row.raw_out_of === row.converts_to && row.raw_out_of > 0 ? 'default' : 'outline'}
+																		size="sm"
+																		className="h-6 px-2 text-[10px]"
+																		onClick={() => setRowPassThrough(idx)}
+																		title="Pass-through: raw mark used as-is (÷1)"
+																	>
+																		÷1
+																	</Button>
+																</div>
+															</TableCell>
+															<TableCell>
+																<Button variant="ghost" size="sm" className="h-7 w-7 p-0" onClick={() => removeQuickRow(idx)}>
+																	<X className="h-3.5 w-3.5" />
+																</Button>
+															</TableCell>
+														</TableRow>
+													)
+												})}
+												{quickRows.length > 0 && (
+													<TableRow className="bg-muted/30 font-semibold">
+														<TableCell className="text-xs text-right">Σ Converts To (must equal <code>course.internal_max_mark</code>)</TableCell>
+														<TableCell />
+														<TableCell className="text-center text-sm">{quickTotalConvertsTo}</TableCell>
+														<TableCell colSpan={2} />
+													</TableRow>
+												)}
+											</TableBody>
+										</Table>
+									</div>
 
-							{/* Section 5: Final Rule */}
-							<section className="space-y-4">
-								<h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-									Final CIA Rule
-								</h3>
-								<FinalRuleEditor
-									availableRounds={definedRounds}
-									availableComponents={enabledComponents}
-									value={form.final_rule}
-									onChange={rule => setForm(prev => ({ ...prev, final_rule: rule }))}
-								/>
-							</section>
+									<p className="text-xs text-muted-foreground">
+										Quick Setup creates a single round called <code>Components</code> with all rows summed.
+										Each row stores <code>{`{ raw_out_of, converts_to }`}</code> in <code>component_rules</code>.
+										Use <strong>Advanced</strong> for multi-round (CIA-1 / CIA-2 separate) setups or <code>best_of</code> formulas.
+									</p>
+								</section>
+							)}
+
+							{/* ===== Advanced (multi-round / formula / round-rules) ===== */}
+							{showAdvanced && (
+								<>
+									{/* Section 3: Component Scaling */}
+									<section className="space-y-4">
+										<h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+											Component Scaling
+										</h3>
+										<ComponentRuleEditor
+											value={form.component_rules}
+											onChange={rules => setForm(prev => ({ ...prev, component_rules: rules }))}
+										/>
+									</section>
+
+									{/* Section 4: Round Rules */}
+									<section className="space-y-4">
+										<h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+											Round Rules
+										</h3>
+										<RoundRuleEditor
+											availableComponents={enabledComponents}
+											value={form.round_rules}
+											onChange={rules => setForm(prev => ({ ...prev, round_rules: rules }))}
+										/>
+									</section>
+
+									{/* Section 5: Final Rule */}
+									<section className="space-y-4">
+										<h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+											Final CIA Rule
+										</h3>
+										<FinalRuleEditor
+											availableRounds={definedRounds}
+											availableComponents={enabledComponents}
+											value={form.final_rule}
+											onChange={rule => setForm(prev => ({ ...prev, final_rule: rule }))}
+										/>
+									</section>
+								</>
+							)}
 
 							<div className="flex justify-end gap-2 pt-4 border-t">
 								<Button variant="outline" size="sm" className="h-10 px-6" onClick={() => setSheetOpen(false)}>

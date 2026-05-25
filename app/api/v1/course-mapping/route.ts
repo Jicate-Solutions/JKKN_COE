@@ -32,6 +32,52 @@ function filterCourseMappingFields(data: any) {
 	return courseMappingData
 }
 
+async function enrichWithCourseMarks(
+	supabase: ReturnType<typeof getSupabaseServer>,
+	mappings: any[],
+	options: { includeCoursesDetails?: boolean } = {},
+): Promise<any[]> {
+	if (!mappings || mappings.length === 0) return mappings
+	const courseIds = Array.from(new Set(mappings.map(m => m.course_id).filter(Boolean)))
+	if (courseIds.length === 0) return mappings
+
+	const { data: coursesData } = await supabase
+		.from('courses')
+		.select('id, course_code, course_name, internal_max_mark, internal_pass_mark, external_max_mark, external_pass_mark, total_max_mark, total_pass_mark, credit')
+		.in('id', courseIds)
+
+	if (!coursesData) return mappings
+
+	const coursesMap = new Map(coursesData.map(c => [c.id, c]))
+	return mappings.map(m => {
+		const c: any = coursesMap.get(m.course_id)
+		if (!c) return m
+		const enriched: any = {
+			...m,
+			internal_max_mark: c.internal_max_mark,
+			internal_pass_mark: c.internal_pass_mark,
+			external_max_mark: c.external_max_mark,
+			external_pass_mark: c.external_pass_mark,
+			total_max_mark: c.total_max_mark,
+			total_pass_mark: c.total_pass_mark,
+		}
+		if (options.includeCoursesDetails) {
+			enriched.courses = {
+				course_code: c.course_code,
+				course_title: c.course_name,
+				internal_max_mark: c.internal_max_mark,
+				internal_pass_mark: c.internal_pass_mark,
+				external_max_mark: c.external_max_mark,
+				external_pass_mark: c.external_pass_mark,
+				total_max_mark: c.total_max_mark,
+				total_pass_mark: c.total_pass_mark,
+				credits: c.credit,
+			}
+		}
+		return enriched
+	})
+}
+
 function checkInstitutionAccess(context: ExternalApiContext, institutionsId: string | null): boolean {
 	if (!context.allowedInstitutionIds || context.allowedInstitutionIds.length === 0) return true
 	if (!institutionsId) return false
@@ -73,15 +119,16 @@ export const GET = withExternalAuth(async (request: Request, context: ExternalAp
 				return NextResponse.json({ error: 'Access denied for this institution' }, { status: 403 })
 			}
 
-			return NextResponse.json({ data: mapCourseMappingToResponse(data, format) })
+			const enriched = await enrichWithCourseMarks(supabase, [data])
+			return NextResponse.json({ data: mapCourseMappingToResponse(enriched[0], format) })
 		}
 
 		let query = supabase
 			.from('course_mapping')
 			.select(COURSE_MAPPING_SELECT)
+			.order('course_order', { ascending: true, nullsFirst: false })
 			.order('program_code')
 			.order('semester_code')
-			.order('course_order', { ascending: true, nullsFirst: false })
 			.order('course_code')
 
 		// Apply institution filter (request-based or auto from API key)
@@ -115,31 +162,8 @@ export const GET = withExternalAuth(async (request: Request, context: ExternalAp
 
 		let result: any[] = data || []
 
-		// Optional: enrich with course details
-		if (includeDetails && result.length > 0) {
-			const courseIds = Array.from(new Set(result.map(m => m.course_id).filter(Boolean)))
-			if (courseIds.length > 0) {
-				const { data: coursesData } = await supabase
-					.from('courses')
-					.select('id, course_code, course_name, internal_max_mark, internal_pass_mark, external_max_mark, external_pass_mark, total_max_mark, total_pass_mark, credit')
-					.in('id', courseIds)
-
-				if (coursesData) {
-					const coursesMap = new Map(coursesData.map(c => [c.id, {
-						course_code: c.course_code,
-						course_title: c.course_name,
-						internal_max_mark: c.internal_max_mark,
-						internal_pass_mark: c.internal_pass_mark,
-						external_max_mark: c.external_max_mark,
-						external_pass_mark: c.external_pass_mark,
-						total_max_mark: c.total_max_mark,
-						total_pass_mark: c.total_pass_mark,
-						credits: c.credit,
-					}]))
-					result = result.map(m => ({ ...m, courses: coursesMap.get(m.course_id) || null }))
-				}
-			}
-		}
+		// Always enrich with pass/max marks from courses table (pass marks live there, not in course_mapping)
+		result = await enrichWithCourseMarks(supabase, result, { includeCoursesDetails: includeDetails })
 
 		const mapped = result.map(m => mapCourseMappingToResponse(m, format))
 		return NextResponse.json({ data: mapped, total: mapped.length })

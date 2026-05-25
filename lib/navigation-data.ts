@@ -232,6 +232,7 @@ export const navMain: NavItem[] = [
 			{ title: 'CIA Entry Setting', url: '/pre-exam/internal-mark-entry-setting', icon: Settings2, permission: 'page.pre_exam.internal_mark_entry_setting.view' },
 			{ title: 'Mark Conversion Rules', url: '/pre-exam/mark-conversion-rules', icon: Scale, permission: 'page.pre_exam.mark_conversion_rules.view' },
 			{ title: 'Internal Mark Entry', url: '/pre-exam/internal-mark-entry', icon: Edit, permission: 'page.pre_exam.internal_mark_entry.view' },
+			{ title: 'Generate Internal Marks', url: '/pre-exam/generate-internal-marks', icon: Calculator, permission: 'page.pre_exam.generate_internal_marks.view' },
 			{ title: 'Internal Mark Report', url: '/pre-exam/internal-mark-report', icon: FileText, permission: 'page.pre_exam.internal_mark_report.view' },
 			{ title: 'COE Calendar', url: '/pre-exam/coe-calendar', icon: CalendarDays, permission: 'page.pre_exam.coe_calendar.view' },
 		],

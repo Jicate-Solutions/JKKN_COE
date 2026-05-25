@@ -511,6 +511,7 @@ export async function GET(request: NextRequest) {
 /**
  * POST /api/grading/final-marks
  * Generate final marks for selected courses
+ * HOTFIX: Grade point calculation uses percentage / 10 for all courses
  */
 export async function POST(request: NextRequest) {
 	try {
@@ -1292,9 +1293,52 @@ export async function POST(request: NextRequest) {
 			const attendanceRecord = examAttendanceMap.get(attendanceKey)
 
 			// =========================================================
-			// TYPE BRANCHING: Handle Status Papers vs Mark Papers
+			// CREDIT COURSE HANDLING: Auto-grant full credit
+			// Condition: result_type = 'Credit'
+			// No internal/external marks needed, no attendance check
 			// =========================================================
 			const courseResultType = course.result_type?.toUpperCase() || 'MARK'
+
+			if (courseResultType === 'CREDIT') {
+				const resultRow: StudentResultRow = {
+					student_id: examReg.student_id,
+					student_name: examReg.student_name || 'Unknown',
+					register_no: examReg.stu_register_no || 'N/A',
+					exam_registration_id: examReg.id,
+					course_offering_id: courseOffering.id,
+					course_id: course.id,
+					course_code: course.course_code,
+					course_name: course.course_name || course.course_code,
+					internal_marks: 0,
+					internal_max: 0,
+					internal_pass_mark: 0,
+					external_marks: 0,
+					external_max: 0,
+					external_pass_mark: 0,
+					total_marks: 0,
+					total_max: 0,
+					total_pass_mark: 0,
+					percentage: 0,
+					grade: 'Credit',
+					grade_point: 0,
+					grade_description: 'Credit',
+					credits: course.credit || 0,
+					credit_points: course.credit || 0,
+					pass_status: 'Pass',
+					is_pass: true,
+					is_absent: false,
+					fail_reason: null,
+					internal_marks_id: null,
+					marks_entry_id: null
+				}
+				results.push(resultRow)
+				summary.passed++
+				continue
+			}
+
+			// =========================================================
+			// TYPE BRANCHING: Handle Status Papers vs Mark Papers
+			// =========================================================
 
 			// CIA-only courses with result_type='Status' but no status grade in internal_marks
 			// (grade is null but total_internal_marks is set) should use MARK paper path.
@@ -1538,6 +1582,14 @@ export async function POST(request: NextRequest) {
 
 			const percentage = totalMax > 0 ? Math.round((totalMarks / totalMax) * 100 * 100) / 100 : 0
 
+			// =========================================================
+			// MAX MARKS NORMALIZATION: For grade calculation
+			// Percentage is already on 100-scale (totalMarks / totalMax * 100)
+			// Grade lookup always uses this percentage regardless of totalMax
+			// This works because: if max=200 & marks=180 → percentage=90%
+			// which equals normalized value on 100-scale
+			// =========================================================
+
 			// Determine pass/fail based on course rules
 			let failReason: 'INTERNAL' | 'EXTERNAL' | 'TOTAL' | null = null
 			let isPass = true
@@ -1605,9 +1657,12 @@ export async function POST(request: NextRequest) {
 				gradeDescription = 'Re-Appear'
 			} else {
 				// PASSED: Use grade letter from grade_system
-				// Grade point = total_marks / 10 (e.g., 59 marks = 5.9 GP, 74 marks = 7.4 GP)
+				// Grade point = percentage / 10 (percentage is always on 100-scale)
+				// Works for all course types:
+				// - Standard (max=100): marks=92 → percentage=92% → GP=9.2
+				// - Project (max=200): marks=184 → percentage=92% → GP=9.2
 				letterGrade = gradeEntry?.grade || 'RA'
-				gradePoint = Math.round((totalMarks / 10) * 100) / 100 // Round to 2 decimal places
+				gradePoint = Math.round((percentage / 10) * 100) / 100
 				gradeDescription = gradeEntry?.description || ''
 			}
 			const credits = course.credit || 0

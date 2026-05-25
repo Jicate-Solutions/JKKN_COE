@@ -109,12 +109,27 @@ export async function POST(request: Request) {
 			resolvedCode = inst.institution_code
 		}
 
+		// Resolve regulation_id against LOCAL regulations table.
+		// The client sends MyJKKN's regulation UUID which won't match the COE table —
+		// FK constraint mcr_regulation_fk would fail. Look up by regulation_code and use
+		// the local UUID (if it exists); otherwise leave NULL and rely on regulation_code.
+		let resolvedRegulationId: string | null = null
+		if (regulation_code) {
+			const { data: localReg } = await supabase
+				.from('regulations')
+				.select('id')
+				.eq('regulation_code', regulation_code)
+				.eq('institutions_id', institutions_id)
+				.maybeSingle()
+			resolvedRegulationId = localReg?.id || null
+		}
+
 		const { data, error } = await supabase
 			.from('mark_conversion_rules')
 			.insert({
 				institutions_id,
 				institution_code: resolvedCode,
-				regulation_id: regulation_id || null,
+				regulation_id: resolvedRegulationId,
 				regulation_code: regulation_code || null,
 				wef_date,
 				rule_name: rule_name.trim(),
@@ -190,6 +205,29 @@ export async function PUT(request: Request) {
 		}
 
 		const supabase = getSupabaseServer()
+
+		// Resolve regulation_id against local regulations table — same reasoning as POST.
+		// Fetch the existing row's institutions_id to constrain the regulation lookup.
+		if ('regulation_id' in updateData || 'regulation_code' in updateData) {
+			const { data: existing } = await supabase
+				.from('mark_conversion_rules')
+				.select('institutions_id')
+				.eq('id', id)
+				.maybeSingle()
+
+			if (existing?.institutions_id && updateData.regulation_code) {
+				const { data: localReg } = await supabase
+					.from('regulations')
+					.select('id')
+					.eq('regulation_code', updateData.regulation_code)
+					.eq('institutions_id', existing.institutions_id)
+					.maybeSingle()
+				updateData.regulation_id = localReg?.id || null
+			} else if (!updateData.regulation_code) {
+				updateData.regulation_id = null
+			}
+		}
+
 		const { data, error } = await supabase
 			.from('mark_conversion_rules')
 			.update(updateData)
