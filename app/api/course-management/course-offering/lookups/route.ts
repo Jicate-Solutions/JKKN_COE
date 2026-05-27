@@ -59,12 +59,12 @@ export async function GET(request: Request) {
 				return NextResponse.json({ error: 'Failed to fetch semesters' }, { status: 500 })
 			}
 
-			// Deduplicate by semester_id, preserve both id and code
+			// Deduplicate by semester_code (semester_id may be null)
 			const seen = new Set<string>()
-			const unique: Array<{ semester_id: string; semester_code: string }> = []
+			const unique: Array<{ semester_id: string | null; semester_code: string }> = []
 			for (const row of data || []) {
-				if (row.semester_id && !seen.has(row.semester_id)) {
-					seen.add(row.semester_id)
+				if (row.semester_code && !seen.has(row.semester_code)) {
+					seen.add(row.semester_code)
 					unique.push({ semester_id: row.semester_id, semester_code: row.semester_code })
 				}
 			}

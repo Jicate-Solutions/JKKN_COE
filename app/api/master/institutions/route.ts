@@ -79,19 +79,19 @@ export async function GET(request: Request) {
       }
     }
 
-    // Create a map of MyJKKN institutions by counselling_code for O(1) lookup
-    // Note: MyJKKN API returns 'counselling_code' which maps to local 'counselling_code'
+    // Create a map of MyJKKN institutions by institution_code for O(1) lookup
+    // Note: MyJKKN API returns 'institution_code', not 'counselling_code'
     const myjkknMap = new Map(
-      myjkknInstitutions.map(inst => [(inst as any).counselling_code || inst.institution_code, inst])
+      myjkknInstitutions.map(inst => [inst.institution_code?.toUpperCase(), inst])
     )
 
-    // Left join: merge local institutions with MyJKKN data using counselling_code
+    // Left join: merge local institutions with MyJKKN data using institution_code
     // Return ALL local institutions, enriched with MyJKKN data where available
     const mergedInstitutions: MergedInstitution[] = (localInstitutions || [])
       .map(local => {
-        // Use counselling_code to find matching MyJKKN institution
-        const myjkknData = local.counselling_code
-          ? myjkknMap.get(local.counselling_code)
+        // Match using institution_code (case-insensitive)
+        const myjkknData = local.institution_code
+          ? myjkknMap.get(local.institution_code?.toUpperCase())
           : undefined
 
         return {
