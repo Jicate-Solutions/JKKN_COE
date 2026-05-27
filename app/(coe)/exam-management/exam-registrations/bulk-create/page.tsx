@@ -318,7 +318,7 @@ export default function BulkCreateExamRegistrationPage() {
 
 	// ── Load learners (program + semester) from MyJKKN ──
 	const loadLearners = useCallback(async () => {
-		if (!programCode || !semesterId || myjkknInstitutionIds.length === 0) {
+		if (!programCode || !semesterCode || myjkknInstitutionIds.length === 0) {
 			setLearners([])
 			setLearnerFilterStats({ total: 0, programMismatch: 0, semesterMismatch: 0 })
 			return
@@ -326,7 +326,7 @@ export default function BulkCreateExamRegistrationPage() {
 		setLoadingLearners(true)
 		setSelectedLearners(new Set())
 		try {
-			const targetSemesterId = semesterId
+			const targetSemesterNum = parseSemesterNumber(semesterCode)
 			const all: LearnerRow[] = []
 			const seen = new Set<string>()
 			let total = 0
@@ -335,12 +335,12 @@ export default function BulkCreateExamRegistrationPage() {
 			const sampleSemesterMismatches: Array<{ reg: string; raw: string; parsed: number }> = []
 
 			for (const myjkknInstId of myjkknInstitutionIds) {
-				// Pass program_code + semester_id for filtering
+				// Pass program_code + current_semester (number) for filtering
 				const params = new URLSearchParams({
 					institution_id: myjkknInstId,
 					fetchAll: 'true',
 					program_code: programCode,
-					semester_id: targetSemesterId,
+					current_semester: String(targetSemesterNum),
 				})
 				const res = await fetch(`/api/myjkkn/learner-profiles?${params}`)
 				if (!res.ok) continue
@@ -352,14 +352,15 @@ export default function BulkCreateExamRegistrationPage() {
 					total++
 					const learnerProg = s.program_code || s.program_id
 					if (learnerProg && learnerProg !== programCode) { programMismatch++; continue }
-					// Filter by semester_id direct match
-					if (s.semester_id !== targetSemesterId) {
+					// Filter by current_semester number (parse from learner data)
+					const learnerSemNum = getSemesterNum(s.current_semester)
+					if (learnerSemNum !== targetSemesterNum) {
 						semesterMismatch++
 						if (sampleSemesterMismatches.length < 5) {
 							sampleSemesterMismatches.push({
 								reg: s.register_number || s.roll_number || '?',
-								raw: String(s.semester_id),
-								parsed: targetSemesterId,
+								raw: String(s.current_semester),
+								parsed: targetSemesterNum,
 							})
 						}
 						continue
@@ -386,7 +387,7 @@ export default function BulkCreateExamRegistrationPage() {
 		} finally {
 			setLoadingLearners(false)
 		}
-	}, [programCode, semesterId, myjkknInstitutionIds, toast, getSemesterNum])
+	}, [programCode, semesterCode, myjkknInstitutionIds, toast, getSemesterNum])
 
 	useEffect(() => { loadLearners() }, [loadLearners])
 
