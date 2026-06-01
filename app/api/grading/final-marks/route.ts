@@ -229,14 +229,43 @@ export async function GET(request: NextRequest) {
 						.filter(Boolean)
 
 					if (courseIds.length > 0) {
-						const { data: savedMarks } = await supabase
-							.from('final_marks')
-							.select('course_id, result_status')
-							.eq('institutions_id', institutionId)
-							.eq('program_id', programId)
-							.eq('examination_session_id', sessionId)
-							.in('course_id', courseIds)
-							.eq('is_active', true)
+						// IMPORTANT: final_marks holds one row PER learner-course, so a
+						// program-session can easily exceed Supabase's default 1000-row
+						// cap (28 courses x N learners). Without pagination, rows for
+						// some courses fall past row 1000 and are missed, making those
+						// courses wrongly appear unsaved/generatable in Step 2 — while
+						// the POST regeneration check (scoped to the few selected
+						// courses) still finds them and blocks. Paginate to stay consistent.
+						const FM_PAGE_SIZE = 1000
+						let savedMarks: any[] = []
+						let fmPage = 0
+						let fmHasMore = true
+						while (fmHasMore) {
+							const from = fmPage * FM_PAGE_SIZE
+							const to = from + FM_PAGE_SIZE - 1
+							const { data: fmRows, error: fmErr } = await supabase
+								.from('final_marks')
+								.select('course_id, result_status')
+								.eq('institutions_id', institutionId)
+								.eq('program_id', programId)
+								.eq('examination_session_id', sessionId)
+								.in('course_id', courseIds)
+								.eq('is_active', true)
+								.range(from, to)
+
+							if (fmErr) {
+								console.error('Error fetching saved final_marks for course-offerings:', fmErr)
+								break
+							}
+
+							if (fmRows && fmRows.length > 0) {
+								savedMarks.push(...fmRows)
+								fmHasMore = fmRows.length === FM_PAGE_SIZE
+								fmPage++
+							} else {
+								fmHasMore = false
+							}
+						}
 
 						if (savedMarks) {
 							// Group by course_id and get the most restrictive status
@@ -277,13 +306,37 @@ export async function GET(request: NextRequest) {
 				// Check internal marks availability for all courses (useful for CIA courses)
 				const internalMarksAvailability = new Map<string, { count: number; has_marks: boolean }>()
 				if (institutionId && sessionId && allCourseIds.length > 0) {
-					const { data: internalMarksCount } = await supabase
-						.from('internal_marks')
-						.select('course_id')
-						.eq('institutions_id', institutionId)
-						.eq('examination_session_id', sessionId)
-						.in('course_id', allCourseIds)
-						.eq('is_active', true)
+					// internal_marks is also one row per learner-course; paginate past
+					// the 1000-row cap so per-course counts (and CIA availability) are accurate.
+					const IM_PAGE_SIZE = 1000
+					let internalMarksCount: any[] = []
+					let imPage = 0
+					let imHasMore = true
+					while (imHasMore) {
+						const from = imPage * IM_PAGE_SIZE
+						const to = from + IM_PAGE_SIZE - 1
+						const { data: imRows, error: imErr } = await supabase
+							.from('internal_marks')
+							.select('course_id')
+							.eq('institutions_id', institutionId)
+							.eq('examination_session_id', sessionId)
+							.in('course_id', allCourseIds)
+							.eq('is_active', true)
+							.range(from, to)
+
+						if (imErr) {
+							console.error('Error fetching internal_marks for course-offerings:', imErr)
+							break
+						}
+
+						if (imRows && imRows.length > 0) {
+							internalMarksCount.push(...imRows)
+							imHasMore = imRows.length === IM_PAGE_SIZE
+							imPage++
+						} else {
+							imHasMore = false
+						}
+					}
 
 					if (internalMarksCount) {
 						// Count internal marks per course
@@ -294,6 +347,51 @@ export async function GET(request: NextRequest) {
 						countMap.forEach((count, courseId) => {
 							internalMarksAvailability.set(courseId, { count, has_marks: count > 0 })
 						})
+					}
+				}
+
+				// =========================================================
+				// REGISTRATION CHECK: A course_offering can exist for a session
+				// with ZERO learners registered (no exam_registrations). Such a
+				// course is NOT registered in this session and must not appear as
+				// generatable. We mirror the generation step, which treats
+				// exam_registrations as the source of truth for who is registered.
+				// This applies to ALL courses, including CIA-only — every course
+				// requires exam registration to be generatable in this session.
+				// =========================================================
+				const registeredOfferingIds = new Set<string>()
+				let registrationCheckOk = false
+				const offeringIds = (offerings || []).map((o: any) => o.id).filter(Boolean)
+				if (sessionId && offeringIds.length > 0) {
+					const REG_PAGE_SIZE = 1000
+					let regPage = 0
+					let regHasMore = true
+					registrationCheckOk = true
+					while (regHasMore) {
+						const from = regPage * REG_PAGE_SIZE
+						const to = from + REG_PAGE_SIZE - 1
+						const { data: regRows, error: regErr } = await supabase
+							.from('exam_registrations')
+							.select('course_offering_id')
+							.eq('examination_session_id', sessionId)
+							.in('course_offering_id', offeringIds)
+							.range(from, to)
+
+						if (regErr) {
+							console.error('Error fetching exam registrations for course-offerings filter:', regErr)
+							// On error, fall back to showing all offerings (old behavior)
+							// rather than silently hiding every non-CIA course.
+							registrationCheckOk = false
+							break
+						}
+
+						if (regRows && regRows.length > 0) {
+							regRows.forEach((r: any) => r.course_offering_id && registeredOfferingIds.add(r.course_offering_id))
+							regHasMore = regRows.length === REG_PAGE_SIZE
+							regPage++
+						} else {
+							regHasMore = false
+						}
 					}
 				}
 
@@ -332,11 +430,21 @@ export async function GET(request: NextRequest) {
 						can_regenerate: !status,
 						// Internal marks info (especially useful for CIA courses)
 						has_internal_marks: internalStatus?.has_marks || false,
-						internal_marks_count: internalStatus?.count || 0
+						internal_marks_count: internalStatus?.count || 0,
+						// Whether any learner is registered for this offering in this session
+						has_registrations: registeredOfferingIds.has(co.id)
 					}
 				})
 
-				return NextResponse.json(transformed)
+				// Exclude offerings with no learner registrations in this session.
+				// Every course (including CIA-only) requires exam registration to be
+				// generatable. If the registration check failed, keep all offerings
+				// to avoid hiding valid courses.
+				const filtered = registrationCheckOk
+					? transformed.filter((co: any) => co.has_registrations)
+					: transformed
+
+				return NextResponse.json(filtered)
 			}
 
 			case 'courses': {

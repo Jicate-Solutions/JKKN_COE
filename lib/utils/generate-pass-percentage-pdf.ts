@@ -11,6 +11,9 @@ interface PdfOptions {
 	report: PassPercentageReport
 	logoImage?: string
 	rightLogoImage?: string
+	// When true, render the official 4-column signatures (Board Chairman / CoE /
+	// Principal / University Nominee) instead of the 2-column examiner signatures.
+	fullSignatures?: boolean
 }
 
 interface MultiBoardPdfOptions {
@@ -661,12 +664,28 @@ function generateCourseSummaryContent(
 
 // ─── Standalone Course-Wise Summary PDF ──────────────────
 export function generateCourseSummaryPDF(options: PdfOptions): string {
-	const { report, logoImage, rightLogoImage } = options
+	const { report, logoImage, rightLogoImage, fullSignatures } = options
 	const doc = new jsPDF('portrait', 'mm', 'a4')
-	generateCourseSummaryContent(doc, report, logoImage, rightLogoImage)
+	generateCourseSummaryContent(doc, report, logoImage, rightLogoImage, fullSignatures ? FULL_SIGNATURES : SUMMARY_SIGNATURES)
 	addFooter(doc, report.generated_at)
 	const label = report.board?.board_code || report.program?.program_code || 'summary'
 	const fileName = `course-wise-summary-${label}-${new Date().toISOString().slice(0, 10)}.pdf`
+	doc.save(fileName)
+	return fileName
+}
+
+// ─── Multiple boards/programs: one COURSE-WISE SUMMARY page each ──
+export function generateMultiCourseSummaryPDF(options: MultiBoardPdfOptions & { fullSignatures?: boolean }): string {
+	const { reports, logoImage, rightLogoImage, fullSignatures } = options
+	const doc = new jsPDF('portrait', 'mm', 'a4')
+	const signatures = fullSignatures ? FULL_SIGNATURES : SUMMARY_SIGNATURES
+	reports.forEach((report, idx) => {
+		if (idx > 0) doc.addPage()
+		generateCourseSummaryContent(doc, report, logoImage, rightLogoImage, signatures)
+	})
+	const generatedAt = reports[0]?.generated_at || new Date().toISOString()
+	addFooter(doc, generatedAt)
+	const fileName = `course-wise-summary-all-${new Date().toISOString().slice(0, 10)}.pdf`
 	doc.save(fileName)
 	return fileName
 }

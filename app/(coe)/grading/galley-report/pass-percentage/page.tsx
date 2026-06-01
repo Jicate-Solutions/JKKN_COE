@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useMemo } from "react"
+import { useState, useEffect, useMemo, useRef } from "react"
 import { useSessionSync } from '@/hooks/use-session-sync'
 import { Card, CardContent, CardHeader } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -24,11 +24,12 @@ import {
 	UserCheck,
 	RefreshCw,
 	BookOpen,
-	BarChart3
+	BarChart3,
+	ClipboardList
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useInstitutionFilter } from "@/hooks/use-institution-filter"
-import { generatePassPercentagePDF, generateMultiBoardPassPercentagePDF, generateProgramPassPercentagePDF, generateMultiProgramPassPercentagePDF, generateCourseSummaryPDF, generateCourseSummaryTemplatePDF } from "@/lib/utils/generate-pass-percentage-pdf"
+import { generatePassPercentagePDF, generateMultiBoardPassPercentagePDF, generateProgramPassPercentagePDF, generateMultiProgramPassPercentagePDF, generateCourseSummaryPDF, generateMultiCourseSummaryPDF, generateCourseSummaryTemplatePDF } from "@/lib/utils/generate-pass-percentage-pdf"
 import type { PassPercentageReport } from "@/types/pass-percentage"
 
 // ─── Interfaces ─────────────────────────────────────────
@@ -96,6 +97,7 @@ export default function PassPercentageReportPage() {
 	const [loadingReport, setLoadingReport] = useState(false)
 	const [generatingPDF, setGeneratingPDF] = useState(false)
 	const [generatingSummary, setGeneratingSummary] = useState(false)
+	const [generatingCourseSummary, setGeneratingCourseSummary] = useState(false)
 	const [generatingTemplate, setGeneratingTemplate] = useState(false)
 
 	// Popover states
@@ -219,15 +221,15 @@ export default function PassPercentageReportPage() {
 			setLoadingReport(true)
 
 			if (reportType === 'board') {
-				const allReports: PassPercentageReport[] = []
-				for (const boardCode of selectedBoardCodes) {
+				// Fetch all boards in parallel (preserves selection order via map)
+				const results = await Promise.all(selectedBoardCodes.map(async (boardCode) => {
 					const url = `${API_BASE}?institution_id=${selectedInstitutionId}&session_id=${selectedSessionId}&report_type=board&board_code=${boardCode}`
 					const res = await fetch(url)
-					if (res.ok) {
-						const data = await res.json()
-						if (data.courses?.length > 0) allReports.push(data)
-					}
-				}
+					if (!res.ok) return null
+					const data = await res.json()
+					return data.courses?.length > 0 ? data : null
+				}))
+				const allReports: PassPercentageReport[] = results.filter(Boolean) as PassPercentageReport[]
 
 				if (allReports.length > 0) {
 					const merged: PassPercentageReport = {
@@ -252,16 +254,15 @@ export default function PassPercentageReportPage() {
 					setAllBoardReports([])
 				}
 			} else {
-				// Program-wise: loop per program (like board)
-				const allReports: PassPercentageReport[] = []
-				for (const programCode of selectedProgramCodes) {
+				// Program-wise: fetch all programmes in parallel (preserves order via map)
+				const results = await Promise.all(selectedProgramCodes.map(async (programCode) => {
 					const url = `${API_BASE}?institution_id=${selectedInstitutionId}&session_id=${selectedSessionId}&report_type=program&program_code=${programCode}`
 					const res = await fetch(url)
-					if (res.ok) {
-						const data = await res.json()
-						if (data.courses?.length > 0) allReports.push(data)
-					}
-				}
+					if (!res.ok) return null
+					const data = await res.json()
+					return data.courses?.length > 0 ? data : null
+				}))
+				const allReports: PassPercentageReport[] = results.filter(Boolean) as PassPercentageReport[]
 
 				if (allReports.length > 0) {
 					// Merge all program reports for scorecards
@@ -311,7 +312,10 @@ export default function PassPercentageReportPage() {
 	}, [reportData])
 
 	// ─── Logos ────────────────────────────────────────────
+	// Cache base64 logos so they're fetched/encoded only once per session
+	const logoCacheRef = useRef<{ logoBase64: string; rightLogoBase64: string } | null>(null)
 	const loadLogos = async () => {
+		if (logoCacheRef.current) return logoCacheRef.current
 		let logoBase64 = ''
 		let rightLogoBase64 = ''
 		try {
@@ -336,7 +340,9 @@ export default function PassPercentageReportPage() {
 		} catch (e) {
 			console.warn('Logo not loaded:', e)
 		}
-		return { logoBase64, rightLogoBase64 }
+		const logos = { logoBase64, rightLogoBase64 }
+		logoCacheRef.current = logos
+		return logos
 	}
 
 	// ─── Download PDF ────────────────────────────────────
@@ -386,6 +392,34 @@ export default function PassPercentageReportPage() {
 			toast({ title: '❌ PDF Error', description: 'Failed to generate Course-Wise Summary.', variant: 'destructive' })
 		} finally {
 			setGeneratingSummary(false)
+		}
+	}
+
+	// ─── Download COURSE-WISE SUMMARY only (official 4 signatures) ──
+	const handleDownloadCourseSummary = async () => {
+		if (!reportData) return
+		try {
+			setGeneratingCourseSummary(true)
+			const { logoBase64, rightLogoBase64 } = await loadLogos()
+			let fileName: string
+
+			// Each board/programme gets its own COURSE-WISE SUMMARY page (like page 4)
+			const perReportSummaries =
+				reportType === 'board' ? allBoardReports : allProgramReports
+
+			if (perReportSummaries.length > 1) {
+				fileName = generateMultiCourseSummaryPDF({ reports: perReportSummaries, logoImage: logoBase64, rightLogoImage: rightLogoBase64, fullSignatures: true })
+			} else {
+				const single = perReportSummaries[0] || reportData
+				fileName = generateCourseSummaryPDF({ report: single, logoImage: logoBase64, rightLogoImage: rightLogoBase64, fullSignatures: true })
+			}
+
+			toast({ title: '✅ Course-Wise Summary Generated', description: `Downloaded ${fileName}`, className: 'bg-green-50 border-green-200 text-green-800' })
+		} catch (error) {
+			console.error('Course-Wise Summary PDF generation error:', error)
+			toast({ title: '❌ PDF Error', description: 'Failed to generate Course-Wise Summary.', variant: 'destructive' })
+		} finally {
+			setGeneratingCourseSummary(false)
 		}
 	}
 
@@ -551,6 +585,14 @@ export default function PassPercentageReportPage() {
 												</Button>
 											</TooltipTrigger>
 											<TooltipContent>Download PDF Report</TooltipContent>
+										</Tooltip>
+										<Tooltip>
+											<TooltipTrigger asChild>
+												<Button onClick={handleDownloadCourseSummary} disabled={generatingCourseSummary} variant="outline" size="sm" className="h-8 text-sm px-3">
+													{generatingCourseSummary ? <Loader2 className="h-4 w-4 animate-spin" /> : <><ClipboardList className="mr-1.5 h-3.5 w-3.5" />Course Summary</>}
+												</Button>
+											</TooltipTrigger>
+											<TooltipContent>Download COURSE-WISE SUMMARY only (official 4 signatures)</TooltipContent>
 										</Tooltip>
 										<Tooltip>
 											<TooltipTrigger asChild>
