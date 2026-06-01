@@ -644,6 +644,18 @@ export function generateGalleyReportPDF(data: GalleyReportData): string {
 		startY = margin + 10
 	}
 
+	// ========== COURSE ANALYSIS TABLE TITLE ==========
+	// e.g. "PROGRAM: UHI - B.A. HISTORY - Result Analysis - APRIL-MAY-2026 Examinations"
+	const analysisProgramCode = data.program?.program_code || ''
+	const analysisProgramName = data.program?.program_name || ''
+	const analysisSessionName = data.session?.session_name || ''
+	const analysisTitle = `PROGRAM: ${analysisProgramCode} - ${analysisProgramName.toUpperCase()} - RESULT ANALYSIS${analysisSessionName ? ` - ${analysisSessionName.toUpperCase()} EXAMINATIONS` : ''}`
+	doc.setFont('times', 'bold')
+	doc.setFontSize(11)
+	doc.setTextColor(0, 0, 0)
+	doc.text(analysisTitle, pageWidth / 2, startY, { align: 'center' })
+	startY += 6
+
 	autoTable(doc, {
 		startY: startY,
 		head: [courseAnalysisHeaders],

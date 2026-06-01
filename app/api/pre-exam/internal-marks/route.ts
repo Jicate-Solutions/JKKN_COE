@@ -192,6 +192,7 @@ export async function GET(request: Request) {
 							internal_percentage,
 							marks_status,
 							remarks,
+							grade,
 							is_active,
 							created_at,
 							exam_registrations:exam_registration_id (
@@ -358,6 +359,10 @@ export async function POST(request: Request) {
 			return handleBulkUpload(supabase, body)
 		} else if (action === 'bulk-delete') {
 			return handleBulkDelete(supabase, body)
+		} else if (action === 'mark-absent') {
+			return handleMarkAbsent(supabase, body)
+		} else if (action === 'unmark-absent') {
+			return handleUnmarkAbsent(supabase, body)
 		} else {
 			// Single mark insert
 			return handleSingleInsert(supabase, body)
@@ -1006,7 +1011,8 @@ async function handleBulkUpload(supabase: any, body: any) {
 		const test2Mark = parseMarks(row.test_2_mark)
 		const test3Mark = parseMarks(row.test_3_mark)
 		const maxInternalMarks = parseMarks(row.max_internal_marks) || 100
-		const remarks = String(row.remarks || '').trim()
+		const isAbsent = row.is_absent === true || ['yes', 'y', 'true', '1', 'absent', 'ab'].includes(String(row.is_absent || '').trim().toLowerCase())
+		const remarks = String(row.remarks || '').trim() || (isAbsent ? 'Both internal papers absent' : '')
 
 		// Check if at least one marks type is provided
 		const hasAnyMarks = assignmentMarks !== null || quizMarks !== null || midTermMarks !== null ||
@@ -1014,7 +1020,8 @@ async function handleBulkUpload(supabase: any, body: any) {
 			projectMarks !== null || seminarMarks !== null || vivaMarks !== null || otherMarks !== null ||
 			test1Mark !== null || test2Mark !== null || test3Mark !== null
 
-		if (!hasAnyMarks) {
+		// Absent rows legitimately have no marks
+		if (!hasAnyMarks && !isAbsent) {
 			rowErrors.push('At least one marks type must be provided')
 		}
 
@@ -1103,19 +1110,21 @@ async function handleBulkUpload(supabase: any, body: any) {
 				: null
 
 			const marksDataObj: any = {
-				assignment_marks: assignmentMarks,
-				quiz_marks: quizMarks,
-				mid_term_marks: midTermMarks,
-				presentation_marks: presentationMarks,
-				attendance_marks: attendanceMarks,
-				lab_marks: labMarks,
-				project_marks: projectMarks,
-				seminar_marks: seminarMarks,
-				viva_marks: vivaMarks,
-				other_marks: otherMarks,
-				test_1_mark: test1Mark,
-				test_2_mark: test2Mark,
-				test_3_mark: test3Mark,
+				// Absent learners have all internal components zeroed
+				assignment_marks: isAbsent ? 0 : assignmentMarks,
+				quiz_marks: isAbsent ? 0 : quizMarks,
+				mid_term_marks: isAbsent ? 0 : midTermMarks,
+				presentation_marks: isAbsent ? 0 : presentationMarks,
+				attendance_marks: isAbsent ? 0 : attendanceMarks,
+				lab_marks: isAbsent ? 0 : labMarks,
+				project_marks: isAbsent ? 0 : projectMarks,
+				seminar_marks: isAbsent ? 0 : seminarMarks,
+				viva_marks: isAbsent ? 0 : vivaMarks,
+				other_marks: isAbsent ? 0 : otherMarks,
+				test_1_mark: isAbsent ? 0 : test1Mark,
+				test_2_mark: isAbsent ? 0 : test2Mark,
+				test_3_mark: isAbsent ? 0 : test3Mark,
+				grade: isAbsent ? 'AAA' : null,
 				max_internal_marks: maxInternalMarks || examReg.internal_max_mark,
 				remarks: remarks || null,
 				examination_session_id: examReg.examination_session_id,
@@ -1125,7 +1134,7 @@ async function handleBulkUpload(supabase: any, body: any) {
 				exam_registration_id: examReg.exam_registration_id,
 				faculty_id: uploaded_by,
 				submission_date: new Date().toISOString().split('T')[0],
-				total_internal_marks: (assignmentMarks || 0) + (quizMarks || 0) + (midTermMarks || 0) +
+				total_internal_marks: isAbsent ? 0 : (assignmentMarks || 0) + (quizMarks || 0) + (midTermMarks || 0) +
 					(presentationMarks || 0) + (attendanceMarks || 0) + (labMarks || 0) +
 					(projectMarks || 0) + (seminarMarks || 0) + (vivaMarks || 0) + (otherMarks || 0) +
 					(test1Mark || 0) + (test2Mark || 0) + (test3Mark || 0)
@@ -1218,6 +1227,87 @@ async function handleBulkUpload(supabase: any, body: any) {
 		skipped: results.skipped,
 		errors: results.errors,
 		validation_errors: results.validation_errors
+	})
+}
+
+const DEFAULT_ABSENT_REMARK = 'Both internal papers absent'
+// Reuses the existing internal_marks.grade column ('AAA' = Absent), the same
+// convention as the Status Grades module. No dedicated boolean column needed.
+const ABSENT_GRADE = 'AAA'
+
+// Mark selected internal marks records as Absent (internal only).
+// Sets grade = 'AAA', zeroes all internal component marks so downstream totals
+// stay consistent, and stores the absent comment in remarks.
+async function handleMarkAbsent(supabase: any, body: any) {
+	const { ids, remarks } = body
+
+	if (!ids || !Array.isArray(ids) || ids.length === 0) {
+		return NextResponse.json({ error: 'No IDs provided to mark absent' }, { status: 400 })
+	}
+
+	const absentRemark = String(remarks || '').trim() || DEFAULT_ABSENT_REMARK
+
+	const { data, error } = await supabase
+		.from('internal_marks')
+		.update({
+			grade: ABSENT_GRADE,
+			remarks: absentRemark,
+			assignment_marks: 0,
+			quiz_marks: 0,
+			mid_term_marks: 0,
+			presentation_marks: 0,
+			attendance_marks: 0,
+			lab_marks: 0,
+			project_marks: 0,
+			seminar_marks: 0,
+			viva_marks: 0,
+			other_marks: 0,
+			test_1_mark: 0,
+			test_2_mark: 0,
+			test_3_mark: 0,
+			total_internal_marks: 0,
+			updated_at: new Date().toISOString()
+		})
+		.in('id', ids)
+		.select('id')
+
+	if (error) {
+		console.error('Error marking internal marks absent:', error)
+		return NextResponse.json({ error: `Failed to mark absent: ${error.message}` }, { status: 500 })
+	}
+
+	return NextResponse.json({
+		updated: data?.length || 0,
+		message: `Marked ${data?.length || 0} record(s) as absent`
+	})
+}
+
+// Revert Absent grade. Marks are left at 0 (re-upload to restore actual marks).
+async function handleUnmarkAbsent(supabase: any, body: any) {
+	const { ids } = body
+
+	if (!ids || !Array.isArray(ids) || ids.length === 0) {
+		return NextResponse.json({ error: 'No IDs provided to unmark' }, { status: 400 })
+	}
+
+	const { data, error } = await supabase
+		.from('internal_marks')
+		.update({
+			grade: null,
+			remarks: null,
+			updated_at: new Date().toISOString()
+		})
+		.in('id', ids)
+		.select('id')
+
+	if (error) {
+		console.error('Error unmarking absent internal marks:', error)
+		return NextResponse.json({ error: `Failed to unmark absent: ${error.message}` }, { status: 500 })
+	}
+
+	return NextResponse.json({
+		updated: data?.length || 0,
+		message: `Reverted ${data?.length || 0} record(s)`
 	})
 }
 

@@ -19,9 +19,8 @@ export async function GET(req: NextRequest) {
 
     // NOTE: The actual table is public.course (singular). Select all fields
     const supabase = getSupabaseServer()
-    let query = supabase
-      .from('courses')
-      .select(`
+
+    const COURSE_SELECT = `
         id,
         institutions_id,
         regulation_id,
@@ -78,43 +77,70 @@ export async function GET(req: NextRequest) {
         credit_included,
         has_hall_ticket,
         courses_status
-      `, { count: 'exact' })
-      .order('created_at', { ascending: false })
-      .range(0, 9999) // Increase limit from default 1000 to 10000 rows
+      `
 
-    // Apply filters against the real column names
-    if (id) {
-      query = query.eq('id', id)
-    }
-    if (ids) {
-      // Support batch fetching with comma-separated IDs
-      const idArray = ids.split(',').map(id => id.trim()).filter(Boolean)
-      if (idArray.length > 0) {
-        query = query.in('id', idArray)
+    // Build a fresh, fully-filtered query. Re-built per batch because a
+    // Supabase query builder can only be awaited once.
+    const buildQuery = () => {
+      let query = supabase
+        .from('courses')
+        .select(COURSE_SELECT)
+        .order('created_at', { ascending: false })
+
+      // Apply filters against the real column names
+      if (id) {
+        query = query.eq('id', id)
       }
-    }
-    if (search) {
-      query = query.or(`course_code.ilike.%${search}%,course_name.ilike.%${search}%`)
-    }
-    if (institution_code) {
-      query = query.eq('institution_code', institution_code)
-    }
-    // Note: courses table doesn't have program_code column
-    // Filter by offering_department_code instead which is derived from program
-    if (offering_department_code) {
-      query = query.eq('offering_department_code', offering_department_code)
-    }
-    if (regulation_code) {
-      query = query.eq('regulation_code', regulation_code)
-    }
-    if (course_type) {
-      query = query.eq('course_type', course_type)
-    }
-    if (is_active !== null) {
-      query = query.eq('status', is_active === 'true')
+      if (ids) {
+        // Support batch fetching with comma-separated IDs
+        const idArray = ids.split(',').map(id => id.trim()).filter(Boolean)
+        if (idArray.length > 0) {
+          query = query.in('id', idArray)
+        }
+      }
+      if (search) {
+        query = query.or(`course_code.ilike.%${search}%,course_name.ilike.%${search}%`)
+      }
+      if (institution_code) {
+        query = query.eq('institution_code', institution_code)
+      }
+      // Note: courses table doesn't have program_code column
+      // Filter by offering_department_code instead which is derived from program
+      if (offering_department_code) {
+        query = query.eq('offering_department_code', offering_department_code)
+      }
+      if (regulation_code) {
+        query = query.eq('regulation_code', regulation_code)
+      }
+      if (course_type) {
+        query = query.eq('course_type', course_type)
+      }
+      if (is_active !== null) {
+        query = query.eq('status', is_active === 'true')
+      }
+      return query
     }
 
-    const { data, error } = await query
+    // Fetch ALL matching rows in batches. PostgREST enforces a server-side
+    // db-max-rows cap (commonly 1000), so a single .range(0, 9999) is still
+    // truncated. Page through until a short batch signals the end.
+    const PAGE_SIZE = 1000
+    const MAX_ROWS = 100000 // hard safety stop to avoid runaway loops
+    let data: any[] = []
+    let error: any = null
+    let from = 0
+    while (from < MAX_ROWS) {
+      const { data: batch, error: batchErr } = await buildQuery().range(from, from + PAGE_SIZE - 1)
+      if (batchErr) {
+        error = batchErr
+        break
+      }
+      if (batch && batch.length) {
+        data = data.concat(batch)
+      }
+      if (!batch || batch.length < PAGE_SIZE) break
+      from += PAGE_SIZE
+    }
 
     if (error) {
       console.error('Supabase error:', error)

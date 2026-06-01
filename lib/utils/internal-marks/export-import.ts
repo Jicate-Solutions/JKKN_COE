@@ -33,6 +33,7 @@ export interface InternalMarkExport {
 	internal_percentage: number | null
 	marks_status: string
 	remarks: string | null
+	is_absent?: boolean
 }
 
 export interface Institution {
@@ -88,7 +89,8 @@ export function exportToJSON(items: InternalMarkExport[]): void {
 		max_internal_marks: item.max_internal_marks,
 		internal_percentage: item.internal_percentage,
 		marks_status: item.marks_status || 'Draft',
-		remarks: item.remarks || ''
+		remarks: item.remarks || '',
+		is_absent: item.is_absent ? 'Yes' : 'No'
 	}))
 
 	const json = JSON.stringify(exportData, null, 2)
@@ -134,6 +136,7 @@ export function exportToExcel(
 		'Max': item.max_internal_marks ?? 100,
 		'Percentage': item.internal_percentage ?? 0,
 		'Status': item.marks_status || 'Draft',
+		'Absent': item.is_absent ? 'Yes' : 'No',
 		'Remarks': item.remarks || ''
 	}))
 
@@ -164,6 +167,7 @@ export function exportToExcel(
 		{ wch: 8 },  // Max
 		{ wch: 10 }, // Percentage
 		{ wch: 10 }, // Status
+		{ wch: 8 },  // Absent
 		{ wch: 25 }  // Remarks
 	]
 	ws['!cols'] = colWidths
@@ -220,6 +224,7 @@ export function exportTemplate(
 			'Test 3 Mark': '',
 			'Other Marks': '',
 			'Max Internal Marks *': 100,
+			'Absent': 'No',
 			'Remarks': 'Good performance'
 		},
 		{
@@ -242,7 +247,8 @@ export function exportTemplate(
 			'Test 3 Mark': '',
 			'Other Marks': '',
 			'Max Internal Marks *': 100,
-			'Remarks': ''
+			'Absent': 'Yes',
+			'Remarks': 'Both internal papers absent'
 		}
 	]
 
@@ -269,6 +275,7 @@ export function exportTemplate(
 		{ wch: 12 }, // Test 3 Mark
 		{ wch: 12 }, // Other Marks
 		{ wch: 18 }, // Max Internal Marks
+		{ wch: 8 },  // Absent
 		{ wch: 25 }  // Remarks
 	]
 
@@ -321,7 +328,8 @@ export function exportTemplate(
 		{ col: 'Test 1/2/3 Mark', req: 'No', desc: 'Internal test marks (0-100)' },
 		{ col: 'Other Marks', req: 'No', desc: 'Other assessment marks (0-100)' },
 		{ col: 'Max Internal Marks *', req: 'Yes', desc: 'Maximum internal marks for the course' },
-		{ col: 'Remarks', req: 'No', desc: 'Any additional remarks' }
+		{ col: 'Absent', req: 'No', desc: 'Yes = learner absent for internal papers (marks set to 0). Default No' },
+		{ col: 'Remarks', req: 'No', desc: 'Any additional remarks / absent comment' }
 	]
 	columnInfo.forEach(info => {
 		referenceData.push({
@@ -480,6 +488,7 @@ export function mapImportRow(row: any, index: number): {
 	test_2_mark: number | null
 	test_3_mark: number | null
 	max_internal_marks: number
+	is_absent: boolean
 	remarks: string
 	errors: string[]
 	status: 'valid' | 'error'
@@ -545,6 +554,11 @@ export function mapImportRow(row: any, index: number): {
 
 	const maxMarksStr = String(getValue(['Max Internal Marks *', 'Max Internal Marks', 'max_internal_marks']) || '100').trim()
 	const max_internal_marks = parseFloat(maxMarksStr)
+
+	// Parse Absent flag - accepts Yes/Y/True/1/Absent/AB (case-insensitive)
+	const absentRaw = String(getValue(['Absent', 'is_absent', 'Is Absent']) || '').trim().toLowerCase()
+	const is_absent = ['yes', 'y', 'true', '1', 'absent', 'ab'].includes(absentRaw)
+
 	const remarks = String(getValue(['Remarks', 'remarks']) || '').trim()
 
 	// Validation
@@ -584,7 +598,8 @@ export function mapImportRow(row: any, index: number): {
 		test_1_mark !== null || test_2_mark !== null || test_3_mark !== null ||
 		total_internal_marks_provided !== null
 
-	if (!hasAnyMarks) {
+	// Absent rows legitimately carry no marks, so skip the "needs marks" check for them
+	if (!hasAnyMarks && !is_absent) {
 		// Log available keys for debugging
 		console.log('No marks found in row. Available columns:', Object.keys(row))
 		errors.push('At least one marks type must be provided')
@@ -611,6 +626,7 @@ export function mapImportRow(row: any, index: number): {
 		test_2_mark,
 		test_3_mark,
 		max_internal_marks: isNaN(max_internal_marks) ? 100 : max_internal_marks,
+		is_absent,
 		remarks,
 		errors,
 		status: errors.length === 0 ? 'valid' : 'error'

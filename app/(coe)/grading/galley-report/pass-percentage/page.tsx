@@ -28,7 +28,7 @@ import {
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useInstitutionFilter } from "@/hooks/use-institution-filter"
-import { generatePassPercentagePDF, generateMultiBoardPassPercentagePDF, generateProgramPassPercentagePDF, generateMultiProgramPassPercentagePDF } from "@/lib/utils/generate-pass-percentage-pdf"
+import { generatePassPercentagePDF, generateMultiBoardPassPercentagePDF, generateProgramPassPercentagePDF, generateMultiProgramPassPercentagePDF, generateCourseSummaryPDF, generateCourseSummaryTemplatePDF } from "@/lib/utils/generate-pass-percentage-pdf"
 import type { PassPercentageReport } from "@/types/pass-percentage"
 
 // ─── Interfaces ─────────────────────────────────────────
@@ -95,6 +95,8 @@ export default function PassPercentageReportPage() {
 	const [loadingPrograms, setLoadingPrograms] = useState(false)
 	const [loadingReport, setLoadingReport] = useState(false)
 	const [generatingPDF, setGeneratingPDF] = useState(false)
+	const [generatingSummary, setGeneratingSummary] = useState(false)
+	const [generatingTemplate, setGeneratingTemplate] = useState(false)
 
 	// Popover states
 	const [institutionOpen, setInstitutionOpen] = useState(false)
@@ -371,6 +373,38 @@ export default function PassPercentageReportPage() {
 		}
 	}
 
+	// ─── Download Course-Wise Summary PDF ────────────────
+	const handleDownloadSummary = async () => {
+		if (!reportData) return
+		try {
+			setGeneratingSummary(true)
+			const { logoBase64, rightLogoBase64 } = await loadLogos()
+			const fileName = generateCourseSummaryPDF({ report: reportData, logoImage: logoBase64, rightLogoImage: rightLogoBase64 })
+			toast({ title: '✅ Summary Generated', description: `Downloaded ${fileName}`, className: 'bg-green-50 border-green-200 text-green-800' })
+		} catch (error) {
+			console.error('Summary PDF generation error:', error)
+			toast({ title: '❌ PDF Error', description: 'Failed to generate Course-Wise Summary.', variant: 'destructive' })
+		} finally {
+			setGeneratingSummary(false)
+		}
+	}
+
+	// ─── Download Course-Wise Summary TEMPLATE (marks blank) ──
+	const handleDownloadTemplate = async () => {
+		if (!reportData) return
+		try {
+			setGeneratingTemplate(true)
+			const { logoBase64, rightLogoBase64 } = await loadLogos()
+			const fileName = generateCourseSummaryTemplatePDF({ report: reportData, logoImage: logoBase64, rightLogoImage: rightLogoBase64 })
+			toast({ title: '✅ Template Generated', description: `Downloaded ${fileName}`, className: 'bg-green-50 border-green-200 text-green-800' })
+		} catch (error) {
+			console.error('Template PDF generation error:', error)
+			toast({ title: '❌ PDF Error', description: 'Failed to generate Course-Wise Summary template.', variant: 'destructive' })
+		} finally {
+			setGeneratingTemplate(false)
+		}
+	}
+
 	// ─── Export CSV ──────────────────────────────────────
 	const handleExportCSV = () => {
 		if (!reportData?.courses?.length) return
@@ -517,6 +551,22 @@ export default function PassPercentageReportPage() {
 												</Button>
 											</TooltipTrigger>
 											<TooltipContent>Download PDF Report</TooltipContent>
+										</Tooltip>
+										<Tooltip>
+											<TooltipTrigger asChild>
+												<Button onClick={handleDownloadSummary} disabled={generatingSummary} variant="outline" size="sm" className="h-8 text-sm px-3">
+													{generatingSummary ? <Loader2 className="h-4 w-4 animate-spin" /> : <><BarChart3 className="mr-1.5 h-3.5 w-3.5" />Summary</>}
+												</Button>
+											</TooltipTrigger>
+											<TooltipContent>Download Course-Wise Summary (Board Chairman(s) &amp; Examiner(s))</TooltipContent>
+										</Tooltip>
+										<Tooltip>
+											<TooltipTrigger asChild>
+												<Button onClick={handleDownloadTemplate} disabled={generatingTemplate} variant="outline" size="sm" className="h-8 text-sm px-3">
+													{generatingTemplate ? <Loader2 className="h-4 w-4 animate-spin" /> : <><FileText className="mr-1.5 h-3.5 w-3.5" />Template</>}
+												</Button>
+											</TooltipTrigger>
+											<TooltipContent>Download Course-Wise Summary Template (counts filled, marks blank)</TooltipContent>
 										</Tooltip>
 										<Tooltip>
 											<TooltipTrigger asChild>

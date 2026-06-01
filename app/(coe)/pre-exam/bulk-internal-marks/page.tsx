@@ -39,7 +39,8 @@ import {
 	FileUp,
 	ClipboardList,
 	FileJson,
-	Loader2
+	Loader2,
+	UserX
 } from "lucide-react"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 
@@ -87,6 +88,7 @@ interface InternalMark {
 	internal_percentage: number | null
 	marks_status: string
 	remarks: string | null
+	grade: string | null
 	is_active: boolean
 	created_at: string
 }
@@ -112,6 +114,7 @@ interface ImportPreviewRow {
 	test_2_mark: number | null
 	test_3_mark: number | null
 	max_internal_marks: number
+	is_absent: boolean
 	remarks: string
 	errors: string[]
 	isValid: boolean
@@ -184,6 +187,8 @@ export default function BulkInternalMarksPage() {
 
 	// Dialogs
 	const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
+	const [absentDialogOpen, setAbsentDialogOpen] = useState(false)
+	const [absentRemark, setAbsentRemark] = useState("Both internal papers absent")
 	const [previewDialogOpen, setPreviewDialogOpen] = useState(false)
 	const [errorDialogOpen, setErrorDialogOpen] = useState(false)
 	const [confirmationDialogOpen, setConfirmationDialogOpen] = useState(false)
@@ -723,7 +728,8 @@ export default function BulkInternalMarksPage() {
 			max_internal_marks: item.max_internal_marks,
 			internal_percentage: item.internal_percentage,
 			marks_status: item.marks_status || 'Draft',
-			remarks: item.remarks
+			remarks: item.remarks,
+			is_absent: item.grade === 'AAA'
 		}))
 
 		exportToJSON(exportData)
@@ -771,7 +777,8 @@ export default function BulkInternalMarksPage() {
 			max_internal_marks: item.max_internal_marks,
 			internal_percentage: item.internal_percentage,
 			marks_status: item.marks_status || 'Draft',
-			remarks: item.remarks
+			remarks: item.remarks,
+			is_absent: item.grade === 'AAA'
 		}))
 
 		// Get institution code from context for filename
@@ -842,6 +849,7 @@ export default function BulkInternalMarksPage() {
 						test_2_mark: mapped.test_2_mark,
 						test_3_mark: mapped.test_3_mark,
 						max_internal_marks: mapped.max_internal_marks,
+						is_absent: mapped.is_absent,
 						remarks: mapped.remarks,
 						errors: mapped.errors,
 						isValid: mapped.status === 'valid'
@@ -951,6 +959,7 @@ export default function BulkInternalMarksPage() {
 					test_2_mark: row.test_2_mark,
 					test_3_mark: row.test_3_mark,
 					max_internal_marks: row.max_internal_marks,
+					is_absent: row.is_absent,
 					remarks: row.remarks
 				}))
 
@@ -1111,6 +1120,94 @@ export default function BulkInternalMarksPage() {
 		}
 	}
 
+	// Mark selected records as Absent (internal only)
+	const handleMarkAbsent = async () => {
+		if (selectedIds.size === 0) return
+
+		setLoading(true)
+		try {
+			const response = await fetch('/api/pre-exam/internal-marks', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					action: 'mark-absent',
+					ids: Array.from(selectedIds),
+					remarks: absentRemark
+				})
+			})
+
+			const result = await response.json()
+
+			if (!response.ok) {
+				throw new Error(result.error || 'Failed to mark absent')
+			}
+
+			toast({
+				title: "✅ Marked Absent",
+				description: `${result.updated} record(s) marked as absent.`,
+				className: "bg-green-50 border-green-200 text-green-800 dark:bg-green-900/20 dark:border-green-800 dark:text-green-200",
+			})
+
+			setSelectedIds(new Set())
+			setSelectAll(false)
+			fetchMarks()
+
+		} catch (error) {
+			console.error('Mark absent error:', error)
+			toast({
+				title: "❌ Failed to Mark Absent",
+				description: error instanceof Error ? error.message : 'Failed to mark records absent',
+				variant: "destructive",
+			})
+		} finally {
+			setLoading(false)
+			setAbsentDialogOpen(false)
+		}
+	}
+
+	// Revert Absent flag for selected records
+	const handleUnmarkAbsent = async () => {
+		if (selectedIds.size === 0) return
+
+		setLoading(true)
+		try {
+			const response = await fetch('/api/pre-exam/internal-marks', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					action: 'unmark-absent',
+					ids: Array.from(selectedIds)
+				})
+			})
+
+			const result = await response.json()
+
+			if (!response.ok) {
+				throw new Error(result.error || 'Failed to unmark absent')
+			}
+
+			toast({
+				title: "✅ Reverted",
+				description: `${result.updated} record(s) reverted. Re-upload marks to restore values.`,
+				className: "bg-blue-50 border-blue-200 text-blue-800 dark:bg-blue-900/20 dark:border-blue-800 dark:text-blue-200",
+			})
+
+			setSelectedIds(new Set())
+			setSelectAll(false)
+			fetchMarks()
+
+		} catch (error) {
+			console.error('Unmark absent error:', error)
+			toast({
+				title: "❌ Failed to Revert",
+				description: error instanceof Error ? error.message : 'Failed to revert records',
+				variant: "destructive",
+			})
+		} finally {
+			setLoading(false)
+		}
+	}
+
 	return (
 		<SidebarProvider>
 			{/* Import Loading Overlay - centered modal pattern like exam-registrations */}
@@ -1179,7 +1276,7 @@ export default function BulkInternalMarksPage() {
 					</div>
 
 					{/* Scorecard Section */}
-					<div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3 flex-shrink-0">
+					<div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-3 flex-shrink-0">
 						<Card>
 							<CardContent className="p-3">
 								<div className="flex items-center justify-between">
@@ -1219,6 +1316,21 @@ export default function BulkInternalMarksPage() {
 									</div>
 									<div className="h-7 w-7 rounded-full bg-green-100 dark:bg-green-900/20 flex items-center justify-center">
 										<CheckCircle className="h-3 w-3 text-green-600 dark:text-green-400" />
+									</div>
+								</div>
+							</CardContent>
+						</Card>
+						<Card>
+							<CardContent className="p-3">
+								<div className="flex items-center justify-between">
+									<div>
+										<p className="text-xs font-medium text-muted-foreground">Absent</p>
+										<p className="text-xl font-bold text-red-600 font-grotesk mt-1">
+											{items.filter(i => i.grade === 'AAA').length}
+										</p>
+									</div>
+									<div className="h-7 w-7 rounded-full bg-red-100 dark:bg-red-900/20 flex items-center justify-center">
+										<UserX className="h-3 w-3 text-red-600 dark:text-red-400" />
 									</div>
 								</div>
 							</CardContent>
@@ -1430,6 +1542,44 @@ export default function BulkInternalMarksPage() {
 										</Tooltip>
 									</TooltipProvider>
 
+									{/* Mark Absent (internal) */}
+									<TooltipProvider>
+										<Tooltip>
+											<TooltipTrigger asChild>
+												<Button
+													variant="outline"
+													size="sm"
+													className="text-xs px-2 h-8 bg-amber-50 hover:bg-amber-100 text-amber-700 border-amber-200 dark:bg-amber-900/20 dark:hover:bg-amber-900/30 dark:text-amber-300 dark:border-amber-800"
+													onClick={() => { setAbsentRemark("Both internal papers absent"); setAbsentDialogOpen(true) }}
+													disabled={selectedIds.size === 0}
+												>
+													<UserX className="h-3 w-3 mr-1" />
+													Mark Absent ({selectedIds.size})
+												</Button>
+											</TooltipTrigger>
+											<TooltipContent>Mark selected as Absent (internal papers)</TooltipContent>
+										</Tooltip>
+									</TooltipProvider>
+
+									{/* Unmark Absent */}
+									<TooltipProvider>
+										<Tooltip>
+											<TooltipTrigger asChild>
+												<Button
+													variant="outline"
+													size="sm"
+													className="text-xs px-2 h-8"
+													onClick={handleUnmarkAbsent}
+													disabled={selectedIds.size === 0 || loading}
+												>
+													<RefreshCw className="h-3 w-3 mr-1" />
+													Unmark
+												</Button>
+											</TooltipTrigger>
+											<TooltipContent>Revert Absent flag for selected records</TooltipContent>
+										</Tooltip>
+									</TooltipProvider>
+
 									{/* Delete Selected */}
 									<TooltipProvider>
 										<Tooltip>
@@ -1540,14 +1690,14 @@ export default function BulkInternalMarksPage() {
 																		</Badge>
 																	</TableCell>
 																	<TableCell className="py-2 text-center text-xs font-medium">
-																		{marks !== null ? marks : '-'}
+																		{item.grade === 'AAA' ? <span className="font-semibold text-red-600 dark:text-red-400">AB</span> : marks !== null ? marks : '-'}
 																	</TableCell>
 																	<TableCell className="py-2">
 																		<Badge
-																			variant={item.marks_status === 'Submitted' ? 'default' : 'secondary'}
-																			className="text-xs"
+																			variant={item.grade === 'AAA' ? 'outline' : item.marks_status === 'Submitted' ? 'default' : 'secondary'}
+																			className={item.grade === 'AAA' ? "text-xs bg-red-50 text-red-700 border-red-200 dark:bg-red-900/20 dark:text-red-300 dark:border-red-800" : "text-xs"}
 																		>
-																			{item.marks_status}
+																			{item.grade === 'AAA' ? 'Absent' : item.marks_status}
 																		</Badge>
 																	</TableCell>
 																</TableRow>
@@ -1642,6 +1792,58 @@ export default function BulkInternalMarksPage() {
 				</AlertDialogContent>
 			</AlertDialog>
 
+			{/* Mark Absent Dialog */}
+			<Dialog open={absentDialogOpen} onOpenChange={setAbsentDialogOpen}>
+				<DialogContent className="max-w-md">
+					<DialogHeader>
+						<DialogTitle className="flex items-center gap-2 text-amber-600">
+							<UserX className="h-5 w-5" />
+							Mark as Absent
+						</DialogTitle>
+						<DialogDescription>
+							Flag {selectedIds.size} selected record(s) as absent for the internal assessment.
+							Internal component marks will be set to 0. External marks are not affected.
+						</DialogDescription>
+					</DialogHeader>
+
+					<div className="space-y-2 py-2">
+						<label className="text-xs font-medium text-muted-foreground">Comment</label>
+						<Input
+							value={absentRemark}
+							onChange={(e) => setAbsentRemark(e.target.value)}
+							placeholder="Absent comment"
+							className="h-9 text-sm"
+						/>
+						<p className="text-xs text-muted-foreground">
+							Saved to the record&apos;s remarks. Default: &quot;Both internal papers absent&quot;.
+						</p>
+					</div>
+
+					<DialogFooter>
+						<Button variant="outline" onClick={() => setAbsentDialogOpen(false)}>
+							Cancel
+						</Button>
+						<Button
+							onClick={handleMarkAbsent}
+							disabled={loading}
+							className="bg-amber-600 hover:bg-amber-700 text-white"
+						>
+							{loading ? (
+								<>
+									<Loader2 className="h-4 w-4 mr-2 animate-spin" />
+									Marking...
+								</>
+							) : (
+								<>
+									<UserX className="h-4 w-4 mr-2" />
+									Mark Absent
+								</>
+							)}
+						</Button>
+					</DialogFooter>
+				</DialogContent>
+			</Dialog>
+
 			{/* Import Preview Dialog - follows skill pattern */}
 			<Dialog open={previewDialogOpen} onOpenChange={setPreviewDialogOpen}>
 				<DialogContent className="max-w-4xl max-h-[80vh] overflow-hidden flex flex-col">
@@ -1705,7 +1907,11 @@ export default function BulkInternalMarksPage() {
 											<TableCell className="text-xs font-mono">{row.row}</TableCell>
 											<TableCell>
 												{row.isValid ? (
-													<Badge className="bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300">Valid</Badge>
+													row.is_absent ? (
+														<Badge className="bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300">Absent</Badge>
+													) : (
+														<Badge className="bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300">Valid</Badge>
+													)
 												) : (
 													<Badge variant="destructive">Error</Badge>
 												)}
@@ -1714,7 +1920,7 @@ export default function BulkInternalMarksPage() {
 											<TableCell className="text-xs font-medium">{row.register_no || '-'}</TableCell>
 											<TableCell className="text-xs font-mono">{row.course_code || '-'}</TableCell>
 											<TableCell className="text-xs max-w-[200px] truncate">
-												{marksSummary.length > 0 ? marksSummary.join(', ') : '-'}
+												{row.is_absent ? <span className="font-semibold text-red-600 dark:text-red-400">ABSENT</span> : marksSummary.length > 0 ? marksSummary.join(', ') : '-'}
 											</TableCell>
 											<TableCell className="text-xs text-center">{row.max_internal_marks}</TableCell>
 											<TableCell className="text-red-600 text-xs max-w-[200px]">
