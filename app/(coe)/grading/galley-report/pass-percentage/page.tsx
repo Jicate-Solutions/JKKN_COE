@@ -25,11 +25,13 @@ import {
 	RefreshCw,
 	BookOpen,
 	BarChart3,
-	ClipboardList
+	FileDown,
+	FileType
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useInstitutionFilter } from "@/hooks/use-institution-filter"
 import { generatePassPercentagePDF, generateMultiBoardPassPercentagePDF, generateProgramPassPercentagePDF, generateMultiProgramPassPercentagePDF, generateCourseSummaryPDF, generateMultiCourseSummaryPDF, generateCourseSummaryTemplatePDF } from "@/lib/utils/generate-pass-percentage-pdf"
+import { generatePassPercentageWord } from "@/lib/utils/generate-pass-percentage-word"
 import type { PassPercentageReport } from "@/types/pass-percentage"
 
 // ─── Interfaces ─────────────────────────────────────────
@@ -99,6 +101,7 @@ export default function PassPercentageReportPage() {
 	const [generatingSummary, setGeneratingSummary] = useState(false)
 	const [generatingCourseSummary, setGeneratingCourseSummary] = useState(false)
 	const [generatingTemplate, setGeneratingTemplate] = useState(false)
+	const [generatingWord, setGeneratingWord] = useState(false)
 
 	// Popover states
 	const [institutionOpen, setInstitutionOpen] = useState(false)
@@ -414,10 +417,10 @@ export default function PassPercentageReportPage() {
 				fileName = generateCourseSummaryPDF({ report: single, logoImage: logoBase64, rightLogoImage: rightLogoBase64, fullSignatures: true })
 			}
 
-			toast({ title: '✅ Course-Wise Summary Generated', description: `Downloaded ${fileName}`, className: 'bg-green-50 border-green-200 text-green-800' })
+			toast({ title: '✅ Board-Wise Summary Generated', description: `Downloaded ${fileName}`, className: 'bg-green-50 border-green-200 text-green-800' })
 		} catch (error) {
-			console.error('Course-Wise Summary PDF generation error:', error)
-			toast({ title: '❌ PDF Error', description: 'Failed to generate Course-Wise Summary.', variant: 'destructive' })
+			console.error('Board-Wise Summary PDF generation error:', error)
+			toast({ title: '❌ PDF Error', description: 'Failed to generate Board-Wise Summary.', variant: 'destructive' })
 		} finally {
 			setGeneratingCourseSummary(false)
 		}
@@ -436,6 +439,31 @@ export default function PassPercentageReportPage() {
 			toast({ title: '❌ PDF Error', description: 'Failed to generate Course-Wise Summary template.', variant: 'destructive' })
 		} finally {
 			setGeneratingTemplate(false)
+		}
+	}
+
+	// ─── Download Course-Wise Summary as Word (.doc) ─────
+	const handleDownloadWord = async () => {
+		if (!reportData) return
+		try {
+			setGeneratingWord(true)
+			const { logoBase64, rightLogoBase64 } = await loadLogos()
+			// Use the per-board/per-programme reports so each starts on its own page
+			const reports = reportType === 'board' ? allBoardReports : allProgramReports
+			const finalReports = reports.length > 0 ? reports : [reportData]
+			const fileName = await generatePassPercentageWord({
+				reports: finalReports,
+				reportType,
+				logoImage: logoBase64,
+				rightLogoImage: rightLogoBase64,
+				summaryOnly: true,
+			})
+			toast({ title: '✅ Word Generated', description: `Downloaded ${fileName}`, className: 'bg-green-50 border-green-200 text-green-800' })
+		} catch (error) {
+			console.error('Word generation error:', error)
+			toast({ title: '❌ Word Error', description: 'Failed to generate Word file.', variant: 'destructive' })
+		} finally {
+			setGeneratingWord(false)
 		}
 	}
 
@@ -589,10 +617,10 @@ export default function PassPercentageReportPage() {
 										<Tooltip>
 											<TooltipTrigger asChild>
 												<Button onClick={handleDownloadCourseSummary} disabled={generatingCourseSummary} variant="outline" size="sm" className="h-8 text-sm px-3">
-													{generatingCourseSummary ? <Loader2 className="h-4 w-4 animate-spin" /> : <><ClipboardList className="mr-1.5 h-3.5 w-3.5" />Course Summary</>}
+													{generatingCourseSummary ? <Loader2 className="h-4 w-4 animate-spin" /> : <><FileDown className="mr-1.5 h-3.5 w-3.5" />Board Summary PDF</>}
 												</Button>
 											</TooltipTrigger>
-											<TooltipContent>Download COURSE-WISE SUMMARY only (official 4 signatures)</TooltipContent>
+											<TooltipContent>Download BOARD-WISE SUMMARY only (official 4 signatures)</TooltipContent>
 										</Tooltip>
 										<Tooltip>
 											<TooltipTrigger asChild>
@@ -600,7 +628,7 @@ export default function PassPercentageReportPage() {
 													{generatingSummary ? <Loader2 className="h-4 w-4 animate-spin" /> : <><BarChart3 className="mr-1.5 h-3.5 w-3.5" />Summary</>}
 												</Button>
 											</TooltipTrigger>
-											<TooltipContent>Download Course-Wise Summary (Board Chairman(s) &amp; Examiner(s))</TooltipContent>
+											<TooltipContent>Download Board-Wise Summary (Board Chairman(s) &amp; Examiner(s))</TooltipContent>
 										</Tooltip>
 										<Tooltip>
 											<TooltipTrigger asChild>
@@ -608,7 +636,15 @@ export default function PassPercentageReportPage() {
 													{generatingTemplate ? <Loader2 className="h-4 w-4 animate-spin" /> : <><FileText className="mr-1.5 h-3.5 w-3.5" />Template</>}
 												</Button>
 											</TooltipTrigger>
-											<TooltipContent>Download Course-Wise Summary Template (counts filled, marks blank)</TooltipContent>
+											<TooltipContent>Download Board-Wise Summary Template (counts filled, marks blank)</TooltipContent>
+										</Tooltip>
+										<Tooltip>
+											<TooltipTrigger asChild>
+												<Button onClick={handleDownloadWord} disabled={generatingWord} variant="outline" size="sm" className="h-8 text-sm px-3">
+													{generatingWord ? <Loader2 className="h-4 w-4 animate-spin" /> : <><FileType className="mr-1.5 h-3.5 w-3.5" />Board Summary docx</>}
+												</Button>
+											</TooltipTrigger>
+											<TooltipContent>Download Board-Wise Summary as Word (.docx) — each board/programme on its own page</TooltipContent>
 										</Tooltip>
 										<Tooltip>
 											<TooltipTrigger asChild>
@@ -1063,7 +1099,7 @@ export default function PassPercentageReportPage() {
 								{/* Course Summary */}
 								<div className="rounded-md border overflow-hidden">
 									<div className="px-3 py-2 bg-muted/50 border-b">
-										<p className="text-xs font-semibold uppercase tracking-wider">Course-wise Summary</p>
+										<p className="text-xs font-semibold uppercase tracking-wider">Board-wise Summary</p>
 									</div>
 									<Table>
 										<TableHeader className="bg-muted/30">

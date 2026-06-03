@@ -101,11 +101,12 @@ function generatePdfContent(
 
 		currentY += 6
 
-		// Report title — font 11 bold
+		// Report title — font 11 bold (wraps if too long, e.g. long board names)
 		doc.setFont('times', 'bold')
 		doc.setFontSize(11)
-		doc.text(title, pageWidth / 2, currentY, { align: 'center' })
-		currentY += 5
+		const titleLines = doc.splitTextToSize(title, pageWidth - 2 * margin)
+		doc.text(titleLines, pageWidth / 2, currentY, { align: 'center' })
+		currentY += titleLines.length * 5
 
 		// Degree subtitle (if board-wise)
 		if (degreeSubtitle) {
@@ -524,8 +525,9 @@ function generateCourseSummaryContent(
 
 		doc.setFont('times', 'bold')
 		doc.setFontSize(11)
-		doc.text(title, textCenter, currentY, { align: 'center' })
-		currentY += 5
+		const titleLines = doc.splitTextToSize(title, pageWidth - 2 * margin)
+		doc.text(titleLines, textCenter, currentY, { align: 'center' })
+		currentY += titleLines.length * 5
 
 		if (degreeSubtitle) {
 			doc.setFont('times', 'normal')
@@ -542,7 +544,7 @@ function generateCourseSummaryContent(
 		// Report-specific subtitle (left-aligned)
 		doc.setFont('times', 'bold')
 		doc.setFontSize(10)
-		doc.text('COURSE-WISE SUMMARY', margin, currentY)
+		doc.text('BOARD-WISE SUMMARY', margin, currentY)
 		currentY += 7
 	}
 
@@ -605,7 +607,12 @@ function generateCourseSummaryContent(
 			'Pass %'
 		]],
 		body: courseSummaryData,
-		margin: { left: margin, right: margin },
+		// Reserve bottom space so the signature block always fits below the last
+		// rows (no orphan signature page); repeat the header on every page
+		// (Excel "print titles") and never split a row across pages.
+		margin: { left: margin, right: margin, bottom: 48 },
+		showHead: 'everyPage',
+		rowPageBreak: 'avoid',
 		styles: {
 			font: 'times',
 			fontSize: 9,
@@ -639,7 +646,9 @@ function generateCourseSummaryContent(
 	currentY = (doc as any).lastAutoTable.finalY + 5
 
 	// ─── SIGNATURES (Board Chairman(s) + Examiner(s)) ────
-	if (currentY > pageHeight - 45) {
+	// The reserved bottom margin (48mm) guarantees room here, so the signature
+	// stays on the same page as the last rows. The guard is a safety fallback.
+	if (currentY > pageHeight - 36) {
 		doc.addPage()
 		currentY = margin + 10
 	}
@@ -669,7 +678,7 @@ export function generateCourseSummaryPDF(options: PdfOptions): string {
 	generateCourseSummaryContent(doc, report, logoImage, rightLogoImage, fullSignatures ? FULL_SIGNATURES : SUMMARY_SIGNATURES)
 	addFooter(doc, report.generated_at)
 	const label = report.board?.board_code || report.program?.program_code || 'summary'
-	const fileName = `course-wise-summary-${label}-${new Date().toISOString().slice(0, 10)}.pdf`
+	const fileName = `board-wise-summary-${label}-${new Date().toISOString().slice(0, 10)}.pdf`
 	doc.save(fileName)
 	return fileName
 }
@@ -685,7 +694,7 @@ export function generateMultiCourseSummaryPDF(options: MultiBoardPdfOptions & { 
 	})
 	const generatedAt = reports[0]?.generated_at || new Date().toISOString()
 	addFooter(doc, generatedAt)
-	const fileName = `course-wise-summary-all-${new Date().toISOString().slice(0, 10)}.pdf`
+	const fileName = `board-wise-summary-all-${new Date().toISOString().slice(0, 10)}.pdf`
 	doc.save(fileName)
 	return fileName
 }
@@ -697,7 +706,7 @@ export function generateCourseSummaryTemplatePDF(options: PdfOptions): string {
 	generateCourseSummaryContent(doc, report, logoImage, rightLogoImage, SUMMARY_SIGNATURES, true)
 	addFooter(doc, report.generated_at)
 	const label = report.board?.board_code || report.program?.program_code || 'summary'
-	const fileName = `course-wise-summary-template-${label}-${new Date().toISOString().slice(0, 10)}.pdf`
+	const fileName = `board-wise-summary-template-${label}-${new Date().toISOString().slice(0, 10)}.pdf`
 	doc.save(fileName)
 	return fileName
 }
