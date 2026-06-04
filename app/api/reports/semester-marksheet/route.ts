@@ -62,19 +62,26 @@ function getGradeFromPercentage(
  * Check if student passed based on pass marks
  * UG: Passing requires 40% in ESE AND 40% in Total
  * PG: Passing requires 50% in ESE AND 50% in Total
+ *
+ * CIA-only (internal-only) courses have NO ESE component, so the separate ESE
+ * threshold does not apply — only the Total threshold is checked. The course is
+ * treated as CIA-only when evalType is 'CIA' or there is no ESE maximum.
  */
 function checkPassStatus(
 	eseMarks: number,
 	eseMax: number,
 	totalMarks: number,
 	totalMax: number,
-	passingPercentage: number = 40  // Default to UG (40%), use 50 for PG
+	passingPercentage: number = 40,  // Default to UG (40%), use 50 for PG
+	evalType: string = 'CIA + ESE'
 ): { isPassing: boolean; result: string } {
-	const esePercentage = eseMax > 0 ? (eseMarks / eseMax) * 100 : 0
 	const totalPercentage = totalMax > 0 ? (totalMarks / totalMax) * 100 : 0
-
-	const passesESE = esePercentage >= passingPercentage
 	const passesTotal = totalPercentage >= passingPercentage
+
+	// Only apply the ESE threshold when the course actually has an ESE component.
+	const hasESE = evalType !== 'CIA' && eseMax > 0
+	const esePercentage = hasESE ? (eseMarks / eseMax) * 100 : 0
+	const passesESE = hasESE ? esePercentage >= passingPercentage : true
 
 	if (passesESE && passesTotal) {
 		return { isPassing: true, result: 'PASS' }
@@ -168,7 +175,8 @@ export async function GET(req: NextRequest) {
 								credit,
 								credit_included,
 								course_part_master,
-								result_type
+								result_type,
+								evaluation_type
 							)
 						)
 					),
@@ -530,6 +538,7 @@ export async function GET(req: NextRequest) {
 
 				const resultType: string = courseData.result_type || 'Mark'
 				const isSpecialType = resultType === 'comment' || resultType === 'credit' || resultType === 'Status'
+				const evalType: string = (courseData.evaluation_type || 'CIA + ESE').trim().toUpperCase()
 
 				const eseMarks = fm.external_marks_obtained || 0
 				const ciaMarks = fm.internal_marks_obtained || 0
@@ -562,7 +571,7 @@ export async function GET(req: NextRequest) {
 				const specialIsPassing = letterGrade === 'AAA' ? false : (fm.is_pass ?? true)
 				const { isPassing, result } = isSpecialType
 					? { isPassing: specialIsPassing, result: fm.pass_status || 'PASS' }
-					: checkPassStatus(eseMarks, eseMax, totalMarks, totalMax, passingPercentage)
+					: checkPassStatus(eseMarks, eseMax, totalMarks, totalMax, passingPercentage, evalType)
 
 				// If failed, grade point becomes 0
 				const finalGradePoint = isSpecialType ? 0 : ((isPassing && !isAbsent) ? (gradePoint || 0) : 0)
@@ -790,7 +799,8 @@ export async function GET(req: NextRequest) {
 								credit,
 								credit_included,
 								course_part_master,
-								result_type
+								result_type,
+								evaluation_type
 							)
 						)
 					),
@@ -887,6 +897,7 @@ export async function GET(req: NextRequest) {
 
 				const resultType: string = courseData.result_type || 'Mark'
 				const isSpecialType = resultType === 'comment' || resultType === 'credit' || resultType === 'Status'
+				const evalType: string = (courseData.evaluation_type || 'CIA + ESE').trim().toUpperCase()
 
 				const eseMarks = fm.external_marks_obtained || 0
 				const ciaMarks = fm.internal_marks_obtained || 0
@@ -915,12 +926,17 @@ export async function GET(req: NextRequest) {
 				const specialIsPassingBatch = letterGrade === 'AAA' ? false : (fm.is_pass ?? true)
 				const { isPassing, result } = isSpecialType
 					? { isPassing: specialIsPassingBatch, result: fm.pass_status || 'PASS' }
-					: checkPassStatus(eseMarks, eseMax || 75, totalMarks, totalMax || 100, batchPassingPercentage)
+					: checkPassStatus(eseMarks, eseMax, totalMarks, totalMax || 100, batchPassingPercentage, evalType)
 
 				const finalGradePoint = isSpecialType ? 0 : ((isPassing && !isAbsent) ? (gradePoint || 0) : 0)
 				const credits = courseData.credit || 0
 				const creditIncluded = courseData.credit_included !== false
 				const creditPoints = isSpecialType ? 0 : credits * finalGradePoint
+
+				// CIA-only (evalType 'CIA') has no ESE max; ESE-only (evalType 'ESE') has no CIA max.
+				// Don't apply the legacy 75/25 fallback to those legitimately-zero components.
+				const resolvedEseMax = isSpecialType ? 0 : (evalType === 'CIA' ? 0 : (eseMax || 75))
+				const resolvedCiaMax = isSpecialType ? 0 : (evalType === 'ESE' ? 0 : (ciaMax || 25))
 
 				studentMap[studentId].courses.push({
 					courseCode: courseData.course_code,
@@ -929,8 +945,8 @@ export async function GET(req: NextRequest) {
 					semester: fm.course_offerings?.semester || 1,
 					courseOrder: fm.course_offerings?.course_mapping?.course_order || 0,
 					credits,
-					eseMax: isSpecialType ? 0 : (eseMax || 75),
-					ciaMax: isSpecialType ? 0 : (ciaMax || 25),
+					eseMax: resolvedEseMax,
+					ciaMax: resolvedCiaMax,
 					totalMax: isSpecialType ? 0 : (totalMax || 100),
 					eseMarks,
 					ciaMarks,

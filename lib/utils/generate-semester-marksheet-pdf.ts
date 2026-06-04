@@ -884,16 +884,26 @@ function addStudentMarksheetToDoc(
 			}
 		}
 
+		// CIA-only (internal-only) courses have no ESE component; ESE-only courses have no CIA.
+		// Show "-" for the non-applicable component instead of "0" in both MAXIMUM and SECURED.
+		const isCiaOnly = course.eseMax === 0 && course.ciaMax > 0
+		const isEseOnly = course.ciaMax === 0 && course.eseMax > 0
+
+		const eseMaxText = isCiaOnly ? '-' : course.eseMax.toString()
+		const ciaMaxText = isEseOnly ? '-' : course.ciaMax.toString()
+		const eseSecuredText = isCiaOnly ? '-' : (course.isAbsent ? 'AAA' : course.eseMarks.toString())
+		const ciaSecuredText = isEseOnly ? '-' : course.ciaMarks.toString()
+
 		const commonCols = [
 			{ content: toRoman(course.semester), styles: baseStyles },
 			{ content: course.courseCode, styles: leftAlignStyles },
 			{ content: course.courseName.toUpperCase(), styles: leftAlignStyles },
 			{ content: course.credits.toString(), styles: baseStyles },
-			{ content: course.eseMax.toString(), styles: baseStyles },
-			{ content: course.ciaMax.toString(), styles: baseStyles },
+			{ content: eseMaxText, styles: baseStyles },
+			{ content: ciaMaxText, styles: baseStyles },
 			{ content: course.totalMax.toString(), styles: baseStyles },
-			{ content: course.isAbsent ? 'AAA' : course.eseMarks.toString(), styles: baseStyles },
-			{ content: course.ciaMarks.toString(), styles: baseStyles },
+			{ content: eseSecuredText, styles: baseStyles },
+			{ content: ciaSecuredText, styles: baseStyles },
 			{ content: course.isAbsent ? 'AAA' : course.totalMarks.toString(), styles: baseStyles },
 			{ content: displayGradePoint, styles: baseStyles },
 			{ content: displayGrade, styles: baseStyles },

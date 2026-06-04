@@ -198,6 +198,7 @@ interface SubjectData {
 	course_code: string
 	course_name: string
 	course_category: string  // THEORY or PRACTICAL
+	result_type: string      // 'Mark' | 'Status' | 'comment' | 'credit'
 	total_max_mark: number
 	total_min_mark: number
 	theory_max_mark: number | null
@@ -329,6 +330,24 @@ export async function GET(req: NextRequest) {
 			})
 		}
 
+		// ── Fetch result_type for every course in the result set ───────────────
+		// The view does not expose courses.result_type. 'comment' courses carry NO
+		// numeric marks (MAX/MIN = 0) but the student still EARNS the credit when
+		// they pass. We special-case them below using this map (keyed by course_id).
+		const resultTypeMap = new Map<string, string>()
+		const courseIdList = Array.from(new Set(viewData.map((r: any) => r.course_id).filter(Boolean)))
+		if (courseIdList.length > 0) {
+			const { data: courseRows, error: courseErr } = await supabase
+				.from('courses')
+				.select('id, result_type')
+				.in('id', courseIdList)
+			if (courseErr) {
+				console.error('[NAD Export] Failed to fetch course result_types:', courseErr)
+			} else if (courseRows) {
+				for (const cr of courseRows) resultTypeMap.set(cr.id, cr.result_type || 'Mark')
+			}
+		}
+
 		// Group by student (pivot the data)
 		const studentMap = new Map<string, StudentData>()
 
@@ -382,12 +401,18 @@ export async function GET(req: NextRequest) {
 
 			// Add subject to student - using course_category from view
 			const courseCategory = (row.course_category || 'THEORY').toUpperCase()
+			const resultType = resultTypeMap.get(row.course_id) || 'Mark'
+			// 'comment' courses are descriptive-grade only — they carry no numeric marks,
+			// so MAX/MIN must be 0 (NAD requirement). Credit is handled separately below.
+			const isCommentCourse = resultType === 'comment'
+			const rawMaxMark = parseInt(row.MAX_MARKS) || 100
 			const subjectData: SubjectData = {
 				course_code: row.SUBJECT_CODE || '',
 				course_name: row.SUBJECT_NAME || '',
 				course_category: courseCategory,
-				total_max_mark: parseInt(row.MAX_MARKS) || 100,
-				total_min_mark: Math.round((parseInt(row.MAX_MARKS) || 100) * 0.4), // 40% pass mark
+				result_type: resultType,
+				total_max_mark: isCommentCourse ? 0 : rawMaxMark,
+				total_min_mark: isCommentCourse ? 0 : Math.round(rawMaxMark * 0.4), // 40% pass mark
 				// Theory columns (from view - populated if course_category = Theory)
 				theory_max_mark: row.theory_max_mark ?? null,
 				theory_min_mark: row.theory_min_mark ?? null,
@@ -791,8 +816,14 @@ export async function GET(req: NextRequest) {
 						grade = 'U'
 					}
 
-					// Credit: if grade_points = 0, credit should be 0
-					const credit = (subject.grade_points === 0 || subject.grade_points == null) ? 0 : subject.credit
+					// Credit:
+					// - 'comment' courses have grade_points = 0 by nature, but the student
+					//   still EARNS the course credit when they pass — so award it on pass.
+					// - All other courses: no credit when grade_points = 0 (fail/absent).
+					const subjectPassed = remarks === 'P' || subject.pass_status === 'PASS'
+					const credit = subject.result_type === 'comment'
+						? (subjectPassed ? subject.credit : 0)
+						: ((subject.grade_points === 0 || subject.grade_points == null) ? 0 : subject.credit)
 
 					// SUBnNM - Subject Name
 					row.push(subject.course_name)
