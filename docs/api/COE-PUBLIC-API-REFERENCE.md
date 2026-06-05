@@ -289,15 +289,23 @@ List courses with filters.
 | Name | Type | Required | Notes |
 |---|---|---|---|
 | `format` | `mapped`\|`raw` | no | Default `mapped`. `raw` returns DB column names. |
-| `institution_code` | string | no | |
+| `institutions_id` | UUID | no | Institution UUID (also accepts `institution_id`). Scoped to the key's allowed institutions. |
+| `institution_code` | string | no | Alternative to `institutions_id`. |
 | `program_code` | string | no | Filters on `offering_department_code` |
-| `regulation_code` | string | no | |
+| `regulation_code` | string | no | e.g. `R-2024` |
 | `course_code` | string | no | |
 | `search` | string | no | Matches `course_code` or `course_name` |
 | `is_active` | `true`\|`false` | no | |
 | `courses_status` | string | no | e.g. `Pending`, `Approved` |
+| `limit` | number | no | Page size, default `5000`, max `10000`. |
+| `offset` | number | no | Row offset for pagination, default `0`. |
 
-**Response (200):** `{ data: [...] }` — each item is a mapped course:
+Results are ordered by `course_code`. To retrieve the complete set for an
+institution + regulation, pass `institutions_id` and `regulation_code`; the
+response `total` is the exact match count — page with `limit`/`offset` if it
+exceeds your `limit`.
+
+**Response (200):** `{ data: [...], total, limit, offset }` — each item is a mapped course:
 
 ```json
 {
@@ -390,10 +398,29 @@ Maps a `course` to a `program × regulation × semester × batch`.
 | `regulation_code` | string | no | |
 | `course_category` | string | no | |
 | `is_active` | `true`\|`false`\|`all` | no | Default filters to `is_active = true` |
-| `details` | `true` | no | Include course details (marks, credits) in each row |
+| `details` | `true` | no | Embed the full course detail object (`courses`: title, marks, credits) in each row |
 | `limit` | int | no | Default 5000, max 10000 |
 
 **Response (200):** `{ data: [...], total: <n> }`
+
+Every row includes the human course title at the top level as **`course_title`**
+(aliased as `course_name`) plus **`regulation_code`** — so MyJKKN can read the
+title directly without `details=true`. With `details=true` the row also embeds a
+`courses` object (`course_code`, `course_title`, marks, `credits`). Example row:
+
+```json
+{
+  "id": "uuid",
+  "course_id": "uuid",
+  "course_code": "24PMAC07",
+  "course_title": "CORE-VII-COMPLEX ANALYSIS",
+  "course_name": "CORE-VII-COMPLEX ANALYSIS",
+  "program_code": "MAMATHS",
+  "regulation_code": "R-2024",
+  "semester_code": "S3",
+  "courses": { "course_code": "24PMAC07", "course_title": "CORE-VII-COMPLEX ANALYSIS", "credits": 5, "total_max_mark": 100, "total_pass_mark": 50 }
+}
+```
 
 #### `POST /api/v1/course-mapping`
 
@@ -519,14 +546,16 @@ Body: a single `internal_marks` row. Institution scoping enforced via `instituti
 
 Returns **published** final marks only, and **only after the result has been declared**.
 
-A mark row is returned when **both** conditions hold:
+A mark row is returned when **all** conditions hold:
 
 1. `final_marks.result_status = 'Published'`, and
-2. its examination session's `result_declaration_date` is set **and** has arrived
+2. its examination session's `session_status = 'Results Declared'`, and
+3. its examination session's `result_declaration_date` is set **and** has arrived
    (`result_declaration_date <= now()`).
 
-A session whose `result_declaration_date` is `NULL` or still in the future is
-treated as not-yet-declared — none of its marks are returned, even if published.
+A session that is not `Results Declared`, or whose `result_declaration_date` is
+`NULL` or still in the future, is treated as not-yet-declared — none of its marks
+are returned, even if some of them happen to be `Published`.
 When results are published in the COE app the declaration date/time is stamped to
 the publish moment automatically (unless a future date was scheduled); COE staff
 can also schedule or release it from the **Post-Exam → Result Release** page.
@@ -552,6 +581,8 @@ Each row:
   "register_number": "20BCA001",
   "course_offering_id": "uuid",
   "course_id": "uuid",
+  "course_code": "24PMAC07",
+  "course_name": "CORE-XI-FUNCTIONAL ANALYSIS",
   "program_code": "BCA",
   "internal_marks_obtained": 35,
   "internal_marks_maximum": 40,

@@ -10,6 +10,7 @@ export const GET = withExternalAuth(async (request: Request, context: ExternalAp
 		const { searchParams } = new URL(request.url)
 
 		const format = (searchParams.get('format') || 'mapped') as 'mapped' | 'raw'
+		const institutionsId = searchParams.get('institutions_id') || searchParams.get('institution_id')
 		const institutionCode = searchParams.get('institution_code')
 		const programCode = searchParams.get('program_code')
 		const regulationCode = searchParams.get('regulation_code')
@@ -20,6 +21,13 @@ export const GET = withExternalAuth(async (request: Request, context: ExternalAp
 		const courseType = searchParams.get('course_type')
 		const courseLevel = searchParams.get('course_level')
 		const courseTypeCode = searchParams.get('course_type_code')
+		const limit = Math.min(Math.max(Number(searchParams.get('limit')) || 5000, 1), 10000)
+		const offset = Math.max(Number(searchParams.get('offset')) || 0, 0)
+
+		// Helper: enforce the key's institution scope (empty allow-list = global)
+		const allowed = context.allowedInstitutionIds || []
+		const canAccessInstitution = (id: string | null) =>
+			allowed.length === 0 || (!!id && allowed.includes(id))
 
 		let query = supabase
 			.from('courses')
@@ -81,12 +89,23 @@ export const GET = withExternalAuth(async (request: Request, context: ExternalAp
 				has_hall_ticket,
 				courses_status
 			`, { count: 'exact' })
-			.order('created_at', { ascending: false })
-			.range(0, 9999)
+			.order('course_code', { ascending: true })
 
-		if (institutionCode) {
+		// Institution scoping:
+		//   - explicit institutions_id  -> filter to it (after access check)
+		//   - explicit institution_code -> filter by code
+		//   - otherwise                 -> restrict to the key's allowed institutions
+		if (institutionsId) {
+			if (!canAccessInstitution(institutionsId)) {
+				return NextResponse.json({ error: 'Access denied for this institution' }, { status: 403 })
+			}
+			query = query.eq('institutions_id', institutionsId)
+		} else if (institutionCode) {
 			query = query.eq('institution_code', institutionCode)
+		} else if (allowed.length > 0) {
+			query = query.in('institutions_id', allowed)
 		}
+
 		if (programCode) {
 			query = query.eq('offering_department_code', programCode)
 		}
@@ -115,7 +134,7 @@ export const GET = withExternalAuth(async (request: Request, context: ExternalAp
 			query = query.eq('course_type_code', courseTypeCode)
 		}
 
-		const { data, error } = await query
+		const { data, error, count } = await query.range(offset, offset + limit - 1)
 
 		if (error) {
 			console.error('Error fetching courses:', error)
@@ -123,7 +142,7 @@ export const GET = withExternalAuth(async (request: Request, context: ExternalAp
 		}
 
 		const mapped = (data || []).map((course: any) => mapCourseToResponse(course, format))
-		return NextResponse.json({ data: mapped })
+		return NextResponse.json({ data: mapped, total: count ?? mapped.length, limit, offset })
 	} catch (error) {
 		console.error('Courses GET error:', error)
 		return NextResponse.json({ error: 'Internal server error' }, { status: 500 })

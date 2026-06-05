@@ -54,6 +54,10 @@ async function enrichWithCourseMarks(
 		if (!c) return m
 		const enriched: any = {
 			...m,
+			// Always surface the human course title at the row level so
+			// consumers get it without requiring details=true.
+			course_name: c.course_name,
+			course_title: c.course_name,
 			internal_max_mark: c.internal_max_mark,
 			internal_pass_mark: c.internal_pass_mark,
 			external_max_mark: c.external_max_mark,

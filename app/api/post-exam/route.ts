@@ -62,13 +62,18 @@ export async function GET(request: Request) {
 				const declared = s.result_declaration_date ? new Date(s.result_declaration_date).getTime() : null
 				const dateReached = declared !== null && declared <= now
 				const hasPublished = (publishedCount || 0) > 0
-				const isLiveToLearners = dateReached && hasPublished
+				const isDeclared = s.session_status === 'Results Declared'
+				// Mirror the /api/v1/results gate exactly: a session is live to
+				// learners only when it is 'Results Declared', its declaration
+				// date/time has passed, and it has at least one Published mark.
+				const isLiveToLearners = isDeclared && dateReached && hasPublished
 
 				return {
 					...s,
 					total_final_marks: totalCount || 0,
 					published_final_marks: publishedCount || 0,
 					date_reached: dateReached,
+					is_declared: isDeclared,
 					is_live_to_learners: isLiveToLearners,
 				}
 			})

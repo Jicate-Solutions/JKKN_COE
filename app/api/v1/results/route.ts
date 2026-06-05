@@ -12,17 +12,21 @@ export const GET = withExternalAuth(async (request: Request, ctx: ExternalApiCon
 
 	// =========================================================
 	// VISIBILITY GATE
-	// Results are only exposed once the examination session's
-	// result_declaration_date has arrived (<= now) AND the marks are
-	// Published. We first resolve which sessions have "gone live", then
-	// restrict the marks query to those sessions. A session with a NULL or
-	// future result_declaration_date is NOT yet visible to learners.
+	// Results are only exposed when ALL of these hold for the session:
+	//   1. session_status = 'Results Declared'
+	//   2. result_declaration_date IS NOT NULL and <= now
+	// and the mark row itself is result_status = 'Published'.
+	// We first resolve which sessions have "gone live", then restrict the
+	// marks query to those sessions. A session that is not yet declared, or
+	// whose declaration date is NULL/in the future, is NOT visible — even if
+	// some of its marks happen to be Published.
 	// =========================================================
 	const nowIso = new Date().toISOString()
 
 	let sessionQuery = supabase
 		.from('examination_sessions')
 		.select('id, result_declaration_date, session_status')
+		.eq('session_status', 'Results Declared')
 		.not('result_declaration_date', 'is', null)
 		.lte('result_declaration_date', nowIso)
 
@@ -63,6 +67,10 @@ export const GET = withExternalAuth(async (request: Request, ctx: ExternalApiCon
 			register_number,
 			course_offering_id,
 			course_id,
+			courses:course_id (
+				course_code,
+				course_name
+			),
 			program_code,
 			internal_marks_obtained,
 			internal_marks_maximum,
@@ -100,11 +108,16 @@ export const GET = withExternalAuth(async (request: Request, ctx: ExternalApiCon
 		return NextResponse.json({ error: 'Failed to fetch results' }, { status: 500 })
 	}
 
-	// Attach the session's result declaration date/time (and status) to each row.
+	// Flatten the joined course into top-level course_code/course_name and
+	// attach the session's declaration date/time (and status) to each row.
 	const rows = (data || []).map((row: any) => {
 		const meta = sessionMetaById.get(row.examination_session_id)
+		const course = Array.isArray(row.courses) ? row.courses[0] : row.courses
+		const { courses, ...rest } = row
 		return {
-			...row,
+			...rest,
+			course_code: course?.course_code ?? null,
+			course_name: course?.course_name ?? course?.course_code ?? null,
 			result_declaration_date: meta?.result_declaration_date ?? null,
 			session_status: meta?.session_status ?? null,
 		}

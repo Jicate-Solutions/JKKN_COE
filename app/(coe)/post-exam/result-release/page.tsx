@@ -35,6 +35,28 @@ interface PostExamSession {
 	is_live_to_learners: boolean
 }
 
+interface GradeSystemRow {
+	id: string
+	grade_system_code: string
+	grade: string
+	grade_point: number
+	min_mark: number
+	max_mark: number
+	description: string
+	is_active?: boolean
+}
+
+// Order rows like the official grade chart: absent bands (negative marks)
+// first, then by max_mark descending (O, D+, D, A+, A ...).
+function sortGradeRows(rows: GradeSystemRow[]): GradeSystemRow[] {
+	return [...rows].sort((a, b) => {
+		const aAbsent = a.min_mark < 0 || a.max_mark < 0
+		const bAbsent = b.min_mark < 0 || b.max_mark < 0
+		if (aAbsent !== bAbsent) return aAbsent ? -1 : 1
+		return b.max_mark - a.max_mark
+	})
+}
+
 // Build a "YYYY-MM-DDTHH:mm" value for <input type="datetime-local"> in local time.
 function toDatetimeLocal(value?: string | null): string {
 	if (!value) return ""
@@ -76,6 +98,11 @@ export default function PostExamPage() {
 	const [confirmRelease, setConfirmRelease] = useState<PostExamSession | null>(null)
 	const [confirmHide, setConfirmHide] = useState<PostExamSession | null>(null)
 
+	// Grade system viewer
+	const [gradeRows, setGradeRows] = useState<GradeSystemRow[]>([])
+	const [gradeLoading, setGradeLoading] = useState(false)
+	const [gsCode, setGsCode] = useState<"UG" | "PG">("UG")
+
 	const fetchSessions = useCallback(async () => {
 		if (!isReady) return
 		setLoading(true)
@@ -97,6 +124,41 @@ export default function PostExamPage() {
 	useEffect(() => {
 		fetchSessions()
 	}, [fetchSessions])
+
+	const fetchGradeSystem = useCallback(async () => {
+		if (!isReady || !institutionId) {
+			setGradeRows([])
+			return
+		}
+		setGradeLoading(true)
+		try {
+			const res = await fetch(`/api/grading/grade-system?institutions_id=${institutionId}&is_active=true`)
+			const data = await res.json()
+			if (!res.ok) throw new Error(data?.error || "Failed to load grade system")
+			setGradeRows(Array.isArray(data) ? data : [])
+		} catch (e) {
+			toast({ title: "Error", description: e instanceof Error ? e.message : "Failed to load grade system", variant: "destructive" })
+			setGradeRows([])
+		} finally {
+			setGradeLoading(false)
+		}
+	}, [isReady, institutionId, toast])
+
+	useEffect(() => {
+		fetchGradeSystem()
+	}, [fetchGradeSystem])
+
+	// Rows for the selected System Code (UG/PG), ordered like the official chart.
+	const visibleGradeRows = useMemo(
+		() => sortGradeRows(gradeRows.filter(r => (r.grade_system_code || "").toUpperCase() === gsCode)),
+		[gradeRows, gsCode]
+	)
+
+	// Which system codes actually exist for this institution (to show/hide tabs).
+	const availableGsCodes = useMemo(() => {
+		const set = new Set(gradeRows.map(r => (r.grade_system_code || "").toUpperCase()).filter(Boolean))
+		return set
+	}, [gradeRows])
 
 	const patchDeclaration = useCallback(async (id: string, value: string | null) => {
 		setSaving(true)
@@ -332,6 +394,77 @@ export default function PostExamPage() {
 												</TableRow>
 											)
 										})
+									)}
+								</TableBody>
+							</Table>
+						</CardContent>
+					</Card>
+
+					{/* Grade System (UG / PG) */}
+					<Card>
+						<CardContent className="p-0">
+							<div className="flex items-center justify-between gap-2 flex-wrap p-4 pb-3 border-b">
+								<div>
+									<h2 className="text-sm font-semibold">Grade System</h2>
+									<p className="text-xs text-muted-foreground">Grade bands applied to results for this institution.</p>
+								</div>
+								<div className="inline-flex rounded-md border p-0.5 bg-muted/40">
+									{(["UG", "PG"] as const).map((code) => {
+										const disabled = availableGsCodes.size > 0 && !availableGsCodes.has(code)
+										return (
+											<button
+												key={code}
+												type="button"
+												disabled={disabled}
+												onClick={() => setGsCode(code)}
+												className={
+													`px-3 py-1 text-xs font-medium rounded-[5px] transition-colors ` +
+													(gsCode === code
+														? "bg-background shadow-sm text-foreground"
+														: disabled
+															? "text-muted-foreground/40 cursor-not-allowed"
+															: "text-muted-foreground hover:text-foreground")
+												}
+											>
+												{code}
+											</button>
+										)
+									})}
+								</div>
+							</div>
+							<Table>
+								<TableHeader>
+									<TableRow>
+										<TableHead>Grade</TableHead>
+										<TableHead className="text-center">Grade Point</TableHead>
+										<TableHead className="text-center">Min Mark</TableHead>
+										<TableHead className="text-center">Max Mark</TableHead>
+										<TableHead>Description</TableHead>
+									</TableRow>
+								</TableHeader>
+								<TableBody>
+									{!institutionId ? (
+										<TableRow>
+											<TableCell colSpan={5} className="text-center py-8 text-muted-foreground">Select an institution to view its grade system.</TableCell>
+										</TableRow>
+									) : gradeLoading ? (
+										<TableRow>
+											<TableCell colSpan={5} className="text-center py-8 text-muted-foreground">Loading…</TableCell>
+										</TableRow>
+									) : visibleGradeRows.length === 0 ? (
+										<TableRow>
+											<TableCell colSpan={5} className="text-center py-8 text-muted-foreground">No {gsCode} grade system configured.</TableCell>
+										</TableRow>
+									) : (
+										visibleGradeRows.map((g) => (
+											<TableRow key={g.id}>
+												<TableCell className="font-semibold">{g.grade}</TableCell>
+												<TableCell className="text-center">{g.grade_point}</TableCell>
+												<TableCell className="text-center">{g.min_mark}</TableCell>
+												<TableCell className="text-center">{g.max_mark}</TableCell>
+												<TableCell className="text-muted-foreground">{g.description}</TableCell>
+											</TableRow>
+										))
 									)}
 								</TableBody>
 							</Table>

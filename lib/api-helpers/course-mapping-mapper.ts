@@ -1,10 +1,21 @@
 export function mapCourseMappingToResponse(dbMapping: any, format: 'mapped' | 'raw' = 'mapped') {
   if (!dbMapping) return null
 
+  // Human course title comes from the embedded course (details=true) or from a
+  // course_name/course_title field if already present on the row.
+  const courseTitle =
+    dbMapping.courses?.course_title ??
+    dbMapping.courses?.course_name ??
+    dbMapping.course_title ??
+    dbMapping.course_name ??
+    null
+
   const base = {
     id: dbMapping.id,
     course_id: dbMapping.course_id,
     course_code: dbMapping.course_code,
+    course_title: courseTitle,
+    course_name: courseTitle,
     institution_code: dbMapping.institution_code,
     institutions_id: dbMapping.institutions_id,
     program_code: dbMapping.program_code,
