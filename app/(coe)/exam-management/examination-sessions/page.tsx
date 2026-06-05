@@ -25,6 +25,17 @@ import { useInstitutionFilter } from "@/hooks/use-institution-filter"
 import { useMyJKKNPrograms } from "@/hooks/myjkkn/use-myjkkn-data"
 import type { COEProgram } from "@/services/myjkkn/myjkkn-adapter-service"
 
+// Convert a stored timestamptz (or legacy date string) into the
+// "YYYY-MM-DDTHH:mm" shape that a <input type="datetime-local"> expects,
+// in the user's local time zone. Returns "" when there is no value.
+function toDatetimeLocal(value?: string | null): string {
+	if (!value) return ""
+	const d = new Date(value)
+	if (isNaN(d.getTime())) return ""
+	const pad = (n: number) => String(n).padStart(2, "0")
+	return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+
 interface ExaminationSession {
 	id: string
 	institutions_id: string
@@ -504,7 +515,7 @@ export default function ExaminationSessionsPage() {
 			registration_end_date: session.registration_end_date,
 			exam_start_date: session.exam_start_date,
 			exam_end_date: session.exam_end_date,
-			result_declaration_date: session.result_declaration_date || "",
+			result_declaration_date: toDatetimeLocal(session.result_declaration_date),
 			session_status: session.session_status,
 			is_online_exam: session.is_online_exam,
 			allow_late_registration: session.allow_late_registration,
@@ -1311,18 +1322,21 @@ export default function ExaminationSessionsPage() {
 									{errors.exam_end_date && <p className="text-xs text-destructive">{errors.exam_end_date}</p>}
 								</div>
 
-								{/* Result Declaration Date */}
+								{/* Result Declaration Date & Time */}
 								<div className="space-y-2 md:col-span-2">
 									<Label htmlFor="result_declaration_date" className="text-sm font-semibold">
-										Result Declaration Date
+										Result Declaration Date &amp; Time
 									</Label>
 									<Input
 										id="result_declaration_date"
-										type="date"
+										type="datetime-local"
 										value={formData.result_declaration_date}
 										onChange={(e) => setFormData({ ...formData, result_declaration_date: e.target.value })}
 										className="h-10"
 									/>
+									<p className="text-xs text-muted-foreground">
+										Results become visible to learners only at or after this date &amp; time, once final marks are published. Leave empty to use the publish moment.
+									</p>
 								</div>
 							</div>
 						</div>

@@ -18,6 +18,7 @@ Internal admin/portal routes (under `/api/admin`, `/api/auth`, `/api/master`, `/
   - [Institutions](#institutions)
   - [Boards](#boards)
   - [Examination Sessions](#examination-sessions)
+  - [Grade System](#grade-system)
   - [Courses](#courses)
   - [Course Mapping](#course-mapping)
   - [Exam Registrations](#exam-registrations)
@@ -228,6 +229,50 @@ List examination sessions for an institution.
 | `session_status` | string | no | e.g. `Active`, `Closed` |
 
 **Response (200):** bare array of `{ id, session_code, session_name, institutions_id, exam_start_date, exam_end_date, session_status, month_year }`
+
+---
+
+### Grade System
+
+#### `GET /api/v1/grade-system`
+
+Read-only (view) list of grade system definitions — grade bands, points, and
+mark ranges. **View only:** there are no create/update/delete operations on this
+resource.
+
+**Permission:** `grade-system:read`
+
+**Query params:**
+
+| Name | Type | Required | Notes |
+|---|---|---|---|
+| `institution_id` | UUID | no | COE institution UUID. Required for global (all-institution) keys; key-scoped institutions are applied automatically otherwise. |
+| `grade_system_code` | string | no | e.g. `UG`, `PG` |
+| `regulation_id` | number | no | Filter by regulation |
+| `is_active` | boolean | no | `true`/`false`; defaults to active rows only |
+
+**Response (200):** `{ data: [...], total: <n> }`
+
+Each row:
+
+```json
+{
+  "id": "uuid",
+  "institutions_id": "uuid",
+  "institutions_code": "CAS",
+  "grade_system_code": "UG",
+  "grade_id": "uuid",
+  "grade": "O",
+  "grade_point": 10,
+  "min_mark": 90,
+  "max_mark": 100,
+  "description": "Outstanding",
+  "regulation_id": 12,
+  "regulation_code": "R2021",
+  "is_active": true,
+  "grades": { "id": "uuid", "qualify": true, "is_absent": false, "exclude_cgpa": false, "result_status": "Pass" }
+}
+```
 
 ---
 
@@ -472,7 +517,19 @@ Body: a single `internal_marks` row. Institution scoping enforced via `instituti
 
 #### `GET /api/v1/results`
 
-Returns **published** final marks only (`result_status = 'Published'`).
+Returns **published** final marks only, and **only after the result has been declared**.
+
+A mark row is returned when **both** conditions hold:
+
+1. `final_marks.result_status = 'Published'`, and
+2. its examination session's `result_declaration_date` is set **and** has arrived
+   (`result_declaration_date <= now()`).
+
+A session whose `result_declaration_date` is `NULL` or still in the future is
+treated as not-yet-declared — none of its marks are returned, even if published.
+When results are published in the COE app the declaration date/time is stamped to
+the publish moment automatically (unless a future date was scheduled); COE staff
+can also schedule or release it from the **Post-Exam → Result Release** page.
 
 **Permission:** `results:read`
 
@@ -511,6 +568,9 @@ Each row:
   "pass_status": "Pass",
   "result_status": "Published",
   "is_locked": true,
+  "examination_session_id": "uuid",
+  "result_declaration_date": "2026-06-05T10:30:00.000Z",
+  "session_status": "Results Declared",
   "created_at": "..."
 }
 ```

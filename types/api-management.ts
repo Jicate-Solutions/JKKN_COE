@@ -13,6 +13,7 @@ export const API_MODULES = [
 	'cia-report',
 	'institutions',
 	'examination-sessions',
+	'grade-system',
 	'learners',
 	'timetables',
 	'courses',

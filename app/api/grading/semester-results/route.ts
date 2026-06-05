@@ -2184,6 +2184,32 @@ export async function POST(req: NextRequest) {
 				}
 			}
 
+			// Stamp the result declaration date & time on the examination session(s)
+			// involved so that the public /api/v1/results gate (result_declaration_date
+			// <= now() AND final_marks Published) opens at the publish moment.
+			// Only set it when it is currently NULL — a session that already has a
+			// future-scheduled declaration date keeps that schedule.
+			if (data && data.length > 0) {
+				const publishedSessionIds = [...new Set(data.map(sr => sr.examination_session_id).filter(Boolean))]
+				if (publishedSessionIds.length > 0) {
+					// Stamp the declaration date to NOW only where one was not already
+					// scheduled, and flip the session to 'Results Declared' at the same
+					// time (results are going live now). A session with a future-scheduled
+					// date keeps that schedule and is left untouched here.
+					const { error: declError } = await supabase
+						.from('examination_sessions')
+						.update({
+							result_declaration_date: new Date().toISOString(),
+							session_status: 'Results Declared',
+						})
+						.in('id', publishedSessionIds)
+						.is('result_declaration_date', null)
+					if (declError) {
+						console.error('[Publish] Failed to auto-set result_declaration_date:', declError)
+					}
+				}
+			}
+
 			// Clear backlogs for students who passed in this session (ADDED for publish action)
 			let clearedBacklogsCount = 0
 			if (data && data.length > 0) {

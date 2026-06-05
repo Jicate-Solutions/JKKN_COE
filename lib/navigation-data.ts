@@ -278,6 +278,7 @@ export const navMain: NavItem[] = [
 		icon: CheckSquare,
 		coe_roles: ['super_admin', 'coe', 'coe_mark_entry', 'coe_office_1'],
 		items: [
+			{ title: 'Result Release', url: '/post-exam/result-release', icon: CheckSquare },
 			{ title: 'Dummy Numbers', url: '/utilities/dummy-numbers', icon: Hash, permission: 'page.utilities.dummy_numbers.view' },
 			{ title: 'Answer Sheet Packets', url: '/post-exam/answer-sheet-packets', icon: Package, permission: 'page.post_exam.answer_sheet_packets.view' },
 			{ title: 'Central Valuation', url: '/post-exam/central-valuation/dates', icon: ClipboardCheck, permission: 'page.post_exam.central_valuation.dates.view' },

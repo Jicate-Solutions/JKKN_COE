@@ -2,6 +2,7 @@
 
 import { Bell, ChevronsUpDown, LogOut, Loader2, User, Settings, HelpCircle, Shield, Building2, Clock, Bug } from "lucide-react"
 import { useState, useEffect } from "react"
+import { useRouter } from "next/navigation"
 
 import {
   Avatar,
@@ -33,6 +34,7 @@ interface NavUserProps {
 
 export function NavUser({ variant = "compact" }: NavUserProps) {
   const { isMobile } = useSidebar()
+  const router = useRouter()
   const { user, logout, isLoading } = useAuth()
   const { reportBug, isAvailable } = useBugReporter()
   const [isLoggingOut, setIsLoggingOut] = useState(false)
@@ -240,7 +242,7 @@ export function NavUser({ variant = "compact" }: NavUserProps) {
 
             {/* Profile Actions */}
             <DropdownMenuGroup>
-              <DropdownMenuItem className="cursor-pointer rounded-lg">
+              <DropdownMenuItem className="cursor-pointer rounded-lg" onClick={() => router.push('/profile')}>
                 <User className="h-4 w-4" />
                 <span className="font-inter">View Profile</span>
               </DropdownMenuItem>
@@ -419,7 +421,7 @@ export function NavUser({ variant = "compact" }: NavUserProps) {
 
             {/* Profile Actions */}
             <DropdownMenuGroup>
-              <DropdownMenuItem className="cursor-pointer rounded-lg">
+              <DropdownMenuItem className="cursor-pointer rounded-lg" onClick={() => router.push('/profile')}>
                 <User className="h-4 w-4" />
                 <span className="font-inter">View Profile</span>
               </DropdownMenuItem>
