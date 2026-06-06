@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
 import type { ProgramType, CourseResult, PartSummary, SemesterPartBreakdown } from '@/types/semester-results'
+import { refreshManyStudentResultCaches, invalidateStudentResultCaches } from '@/lib/result-view/cache'
 
 // =====================================================
 // GRADE CONVERSION TABLES (FROM IMAGE)
@@ -2210,6 +2211,24 @@ export async function POST(req: NextRequest) {
 				}
 			}
 
+			// Refresh the precomputed student-result-view cache for every learner
+			// just published, so result-day reads of GET /api/v1/student-result-view
+			// are served straight from the cache (warm rows, no live join).
+			// Best-effort: a cache failure must never fail the publish itself.
+			if (data && data.length > 0) {
+				try {
+					const refreshed = await refreshManyStudentResultCaches(
+						supabase,
+						data
+							.filter(sr => sr.student_id && sr.institutions_id)
+							.map(sr => ({ studentId: sr.student_id as string, institutionId: sr.institutions_id as string })),
+					)
+					console.log(`[Publish] Refreshed ${refreshed} student-result-view cache rows`)
+				} catch (cacheErr) {
+					console.error('[Publish] student-result-view cache refresh failed:', cacheErr)
+				}
+			}
+
 			// Clear backlogs for students who passed in this session (ADDED for publish action)
 			let clearedBacklogsCount = 0
 			if (data && data.length > 0) {
@@ -2670,12 +2689,32 @@ export async function POST(req: NextRequest) {
 				return NextResponse.json({ error: 'reason is required for withdrawal' }, { status: 400 })
 			}
 
+			// Capture affected learners before withdrawal so we can drop their
+			// precomputed result-view cache rows (next read rebuilds from truth).
+			const { data: affected } = await supabase
+				.from('semester_results')
+				.select('student_id, institutions_id')
+				.in('id', semesterResultIds)
+
 			const { data, error } = await supabase.rpc('withdraw_semester_results', {
 				p_semester_result_ids: semesterResultIds,
 				p_withdrawal_reason: reason
 			})
 
 			if (error) throw error
+
+			if (affected && affected.length > 0) {
+				try {
+					await invalidateStudentResultCaches(
+						supabase,
+						affected
+							.filter(sr => sr.student_id && sr.institutions_id)
+							.map(sr => ({ studentId: sr.student_id as string, institutionId: sr.institutions_id as string })),
+					)
+				} catch (cacheErr) {
+					console.error('[Withdraw] student-result-view cache invalidation failed:', cacheErr)
+				}
+			}
 
 			return NextResponse.json({
 				success: true,

@@ -21,7 +21,16 @@ const store = new Map<string, RateLimitEntry>()
 
 // Config: per-key limits
 const WINDOW_MS = 60_000 // 1 minute
-const MAX_REQUESTS_PER_KEY = 60 // 60 requests per key per minute
+// Application default ceiling when a key has no explicit rate_limit_per_min.
+// Raised from 60 to give the aggregate endpoint result-day headroom; ops can
+// override per key (e.g. a higher limit for the shared MyJKKN key, or
+// independent limits on per-institution keys) via api_keys.rate_limit_per_min.
+const DEFAULT_MAX_REQUESTS_PER_KEY = 300
+
+/** Resolve the effective per-minute ceiling for a key. */
+function resolveLimit(limitOverride?: number | null): number {
+	return limitOverride && limitOverride > 0 ? limitOverride : DEFAULT_MAX_REQUESTS_PER_KEY
+}
 
 // Cleanup stale entries every 5 minutes
 const CLEANUP_INTERVAL = 5 * 60 * 1000
@@ -45,9 +54,11 @@ function cleanup(): void {
  */
 export function checkApiKeyRateLimit(
 	accessKeyId: string,
-	requestId: string
+	requestId: string,
+	limitOverride?: number | null
 ): NextResponse | null {
 	const now = Date.now()
+	const maxRequests = resolveLimit(limitOverride)
 
 	// Periodic cleanup
 	cleanup()
@@ -64,13 +75,13 @@ export function checkApiKeyRateLimit(
 	entry.timestamps = entry.timestamps.filter((t) => t > windowStart)
 
 	// Check limit
-	if (entry.timestamps.length >= MAX_REQUESTS_PER_KEY) {
+	if (entry.timestamps.length >= maxRequests) {
 		const oldestInWindow = entry.timestamps[0]
 		const retryAfterMs = oldestInWindow + WINDOW_MS - now
 		const retryAfterSec = Math.ceil(retryAfterMs / 1000)
 
 		const errorBody: ExternalApiErrorResponse = {
-			error: `Rate limit exceeded. Maximum ${MAX_REQUESTS_PER_KEY} requests per minute per API key.`,
+			error: `Rate limit exceeded. Maximum ${maxRequests} requests per minute per API key.`,
 			code: 'RATE_LIMIT_EXCEEDED',
 			request_id: requestId,
 		}
@@ -79,7 +90,7 @@ export function checkApiKeyRateLimit(
 			status: 429,
 			headers: {
 				'Retry-After': String(retryAfterSec),
-				'X-RateLimit-Limit': String(MAX_REQUESTS_PER_KEY),
+				'X-RateLimit-Limit': String(maxRequests),
 				'X-RateLimit-Remaining': '0',
 				'X-RateLimit-Reset': String(Math.ceil((oldestInWindow + WINDOW_MS) / 1000)),
 			},
@@ -95,11 +106,15 @@ export function checkApiKeyRateLimit(
 /**
  * Get rate limit info for adding to response headers.
  */
-export function getApiKeyRateLimitInfo(accessKeyId: string): { limit: number; remaining: number } {
+export function getApiKeyRateLimitInfo(
+	accessKeyId: string,
+	limitOverride?: number | null,
+): { limit: number; remaining: number } {
+	const maxRequests = resolveLimit(limitOverride)
 	const entry = store.get(accessKeyId)
 	const used = entry?.timestamps.length ?? 0
 	return {
-		limit: MAX_REQUESTS_PER_KEY,
-		remaining: Math.max(0, MAX_REQUESTS_PER_KEY - used),
+		limit: maxRequests,
+		remaining: Math.max(0, maxRequests - used),
 	}
 }

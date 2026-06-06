@@ -32,6 +32,16 @@ function methodToOperation(method: string): ApiOperation | null {
 }
 
 /**
+ * Aggregate/composite endpoints whose URL segment is not itself an API module
+ * but which are governed by an existing module's permission. The new
+ * student-result-view endpoint is purpose-built around results and is gated by
+ * `results:read`, so a key already granted results:read can call it.
+ */
+const ENDPOINT_MODULE_ALIASES: Record<string, ApiModule> = {
+	'student-result-view': 'results',
+}
+
+/**
  * Extracts the module name from the API endpoint URL.
  * Expected format: /api/v1/{module}/...
  *
@@ -42,6 +52,10 @@ function extractModule(endpoint: string): ApiModule | null {
 	const match = endpoint.match(/\/api\/v1\/([^/?]+)/)
 	if (match) {
 		const segment = match[1]
+		// Composite endpoints map to a governing module (e.g. results:read).
+		if (ENDPOINT_MODULE_ALIASES[segment]) {
+			return ENDPOINT_MODULE_ALIASES[segment]
+		}
 		if ((API_MODULES as readonly string[]).includes(segment)) {
 			return segment as ApiModule
 		}

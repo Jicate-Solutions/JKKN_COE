@@ -180,6 +180,8 @@ export interface ExternalApiContext {
 	allowedModules: ApiPermission[]
 	/** Institution IDs the app may access. Empty array = all institutions. */
 	allowedInstitutionIds: string[]
+	/** Per-key requests/minute ceiling. null = application default. */
+	rateLimitPerMin?: number | null
 	requestId: string
 }
 

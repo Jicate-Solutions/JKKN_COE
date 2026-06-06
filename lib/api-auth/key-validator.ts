@@ -14,6 +14,8 @@ export interface ValidatedKey {
 	allowedDomains: string[]
 	institutionsId: string | null
 	institutionCode: string | null
+	/** Optional per-key requests/minute ceiling. null = application default. */
+	rateLimitPerMin: number | null
 }
 
 export interface KeyValidationError {
@@ -53,6 +55,7 @@ export async function validateApiKey(
 			secret_key_hash,
 			status,
 			expires_at,
+			rate_limit_per_min,
 			api_applications (
 				id,
 				name,
@@ -157,6 +160,7 @@ export async function validateApiKey(
 			allowedDomains: app.allowed_domains || [],
 			institutionsId: app.institutions_id,
 			institutionCode: app.institution_code,
+			rateLimitPerMin: (keyRecord as { rate_limit_per_min?: number | null }).rate_limit_per_min ?? null,
 		},
 	}
 }

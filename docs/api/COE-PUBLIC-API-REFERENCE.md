@@ -25,6 +25,7 @@ Internal admin/portal routes (under `/api/admin`, `/api/auth`, `/api/master`, `/
   - [Learners](#learners)
   - [Internal Marks](#internal-marks)
   - [Results (Final Marks)](#results-final-marks)
+  - [Student Result View (aggregate)](#student-result-view-aggregate)
   - [CIA Settings](#cia-settings)
   - [CIA Marks — Sync](#cia-marks--sync)
   - [CIA Marks — Report](#cia-marks--report)
@@ -605,6 +606,32 @@ Each row:
   "created_at": "..."
 }
 ```
+
+---
+
+### Student Result View (aggregate)
+
+`GET /api/v1/student-result-view` — **Permission:** `results:read`
+
+Returns a learner's **entire result history grouped by exam session** in a
+**single call** — one tab per session, each holding its regular **and** arrear
+(re-appear) papers, with marks, grades, SGPA, and the grade-band legend. Each
+session tab is labelled by the semester of its regular papers. Built to replace
+the ~20 separate `/api/v1/*` calls the MyJKKN result page used to make per
+student.
+
+| Query param | Notes |
+|---|---|
+| `student_id` (UUID) **or** `register_number` (string) | Exactly one. |
+| `institution_id` (UUID) | Required for global keys; auto-applied for scoped keys. |
+| `examination_session_id` (UUID, optional) | Omit = all semesters. |
+
+Marks obey the same visibility gate as `/results` (`is_published=false` with null
+marks until the session's results are declared). Response carries
+`Cache-Control: private, max-age=30, stale-while-revalidate=120`.
+
+➡ **Full schema, examples, TypeScript types and the old→new migration map:**
+[student-result-view-integration.md](./student-result-view-integration.md)
 
 ---
 

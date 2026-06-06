@@ -173,6 +173,7 @@ export async function authenticateExternalApi(
 		institutionCode: validatedKey.institutionCode,
 		allowedModules: permissionResult.permissions,
 		allowedInstitutionIds: permissionResult.allowedInstitutionIds,
+		rateLimitPerMin: validatedKey.rateLimitPerMin,
 		requestId,
 	}
 
@@ -252,8 +253,8 @@ export function withExternalAuth(handler: ExternalApiHandler) {
 			accessKeyId = context.accessKeyId
 			requestId = context.requestId
 
-			// Per-API-key rate limiting
-			const rateLimitResponse = checkApiKeyRateLimit(context.accessKeyId, requestId)
+			// Per-API-key rate limiting (uses the key's configured ceiling if set)
+			const rateLimitResponse = checkApiKeyRateLimit(context.accessKeyId, requestId, context.rateLimitPerMin)
 			if (rateLimitResponse) {
 				logApiRequest({
 					app_id: appId,
@@ -275,7 +276,7 @@ export function withExternalAuth(handler: ExternalApiHandler) {
 			const response = await handler(request, context)
 
 			// Add rate limit info to response headers
-			const rlInfo = getApiKeyRateLimitInfo(context.accessKeyId)
+			const rlInfo = getApiKeyRateLimitInfo(context.accessKeyId, context.rateLimitPerMin)
 			response.headers.set('X-RateLimit-Limit', String(rlInfo.limit))
 			response.headers.set('X-RateLimit-Remaining', String(rlInfo.remaining))
 
