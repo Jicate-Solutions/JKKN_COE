@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
 import { withExternalAuth } from '@/lib/api-auth/middleware'
 import type { ExternalApiContext } from '@/types/api-management'
+import { invalidateStudentCiaCaches } from '@/lib/cia-view/cache'
 
 /**
  * POST /api/v1/cia-marks/sync
@@ -342,6 +343,16 @@ export const POST = withExternalAuth(async (request: Request, ctx: ExternalApiCo
 
 	const synced = insertCount + updateCount
 	const failed = results.filter(r => r.status === 'error').length
+
+	// Drop the precomputed CIA view for every learner whose marks just changed, so
+	// GET /api/v1/student-cia-view rebuilds on the next read. Best-effort: a
+	// missing cache table (not yet migrated) just logs and is ignored.
+	if (synced > 0) {
+		const touched = validRecords
+			.map(r => ({ studentId: String(r.student_id), institutionId: String(r.institutions_id) }))
+			.filter(s => s.studentId && s.institutionId)
+		await invalidateStudentCiaCaches(supabase, touched)
+	}
 
 	// First error message (if any) for top-level error field
 	const firstError = results.find(r => r.status === 'error')?.error

@@ -29,6 +29,7 @@ Internal admin/portal routes (under `/api/admin`, `/api/auth`, `/api/master`, `/
   - [CIA Settings](#cia-settings)
   - [CIA Marks — Sync](#cia-marks--sync)
   - [CIA Marks — Report](#cia-marks--report)
+  - [Student CIA View (aggregate)](#student-cia-view-aggregate)
   - [BOS Compositions](#bos-compositions)
   - [BOS Meetings](#bos-meetings)
   - [BOS Experts](#bos-experts)
@@ -828,6 +829,35 @@ Returns a CIA report for a course + round with dummy numbers and digit-by-digit 
 ```
 
 Available component codes in `marks`: `assignment`, `quiz`, `mid_term`, `presentation`, `attendance`, `lab`, `project`, `seminar`, `viva`, `test_1`, `test_2`, `test_3`, `other`.
+
+---
+
+### Student CIA View (aggregate)
+
+`GET /api/v1/student-cia-view` — **Permission:** `cia-report:read`
+
+Returns a learner's **entire internal-assessment (CIA) view grouped by exam
+session** in a **single call** — one tab per session, each holding that session's
+CIA round/component configuration (`settings[]`) plus the learner's component
+marks per course per round (`courses[].rounds[]`), for regular **and** arrear
+papers. Built to replace the **40+** separate `/api/v1/*` calls the MyJKKN
+"Internal Marks" tab made per student (`examination-sessions` + per-session
+`registrations` + `cia-settings` + `cia-marks/report` per course per round).
+
+| Query param | Notes |
+|---|---|
+| `student_id` (UUID) **or** `register_number` (string) | Exactly one. |
+| `institution_id` (UUID) | Required for global keys; auto-applied for scoped keys. |
+| `examination_session_id` (UUID, optional) | Omit = all sessions. |
+
+Per-learner only — the marks query is scoped to the resolved learner, so no other
+student's marks can leak. Unlike `/results` there is **no** publish gate: a
+component not yet entered is `null` and a round with no entries has
+`has_entries: false`. Response carries
+`Cache-Control: private, max-age=30, stale-while-revalidate=120`.
+
+➡ **Full schema, examples, TypeScript types and the old→new migration map:**
+[student-cia-view-integration.md](./student-cia-view-integration.md)
 
 ---
 

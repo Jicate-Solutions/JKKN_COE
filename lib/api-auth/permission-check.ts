@@ -39,6 +39,9 @@ function methodToOperation(method: string): ApiOperation | null {
  */
 const ENDPOINT_MODULE_ALIASES: Record<string, ApiModule> = {
 	'student-result-view': 'results',
+	// Aggregate CIA/internal view — governed by the CIA report permission, so a
+	// key already granted cia-report:read can call it.
+	'student-cia-view': 'cia-report',
 }
 
 /**
