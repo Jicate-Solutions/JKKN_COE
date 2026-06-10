@@ -112,3 +112,14 @@ Use these skills for detailed patterns — do not ask Claude to reproduce them i
 | Schema changes | `supabase-schema-change` |
 | Debug database | `debug-db` |
 | PDF reports | `pdf-processing-pro` |
+| Role-based access (6 roles, route guards) | `rbac-coe-permissions` |
+| Audit trail for mark changes | `exam-audit-trail` |
+| Exam registration + eligibility checks | `exam-registration` |
+| Hall ticket PDF + QR generation | `hall-ticket-pdf` |
+| Mark entry draft/submit/approve flow | `mark-entry-workflow` |
+| CIA+ESE result compilation + grace marks | `result-compilation` |
+| Multi-level result declaration approval | `result-declaration-workflow` |
+| Grade card / marksheet PDF | `grade-card-pdf` |
+| Semester marksheet PDF (data fetch, arrears, part GPA, batch) | `semester-marksheet-pdf` |
+| Revaluation application + result revision | `revaluation-system` |
+| Question bank + Bloom's taxonomy + blueprints | `question-bank` |

@@ -74,6 +74,13 @@ export function checkRateLimit(request: NextRequest): NextResponse | null {
 	// Skip rate limiting for external API (v1) — they have their own API key auth
 	if (pathname.startsWith('/api/v1')) return null
 
+	// Skip the internal image proxy. Batch reports (e.g. semester marksheets for a
+	// whole program) legitimately fetch one photo per learner — easily 100+ in a
+	// burst — and the default 100/min api cap would 429 the tail, leaving learners
+	// with blank photos. It only proxies same-origin public images, so it's not an
+	// abuse vector.
+	if (pathname.startsWith('/api/utils/image-to-base64')) return null
+
 	const category = getRouteCategory(pathname)
 	const config = RATE_LIMITS[category]
 	const key = getClientKey(request, category)

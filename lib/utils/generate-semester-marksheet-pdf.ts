@@ -232,10 +232,27 @@ export async function fetchImageAsBase64(url: string): Promise<string | null> {
 
 		// Use server-side API to fetch and convert image (bypasses CORS)
 		const apiUrl = `/api/utils/image-to-base64?url=${encodeURIComponent(url)}`
-		const response = await fetch(apiUrl)
 
-		if (!response.ok) {
-			console.warn('Failed to fetch image via API:', response.status)
+		// Retry on 429 (rate limit). Batch reports fetch many photos; if any layer
+		// throttles, back off and retry instead of silently dropping the photo.
+		const MAX_ATTEMPTS = 4
+		let response: Response | null = null
+		for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+			response = await fetch(apiUrl)
+
+			if (response.status !== 429) break
+
+			// Honour Retry-After when present, else exponential backoff (0.5s, 1s, 2s)
+			const retryAfterHeader = response.headers.get('Retry-After')
+			const retryAfterMs = retryAfterHeader
+				? Number(retryAfterHeader) * 1000
+				: 500 * Math.pow(2, attempt)
+			console.warn(`Image fetch rate-limited (429), retry ${attempt + 1}/${MAX_ATTEMPTS} in ${retryAfterMs}ms`)
+			await new Promise(resolve => setTimeout(resolve, retryAfterMs))
+		}
+
+		if (!response || !response.ok) {
+			console.warn('Failed to fetch image via API:', response?.status)
 			return null
 		}
 

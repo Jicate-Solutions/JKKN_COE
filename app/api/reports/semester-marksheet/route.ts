@@ -195,7 +195,8 @@ export async function GET(req: NextRequest) {
 			// 	query = query.eq('course_offerings.semester', parseInt(semester))
 			// }
 
-			const { data: finalMarks, error: fmError } = await query
+			// Override default 1000-row limit so students with many courses/arrears aren't truncated
+			const { data: finalMarks, error: fmError } = await query.range(0, 100000)
 
 			if (fmError) {
 				console.error('Error fetching final marks:', fmError)
@@ -443,6 +444,38 @@ export async function GET(req: NextRequest) {
 					}
 				} catch (myjkknError) {
 					console.error('[Semester Marksheet] MyJKKN API error (non-critical):', myjkknError)
+				}
+
+				// FALLBACK: the MyJKKN profiles API omits learners whose
+				// lifecycle_status = 'inactive' (e.g. absent / discontinued), so they
+				// return no photo/DOB even though the data exists. Fill from the synced
+				// local learners_profiles mirror (no lifecycle filter), matched by
+				// exact register_number. Same strategy as the batch action.
+				if (!photoUrl || !dateOfBirth) {
+					try {
+						const { data: lpRows } = await supabase
+							.from('learners_profiles')
+							.select('first_name, last_name, date_of_birth, student_photo_url')
+							.eq('register_number', registerNo)
+							.limit(1)
+						const lp: any = lpRows?.[0]
+						if (lp) {
+							if (!photoUrl && lp.student_photo_url) photoUrl = lp.student_photo_url
+							if (!dateOfBirth && lp.date_of_birth) {
+								const dob = new Date(lp.date_of_birth)
+								if (!isNaN(dob.getTime())) {
+									dateOfBirth = `${String(dob.getDate()).padStart(2, '0')}-${String(dob.getMonth() + 1).padStart(2, '0')}-${dob.getFullYear()}`
+								}
+							}
+							if (!learnerName) {
+								const nm = [lp.first_name, lp.last_name].filter(Boolean).join(' ')
+								if (nm) learnerName = nm
+							}
+							console.log(`[Semester Marksheet] Filled photo/DOB for ${registerNo} from local learners_profiles mirror`)
+						}
+					} catch (lpErr) {
+						console.warn('[Semester Marksheet] learners_profiles fallback error (non-critical):', lpErr)
+					}
 				}
 
 				// Final status
@@ -768,64 +801,126 @@ export async function GET(req: NextRequest) {
 				}, { status: 400 })
 			}
 
-			// Fetch all final marks for the criteria
-			let query = supabase
-				.from('final_marks')
-				.select(`
-					id,
-					student_id,
-					course_id,
-					credit,
-					internal_marks_obtained,
-					internal_marks_maximum,
-					external_marks_obtained,
-					external_marks_maximum,
-					total_marks_obtained,
-					total_marks_maximum,
-					percentage,
-					grade_points,
-					letter_grade,
-					grade_description,
-					is_pass,
-					pass_status,
-					course_offerings (
-						semester,
-						course_mapping (
-							course_order,
-							semester_code,
-							courses (
-								course_code,
-								course_name,
-								credit,
-								credit_included,
-								course_part_master,
-								result_type,
-								evaluation_type
-							)
-						)
-					),
-					exam_registrations (
-						stu_register_no,
-						student_name
-					)
-				`)
+			// Resolve the student cohort EXACTLY the way the learner dropdown does
+			// (the `students` action), then union with final_marks, then fetch ALL of
+			// their papers below WITHOUT a program_code filter.
+			//
+			// Why the dropdown's source (semester_results_detailed_view), not the
+			// semester_results TABLE:
+			//  - The VIEW derives program_code through joins, so it returns the full
+			//    cohort (~174). The base table's program_code column is null/mismatched
+			//    for many learners, so scoping the table by program_code silently
+			//    dropped ~80 learners who DO have marks (the "still 90 students" report).
+			// Why also union final_marks:
+			//  - Catches any learner who has marks but no compiled semester_results row.
+			// Fetching every paper for the unioned ids (no program_code filter) also
+			// preserves arrear / language (Part I-II) / elective papers.
+			let srScopeQuery = supabase
+				.from('semester_results_detailed_view')
+				.select('student_id')
 				.eq('institutions_id', institutionId)
 				.eq('examination_session_id', sessionId)
 				.eq('is_active', true)
+			if (programCode) srScopeQuery = srScopeQuery.eq('program_code', programCode)
+			if (semester) srScopeQuery = srScopeQuery.eq('semester', parseInt(semester))
 
-			if (programCode) {
-				query = query.eq('program_code', programCode)
+			let fmScopeQuery = supabase
+				.from('final_marks')
+				.select('student_id')
+				.eq('institutions_id', institutionId)
+				.eq('examination_session_id', sessionId)
+				.eq('is_active', true)
+			if (programCode) fmScopeQuery = fmScopeQuery.eq('program_code', programCode)
+
+			// Override default 1000-row limit on both scope queries
+			const [srScopeRes, fmScopeRes] = await Promise.all([
+				srScopeQuery.range(0, 1000000),
+				fmScopeQuery.range(0, 1000000),
+			])
+			if (srScopeRes.error) throw srScopeRes.error
+			if (fmScopeRes.error) throw fmScopeRes.error
+
+			const scopedStudentIds = [...new Set([
+				...((srScopeRes.data || []).map((r: any) => r.student_id)),
+				...((fmScopeRes.data || []).map((r: any) => r.student_id)),
+			].filter(Boolean))]
+
+			if (scopedStudentIds.length === 0) {
+				return NextResponse.json({ marksheets: [], total: 0 })
 			}
 
-			// ARREAR PAPERS: Don't filter by semester to include arrear papers from previous semesters
-			// Example: Semester II marksheet will show Semester II courses + failed Semester I papers
-			// if (semester) {
-			// 	query = query.eq('course_offerings.semester', parseInt(semester))
-			// }
+			// Fetch every paper for the scoped students (mirrors the single-student query:
+			// no program_code filter, no semester filter — so arrears from earlier
+			// semesters are included).
+			//
+			// IMPORTANT: fetch in CHUNKS of student_ids. A single `.in('student_id', [175
+			// UUIDs])` combined with the large nested embed below produces a ~7-8 KB GET
+			// URL, which PostgREST / the API gateway can TRUNCATE — silently returning
+			// only the learners whose IDs survived in the cut-off `in.(…)` list (this is
+			// what capped the batch at ~90 despite a 175-learner cohort). Chunking keeps
+			// every URL short, and the chunks run concurrently.
+			const FINAL_MARKS_SELECT = `
+				id,
+				student_id,
+				course_id,
+				credit,
+				internal_marks_obtained,
+				internal_marks_maximum,
+				external_marks_obtained,
+				external_marks_maximum,
+				total_marks_obtained,
+				total_marks_maximum,
+				percentage,
+				grade_points,
+				letter_grade,
+				grade_description,
+				is_pass,
+				pass_status,
+				course_offerings (
+					semester,
+					course_mapping (
+						course_order,
+						semester_code,
+						courses (
+							course_code,
+							course_name,
+							credit,
+							credit_included,
+							course_part_master,
+							result_type,
+							evaluation_type
+						)
+					)
+				),
+				exam_registrations (
+					stu_register_no,
+					student_name
+				)
+			`
 
-			const { data: finalMarks, error } = await query
+			const FM_CHUNK_SIZE = 40
+			const idChunks: string[][] = []
+			for (let i = 0; i < scopedStudentIds.length; i += FM_CHUNK_SIZE) {
+				idChunks.push(scopedStudentIds.slice(i, i + FM_CHUNK_SIZE))
+			}
 
-			if (error) throw error
+			const fmChunkResults = await Promise.all(
+				idChunks.map((chunk) =>
+					supabase
+						.from('final_marks')
+						.select(FINAL_MARKS_SELECT)
+						.in('student_id', chunk)
+						.eq('examination_session_id', sessionId)
+						.eq('is_active', true)
+						.range(0, 1000000)
+				)
+			)
+
+			const fmChunkError = fmChunkResults.find((r) => r.error)?.error
+			if (fmChunkError) throw fmChunkError
+
+			const finalMarks = fmChunkResults.flatMap((r) => r.data || [])
+			console.log(`[Semester Marksheet Batch] Cohort=${scopedStudentIds.length}, fetched ${finalMarks.length} final_marks rows across ${idChunks.length} chunks`)
 
 			// Fetch exam session and institution in parallel (performance optimization)
 			const [examSessionResult, institutionResult] = await Promise.all([
@@ -978,6 +1073,28 @@ export async function GET(req: NextRequest) {
 			const photoMap: Record<string, string> = {}
 			const nameMap: Record<string, string> = {}
 
+			// PERFORMANCE: kick off the supplementary semester_results query (folio /
+			// cgpa / published_date) NOW so it runs concurrently with the MyJKKN
+			// photo/DOB enrichment below — the two are independent.
+			// No program_code filter here: the base-table program_code is unreliable
+			// (same reason the cohort is scoped via the view), and `studentIds`
+			// already pins the exact cohort.
+			const studentIds = Object.keys(studentMap)
+			const folioMap: Record<string, string> = {}
+			const cgpaMap: Record<string, number> = {}
+			const resultPublicationDateMap: Record<string, string> = {}
+
+			let folioPromise: any = null
+			if (studentIds.length > 0) {
+				let srQuery = supabase
+					.from('semester_results')
+					.select('student_id, folio_number, cgpa, published_date')
+					.in('student_id', studentIds)
+					.eq('examination_session_id', sessionId)
+				if (semester) srQuery = srQuery.eq('semester', parseInt(semester))
+				folioPromise = srQuery.range(0, 1000000)
+			}
+
 			if (registerNumbers.length > 0) {
 				// ====================================================================
 				// Fetch photo URL and DOB from MyJKKN API using myjkkn_institution_ids
@@ -988,84 +1105,79 @@ export async function GET(req: NextRequest) {
 					const myjkknApiUrl = process.env.MYJKKN_API_URL || 'https://www.jkkn.ai/api'
 					const myjkknApiKey = process.env.MYJKKN_API_KEY || ''
 
-					// Reuse myjkkn_institution_ids fetched earlier (performance optimization)
-					console.log(`[Semester Marksheet Batch] Institution ${institutionId} has ${myjkknIds.length} myjkkn_institution_ids:`, myjkknIds)
+					// Match register numbers tolerantly: normalize case/whitespace and
+					// accept any of several MyJKKN id fields. Some profiles store the
+					// register number under roll_number / application_number, or with
+					// stray spacing/casing, which broke the strict `===` match and left
+					// those learners without photo/DOB.
+					const norm = (s: any) => (s ?? '').toString().trim().toUpperCase()
+					const regNoByNorm = new Map<string, string>()  // normalized -> original COE regNo
+					registerNumbers.forEach((rn) => regNoByNorm.set(norm(rn), rn))
 
-					// Query MyJKKN API for each institution ID with pagination
+					const applyProfile = (lp: any) => {
+						const candidates = [
+							lp.register_number, lp.registration_number,
+							lp.roll_number, lp.rollno, lp.roll_no,
+							lp.application_number,
+						]
+						let regNo: string | undefined
+						for (const c of candidates) {
+							const hit = regNoByNorm.get(norm(c))
+							if (hit) { regNo = hit; break }
+						}
+						if (!regNo) return
+						const profilePhotoUrl = lp.student_photo_url || lp.photo_url || lp.profile_photo || lp.image_url
+						if (profilePhotoUrl && !photoMap[regNo]) photoMap[regNo] = profilePhotoUrl
+						if (lp.date_of_birth && !dobMap[regNo]) {
+							const dob = new Date(lp.date_of_birth)
+							if (!isNaN(dob.getTime())) {
+								dobMap[regNo] = `${String(dob.getDate()).padStart(2, '0')}-${String(dob.getMonth() + 1).padStart(2, '0')}-${dob.getFullYear()}`
+							}
+						}
+						if (!nameMap[regNo]) {
+							const constructedName = lp.student_name || lp.full_name || [lp.first_name, lp.last_name].filter(Boolean).join(' ')
+							if (constructedName) nameMap[regNo] = constructedName
+						}
+					}
+
 					if (myjkknApiKey && myjkknIds.length > 0) {
+						const pageSize = 200
+						const MAX_PAGES = 1000      // safety cap
+						const PAGE_CONCURRENCY = 5  // fetch 5 pages at a time instead of 1
+
+						const fetchPage = async (myjkknInstId: string, page: number): Promise<any[] | null> => {
+							const p = new URLSearchParams()
+							p.set('institution_id', myjkknInstId)
+							p.set('limit', String(pageSize))
+							p.set('page', String(page))
+							const resp = await fetch(`${myjkknApiUrl}/api-management/learners/profiles?${p.toString()}`, {
+								method: 'GET',
+								headers: {
+									'Authorization': `Bearer ${myjkknApiKey}`,
+									'Accept': 'application/json',
+									'Content-Type': 'application/json',
+								},
+								cache: 'no-store',
+							})
+							if (!resp.ok) return null
+							const json = await resp.json()
+							return json.data || []
+						}
+
 						for (const myjkknInstId of myjkknIds) {
-							// Paginate through all profiles (API returns max ~200 per page)
-							let page = 1
-							const pageSize = 200
-							let hasMorePages = true
-
-							while (hasMorePages) {
-								const batchProfileParams = new URLSearchParams()
-								batchProfileParams.set('institution_id', myjkknInstId)
-								batchProfileParams.set('limit', String(pageSize))
-								batchProfileParams.set('page', String(page))
-
-								console.log(`[Semester Marksheet Batch] Querying MyJKKN API with institution_id: ${myjkknInstId}, page: ${page}`)
-
-								const batchProfileResponse = await fetch(
-									`${myjkknApiUrl}/api-management/learners/profiles?${batchProfileParams.toString()}`,
-									{
-										method: 'GET',
-										headers: {
-											'Authorization': `Bearer ${myjkknApiKey}`,
-											'Accept': 'application/json',
-											'Content-Type': 'application/json',
-										},
-										cache: 'no-store',
-									}
-								)
-
-								if (batchProfileResponse.ok) {
-									const batchProfileData = await batchProfileResponse.json()
-									const allProfiles = batchProfileData.data || []
-									console.log(`[Semester Marksheet Batch] MyJKKN institution ${myjkknInstId} page ${page} returned ${allProfiles.length} profiles`)
-
-									// Extract photo URL and DOB from MyJKKN
-									allProfiles.forEach((lp: any) => {
-										// Use register_number only
-										const regNo = lp.register_number
-										if (regNo && registerNumbers.includes(regNo)) {
-											// Get photo URL (try multiple possible field names)
-											const profilePhotoUrl = lp.student_photo_url ||
-												lp.photo_url ||
-												lp.profile_photo ||
-												lp.image_url
-											if (profilePhotoUrl && !photoMap[regNo]) {
-												photoMap[regNo] = profilePhotoUrl
-												console.log(`[Semester Marksheet Batch] Found photo for ${regNo} in institution ${myjkknInstId}`)
-											}
-
-											// Get DOB
-											if (lp.date_of_birth && !dobMap[regNo]) {
-												const dob = new Date(lp.date_of_birth)
-												if (!isNaN(dob.getTime())) {
-													dobMap[regNo] = `${String(dob.getDate()).padStart(2, '0')}-${String(dob.getMonth() + 1).padStart(2, '0')}-${dob.getFullYear()}`
-												}
-											}
-
-											// Get name from MyJKKN profile
-											if (!nameMap[regNo]) {
-												const myjkknFullName = lp.student_name || lp.full_name || ''
-												const constructedName = myjkknFullName ||
-													[lp.first_name, lp.last_name].filter(Boolean).join(' ')
-												if (constructedName) {
-													nameMap[regNo] = constructedName
-												}
-											}
-										}
-									})
-
-									// Check if there are more pages
-									hasMorePages = allProfiles.length === pageSize
-									page++
-								} else {
-									hasMorePages = false
+							let startPage = 1
+							let done = false
+							while (!done && startPage <= MAX_PAGES) {
+								const pageNums = Array.from({ length: PAGE_CONCURRENCY }, (_, i) => startPage + i)
+								const results = await Promise.all(pageNums.map((pg) => fetchPage(myjkknInstId, pg)))
+								for (const profiles of results) {
+									// null (HTTP error) or empty page => reached the end
+									if (!profiles || profiles.length === 0) { done = true; continue }
+									profiles.forEach(applyProfile)
 								}
+								// Early-exit once every learner has both photo and DOB
+								if (registerNumbers.every((rn) => photoMap[rn] && dobMap[rn])) done = true
+								startPage += PAGE_CONCURRENCY
 							}
 						}
 					} else if (!myjkknApiKey) {
@@ -1077,54 +1189,59 @@ export async function GET(req: NextRequest) {
 					console.error('[Semester Marksheet Batch] MyJKKN fetch error (non-critical):', err)
 				}
 
-				console.log(`[Semester Marksheet Batch] Final: ${Object.keys(photoMap).length} photos, ${Object.keys(dobMap).length} DOBs, ${Object.keys(nameMap).length} names from MyJKKN`)
+				// FALLBACK (same strategy the /api/myjkkn/learner-profiles proxy uses):
+				// the MyJKKN institution-pagination endpoint omits profiles whose
+				// lifecycle_status = 'inactive' (e.g. absent / discontinued learners),
+				// so they come back with no photo/DOB even though the data exists. Read
+				// those stragglers from the synced local learners_profiles mirror, which
+				// has no lifecycle filter. Matched by exact register_number, in chunks.
+				const stillMissing = registerNumbers.filter((rn) => !photoMap[rn] || !dobMap[rn])
+				if (stillMissing.length > 0) {
+					console.log(`[Semester Marksheet Batch] ${stillMissing.length} learners missing photo/DOB from MyJKKN API — filling from local learners_profiles mirror`)
+					const LP_CHUNK = 50
+					for (let i = 0; i < stillMissing.length; i += LP_CHUNK) {
+						const chunk = stillMissing.slice(i, i + LP_CHUNK)
+						const { data: lpRows, error: lpErr } = await supabase
+							.from('learners_profiles')
+							.select('register_number, roll_number, first_name, last_name, date_of_birth, student_photo_url')
+							.in('register_number', chunk)
+						if (lpErr) {
+							console.warn('[Semester Marksheet Batch] learners_profiles fallback error (non-critical):', lpErr)
+							break
+						}
+						;(lpRows || []).forEach((lp: any) => {
+							const regNo = lp.register_number
+							if (!regNo) return
+							if (!photoMap[regNo] && lp.student_photo_url) photoMap[regNo] = lp.student_photo_url
+							if (!dobMap[regNo] && lp.date_of_birth) {
+								const dob = new Date(lp.date_of_birth)
+								if (!isNaN(dob.getTime())) {
+									dobMap[regNo] = `${String(dob.getDate()).padStart(2, '0')}-${String(dob.getMonth() + 1).padStart(2, '0')}-${dob.getFullYear()}`
+								}
+							}
+							if (!nameMap[regNo]) {
+								const nm = [lp.first_name, lp.last_name].filter(Boolean).join(' ')
+								if (nm) nameMap[regNo] = nm
+							}
+						})
+					}
+				}
+
+				console.log(`[Semester Marksheet Batch] Final: ${Object.keys(photoMap).length} photos, ${Object.keys(dobMap).length} DOBs, ${Object.keys(nameMap).length} names`)
 			}
 
-			// Fetch folio numbers and other data from semester_results
-			const studentIds = Object.keys(studentMap)
-			const folioMap: Record<string, string> = {}
-			const cgpaMap: Record<string, number> = {}
-			const resultPublicationDateMap: Record<string, string> = {}
-
-			if (studentIds.length > 0) {
-				console.log(`[Semester Marksheet Batch] Querying semester_results for ${studentIds.length} students, sessionId: ${sessionId}, semester: ${semester}, programCode: ${programCode}`)
-
-				let srQuery = supabase
-					.from('semester_results')
-					.select('student_id, folio_number, cgpa, published_date')
-					.in('student_id', studentIds)
-					.eq('examination_session_id', sessionId)
-
-				// Add semester filter if provided
-				if (semester) {
-					srQuery = srQuery.eq('semester', parseInt(semester))
-				}
-
-				// Add program_code filter if provided
-				if (programCode) {
-					srQuery = srQuery.eq('program_code', programCode)
-				}
-
-				// Override default 1000-row limit
-				const { data: semesterResults, error: srError } = await srQuery.range(0, 99999)
-
+			// Now await the folio query that was started in parallel above.
+			if (folioPromise) {
+				const { data: semesterResults, error: srError } = await folioPromise
 				if (srError) {
 					console.error('[Semester Marksheet Batch] semester_results query error:', srError)
 				} else if (semesterResults) {
-					console.log(`[Semester Marksheet Batch] Found ${semesterResults.length} semester_results records`)
 					semesterResults.forEach((sr: any) => {
-						if (sr.folio_number) {
-							folioMap[sr.student_id] = sr.folio_number
-						}
-						if (sr.cgpa !== null && sr.cgpa !== undefined) {
-							cgpaMap[sr.student_id] = sr.cgpa
-						}
-						if (sr.published_date) {
-							resultPublicationDateMap[sr.student_id] = sr.published_date
-						}
+						if (sr.folio_number) folioMap[sr.student_id] = sr.folio_number
+						if (sr.cgpa !== null && sr.cgpa !== undefined) cgpaMap[sr.student_id] = sr.cgpa
+						if (sr.published_date) resultPublicationDateMap[sr.student_id] = sr.published_date
 					})
 				}
-				console.log(`[Semester Marksheet Batch] Mapped ${Object.keys(folioMap).length} folio numbers from semester_results`)
 			}
 
 			// Filter students to only include those whose PRIMARY/CURRENT semester matches the selected semester
@@ -1369,7 +1486,8 @@ export async function GET(req: NextRequest) {
 				query = query.eq('examination_session_id', sessionId)
 			}
 
-			const { data, error } = await query
+			// Override default 1000-row limit so all distinct semesters are captured
+			const { data, error } = await query.range(0, 100000)
 
 			if (error) throw error
 
@@ -1405,7 +1523,9 @@ export async function GET(req: NextRequest) {
 				query = query.eq('semester', parseInt(semester))
 			}
 
-			const { data, error } = await query.order('register_number')
+			// Override default 1000-row limit; the view has one row per student-course,
+			// so a full program can exceed 1000 rows and drop students before dedup.
+			const { data, error } = await query.order('register_number').range(0, 100000)
 
 			if (error) throw error
 
