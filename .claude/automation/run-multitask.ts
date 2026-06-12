@@ -1,3 +1,4 @@
+// CI smoke test 2026-06-12: validates org-central Claude Risk Review stub (PR will be closed, not merged).
 /**
  * JKKN COE – Multi-Agent Workflow Runner
  * Runs a chained multi-task execution using the Task tool.
