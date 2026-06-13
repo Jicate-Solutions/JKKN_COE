@@ -145,9 +145,33 @@ export async function GET(request: Request) {
 				}
 			}
 
-			// Skip the complex display_order sorting for now - just return the enriched data
+			// Flag mappings that already have exam/course offerings. Such mappings must not
+			// have their course changed or be deleted, since offerings reference the mapping id.
+			if (data && data.length > 0) {
+				try {
+					const mappingIds = data.map(m => m.id).filter(Boolean)
+					if (mappingIds.length > 0) {
+						const { data: offeringRows } = await supabase
+							.from('course_offerings')
+							.select('course_mapping_id')
+							.in('course_mapping_id', mappingIds)
+
+						const offeredCounts = new Map<string, number>()
+						offeringRows?.forEach(o => {
+							if (o.course_mapping_id) offeredCounts.set(o.course_mapping_id, (offeredCounts.get(o.course_mapping_id) || 0) + 1)
+						})
+						data = data.map(m => ({
+							...m,
+							offering_count: offeredCounts.get(m.id) || 0,
+							has_offerings: (offeredCounts.get(m.id) || 0) > 0
+						}))
+					}
+				} catch (err) {
+					console.error('[Course Mapping API] Error checking offerings:', err)
+				}
+			}
+
 			// Data is already sorted by course_order from the initial query
-			console.log('[Course Mapping API] Returning final data:', data?.length || 0, 'items')
 			return NextResponse.json(data || [])
 		}
 	} catch (err) {
@@ -268,8 +292,36 @@ export async function POST(request: Request) {
 
 			// Step 4: Batch upsert all records in a single operation
 			// Using onConflict for records with existing IDs (updates) and inserting new ones
-			const recordsWithId = upsertRecords.filter(r => r.id)
+			let recordsWithId = upsertRecords.filter(r => r.id)
 			const recordsWithoutId = upsertRecords.filter(r => !r.id)
+
+			// Guard: a mapping that already has exam/course offerings must not have its
+			// course changed. The offering references the mapping id, so swapping the course
+			// would silently point a conducted/offered exam at a different subject.
+			if (recordsWithId.length > 0) {
+				const idsToUpdate = recordsWithId.map(r => r.id)
+				const [storedRes, offeringRes] = await Promise.all([
+					supabase.from('course_mapping').select('id, course_id, course_code').in('id', idsToUpdate),
+					supabase.from('course_offerings').select('course_mapping_id').in('course_mapping_id', idsToUpdate)
+				])
+				const storedById = new Map<string, { course_id: string; course_code: string }>()
+				storedRes.data?.forEach(s => storedById.set(s.id, { course_id: s.course_id, course_code: s.course_code }))
+				const offeredIds = new Set<string>()
+				offeringRes.data?.forEach(o => o.course_mapping_id && offeredIds.add(o.course_mapping_id))
+
+				recordsWithId = recordsWithId.filter(r => {
+					const stored = storedById.get(r.id)
+					if (stored && offeredIds.has(r.id) && r.course_id !== stored.course_id) {
+						errors.push({
+							semester_code: r.semester_code,
+							course_id: r.course_id,
+							error: `Cannot change course of "${stored.course_code}" — an exam offering already exists for this mapping. Remove the offering first.`
+						})
+						return false
+					}
+					return true
+				})
+			}
 
 			let allResults: any[] = []
 
@@ -305,10 +357,53 @@ export async function POST(request: Request) {
 					.select('*')
 
 				if (insertError) {
-					console.error('Bulk insert error:', insertError)
-					// Report all records in the batch as failed rather than attempting N+1 individual inserts
+					console.error('Bulk insert error, retrying individually:', insertError)
+					// A single bad row (e.g. a duplicate that violates the unique mapping
+					// index) makes the whole batch insert fail. Retry each row on its own so
+					// valid new mappings still save and only the offending rows are reported.
 					for (const record of newRecords) {
-						errors.push({ semester_code: record.semester_code, course_id: record.course_id, error: insertError.message })
+						const { data: oneData, error: oneError } = await supabase
+							.from('course_mapping')
+							.insert([record])
+							.select('*')
+							.single()
+
+						if (!oneError) {
+							if (oneData) allResults.push(oneData)
+							continue
+						}
+
+						// A duplicate means a mapping already exists for this natural key
+						// (institution → program → regulation → semester → course). Re-adding
+						// should UPDATE that existing mapping rather than fail, so "Save All"
+						// is idempotent. The unique index is partial (active rows), so we match
+						// the natural key explicitly instead of relying on ON CONFLICT.
+						if (oneError.code === '23505') {
+							const { created_at, ...updatableFields } = record
+							const { data: updData, error: updError } = await supabase
+								.from('course_mapping')
+								.update(updatableFields)
+								.eq('course_id', record.course_id)
+								.eq('institution_code', record.institution_code)
+								.eq('program_code', record.program_code)
+								.eq('batch_code', record.batch_code ?? '')
+								.eq('regulation_code', record.regulation_code)
+								.eq('semester_code', record.semester_code)
+								.select('*')
+								.maybeSingle()
+
+							if (!updError && updData) {
+								allResults.push(updData)
+							} else {
+								errors.push({
+									semester_code: record.semester_code,
+									course_id: record.course_id,
+									error: updError?.message || `Course "${record.course_code}" is already mapped for ${record.semester_code}`
+								})
+							}
+						} else {
+							errors.push({ semester_code: record.semester_code, course_id: record.course_id, error: oneError.message })
+						}
 					}
 				} else if (insertData) {
 					allResults = [...allResults, ...insertData]
@@ -552,6 +647,27 @@ export async function PUT(request: Request) {
 
 		// If course_id is being updated, fetch the new course_code
 		if (updateData.course_id) {
+			// Guard: block changing the course on a mapping that already has offerings.
+			const { data: stored } = await supabase
+				.from('course_mapping')
+				.select('course_id, course_code')
+				.eq('id', id)
+				.single()
+
+			if (stored && stored.course_id !== updateData.course_id) {
+				const { count: offeringCount } = await supabase
+					.from('course_offerings')
+					.select('*', { count: 'exact', head: true })
+					.eq('course_mapping_id', id)
+
+				if ((offeringCount || 0) > 0) {
+					return NextResponse.json(
+						{ error: `Cannot change course of "${stored.course_code}" — an exam offering already exists for this mapping. Remove the offering first.` },
+						{ status: 409 }
+					)
+				}
+			}
+
 			const { data: courseData, error: courseError } = await supabase
 				.from('courses')
 				.select('course_code')
@@ -596,6 +712,26 @@ export async function DELETE(request: Request) {
 			return NextResponse.json(
 				{ error: 'Mapping ID is required' },
 				{ status: 400 }
+			)
+		}
+
+		// Hard block: never delete a mapping that has exam/course offerings. Offerings
+		// reference the mapping id and may have conducted exams / marks behind them, so a
+		// force-cascade is not offered here — the offering must be removed first.
+		const supabase = getSupabaseServer()
+		const { count: offeringCount } = await supabase
+			.from('course_offerings')
+			.select('*', { count: 'exact', head: true })
+			.eq('course_mapping_id', id)
+
+		if ((offeringCount || 0) > 0) {
+			return NextResponse.json(
+				{
+					error: `Cannot delete this course mapping — ${offeringCount} exam offering(s) reference it. Remove the offering(s) first.`,
+					has_offerings: true,
+					offering_count: offeringCount
+				},
+				{ status: 409 }
 			)
 		}
 

@@ -147,21 +147,54 @@ async function fetchLookupData(): Promise<LookupMaps> {
 	const localInstitutions = new Map<string, { institution_name: string; institution_code: string }>()
 	try {
 		const supabase = getSupabaseServer()
-		const { data: localInsts } = await supabase
+		// NOTE: the COE institutions table column is `name`, not `institution_name`.
+		const { data: localInsts, error: instErr } = await supabase
 			.from('institutions')
-			.select('id, institution_code, institution_name')
+			.select('id, institution_code, name')
+			.range(0, 9999)
+
+		if (instErr) console.warn('[Learner Profiles API] local institutions query error:', instErr.message)
 
 		for (const inst of localInsts || []) {
 			// Map by institution_code (counselling_code from MyJKKN)
 			if (inst.institution_code) {
 				localInstitutions.set(inst.institution_code, {
-					institution_name: inst.institution_name || '',
+					institution_name: inst.name || '',
 					institution_code: inst.institution_code
 				})
 			}
 		}
+
+		// Resolve semesters from the local COE `course_mapping` table.
+		// The MyJKKN semesters API only returns one page (~200 rows), so many semester_ids
+		// don't resolve there, collapsing a learner's current_semester to null. course_mapping
+		// is read through the same server client by the course-offering lookups route, so it is
+		// reliably readable here, and carries semester_id + semester_code (e.g. "EEE-6" → 6).
+		const { data: cmRows, error: cmErr } = await supabase
+			.from('course_mapping')
+			.select('semester_id, semester_code')
+			.not('semester_id', 'is', null)
+			.not('semester_code', 'is', null)
+			.range(0, 99999)
+
+		if (cmErr) console.warn('[Learner Profiles API] course_mapping semesters query error:', cmErr.message)
+
+		const seenSemIds = new Set<string>()
+		for (const row of cmRows || []) {
+			const semId = (row as { semester_id?: string }).semester_id
+			const semCode = (row as { semester_code?: string }).semester_code || ''
+			if (!semId || seenSemIds.has(semId)) continue
+			seenSemIds.add(semId)
+			// course_mapping wins over the truncated MyJKKN list.
+			semesters.set(semId, {
+				semester_code: semCode,
+				semester_name: semCode,
+				semester_number: parseSemesterValue(semCode),
+			})
+		}
+		console.log(`[Learner Profiles API] Merged ${seenSemIds.size} semesters from course_mapping (queried ${cmRows?.length ?? 0} rows)`)
 	} catch (err) {
-		console.warn('[Learner Profiles API] Could not fetch local institutions:', err)
+		console.warn('[Learner Profiles API] Could not fetch local institutions/semesters:', err)
 	}
 
 	console.log(`[Learner Profiles API] Lookup data loaded: ${institutions.size} institutions, ${programs.size} programs, ${semesters.size} semesters, ${departments.size} departments, ${batches.size} batches, ${localInstitutions.size} local institutions`)
@@ -328,28 +361,36 @@ export async function GET(request: NextRequest) {
 
 			console.log(`[Learner Profiles API] Page 1/${totalPages} - Fetched ${firstPageResponse.data?.length || 0}`)
 
-			// Fetch remaining pages sequentially (to avoid overwhelming the API)
-			for (let currentPage = 2; currentPage <= totalPages; currentPage++) {
-				try {
-					const response = await fetchMyJKKNLearnerProfiles({
-						...baseOptions,
-						page: currentPage,
-						limit: MYJKKN_MAX_PER_PAGE,
+			// Fetch remaining pages in parallel, in bounded batches. Sequential paging of
+			// ~23 pages dominated request latency (~8s); a small concurrency window cuts
+			// that to ~1-2s without overwhelming the MyJKKN API.
+			const PAGE_CONCURRENCY = 6
+			for (let start = 2; start <= totalPages; start += PAGE_CONCURRENCY) {
+				const batch: number[] = []
+				for (let p = start; p < start + PAGE_CONCURRENCY && p <= totalPages; p++) batch.push(p)
+
+				const batchResults = await Promise.all(
+					batch.map(async (pageNum) => {
+						try {
+							const response = await fetchMyJKKNLearnerProfiles({
+								...baseOptions,
+								page: pageNum,
+								limit: MYJKKN_MAX_PER_PAGE,
+							})
+							return response.data || []
+						} catch (pageError) {
+							console.error(`[Learner Profiles API] Error fetching page ${pageNum}:`, pageError)
+							return []
+						}
 					})
+				)
 
-					if (response.data && response.data.length > 0) {
-						allData.push(...response.data)
-					}
-
-					console.log(`[Learner Profiles API] Page ${currentPage}/${totalPages} - Fetched ${response.data?.length || 0}, Total: ${allData.length}`)
-				} catch (pageError) {
-					console.error(`[Learner Profiles API] Error fetching page ${currentPage}:`, pageError)
-					// Continue with what we have so far instead of failing completely
-					break
+				for (const data of batchResults) {
+					if (data.length > 0) allData.push(...data)
 				}
 			}
 
-			console.log(`[Learner Profiles API] Complete! Total learners fetched: ${allData.length}`)
+			console.log(`[Learner Profiles API] Complete! Total learners fetched: ${allData.length} (${totalPages} pages, concurrency ${PAGE_CONCURRENCY})`)
 
 			// If register_number was specifically requested, filter to exact matches
 			let filteredData = allData

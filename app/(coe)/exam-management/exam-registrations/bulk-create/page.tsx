@@ -1,6 +1,8 @@
 'use client'
 
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback, useMemo, memo, type CSSProperties } from 'react'
+import { FixedSizeList as VirtualList } from 'react-window'
+import AutoSizer from 'react-virtualized-auto-sizer'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useToast } from '@/hooks/common/use-toast'
@@ -26,6 +28,7 @@ import { Command, CommandEmpty, CommandInput, CommandItem, CommandList } from '@
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog'
 import { ArrowLeft, BookOpen, Check, ChevronsUpDown, ClipboardCheck, Loader2, Save, Search, Users } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { useDebounce } from '@/hooks/common/use-debounce'
 
 const ROMAN = ['', 'I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X']
 
@@ -33,9 +36,101 @@ interface ProgramOption { program_code: string; program_name: string; program_or
 interface CourseRow { course_offering_id: string; course_mapping_id: string; course_code: string; course_name: string; semester: number; semester_code: string }
 interface LearnerRow { id: string; stu_register_no: string; student_name: string }
 
+// Rows are fixed-height so the lists can be virtualized; long lists only mount
+// the visible rows. Below this count we render a plain map (cheaper, no measuring).
+const ROW_HEIGHT = 52
+const VIRTUALIZE_THRESHOLD = 40
+
+// ── Memoized course row (re-renders only when its own props change) ──
+const CourseListRow = memo(function CourseListRow({
+	course, checked, onToggle, style,
+}: {
+	course: CourseRow
+	checked: boolean
+	onToggle: (id: string) => void
+	style?: CSSProperties
+}) {
+	return (
+		<label
+			style={style}
+			className={cn(
+				'flex items-start gap-2 px-4 py-2 border-b cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-900/30 overflow-hidden',
+				checked && 'bg-blue-50/40 dark:bg-blue-950/20'
+			)}
+		>
+			<Checkbox checked={checked} onCheckedChange={() => onToggle(course.course_offering_id)} className="mt-0.5" />
+			<div className="min-w-0 flex-1">
+				<div className="flex items-center gap-2">
+					<span className="text-xs font-mono text-muted-foreground">{course.course_code}</span>
+					<Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4">Sem {ROMAN[course.semester] || course.semester}</Badge>
+				</div>
+				<div className="text-sm truncate">{course.course_name}</div>
+			</div>
+		</label>
+	)
+})
+
+// ── Memoized learner row ──
+const LearnerListRow = memo(function LearnerListRow({
+	learner, checked, fullyRegistered, regCount, selectedCoursesSize, onToggle, style,
+}: {
+	learner: LearnerRow
+	checked: boolean
+	fullyRegistered: boolean
+	regCount: number
+	selectedCoursesSize: number
+	onToggle: (id: string) => void
+	style?: CSSProperties
+}) {
+	return (
+		<label
+			style={style}
+			className={cn(
+				'flex items-center gap-2 px-4 py-2 border-b overflow-hidden',
+				fullyRegistered
+					? 'bg-amber-50/40 dark:bg-amber-950/20 cursor-not-allowed'
+					: 'cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-900/30',
+				!fullyRegistered && checked && 'bg-blue-50/40 dark:bg-blue-950/20'
+			)}
+		>
+			<Checkbox checked={checked} disabled={fullyRegistered} onCheckedChange={() => onToggle(learner.id)} />
+			<div className="min-w-0 flex-1">
+				<div className="flex items-center gap-2">
+					<span className="text-xs font-mono text-muted-foreground">{learner.stu_register_no}</span>
+					{fullyRegistered ? (
+						<Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4 border-amber-300 bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-800">
+							Registered
+						</Badge>
+					) : regCount > 0 ? (
+						<Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4 border-amber-300 bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-800">
+							{regCount}/{selectedCoursesSize} registered
+						</Badge>
+					) : null}
+				</div>
+				<div className="text-sm truncate">{learner.student_name}</div>
+			</div>
+		</label>
+	)
+})
+
 function parseSemesterNumber(semCode: string): number {
 	const m = semCode.match(/(\d+)/)
 	return m ? parseInt(m[1], 10) : 0
+}
+
+// Parse a fetch Response as JSON only when it actually is JSON. In dev (Turbopack),
+// hitting an API route mid-recompile or on a 404/500 returns an HTML page, and
+// res.json() then throws "Unexpected token '<'". This returns the parsed body when
+// JSON, or throws an Error carrying the HTTP status / a readable message instead.
+async function parseJsonResponse(res: Response): Promise<any> {
+	const contentType = res.headers.get('content-type') || ''
+	if (!contentType.includes('application/json')) {
+		const text = await res.text().catch(() => '')
+		throw new Error(
+			`Expected JSON but received ${contentType || 'unknown'} (HTTP ${res.status})${text ? `: ${text.slice(0, 200)}` : ''}`
+		)
+	}
+	return res.json()
 }
 
 // ── Searchable single-select ──
@@ -293,7 +388,7 @@ export default function BulkCreateExamRegistrationPage() {
 				semester_code: semesterCode,
 			})
 			const res = await fetch(`/api/exam-management/exam-registrations/bulk-create/lookups?${params}`)
-			const data = await res.json()
+			const data = await parseJsonResponse(res)
 			setCourses(Array.isArray(data) ? data : [])
 		} catch (e) {
 			console.error('[bulk-create] load courses failed:', e)
@@ -316,7 +411,63 @@ export default function BulkCreateExamRegistrationPage() {
 		return parseSemesterNumber(String(val))
 	}, [])
 
-	// ── Load learners (program + semester) from MyJKKN ──
+	// ── Fallback: fetch ALL institution learners from MyJKKN and filter client-side. ──
+	// Used only when the local mirror returns nothing (stale/unsynced). Also records the
+	// diagnostic counts shown in the empty state.
+	const loadLearnersFromMyJKKN = useCallback(async (): Promise<LearnerRow[]> => {
+		const targetSemesterNum = parseSemesterNumber(semesterCode)
+		const all: LearnerRow[] = []
+		const seen = new Set<string>()
+		let total = 0
+		let programMismatch = 0
+		let semesterMismatch = 0
+		const sampleSemesterMismatches: Array<{ reg: string; raw: string; parsed: number }> = []
+
+		for (const myjkknInstId of myjkknInstitutionIds) {
+			// MyJKKN server-side program_code/current_semester filtering is unreliable
+			// and returns a stripped record shape where semester_id no longer resolves.
+			// Fetch by institution only, then filter client-side.
+			const params = new URLSearchParams({ institution_id: myjkknInstId, fetchAll: 'true' })
+			const res = await fetch(`/api/myjkkn/learner-profiles?${params}`)
+			if (!res.ok) continue
+			const raw = await parseJsonResponse(res)
+			const list: any[] = raw?.data || raw || []
+			for (const s of list) {
+				const id = s.id
+				if (!id || seen.has(id)) continue
+				seen.add(id)
+				total++
+				const learnerProg = s.program_code || s.program_id
+				if (learnerProg && learnerProg !== programCode) { programMismatch++; continue }
+				const learnerSemNum = getSemesterNum(s.current_semester)
+				if (learnerSemNum !== targetSemesterNum) {
+					semesterMismatch++
+					if (sampleSemesterMismatches.length < 5) {
+						sampleSemesterMismatches.push({
+							reg: s.register_number || s.roll_number || '?',
+							raw: String(s.current_semester),
+							parsed: targetSemesterNum,
+						})
+					}
+					continue
+				}
+				all.push({
+					id,
+					stu_register_no: s.register_number || s.roll_number || '',
+					student_name: `${s.first_name || ''} ${s.last_name || ''}`.trim() || s.name || '',
+				})
+			}
+		}
+		if (sampleSemesterMismatches.length > 0) {
+			const details = sampleSemesterMismatches.map(s => `${s.reg}: raw="${s.raw}" → parsed=${s.parsed}`).join(', ')
+			console.log(`[bulk-create] ${semesterMismatch} learners skipped (expected ${targetSemesterNum}): ${details}`)
+		}
+		all.sort((a, b) => a.stu_register_no.localeCompare(b.stu_register_no))
+		setLearnerFilterStats({ total, programMismatch, semesterMismatch })
+		return all
+	}, [programCode, semesterCode, myjkknInstitutionIds, getSemesterNum])
+
+	// ── Load learners: fast local-mirror query first, live MyJKKN fetch as fallback ──
 	const loadLearners = useCallback(async () => {
 		if (!programCode || !semesterCode || myjkknInstitutionIds.length === 0) {
 			setLearners([])
@@ -326,68 +477,41 @@ export default function BulkCreateExamRegistrationPage() {
 		setLoadingLearners(true)
 		setSelectedLearners(new Set())
 		try {
-			const targetSemesterNum = parseSemesterNumber(semesterCode)
-			const all: LearnerRow[] = []
-			const seen = new Set<string>()
-			let total = 0
-			let programMismatch = 0
-			let semesterMismatch = 0
-			const sampleSemesterMismatches: Array<{ reg: string; raw: string; parsed: number }> = []
-
-			for (const myjkknInstId of myjkknInstitutionIds) {
-				// Pass program_code + current_semester (number) for filtering
+			// Fast path: one indexed query against the local learners_profiles mirror,
+			// keyed by institution + semester_id (semester_id is program-specific).
+			let rows: LearnerRow[] = []
+			if (semesterId) {
 				const params = new URLSearchParams({
-					institution_id: myjkknInstId,
-					fetchAll: 'true',
+					institution_ids: myjkknInstitutionIds.join(','),
+					semester_id: semesterId,
 					program_code: programCode,
-					current_semester: String(targetSemesterNum),
 				})
-				const res = await fetch(`/api/myjkkn/learner-profiles?${params}`)
-				if (!res.ok) continue
-				const raw = await res.json()
-				const list: any[] = raw?.data || raw || []
-				for (const s of list) {
-					const id = s.id
-					if (!id || seen.has(id)) continue
-					total++
-					const learnerProg = s.program_code || s.program_id
-					if (learnerProg && learnerProg !== programCode) { programMismatch++; continue }
-					// Filter by current_semester number (parse from learner data)
-					const learnerSemNum = getSemesterNum(s.current_semester)
-					if (learnerSemNum !== targetSemesterNum) {
-						semesterMismatch++
-						if (sampleSemesterMismatches.length < 5) {
-							sampleSemesterMismatches.push({
-								reg: s.register_number || s.roll_number || '?',
-								raw: String(s.current_semester),
-								parsed: targetSemesterNum,
-							})
-						}
-						continue
-					}
-					seen.add(id)
-					all.push({
-						id,
-						stu_register_no: s.register_number || s.roll_number || '',
-						student_name: `${s.first_name || ''} ${s.last_name || ''}`.trim() || s.name || '',
-					})
+				const res = await fetch(`/api/exam-management/exam-registrations/bulk-create/eligible-learners?${params}`)
+				if (res.ok) {
+					const json = await parseJsonResponse(res)
+					rows = (json?.data || []).map((l: any) => ({
+						id: l.id,
+						stu_register_no: l.stu_register_no || '',
+						student_name: l.student_name || '',
+					}))
 				}
 			}
-			if (sampleSemesterMismatches.length > 0) {
-				const details = sampleSemesterMismatches.map(s => `${s.reg}: raw="${s.raw}" → parsed=${s.parsed}`).join(', ')
-				console.log(`[bulk-create] ${semesterMismatch} learners skipped (expected ${targetSemester}): ${details}`)
-				console.log('[bulk-create] Full samples:', sampleSemesterMismatches)
+
+			if (rows.length > 0) {
+				setLearners(rows)
+				setLearnerFilterStats({ total: rows.length, programMismatch: 0, semesterMismatch: 0 })
+			} else {
+				// Mirror empty/stale → fall back to the live MyJKKN fetch + client filter.
+				const fallback = await loadLearnersFromMyJKKN()
+				setLearners(fallback)
 			}
-			all.sort((a, b) => a.stu_register_no.localeCompare(b.stu_register_no))
-			setLearners(all)
-			setLearnerFilterStats({ total, programMismatch, semesterMismatch })
 		} catch (e) {
 			console.error('[bulk-create] load learners failed:', e)
-			toast({ title: '❌ Load Failed', description: 'Failed to load learners from MyJKKN', variant: 'destructive' })
+			toast({ title: '❌ Load Failed', description: 'Failed to load learners', variant: 'destructive' })
 		} finally {
 			setLoadingLearners(false)
 		}
-	}, [programCode, semesterCode, myjkknInstitutionIds, toast, getSemesterNum])
+	}, [programCode, semesterCode, semesterId, myjkknInstitutionIds, toast, loadLearnersFromMyJKKN])
 
 	useEffect(() => { loadLearners() }, [loadLearners])
 
@@ -420,24 +544,27 @@ export default function BulkCreateExamRegistrationPage() {
 			.finally(() => setLoadingRegistered(false))
 	}, [institutionsId, sessionId, courses])
 
-	// ── Filtered lists ──
+	// ── Filtered lists (search debounced so filtering doesn't run on every keystroke) ──
+	const debouncedCourseSearch = useDebounce(courseSearch, 200)
+	const debouncedLearnerSearch = useDebounce(learnerSearch, 200)
+
 	const filteredCourses = useMemo(() => {
-		if (!courseSearch.trim()) return courses
-		const q = courseSearch.toLowerCase()
+		if (!debouncedCourseSearch.trim()) return courses
+		const q = debouncedCourseSearch.toLowerCase()
 		return courses.filter(c =>
 			c.course_code.toLowerCase().includes(q) ||
 			c.course_name.toLowerCase().includes(q)
 		)
-	}, [courses, courseSearch])
+	}, [courses, debouncedCourseSearch])
 
 	const filteredLearners = useMemo(() => {
-		if (!learnerSearch.trim()) return learners
-		const q = learnerSearch.toLowerCase()
+		if (!debouncedLearnerSearch.trim()) return learners
+		const q = debouncedLearnerSearch.toLowerCase()
 		return learners.filter(l =>
 			l.stu_register_no.toLowerCase().includes(q) ||
 			l.student_name.toLowerCase().includes(q)
 		)
-	}, [learners, learnerSearch])
+	}, [learners, debouncedLearnerSearch])
 
 	// ── Course select-all ──
 	const allCoursesChecked = filteredCourses.length > 0 && filteredCourses.every(c => selectedCourses.has(c.course_offering_id))
@@ -449,13 +576,13 @@ export default function BulkCreateExamRegistrationPage() {
 			return next
 		})
 	}
-	const toggleCourse = (id: string) => {
+	const toggleCourse = useCallback((id: string) => {
 		setSelectedCourses(prev => {
 			const next = new Set(prev)
 			if (next.has(id)) next.delete(id); else next.add(id)
 			return next
 		})
-	}
+	}, [])
 
 	// ── Registered-state per learner (for the currently-selected courses) ──
 	// count = how many of the selected courses this learner is already registered for
@@ -493,14 +620,14 @@ export default function BulkCreateExamRegistrationPage() {
 			return next
 		})
 	}
-	const toggleLearner = (id: string) => {
+	const toggleLearner = useCallback((id: string) => {
 		if (isLearnerFullyRegistered(id)) return // can't unselect fully-registered
 		setSelectedLearners(prev => {
 			const next = new Set(prev)
 			if (next.has(id)) next.delete(id); else next.add(id)
 			return next
 		})
-	}
+	}, [isLearnerFullyRegistered])
 
 	// ── Computed: pairs (cross-product), excluding already-registered ──
 	const pairs = useMemo(() => {
@@ -573,7 +700,7 @@ export default function BulkCreateExamRegistrationPage() {
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify(payload),
 			})
-			const result = await res.json()
+			const result = await parseJsonResponse(res)
 
 			if (!res.ok) {
 				toast({ title: '❌ Save failed', description: result.error || 'Unknown error', variant: 'destructive' })
@@ -838,51 +965,56 @@ export default function BulkCreateExamRegistrationPage() {
 										)}
 									</div>
 								</CardHeader>
-								<CardContent className="p-0 flex-1 overflow-y-auto">
+								<CardContent className="p-0 flex-1 flex flex-col min-h-0">
 									{loadingCourses ? (
-										<div className="flex items-center justify-center h-full p-8 text-sm text-muted-foreground">
+										<div className="flex items-center justify-center flex-1 p-8 text-sm text-muted-foreground">
 											<Loader2 className="h-4 w-4 animate-spin mr-2" />Loading...
 										</div>
 									) : filteredCourses.length === 0 ? (
-										<div className="flex flex-col items-center justify-center h-full p-8 text-sm text-muted-foreground">
+										<div className="flex flex-col items-center justify-center flex-1 p-8 text-sm text-muted-foreground">
 											<BookOpen className="h-8 w-8 mb-2 opacity-40" />
 											<p>{courses.length === 0 ? 'No courses to show' : 'No courses match search'}</p>
 										</div>
 									) : (
-										<div>
-											{/* Select All header */}
-											<label className="flex items-center gap-2 px-4 py-2 border-b bg-slate-50 dark:bg-slate-900/40 cursor-pointer text-xs font-medium sticky top-0">
+										<>
+											{/* Select All header (fixed) */}
+											<label className="flex items-center gap-2 px-4 py-2 border-b bg-slate-50 dark:bg-slate-900/40 cursor-pointer text-xs font-medium">
 												<Checkbox checked={allCoursesChecked} onCheckedChange={toggleAllCourses} />
 												<span>Select all ({filteredCourses.length})</span>
 											</label>
-											<div>
-												{filteredCourses.map(c => {
-													const checked = selectedCourses.has(c.course_offering_id)
-													return (
-														<label
+											{filteredCourses.length > VIRTUALIZE_THRESHOLD ? (
+												<div className="flex-1 min-h-0">
+													<AutoSizer>
+														{({ height, width }) => (
+															<VirtualList height={height} width={width} itemCount={filteredCourses.length} itemSize={ROW_HEIGHT}>
+																{({ index, style }) => {
+																	const c = filteredCourses[index]
+																	return (
+																		<CourseListRow
+																			style={style}
+																			course={c}
+																			checked={selectedCourses.has(c.course_offering_id)}
+																			onToggle={toggleCourse}
+																		/>
+																	)
+																}}
+															</VirtualList>
+														)}
+													</AutoSizer>
+												</div>
+											) : (
+												<div className="flex-1 overflow-y-auto">
+													{filteredCourses.map(c => (
+														<CourseListRow
 															key={c.course_offering_id}
-															className={cn(
-																'flex items-start gap-2 px-4 py-2 border-b cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-900/30',
-																checked && 'bg-blue-50/40 dark:bg-blue-950/20'
-															)}
-														>
-															<Checkbox
-																checked={checked}
-																onCheckedChange={() => toggleCourse(c.course_offering_id)}
-																className="mt-0.5"
-															/>
-															<div className="min-w-0 flex-1">
-																<div className="flex items-center gap-2">
-																	<span className="text-xs font-mono text-muted-foreground">{c.course_code}</span>
-																	<Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4">Sem {ROMAN[c.semester] || c.semester}</Badge>
-																</div>
-																<div className="text-sm break-words">{c.course_name}</div>
-															</div>
-														</label>
-													)
-												})}
-											</div>
-										</div>
+															course={c}
+															checked={selectedCourses.has(c.course_offering_id)}
+															onToggle={toggleCourse}
+														/>
+													))}
+												</div>
+											)}
+										</>
 									)}
 								</CardContent>
 							</Card>
@@ -914,13 +1046,13 @@ export default function BulkCreateExamRegistrationPage() {
 										)}
 									</div>
 								</CardHeader>
-								<CardContent className="p-0 flex-1 overflow-y-auto">
+								<CardContent className="p-0 flex-1 flex flex-col min-h-0">
 									{loadingLearners ? (
-										<div className="flex items-center justify-center h-full p-8 text-sm text-muted-foreground">
+										<div className="flex items-center justify-center flex-1 p-8 text-sm text-muted-foreground">
 											<Loader2 className="h-4 w-4 animate-spin mr-2" />Loading...
 										</div>
 									) : filteredLearners.length === 0 ? (
-										<div className="flex flex-col items-center justify-center h-full p-8 text-sm text-muted-foreground text-center">
+										<div className="flex flex-col items-center justify-center flex-1 p-8 text-sm text-muted-foreground text-center">
 											<Users className="h-8 w-8 mb-2 opacity-40" />
 											{learners.length === 0 ? (
 												learnerFilterStats.total === 0 ? (
@@ -940,8 +1072,8 @@ export default function BulkCreateExamRegistrationPage() {
 											)}
 										</div>
 									) : (
-										<div>
-											<label className="flex items-center gap-2 px-4 py-2 border-b bg-slate-50 dark:bg-slate-900/40 cursor-pointer text-xs font-medium sticky top-0">
+										<>
+											<label className="flex items-center gap-2 px-4 py-2 border-b bg-slate-50 dark:bg-slate-900/40 cursor-pointer text-xs font-medium">
 												<Checkbox checked={allLearnersChecked} onCheckedChange={toggleAllLearners} />
 												<span>
 													Select all ({selectableLearners.length})
@@ -952,47 +1084,49 @@ export default function BulkCreateExamRegistrationPage() {
 													)}
 												</span>
 											</label>
-											<div>
-												{filteredLearners.map(l => {
-													const fullyRegistered = isLearnerFullyRegistered(l.id)
-													const regCount = registeredCountByLearner.get(l.id) || 0
-													const checked = fullyRegistered || selectedLearners.has(l.id)
-													return (
-														<label
-															key={l.id}
-															className={cn(
-																'flex items-center gap-2 px-4 py-2 border-b',
-																fullyRegistered
-																	? 'bg-amber-50/40 dark:bg-amber-950/20 cursor-not-allowed'
-																	: 'cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-900/30',
-																!fullyRegistered && checked && 'bg-blue-50/40 dark:bg-blue-950/20'
-															)}
-														>
-															<Checkbox
-																checked={checked}
-																disabled={fullyRegistered}
-																onCheckedChange={() => toggleLearner(l.id)}
+											{filteredLearners.length > VIRTUALIZE_THRESHOLD ? (
+												<div className="flex-1 min-h-0">
+													<AutoSizer>
+														{({ height, width }) => (
+															<VirtualList height={height} width={width} itemCount={filteredLearners.length} itemSize={ROW_HEIGHT}>
+																{({ index, style }) => {
+																	const l = filteredLearners[index]
+																	const fullyRegistered = isLearnerFullyRegistered(l.id)
+																	return (
+																		<LearnerListRow
+																			style={style}
+																			learner={l}
+																			fullyRegistered={fullyRegistered}
+																			regCount={registeredCountByLearner.get(l.id) || 0}
+																			selectedCoursesSize={selectedCourses.size}
+																			checked={fullyRegistered || selectedLearners.has(l.id)}
+																			onToggle={toggleLearner}
+																		/>
+																	)
+																}}
+															</VirtualList>
+														)}
+													</AutoSizer>
+												</div>
+											) : (
+												<div className="flex-1 overflow-y-auto">
+													{filteredLearners.map(l => {
+														const fullyRegistered = isLearnerFullyRegistered(l.id)
+														return (
+															<LearnerListRow
+																key={l.id}
+																learner={l}
+																fullyRegistered={fullyRegistered}
+																regCount={registeredCountByLearner.get(l.id) || 0}
+																selectedCoursesSize={selectedCourses.size}
+																checked={fullyRegistered || selectedLearners.has(l.id)}
+																onToggle={toggleLearner}
 															/>
-															<div className="min-w-0 flex-1">
-																<div className="flex items-center gap-2">
-																	<span className="text-xs font-mono text-muted-foreground">{l.stu_register_no}</span>
-																	{fullyRegistered ? (
-																		<Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4 border-amber-300 bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-800">
-																			Registered
-																		</Badge>
-																	) : regCount > 0 ? (
-																		<Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4 border-amber-300 bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-800">
-																			{regCount}/{selectedCourses.size} registered
-																		</Badge>
-																	) : null}
-																</div>
-																<div className="text-sm truncate">{l.student_name}</div>
-															</div>
-														</label>
-													)
-												})}
-											</div>
-										</div>
+														)
+													})}
+												</div>
+											)}
+										</>
 									)}
 								</CardContent>
 							</Card>

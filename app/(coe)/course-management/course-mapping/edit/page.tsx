@@ -24,7 +24,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { Badge } from "@/components/ui/badge"
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
-import { Check, ChevronsUpDown, ChevronDown, ChevronRight } from "lucide-react"
+import { Check, ChevronsUpDown, ChevronDown, ChevronRight, Lock } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { generateCourseMappingPDF } from "@/lib/utils/generate-course-mapping-pdf"
 import { fetchCourses as fetchCoursesService } from "@/services/course-management/course-mapping-service"
@@ -68,6 +68,8 @@ type CourseMapping = {
 	registration_based?: boolean
 	is_active?: boolean
 	created_at?: string
+	has_offerings?: boolean
+	offering_count?: number
 }
 
 type Semester = {
@@ -106,35 +108,33 @@ const CourseTableRow = memo(function CourseTableRow({
 	courses: Course[]
 }) {
 	const course = mapping.course_id ? courseMap.get(mapping.course_id) : null
-
-	// Debug: Log courses when popover opens
-	useEffect(() => {
-		if (isPopoverOpen) {
-			console.log(`[CourseTableRow] Popover opened, courses available: ${courses.length}`)
-			console.log(`[CourseTableRow] Course codes:`, courses.map(c => c.course_code))
-		}
-	}, [isPopoverOpen, courses])
+	const isOffered = !!mapping.has_offerings
 
 	return (
-		<TableRow className="hover:bg-muted/50">
+		<TableRow className={cn("hover:bg-muted/50", isOffered && "bg-amber-50/40 dark:bg-amber-950/10")}>
 			<TableCell className="text-xs font-medium py-2 px-2">{rowIndex + 1}</TableCell>
 			<TableCell className="py-2 px-2">
-				<Popover open={isPopoverOpen} onOpenChange={onPopoverChange}>
+				<Popover open={isOffered ? false : isPopoverOpen} onOpenChange={isOffered ? undefined : onPopoverChange}>
 					<PopoverTrigger asChild>
 						<Button
 							variant="outline"
 							role="combobox"
 							aria-expanded={isPopoverOpen}
-							className="h-8 w-full justify-between text-xs font-normal"
+							disabled={isOffered}
+							title={isOffered ? 'Course is offered — cannot be changed. Remove the exam offering first.' : undefined}
+							className="h-8 w-full justify-between text-xs font-normal disabled:opacity-100 disabled:cursor-not-allowed"
 						>
-							{mapping.course_id
-								? (() => {
-									const course = courses.find(c => c.id === mapping.course_id)
-									return course?.course_code || "Select course"
-								})()
-								: courses.length === 0
-									? "No courses"
-									: "Select course"}
+							<span className="flex items-center gap-1 truncate">
+								{isOffered && <Lock className="h-3 w-3 shrink-0 text-amber-600" />}
+								{mapping.course_id
+									? (() => {
+										const course = courses.find(c => c.id === mapping.course_id)
+										return course?.course_code || "Select course"
+									})()
+									: courses.length === 0
+										? "No courses"
+										: "Select course"}
+							</span>
 							<ChevronsUpDown className="ml-1 h-3 w-3 shrink-0 opacity-50" />
 						</Button>
 					</PopoverTrigger>
@@ -221,8 +221,9 @@ const CourseTableRow = memo(function CourseTableRow({
 					variant="ghost"
 					size="sm"
 					onClick={onRemoveRow}
-					className="h-7 w-7 p-0 text-red-600 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/20"
-					title="Delete mapping"
+					disabled={isOffered}
+					className="h-7 w-7 p-0 text-red-600 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/20 disabled:text-muted-foreground"
+					title={isOffered ? 'Cannot delete — an exam offering references this mapping' : 'Delete mapping'}
 				>
 					<Trash2 className="h-3.5 w-3.5" />
 				</Button>
@@ -780,14 +781,6 @@ export default function CourseMappingEditPage() {
 		}
 	}
 
-	// Debug: Log courses state changes
-	useEffect(() => {
-		console.log(`[Edit Page] Courses state changed: ${courses.length} courses`)
-		if (courses.length > 0) {
-			console.log(`[Edit Page] Course list:`, courses.map(c => `${c.course_code} - ${c.course_title}`))
-		}
-	}, [courses])
-
 	const loadExistingMappings = async () => {
 		try {
 			setLoading(true)
@@ -973,7 +966,8 @@ export default function CourseMappingEditPage() {
 			const updated = [...prev]
 			updated[semesterIndex] = {
 				...updated[semesterIndex],
-				mappings: [...updated[semesterIndex].mappings, newRow]
+				mappings: [...updated[semesterIndex].mappings, newRow],
+				isOpen: true // Ensure the semester table is expanded so the new row is visible
 			}
 			return updated
 		})
@@ -1081,7 +1075,6 @@ export default function CourseMappingEditPage() {
 	const toggleSemesterTable = useCallback((semesterIndex: number) => {
 		setSemesterTables(prev => {
 			const isCurrentlyOpen = prev[semesterIndex].isOpen
-			console.log(`[Toggle] Semester ${semesterIndex}, currently ${isCurrentlyOpen ? 'open' : 'closed'}`)
 
 			// Create new array with all semesters closed first
 			const updated = prev.map((table, idx) => {
@@ -1100,7 +1093,6 @@ export default function CourseMappingEditPage() {
 				return table
 			})
 
-			console.log(`[Toggle] Open semesters:`, updated.map((t, i) => t.isOpen ? i : null).filter(i => i !== null))
 			return updated
 		})
 	}, [])
