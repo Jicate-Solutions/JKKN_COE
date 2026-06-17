@@ -84,10 +84,10 @@ function exportStudentFeeDetailsExcel(opts: ExcelExportOptions): ExcelReportResu
 		const courseCount = Math.max(info.courses.length, 1)
 		const startRow = rowIdx + 1 // +1 because row 0 is header in sheet
 
-		// Merge S.No, Register No, Name, DOB, and fee columns for this student
+		// Merge S.No, Register No, Name, DOB, Total Subjects, and fee columns for this student
 		if (courseCount > 1) {
-			// Columns: 0=S.No, 1=Register No, 2=Name, 3=DOB, 7=Theory, 8=App Fee, 9=MS Fee, 10=Total, 11=Sign
-			const mergeCols = [0, 1, 2, 3, 7, 8, 9, 10, 11]
+			// Columns: 0=S.No, 1=Register No, 2=Name, 3=DOB, 7=Total Subjects, 8=Theory, 9=App Fee, 10=MS Fee, 11=Total, 12=Sign
+			const mergeCols = [0, 1, 2, 3, 7, 8, 9, 10, 11, 12]
 			mergeCols.forEach(col => {
 				merges.push({ s: { r: startRow, c: col }, e: { r: startRow + courseCount - 1, c: col } })
 			})
@@ -102,6 +102,7 @@ function exportStudentFeeDetailsExcel(opts: ExcelExportOptions): ExcelReportResu
 				'SEM/Year': toRoman(course.semester),
 				'Subject Code': course.course_code,
 				'Course Name': course.course_name,
+				'Total Subjects': ci === 0 ? info.courses.length : '',
 				'Theory': '',
 				'Application Fee': '',
 				'Mark Statement Fee': '',
@@ -120,10 +121,93 @@ function exportStudentFeeDetailsExcel(opts: ExcelExportOptions): ExcelReportResu
 				'SEM/Year': '',
 				'Subject Code': '',
 				'Course Name': '',
+				'Total Subjects': 0,
 				'Theory': '',
 				'Application Fee': '',
 				'Mark Statement Fee': '',
 				'Total Amount': '',
+				'Signature of the Student': '',
+			})
+			rowIdx++
+		}
+	})
+
+	return { rows, merges }
+}
+
+// ── Report 1b: Student Exam Registration (regular papers only, no fee columns) ──
+
+function exportStudentExamRegistrationExcel(opts: ExcelExportOptions): ExcelReportResult {
+	const studentMap = new Map<string, { name: string, dob: string, courses: any[] }>()
+	for (const row of opts.data) {
+		const regNo = row.stu_register_no || 'Unknown'
+		if (!studentMap.has(regNo)) {
+			studentMap.set(regNo, { name: row.student_name || '', dob: row.date_of_birth || '', courses: [] })
+		}
+		const co = row.course_offering
+		if (co) {
+			const student = studentMap.get(regNo)!
+			// Deduplicate by course_code (same course can exist under multiple offerings)
+			if (!student.courses.some((c: any) => c.course_code === co.course_code)) {
+				student.courses.push({
+					semester: co.semester || 0,
+					course_order: co.course_order ?? 999,
+					course_code: co.course_code || '',
+					course_name: co.course_name || '',
+				})
+			}
+		}
+	}
+
+	const students = Array.from(studentMap.entries())
+		.sort((a, b) => a[0].localeCompare(b[0]))
+
+	const rows: Record<string, any>[] = []
+	const merges: MergeRange[] = []
+	let sno = 0
+	let rowIdx = 0 // 0-based data row index (header is row 0 in sheet, data starts at row 1)
+
+	students.forEach(([regNo, info]) => {
+		sno++
+		info.courses.sort((a: any, b: any) => (a.semester - b.semester) || (a.course_order - b.course_order) || a.course_code.localeCompare(b.course_code))
+
+		const courseCount = Math.max(info.courses.length, 1)
+		const startRow = rowIdx + 1 // +1 because row 0 is header in sheet
+
+		// Merge S.No, Register No, Name, DOB, Total Subjects, and Sign columns for this student
+		if (courseCount > 1) {
+			// Columns: 0=S.No, 1=Register No, 2=Name, 3=DOB, 7=Total Subjects, 8=Sign
+			const mergeCols = [0, 1, 2, 3, 7, 8]
+			mergeCols.forEach(col => {
+				merges.push({ s: { r: startRow, c: col }, e: { r: startRow + courseCount - 1, c: col } })
+			})
+		}
+
+		info.courses.forEach((course: any, ci: number) => {
+			rows.push({
+				'S.No': ci === 0 ? sno : '',
+				'Register No': ci === 0 ? regNo : '',
+				'Name of the Candidate': ci === 0 ? info.name : '',
+				'Date of Birth': ci === 0 ? info.dob : '',
+				'SEM/Year': toRoman(course.semester),
+				'Subject Code': course.course_code,
+				'Course Name': course.course_name,
+				'Total Subjects': ci === 0 ? info.courses.length : '',
+				'Signature of the Student': '',
+			})
+			rowIdx++
+		})
+
+		if (info.courses.length === 0) {
+			rows.push({
+				'S.No': sno,
+				'Register No': regNo,
+				'Name of the Candidate': info.name,
+				'Date of Birth': info.dob,
+				'SEM/Year': '',
+				'Subject Code': '',
+				'Course Name': '',
+				'Total Subjects': 0,
 				'Signature of the Student': '',
 			})
 			rowIdx++
@@ -491,31 +575,96 @@ function prependInfoRow(ws: ReturnType<typeof XLSX.utils.json_to_sheet>, label: 
 	ws['!ref'] = XLSX.utils.encode_range(range)
 }
 
+// ── Compute per-section program info (subjects-per-student + student count) ──
+
+function computeProgramInfo(data: any[]): { subjectCount: number; studentCount: number; programName: string | null } {
+	const studentCourses = new Map<string, Set<string>>()
+	let programName: string | null = null
+	for (const row of data) {
+		const regNo = row.stu_register_no || 'Unknown'
+		if (!studentCourses.has(regNo)) studentCourses.set(regNo, new Set())
+		const co = row.course_offering
+		if (co?.course_code) studentCourses.get(regNo)!.add(co.course_code)
+		if (!programName && co?.program_name) programName = co.program_name
+	}
+	let subjectCount = 0
+	for (const s of studentCourses.values()) subjectCount = Math.max(subjectCount, s.size)
+	return { subjectCount, studentCount: studentCourses.size, programName }
+}
+
+// ── Prepend Program / Year info rows (label left, count right-aligned) ──
+
+function prependProgramInfoRows(
+	ws: ReturnType<typeof XLSX.utils.json_to_sheet>,
+	programLabel: string,
+	subjectsLabel: string,
+	yearLabel: string,
+	studentsLabel: string
+): void {
+	const range = XLSX.utils.decode_range(ws['!ref'] || 'A1')
+	const lastCol = range.e.c
+	const shiftBy = 2
+
+	const shifted: [string, any][] = []
+	for (const key of Object.keys(ws)) {
+		if (key[0] === '!') continue
+		const ref = XLSX.utils.decode_cell(key)
+		shifted.push([XLSX.utils.encode_cell({ r: ref.r + shiftBy, c: ref.c }), ws[key]])
+	}
+	for (const key of Object.keys(ws)) {
+		if (key[0] !== '!') delete ws[key]
+	}
+	for (const [k, v] of shifted) ws[k] = v
+
+	// Row 0: Program (left) + No. of Subjects (right-aligned, last column)
+	ws[XLSX.utils.encode_cell({ r: 0, c: 0 })] = { v: programLabel, t: 's', bold: true }
+	ws[XLSX.utils.encode_cell({ r: 0, c: lastCol })] = { v: subjectsLabel, t: 's', align: 'right', bold: true }
+	// Row 1: Year (left) + No. of Students (right-aligned, last column)
+	ws[XLSX.utils.encode_cell({ r: 1, c: 0 })] = { v: yearLabel, t: 's', bold: true }
+	ws[XLSX.utils.encode_cell({ r: 1, c: lastCol })] = { v: studentsLabel, t: 's', align: 'right', bold: true }
+
+	// Shift existing merges down by 2
+	if (ws['!merges']) {
+		ws['!merges'] = ws['!merges'].map((m: any) => ({
+			s: { r: m.s.r + shiftBy, c: m.s.c },
+			e: { r: m.e.r + shiftBy, c: m.e.c },
+		}))
+	}
+
+	range.e.r += shiftBy
+	ws['!ref'] = XLSX.utils.encode_range(range)
+}
+
 // ── Main Export ──
 
 export async function exportExamRegistrationReportExcel(opts: ExcelExportOptions) {
 	const wb = XLSX.utils.book_new()
 
-	if (opts.report_type === 'student-fee-details') {
+	const isRegistrationType = opts.report_type === 'student-exam-registration' || opts.report_type === 'student-wise-registration'
+	if (opts.report_type === 'student-fee-details' || opts.report_type === 'student-exam-registration' || opts.report_type === 'student-wise-application' || opts.report_type === 'student-wise-registration') {
+		// Student-wise reports — format to be customised; reuse program-wise layout for now
+		const buildSheet = isRegistrationType
+			? exportStudentExamRegistrationExcel
+			: exportStudentFeeDetailsExcel
 		// Group data by program_code, then by year within each program
 		const programGroups = new Map<string, any[]>()
-		const programMeta = new Map<string, { program_board_order: number }>()
+		const programMeta = new Map<string, { program_order: number }>()
 		for (const row of opts.data) {
 			const programCode = row.course_offering?.program_code || row.program_code || 'Unknown'
 			if (!programGroups.has(programCode)) {
 				programGroups.set(programCode, [])
 				programMeta.set(programCode, {
-					program_board_order: row.course_offering?.program_board_order ?? 999,
+					program_order: row.course_offering?.program_order ?? 999,
 				})
 			}
 			programGroups.get(programCode)!.push(row)
 		}
 
-		// Sort programs by program_board_order ASC
+		// Sort programs by program_order ASC
 		const sortedPrograms = Array.from(programGroups.keys()).sort((a, b) => {
 			const ma = programMeta.get(a)!
 			const mb = programMeta.get(b)!
-			return (ma.program_board_order - mb.program_board_order) || a.localeCompare(b)
+			return (ma.program_order - mb.program_order) || a.localeCompare(b)
 		})
 
 		if (sortedPrograms.length === 0) return
@@ -547,11 +696,22 @@ export async function exportExamRegistrationReportExcel(opts: ExcelExportOptions
 
 			for (const year of sortedYears) {
 				const yearData = yearGroups.get(year)!
-				const result = exportStudentFeeDetailsExcel({ ...opts, data: yearData })
+				const result = buildSheet({ ...opts, data: yearData })
 				if (result.rows.length === 0) continue
 
 				const ws = XLSX.utils.json_to_sheet(result.rows)
 				applySheetFormatting(ws, result)
+
+				// Program / Year info block (matches the PDF subtitle)
+				const word = isRegistrationType ? 'Registered' : 'Applied'
+				const info = computeProgramInfo(yearData)
+				prependProgramInfoRows(
+					ws,
+					`Program & Branch : ${programCode}${info.programName ? ` - ${info.programName}` : ''}`,
+					`No.of Subjects : ${info.subjectCount}`,
+					`Year : ${year}`,
+					`No.of Students ${word} : ${info.studentCount}`
+				)
 				if (opts.course_category_filter?.length) prependInfoRow(ws, `Course Category : ${opts.course_category_filter.join(', ')}`)
 
 				// Sheet name: "PCA-I Year" (max 31 chars, sanitized)
@@ -756,6 +916,8 @@ export async function exportExamRegistrationReportExcel(opts: ExcelExportOptions
 	} else {
 		// Split data into UG / PG using board_type (most reliable), then fallback to prefix
 		const classifyRow = (row: any): 'UG' | 'PG' | null => {
+			const programType = row.course_offering?.program_type || ''
+			if (programType === 'UG' || programType === 'PG') return programType
 			const studentBoardType = row.student_board_type || ''
 			if (studentBoardType === 'UG' || studentBoardType === 'PG') return studentBoardType
 			const courseBoardType = row.course_offering?.board_type || ''
@@ -803,6 +965,9 @@ export async function exportExamRegistrationReportExcel(opts: ExcelExportOptions
 
 	const reportNames: Record<string, string> = {
 		'student-fee-details': 'fee-details',
+		'student-exam-registration': 'student-registration',
+		'student-wise-application': 'student-wise-application',
+		'student-wise-registration': 'student-wise-registration',
 		'course-count-regular-arrear': 'course-count-regular-arrear',
 		'course-count-year-wise': 'course-count-year-wise',
 		'course-count-program-year-wise': 'course-count-program-year-wise',

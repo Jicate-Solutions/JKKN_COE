@@ -12,10 +12,11 @@ import { Label } from "@/components/ui/label"
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { useToast } from "@/hooks/common/use-toast"
-import { Loader2, FileText, Check, ChevronsUpDown, X, GraduationCap, Users } from "lucide-react"
+import { Loader2, FileText, Check, ChevronsUpDown, X, GraduationCap, Users, ListChecks } from "lucide-react"
 import { cn } from "@/lib/utils"
 import Link from "next/link"
 import { generateMarksheetDistributionPDF } from "@/lib/utils/generate-marksheet-distribution-pdf"
+import { generateMarksheetDistributionRegisterPDF } from "@/lib/utils/generate-marksheet-distribution-register-pdf"
 import { useInstitutionFilter } from "@/hooks/use-institution-filter"
 import { useMyJKKNInstitutionFilter } from "@/hooks/use-myjkkn-institution-filter"
 
@@ -74,6 +75,7 @@ export default function MarksheetDistributionPage() {
 	const [loadingPrograms, setLoadingPrograms] = useState(false)
 	const [loadingBatches, setLoadingBatches] = useState(false)
 	const [generatingPDF, setGeneratingPDF] = useState(false)
+	const [generatingRegister, setGeneratingRegister] = useState(false)
 
 	// Popover open states
 	const [institutionOpen, setInstitutionOpen] = useState(false)
@@ -360,6 +362,113 @@ export default function MarksheetDistributionPage() {
 		}
 	}
 
+	// Load institution logos as base64 (shared by both PDF generators)
+	const loadLogos = async (): Promise<{ logoBase64?: string; rightLogoBase64?: string }> => {
+		let logoBase64: string | undefined
+		let rightLogoBase64: string | undefined
+		try {
+			const logoResponse = await fetch('/jkkn_logo.png')
+			if (logoResponse.ok) {
+				const blob = await logoResponse.blob()
+				logoBase64 = await new Promise<string>((resolve) => {
+					const reader = new FileReader()
+					reader.onloadend = () => resolve(reader.result as string)
+					reader.readAsDataURL(blob)
+				})
+			}
+
+			const rightLogoResponse = await fetch('/jkkncas_logo.png')
+			if (rightLogoResponse.ok) {
+				const blob = await rightLogoResponse.blob()
+				rightLogoBase64 = await new Promise<string>((resolve) => {
+					const reader = new FileReader()
+					reader.onloadend = () => resolve(reader.result as string)
+					reader.readAsDataURL(blob)
+				})
+			}
+		} catch (e) {
+			console.warn('Logo not loaded:', e)
+		}
+		return { logoBase64, rightLogoBase64 }
+	}
+
+	// Generate A3 "Marksheet Distribution Register" PDF
+	const handleGenerateRegister = async () => {
+		if (!selectedInstitutionId || !selectedProgramCode || !selectedBatchId) {
+			toast({
+				title: "Missing Information",
+				description: "Please select Institution, Program, and Batch.",
+				variant: "destructive",
+			})
+			return
+		}
+
+		try {
+			setGeneratingRegister(true)
+
+			const institution = institutions.find(i => i.id === selectedInstitutionId)
+			const program = programs.find(p => p.program_code === selectedProgramCode)
+			const batch = batches.find(b => b.id === selectedBatchId)
+
+			if (!institution || !program || !batch) {
+				throw new Error('Unable to find selected filter details')
+			}
+
+			const params = new URLSearchParams({
+				institution_id: selectedInstitutionId,
+				program_code: selectedProgramCode,
+				batch_code: batch.batch_code || ''
+			})
+
+			const response = await fetch(`/api/reports/marksheet-distribution?${params.toString()}`)
+
+			if (!response.ok) {
+				const errorData = await response.json()
+				throw new Error(errorData.error || 'Failed to fetch learner data')
+			}
+
+			const reportData = await response.json()
+
+			if (!reportData.learners || reportData.learners.length === 0) {
+				toast({
+					title: "No Data",
+					description: "No learners found for the selected criteria.",
+					className: "bg-blue-50 border-blue-200 text-blue-800",
+				})
+				return
+			}
+
+			const { logoBase64, rightLogoBase64 } = await loadLogos()
+
+			const fileName = generateMarksheetDistributionRegisterPDF({
+				institutionName: institution.institution_name,
+				institutionCode: institution.institution_code,
+				programName: program.program_name,
+				programCode: program.program_code,
+				batchYear: batch.batch_name,
+				learners: reportData.learners,
+				logoImage: logoBase64,
+				rightLogoImage: rightLogoBase64
+			})
+
+			toast({
+				title: "Register Generated",
+				description: `${fileName} has been downloaded (${reportData.learners.length} learners).`,
+				className: "bg-green-50 border-green-200 text-green-800",
+				duration: 5000,
+			})
+		} catch (error) {
+			console.error('Error generating register:', error)
+			toast({
+				title: "Generation Failed",
+				description: error instanceof Error ? error.message : 'Failed to generate register',
+				variant: "destructive",
+			})
+		} finally {
+			setGeneratingRegister(false)
+		}
+	}
+
 	// Get display values
 	const selectedInstitution = institutions.find(i => i.id === selectedInstitutionId)
 	const selectedProgram = programs.find(p => p.program_code === selectedProgramCode)
@@ -388,16 +497,16 @@ export default function MarksheetDistributionPage() {
 							</BreadcrumbItem>
 							<BreadcrumbSeparator />
 							<BreadcrumbItem>
-								<BreadcrumbPage>Marksheet Distribution List</BreadcrumbPage>
+								<BreadcrumbPage>Marksheet Distribution</BreadcrumbPage>
 							</BreadcrumbItem>
 						</BreadcrumbList>
 					</Breadcrumb>
 
 					{/* Page Header */}
 					<div className="flex flex-col">
-						<h1 className="text-2xl font-bold">Marksheet Distribution List</h1>
+						<h1 className="text-2xl font-bold">Marksheet Distribution</h1>
 						<p className="text-sm text-muted-foreground">
-							Generate PDF list of learners for marksheet distribution
+							Generate the per-learner distribution list and the A3 marksheet printing-details register
 						</p>
 					</div>
 
@@ -616,24 +725,43 @@ export default function MarksheetDistributionPage() {
 						</CardContent>
 					</Card>
 
-					{/* Generate Button */}
-					<Button
-						onClick={handleGeneratePDF}
-						disabled={generatingPDF || !selectedInstitutionId || !selectedProgramCode || !selectedBatchId}
-						className="w-fit bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700"
-					>
-						{generatingPDF ? (
-							<>
-								<Loader2 className="mr-2 h-4 w-4 animate-spin" />
-								Generating PDF...
-							</>
-						) : (
-							<>
-								<FileText className="mr-2 h-4 w-4" />
-								Generate PDF Report
-							</>
-						)}
-					</Button>
+					{/* Download Buttons */}
+					<div className="flex flex-wrap items-center gap-2">
+						<Button
+							onClick={handleGeneratePDF}
+							disabled={generatingPDF || !selectedInstitutionId || !selectedProgramCode || !selectedBatchId}
+							className="w-fit bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700"
+						>
+							{generatingPDF ? (
+								<>
+									<Loader2 className="mr-2 h-4 w-4 animate-spin" />
+									Generating PDF...
+								</>
+							) : (
+								<>
+									<FileText className="mr-2 h-4 w-4" />
+									Distribution List PDF
+								</>
+							)}
+						</Button>
+						<Button
+							onClick={handleGenerateRegister}
+							disabled={generatingRegister || !selectedInstitutionId || !selectedProgramCode || !selectedBatchId}
+							className="w-fit bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700"
+						>
+							{generatingRegister ? (
+								<>
+									<Loader2 className="mr-2 h-4 w-4 animate-spin" />
+									Generating PDF...
+								</>
+							) : (
+								<>
+									<ListChecks className="mr-2 h-4 w-4" />
+									Distribution Register PDF
+								</>
+							)}
+						</Button>
+					</div>
 				</div>
 
 				<AppFooter />

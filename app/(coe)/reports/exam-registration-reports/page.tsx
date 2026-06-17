@@ -53,15 +53,19 @@ const COURSE_CATEGORY_OPTIONS = ['Theory', 'Practical', 'Project', 'Field Work']
 const ROMAN = ['', 'I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X']
 function toRoman(n: number): string { return ROMAN[n] || String(n) }
 
-type ReportCategory = 'registration' | 'exam-date'
+type ReportCategory = 'exam-reg-app' | 'registration' | 'exam-date'
 
 const REPORT_CATEGORIES: { value: ReportCategory; label: string }[] = [
+	{ value: 'exam-reg-app', label: 'Exam Registration & Application' },
 	{ value: 'registration', label: 'Board Wise Report' },
 	{ value: 'exam-date', label: 'Exam Date Wise Report' },
 ]
 
-const REPORT_OPTIONS: { value: ReportType; label: string; description: string; group: ReportCategory }[] = [
-	{ value: 'student-fee-details', label: 'Student Exam Registration', description: 'Learner-wise exam registration with courses', group: 'registration' },
+const REPORT_OPTIONS: { value: ReportType; label: string; description: string; group: ReportCategory; section?: string }[] = [
+	{ value: 'student-exam-registration', label: 'Student Exam Registration', description: 'Learner-wise regular exam registration (regular papers only)', group: 'exam-reg-app', section: 'Program wise Report' },
+	{ value: 'student-fee-details', label: 'Student Exam Application', description: 'Learner-wise exam application with courses and fee columns', group: 'exam-reg-app', section: 'Program wise Report' },
+	{ value: 'student-wise-registration', label: 'Student Exam Registration', description: 'Student-wise regular exam registration (regular papers only)', group: 'exam-reg-app', section: 'Student wise Report' },
+	{ value: 'student-wise-application', label: 'Student Exam Application', description: 'Student-wise exam application with courses and fee columns', group: 'exam-reg-app', section: 'Student wise Report' },
 	{ value: 'course-count-regular-arrear', label: 'Regular / Arrear Count', description: 'Course-wise student count split by Regular and Arrear', group: 'registration' },
 	{ value: 'course-count-year-wise', label: 'Board & Year Wise Course List', description: 'Course-wise student count split by Year', group: 'registration' },
 	{ value: 'course-count-program-year-wise', label: 'Board & Program Wise Registration List', description: 'Course-wise count with Program Code, split by Year', group: 'registration' },
@@ -255,6 +259,14 @@ export default function ExamRegistrationReportsPage() {
 		})
 	}, [reportData, selectedCourseCategories])
 
+	// Student-type reports: count unique learners (by register no), not raw registration rows
+	const STUDENT_REPORT_TYPES = ['student-fee-details', 'student-exam-registration', 'student-wise-application', 'student-wise-registration']
+	const isStudentReport = STUDENT_REPORT_TYPES.includes(selectedReportType as string)
+	const uniqueStudentCount = useMemo(
+		() => isStudentReport ? new Set(filteredReportData.map((r: any) => r.stu_register_no).filter(Boolean)).size : 0,
+		[filteredReportData, isStudentReport]
+	)
+
 	// ── Export PDF ──
 
 	const handleExportPdf = useCallback(async () => {
@@ -271,8 +283,10 @@ export default function ExamRegistrationReportsPage() {
 			let rightLogoBase64: string | undefined
 
 			try {
+				// Engineering college: single left logo (jkkncet), no right logo
+				const isEngineering = (reportMeta.institution_code || '').toUpperCase() === 'CET' || (reportMeta.institution_name || '').toUpperCase().includes('ENGINEER')
 				const [logoRes, rightLogoRes] = await Promise.all([
-					fetch('/jkkn_logo.png'),
+					fetch(isEngineering ? '/jkkncet_logo.png' : '/jkkn_logo.png'),
 					fetch('/jkkncas_logo.png'),
 				])
 				if (logoRes.ok) {
@@ -283,7 +297,7 @@ export default function ExamRegistrationReportsPage() {
 						reader.readAsDataURL(blob)
 					})
 				}
-				if (rightLogoRes.ok) {
+				if (rightLogoRes.ok && !isEngineering) {
 					const blob = await rightLogoRes.blob()
 					rightLogoBase64 = await new Promise<string>((resolve) => {
 						const reader = new FileReader()
@@ -313,8 +327,10 @@ export default function ExamRegistrationReportsPage() {
 
 			// Exam date-wise reports: single combined file (no UG/PG split)
 			const isDateWiseReport = selectedReportType === 'exam-date-wise-registration' || selectedReportType === 'exam-date-wise-attendance' || selectedReportType === 'board-wise-exam-timetable' || selectedReportType === 'exam-date-wise-summary' || selectedReportType === 'qp-packing-list'
+				// Student-wise forms: one page per student — single combined file for ALL students (no UG/PG split)
+				const isStudentWiseForm = selectedReportType === 'student-wise-registration' || selectedReportType === 'student-wise-application'
 
-			if (isDateWiseReport) {
+			if (isDateWiseReport || isStudentWiseForm) {
 				const file = generateExamRegistrationReportPdf(baseOpts)
 				if (file) fileNames.push(file)
 			} else {
@@ -406,7 +422,10 @@ export default function ExamRegistrationReportsPage() {
 		}
 
 		switch (selectedReportType) {
-			case 'student-fee-details': {
+			case 'student-fee-details':
+			case 'student-exam-registration':
+			case 'student-wise-application':
+			case 'student-wise-registration': {
 				// Flatten to per-student rows with course list
 				const studentMap = new Map<string, { name: string; dob: string; program_code: string; courses: { semester: number; course_order: number; course_code: string; course_name: string }[] }>()
 				for (const row of reportData2) {
@@ -670,7 +689,7 @@ export default function ExamRegistrationReportsPage() {
 							</BreadcrumbItem>
 							<BreadcrumbSeparator />
 							<BreadcrumbItem>
-								<BreadcrumbPage>Exam Reports Summary</BreadcrumbPage>
+								<BreadcrumbPage>Exam Registration Report</BreadcrumbPage>
 							</BreadcrumbItem>
 						</BreadcrumbList>
 					</Breadcrumb>
@@ -682,7 +701,7 @@ export default function ExamRegistrationReportsPage() {
 								<ClipboardCheck className="h-5 w-5 text-white" />
 							</div>
 							<div>
-								<h1 className="text-2xl font-bold">Exam Reports Summary</h1>
+								<h1 className="text-2xl font-bold">Exam Registration Report</h1>
 								<p className="text-sm text-muted-foreground">Select filters and a report type to generate exam reports</p>
 							</div>
 						</div>
@@ -863,52 +882,71 @@ export default function ExamRegistrationReportsPage() {
 								</div>
 							</div>
 
-							{/* Radio Buttons — shown only when category is selected */}
-							{selectedReportCategory && (
-								<div className="space-y-2">
-									<Label className="text-xs text-muted-foreground">Choose a report type</Label>
-									<div className="flex flex-wrap gap-2">
-										{REPORT_OPTIONS.filter(o => o.group === selectedReportCategory).map((opt) => {
-											const isSelected = selectedReportType === opt.value
-											return (
-												<button
-													key={opt.value}
-													type="button"
-													title={opt.description}
-													onClick={() => handleReportTypeSelect(opt.value)}
-													disabled={loadingReport}
-													className={cn(
-														'flex items-center gap-2 rounded-lg border px-3 py-2 text-left transition-all whitespace-nowrap',
-														isSelected
-															? 'border-emerald-500 bg-emerald-50 dark:bg-emerald-950/30'
-															: 'border-muted hover:border-muted-foreground/30 hover:bg-muted/50',
-														loadingReport && !isSelected && 'opacity-50 cursor-not-allowed'
-													)}
-												>
-													{/* Radio circle */}
-													<div className={cn(
-														'flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-full border-2 transition-colors',
-														isSelected
-															? 'border-emerald-500 bg-emerald-500'
-															: 'border-muted-foreground/40'
-													)}>
-														{isSelected && <div className="h-1.5 w-1.5 rounded-full bg-white" />}
-													</div>
-													<span className={cn(
-														'text-xs font-medium',
-														isSelected && 'text-emerald-700 dark:text-emerald-300'
-													)}>
-														{opt.label}
-													</span>
-													{isSelected && loadingReport && (
-														<Loader2 className="h-3 w-3 shrink-0 animate-spin text-emerald-500" />
-													)}
-												</button>
-											)
-										})}
+							{/* Radio Buttons — shown only when category is selected, grouped by section */}
+							{selectedReportCategory && (() => {
+								const categoryOptions = REPORT_OPTIONS.filter(o => o.group === selectedReportCategory)
+								// Group by section in first-seen order (sections optional)
+								const sections: { name: string | undefined; items: typeof categoryOptions }[] = []
+								for (const o of categoryOptions) {
+									let sec = sections.find(s => s.name === o.section)
+									if (!sec) { sec = { name: o.section, items: [] }; sections.push(sec) }
+									sec.items.push(o)
+								}
+
+								const renderCard = (opt: typeof categoryOptions[number]) => {
+									const isSelected = selectedReportType === opt.value
+									return (
+										<button
+											key={opt.value}
+											type="button"
+											title={opt.description}
+											onClick={() => handleReportTypeSelect(opt.value)}
+											disabled={loadingReport}
+											className={cn(
+												'flex items-center gap-2 rounded-lg border px-3 py-2 text-left transition-all whitespace-nowrap',
+												isSelected
+													? 'border-emerald-500 bg-emerald-50 dark:bg-emerald-950/30'
+													: 'border-muted hover:border-muted-foreground/30 hover:bg-muted/50',
+												loadingReport && !isSelected && 'opacity-50 cursor-not-allowed'
+											)}
+										>
+											{/* Radio circle */}
+											<div className={cn(
+												'flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-full border-2 transition-colors',
+												isSelected
+													? 'border-emerald-500 bg-emerald-500'
+													: 'border-muted-foreground/40'
+											)}>
+												{isSelected && <div className="h-1.5 w-1.5 rounded-full bg-white" />}
+											</div>
+											<span className={cn(
+												'text-xs font-medium',
+												isSelected && 'text-emerald-700 dark:text-emerald-300'
+											)}>
+												{opt.label}
+											</span>
+											{isSelected && loadingReport && (
+												<Loader2 className="h-3 w-3 shrink-0 animate-spin text-emerald-500" />
+											)}
+										</button>
+									)
+								}
+
+								return (
+									<div className="space-y-3">
+										{sections.map((sec) => (
+											<div key={sec.name || 'default'} className="space-y-2">
+												<Label className={cn('text-xs', sec.name ? 'font-semibold text-foreground' : 'text-muted-foreground')}>
+													{sec.name || 'Choose a report type'}
+												</Label>
+												<div className="flex flex-wrap gap-2">
+													{sec.items.map(renderCard)}
+												</div>
+											</div>
+										))}
 									</div>
-								</div>
-							)}
+								)
+							})()}
 
 							{/* Download Buttons — shown when report is generated */}
 							{selectedReportType && reportData.length > 0 && reportMeta && (
@@ -922,9 +960,11 @@ export default function ExamRegistrationReportsPage() {
 										</Badge>
 										<Badge className="bg-emerald-100 text-emerald-800 border-emerald-200 text-xs">
 											<Users className="h-3 w-3 mr-1" />
-											{filteredReportData.length !== reportData.length
-												? `${filteredReportData.length} / ${reportData.length} records`
-												: `${reportData.length} records`
+											{isStudentReport
+												? `${uniqueStudentCount} students`
+												: filteredReportData.length !== reportData.length
+													? `${filteredReportData.length} / ${reportData.length} records`
+													: `${reportData.length} records`
 											}
 										</Badge>
 										<div className="ml-auto flex items-center gap-2">
@@ -977,7 +1017,7 @@ export default function ExamRegistrationReportsPage() {
 							</CardHeader>
 							<CardContent>
 								<div className="rounded-md border overflow-x-auto">
-									{selectedReportType === 'student-fee-details' && (
+									{(selectedReportType === 'student-fee-details' || selectedReportType === 'student-exam-registration' || selectedReportType === 'student-wise-application' || selectedReportType === 'student-wise-registration') && (
 										<Table>
 											<TableHeader>
 												<TableRow>
@@ -1140,7 +1180,7 @@ export default function ExamRegistrationReportsPage() {
 													<div key={section.program_code} className="border rounded-lg overflow-hidden">
 														<div className="bg-slate-100 dark:bg-slate-800 px-4 py-2">
 															<span className="font-semibold text-sm">
-																Program : {section.program_code}{section.program_name ? ` - ${section.program_name}` : ''}
+																Program & Branch : {section.program_code}{section.program_name ? ` - ${section.program_name}` : ''}
 															</span>
 														</div>
 														<Table>

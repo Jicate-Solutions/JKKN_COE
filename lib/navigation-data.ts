@@ -13,6 +13,7 @@ import {
 
 	// Calendar & Time Icons
 	Calendar,
+	CalendarPlus,
 	CalendarDays,
 	CalendarCheck2,
 	CalendarClock,
@@ -169,7 +170,7 @@ export const navMain: NavItem[] = [
 			{ title: 'Hall', url: '#', icon: Shapes },
 			{ title: 'QP Template', url: '#', icon: NotepadText },
 			{ title: 'COE Calendar', url: '/pre-exam/coe-calendar', icon: CalendarDays, permission: 'page.pre_exam.coe_calendar.view' },
-			{ title: 'Fee Details', url: '#', icon: Tags },
+			{ title: 'Fee Details', url: '/fee-details', icon: Tags },
 			{ title: 'Fee Structure', url: '#', icon: CreditCard },
 			{ title: 'Moderation Mark Setup', url: '#', icon: ListChecks },
 		],
@@ -223,6 +224,7 @@ export const navMain: NavItem[] = [
 			{ title: 'Exam Registrations', url: '/exam-management/exam-registrations', icon: UserPlus, permission: 'page.exam_management.exam_registrations.view' },
 			{ title: 'Registration Lookup', url: '/exam-management/exam-registrations/lookup', icon: Search, permission: 'page.exam_management.exam_registrations.lookup.view' },
 			{ title: 'Exam Timetable', url: '/exam-management/exam-timetables', icon: Calendar, permission: 'page.exam_management.exam_timetables.view' },
+			{ title: 'Schedule Exams', url: '/exam-management/exam-timetables/schedule', icon: CalendarPlus, permission: 'page.exam_management.exam_timetables.view' },
 			{ title: 'Validate Timetable', url: '/exam-management/validate-timetable', icon: ShieldCheck, permission: 'page.exam_management.validate_timetable.view' },
 			{ title: 'Hall Tickets', url: '/pre-exam/hall-tickets', icon: Ticket, permission: 'page.pre_exam.hall_tickets.view' },
 			{ title: 'Exam Attendance Sheet', url: '/pre-exam/exam-attendance-sheet', icon: ClipboardList, permission: 'page.pre_exam.exam_attendance_sheet.view' },
@@ -297,6 +299,7 @@ export const navMain: NavItem[] = [
 		icon: RefreshCcw,
 		coe_roles: ['super_admin', 'coe'],
 		items: [
+			{ title: 'Revaluation Periods', url: '/revaluation-management/periods', icon: CalendarClock, permission: 'page.revaluation_management.create.view' },
 			{ title: 'Create Revaluation', url: '/revaluation-management/create', icon: FilePlus, permission: 'page.revaluation_management.create.view' },
 			{ title: 'All Applications', url: '/revaluation-management?tab=applications', icon: List, permission: 'page.revaluation_management.view' },
 			{ title: 'Bulk Application', url: '/revaluation-management?tab=bulk-application', icon: Users, permission: 'page.revaluation_management.view' },
@@ -321,7 +324,7 @@ export const navMain: NavItem[] = [
 		coe_roles: ['super_admin', 'coe', 'nad_coordinator', 'coe_office_1'],
 		items: [
 			{ title: 'Comprehensive Reports', url: '/reports/comprehensive', icon: BarChart3, permission: 'page.reports.comprehensive.view' },
-			{ title: 'Exam Reports Summary', url: '/reports/exam-registration-reports', icon: ClipboardCheck, permission: 'page.reports.exam_registration_reports.view' },
+			{ title: 'Exam Registration Report', url: '/reports/exam-registration-reports', icon: ClipboardCheck, permission: 'page.reports.exam_registration_reports.view' },
 			{ title: 'Attendance Report', url: '/exam-management/reports/attendance', icon: PieChart, permission: 'page.exam_management.reports.attendance.view' },
 			{ title: 'Course Count Report', url: '/exam-management/reports/course-count', icon: Calculator, permission: 'page.exam_management.reports.course_count.view' },
 			{ title: 'Marksheet Distribution', url: '/reports/marksheet-distribution', icon: FileText, permission: 'page.reports.marksheet_distribution.view' },

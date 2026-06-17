@@ -18,7 +18,7 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { useToast } from "@/hooks/common/use-toast"
 import Link from "next/link"
-import { PlusCircle, Edit, Trash2, Search, ChevronLeft, ChevronRight, ArrowUpDown, ArrowUp, ArrowDown, Calendar, TrendingUp, CheckCircle, XCircle, FileSpreadsheet, Upload, AlertTriangle, RefreshCw, ChevronDown, ChevronUp, DoorOpen, Users, MapPin, Download, Loader2, MoreHorizontal } from "lucide-react"
+import { PlusCircle, Edit, Trash2, Search, ChevronLeft, ChevronRight, ArrowUpDown, ArrowUp, ArrowDown, Calendar, CalendarPlus, TrendingUp, CheckCircle, XCircle, FileSpreadsheet, Upload, AlertTriangle, RefreshCw, ChevronDown, ChevronUp, DoorOpen, Users, MapPin, Download, Loader2, MoreHorizontal } from "lucide-react"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
@@ -1320,6 +1320,10 @@ export default function ExamTimetablesListPage() {
 										</Button>
 										<Button variant="outline" size="sm" onClick={handleDataExport} disabled={loading || filtered.length === 0} className="h-9 w-9 rounded-lg hover:bg-green-100 text-green-600 hover:text-green-700 transition-colors border border-green-300 p-0" title="Export Data">
 											<Download className="h-4 w-4" />
+										</Button>
+										<Button size="sm" variant="outline" onClick={() => router.push('/exam-management/exam-timetables/schedule')} disabled={loading} className="h-9 px-4 rounded-xl border-indigo-300 text-indigo-700 hover:bg-indigo-50 transition-all duration-200 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed" title="Schedule exams from approved registrations">
+											<CalendarPlus className="h-4 w-4 mr-2" />
+											Schedule Exams
 										</Button>
 										<Button size="sm" onClick={() => router.push('/exam-management/exam-timetable')} disabled={loading} className="h-9 px-4 rounded-xl bg-blue-600 hover:bg-blue-700 text-white transition-all duration-200 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed" title="Add Timetable">
 											<PlusCircle className="h-4 w-4 mr-2" />

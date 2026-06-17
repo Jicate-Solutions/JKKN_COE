@@ -306,6 +306,13 @@ export async function writeFile(wb: WorkbookCompat, filename: string): Promise<v
           bottom: thinBorder,
           right: thinBorder,
         }
+        // Per-cell alignment / bold hints from the source cell map (additive)
+        const srcRef = encode_cell({ r: range.s.r + (r - 1), c: range.s.c + (c - 1) })
+        const srcCell = wsCompat[srcRef]
+        if (srcCell && (srcCell.align || srcCell.bold)) {
+          if (srcCell.align) cell.alignment = { ...(cell.alignment || {}), horizontal: srcCell.align, vertical: 'middle' }
+          if (srcCell.bold) cell.font = { ...cell.font, bold: true }
+        }
       }
     }
 

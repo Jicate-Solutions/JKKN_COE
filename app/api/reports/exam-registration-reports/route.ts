@@ -179,7 +179,7 @@ export async function GET(request: Request) {
 			supabase.from('programs').select('program_code, program_name, program_order').eq('institutions_id', institutions_id).eq('is_active', true).then(r => r.data || []),
 			// MyJKKN programs (all institutions in parallel)
 			(myjkknIds.length > 0 && myjkknApiKey)
-				? Promise.all(myjkknIds.map(id => fetchMyJKKNPaginated(myjkknApiUrl, 'programs', id, myjkknApiKey)))
+				? Promise.all(myjkknIds.map(id => fetchMyJKKNPaginated(myjkknApiUrl, 'organizations/programs', id, myjkknApiKey)))
 					.then(results => results.flat())
 					.catch(() => [] as any[])
 				: Promise.resolve([] as any[]),
@@ -234,10 +234,11 @@ export async function GET(request: Request) {
 			}
 		}
 
-		// Program names and order
+		// Program names, order, and type (UG/PG)
 		const programNameMap = new Map<string, string>()
 		const programOrderMap = new Map<string, number>()
-		// MyJKKN programs first (primary source for program_order)
+		const programTypeMap = new Map<string, string>()
+		// MyJKKN programs first (primary source for program_order + program_type)
 		for (const p of myjkknProgramsRaw) {
 			const code = p.program_id || p.program_code || ''
 			if (code && !programOrderMap.has(code)) {
@@ -247,6 +248,10 @@ export async function GET(request: Request) {
 			if (code && !programNameMap.has(code)) {
 				const pName = p.program_name || p.name || ''
 				if (pName) programNameMap.set(code, pName)
+			}
+			if (code && !programTypeMap.has(code)) {
+				const pType = (p.program_type || p.degree_type || '').toString().toUpperCase()
+				if (pType === 'UG' || pType === 'PG') programTypeMap.set(code, pType)
 			}
 		}
 		// Local programs as fallback for names and order
@@ -266,9 +271,11 @@ export async function GET(request: Request) {
 		}
 		// Program orders resolved: MyJKKN API → local programs → board_order fallback
 
-		// MyJKKN learner name + DOB maps
+		// MyJKKN learner name + DOB + gender maps
+		const isStudentWise = report_type === 'student-wise-application' || report_type === 'student-wise-registration'
 		const nameMap = new Map<string, string>()
 		const dobMap = new Map<string, string>()
+		const genderMap = new Map<string, string>()
 		for (const lp of myjkknProfilesRaw) {
 			const regNo = lp.register_number
 			if (!regNo || !registerNumberSet.has(regNo)) continue
@@ -277,7 +284,11 @@ export async function GET(request: Request) {
 				const fullName = lp.student_name || lp.full_name || [lp.first_name, lp.last_name].filter(Boolean).join(' ')
 				if (fullName) nameMap.set(key, fullName)
 			}
-			if (report_type === 'student-fee-details' && !dobMap.has(key) && lp.date_of_birth) {
+			if (isStudentWise && !genderMap.has(key) && lp.gender) {
+				const g = String(lp.gender).trim()
+				if (g) genderMap.set(key, g.charAt(0).toUpperCase() + g.slice(1).toLowerCase())
+			}
+			if ((report_type === 'student-fee-details' || report_type === 'student-exam-registration' || report_type === 'student-wise-application' || report_type === 'student-wise-registration') && !dobMap.has(key) && lp.date_of_birth) {
 				try {
 					const dob = new Date(lp.date_of_birth)
 					if (!isNaN(dob.getTime())) {
@@ -313,6 +324,7 @@ export async function GET(request: Request) {
 					course_id: o.course_id,
 					course_order: courseMappingOrderMap.get(o.course_id) ?? 999,
 					board_type: boardInfo?.board_type || null,
+					program_type: programTypeMap.get(o.program_code) || null,
 					program_code: o.program_code,
 					program_name: programNameMap.get(o.program_code) || boardNameMap.get(o.program_code) || null,
 					semester: o.semester,
@@ -371,6 +383,7 @@ export async function GET(request: Request) {
 						course_id: null,
 						course_order: 999,
 						board_type: boardInfo?.board_type || null,
+						program_type: programTypeMap.get(r.program_code) || null,
 						program_code: r.program_code || '',
 						program_name: programNameMap.get(r.program_code) || boardNameMap.get(r.program_code) || null,
 						semester: null,
@@ -387,9 +400,10 @@ export async function GET(request: Request) {
 			return {
 				...r,
 				course_offering: offering,
-				student_board_type: boardCodeMap.get(r.program_code)?.board_type || null,
+				student_board_type: boardCodeMap.get(r.program_code)?.board_type || programTypeMap.get(r.program_code) || null,
 				student_name: (regNo && nameMap.get(regNo)) || r.student_name,
 				...(regNo && dobMap.has(regNo) ? { date_of_birth: dobMap.get(regNo) } : {}),
+				...(regNo && genderMap.has(regNo) ? { gender: genderMap.get(regNo) } : {}),
 			}
 		})
 
@@ -557,6 +571,11 @@ export async function GET(request: Request) {
 			}
 		}
 
+		// Student Exam Registration (program-wise & student-wise): only regular papers (is_regular = true)
+		const responseData = (report_type === 'student-exam-registration' || report_type === 'student-wise-registration')
+			? enriched.filter((r: any) => r.is_regular === true)
+			: enriched
+
 		return NextResponse.json({
 			report_type,
 			institution_name: institution.name,
@@ -564,7 +583,7 @@ export async function GET(request: Request) {
 			session_name: session.session_name,
 			session_code: session.session_code,
 			generated_at: new Date().toISOString(),
-			data: enriched,
+			data: responseData,
 		})
 	} catch (e) {
 		console.error('Exam registration reports API error:', e)

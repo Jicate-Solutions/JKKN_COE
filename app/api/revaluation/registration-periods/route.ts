@@ -77,6 +77,23 @@ export async function POST(request: Request) {
 			return NextResponse.json({ error: 'Institution is required' }, { status: 400 })
 		}
 
+		// Validate revaluation type against the master table (defaults to
+		// 'REVALUATION' for backward compatibility)
+		const revaluationType = (body.revaluation_type || 'REVALUATION').toUpperCase()
+		const { data: typeRow } = await supabase
+			.from('revaluation_types')
+			.select('type_code')
+			.eq('type_code', revaluationType)
+			.eq('is_active', true)
+			.maybeSingle()
+
+		if (!typeRow) {
+			return NextResponse.json(
+				{ error: 'Invalid or inactive revaluation type' },
+				{ status: 400 }
+			)
+		}
+
 		// Validate dates
 		const startDate = new Date(body.start_date)
 		const endDate = new Date(body.end_date)
@@ -85,17 +102,20 @@ export async function POST(request: Request) {
 			return NextResponse.json({ error: 'End date must be after start date' }, { status: 400 })
 		}
 
-		// Check if period already exists for this session
+		// Check if a period already exists for this session + type
 		const { data: existing } = await supabase
 			.from('revaluation_registration_periods')
 			.select('id')
 			.eq('examination_session_id', body.examination_session_id)
 			.eq('institutions_id', body.institutions_id)
+			.eq('revaluation_type', revaluationType)
 			.maybeSingle()
 
 		if (existing) {
 			return NextResponse.json(
-				{ error: 'A revaluation period already exists for this examination session' },
+				{
+					error: `A "${revaluationType}" period already exists for this examination session`,
+				},
 				{ status: 400 }
 			)
 		}
@@ -109,6 +129,7 @@ export async function POST(request: Request) {
 				examination_session_id: body.examination_session_id,
 				session_code: body.session_code,
 				session_name: body.session_name,
+				revaluation_type: revaluationType,
 				start_date: body.start_date,
 				end_date: body.end_date,
 				instructions: body.instructions || null,
@@ -162,10 +183,11 @@ export async function PUT(request: Request) {
 			}
 		}
 
-		// Don't allow changing institution or session
+		// Don't allow changing institution, session, or revaluation type
 		delete updateData.institutions_id
 		delete updateData.institution_code
 		delete updateData.examination_session_id
+		delete updateData.revaluation_type
 
 		const { data, error } = await supabase
 			.from('revaluation_registration_periods')

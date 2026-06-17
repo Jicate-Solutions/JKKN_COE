@@ -2,6 +2,9 @@
 
 export type ReportType =
 	| 'student-fee-details'
+	| 'student-exam-registration'
+	| 'student-wise-application'
+	| 'student-wise-registration'
 	| 'course-count-regular-arrear'
 	| 'course-count-year-wise'
 	| 'course-count-program-year-wise'
