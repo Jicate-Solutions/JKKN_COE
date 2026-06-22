@@ -66,8 +66,6 @@ import {
 	XCircle,
 	Loader2,
 	ArrowUpDown,
-	ArrowUp,
-	ArrowDown,
 } from 'lucide-react'
 
 interface RevaluationPeriod {
@@ -281,7 +279,7 @@ export default function RevaluationPeriodsPage() {
 		}
 	}
 
-	const colSpan = mustSelectInstitution ? 4 : 3
+	const colSpan = mustSelectInstitution ? 5 : 4
 
 	const toggleSort = () => setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))
 
@@ -421,14 +419,6 @@ export default function RevaluationPeriodsPage() {
 									</div>
 
 									<div className="flex items-center gap-2 sm:ml-auto">
-										<Button variant="outline" size="sm" onClick={toggleSort} title="Toggle sort">
-											{sortDir === 'asc' ? (
-												<ArrowUp className="mr-2 h-4 w-4" />
-											) : (
-												<ArrowDown className="mr-2 h-4 w-4" />
-											)}
-											Sort {sortDir === 'asc' ? 'A→Z' : 'Z→A'}
-										</Button>
 										<Button variant="outline" size="icon" onClick={fetchPeriods} title="Refresh">
 											<RefreshCw className="h-4 w-4" />
 										</Button>
@@ -444,6 +434,7 @@ export default function RevaluationPeriodsPage() {
 									<Table>
 										<TableHeader>
 											<TableRow className="bg-gray-50">
+												<TableHead className="w-16 text-center">S. No</TableHead>
 												{mustSelectInstitution && <TableHead>Institution</TableHead>}
 												<TableHead>
 													<button
@@ -479,8 +470,11 @@ export default function RevaluationPeriodsPage() {
 													</TableCell>
 												</TableRow>
 											) : (
-												pageItems.map((g) => (
+												pageItems.map((g, index) => (
 													<TableRow key={g.key}>
+														<TableCell className="text-center text-sm font-medium text-gray-500">
+															{startIndex + index + 1}
+														</TableCell>
 														{mustSelectInstitution && (
 															<TableCell className="text-sm text-gray-600">
 																{g.institution_code || '—'}

@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useMemo, useCallback, memo, type CSSProperties } from 'react'
+import { useState, useEffect, useMemo, useCallback, useRef, memo, type CSSProperties } from 'react'
 import Link from 'next/link'
 import { useToast } from '@/hooks/common/use-toast'
 import { useInstitutionFilter } from '@/hooks/use-institution-filter'
@@ -23,6 +23,8 @@ import { ArrowLeft, CalendarCheck, CalendarPlus, Loader2, Save, Search, Users, X
 import { cn } from '@/lib/utils'
 
 const ROMAN = ['', 'I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X']
+const FILTERS_KEY = 'schedule-exams:filters'
+const SCOPE_KEY = 'schedule-exams:scope'
 // Anything other than plain 'Theory' requires a batch capacity (matches the DB check constraint)
 const requiresBatch = (examType?: string) => (examType || 'Theory') !== 'Theory'
 
@@ -121,7 +123,7 @@ const SubjectRow = memo(function SubjectRow({
 export default function ScheduleExamsPage() {
 	const { toast } = useToast()
 	const { isReady, mustSelectInstitution, institutionId } = useInstitutionFilter()
-	const { availableInstitutions, selectedInstitution, selectInstitution, canSwitchInstitution } = useInstitution()
+	const { availableInstitutions, selectedInstitution, selectInstitution } = useInstitution()
 	const { selectedSessionId, setSelectedSessionId, mustSelectSession } = useSessionSync()
 
 	const [sessions, setSessions] = useState<SessionOption[]>([])
@@ -129,11 +131,60 @@ export default function ScheduleExamsPage() {
 	const [programs, setPrograms] = useState<ProgramOption[]>([])
 	const [loading, setLoading] = useState(false)
 
-	// Filters
+	// Filters (persisted across reloads / navigation)
 	const [categoryFilter, setCategoryFilter] = useState<'all' | 'UG' | 'PG'>('all')
 	const [programFilter, setProgramFilter] = useState('all')
 	const [semesterFilter, setSemesterFilter] = useState('all')
 	const [search, setSearch] = useState('')
+	const [filtersLoaded, setFiltersLoaded] = useState(false)
+
+	// Restore saved filters on mount
+	useEffect(() => {
+		try {
+			const raw = localStorage.getItem(FILTERS_KEY)
+			if (raw) {
+				const f = JSON.parse(raw)
+				if (f.categoryFilter === 'UG' || f.categoryFilter === 'PG' || f.categoryFilter === 'all') setCategoryFilter(f.categoryFilter)
+				if (typeof f.programFilter === 'string') setProgramFilter(f.programFilter)
+				if (typeof f.semesterFilter === 'string') setSemesterFilter(f.semesterFilter)
+				if (typeof f.search === 'string') setSearch(f.search)
+			}
+		} catch {}
+		setFiltersLoaded(true)
+	}, [])
+
+	// Persist filters whenever they change
+	useEffect(() => {
+		if (!filtersLoaded) return
+		try {
+			localStorage.setItem(FILTERS_KEY, JSON.stringify({ categoryFilter, programFilter, semesterFilter, search }))
+		} catch {}
+	}, [filtersLoaded, categoryFilter, programFilter, semesterFilter, search])
+
+	// Remember the exam session chosen here so it can be restored on return.
+	// NOTE: institution is intentionally NOT auto-restored — the global header owns
+	// institution selection (and persists it), so forcing it here would block the
+	// super-admin from choosing "All Institutions".
+	useEffect(() => {
+		if (!isReady) return
+		try {
+			localStorage.setItem(SCOPE_KEY, JSON.stringify({ sessionId: selectedSessionId || '' }))
+		} catch {}
+	}, [isReady, selectedSessionId])
+
+	// Restore the saved session ONCE, after its institution's sessions have loaded.
+	const sessionRestoredRef = useRef(false)
+	useEffect(() => {
+		if (sessionRestoredRef.current || !mustSelectSession || selectedSessionId || sessions.length === 0) return
+		sessionRestoredRef.current = true
+		try {
+			const raw = localStorage.getItem(SCOPE_KEY)
+			if (!raw) return
+			const { sessionId: savedSid } = JSON.parse(raw)
+			if (savedSid && sessions.some((s) => s.id === savedSid)) setSelectedSessionId(savedSid)
+		} catch {}
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [mustSelectSession, selectedSessionId, sessions])
 
 	// Selection + batch capacities
 	const [selected, setSelected] = useState<Set<string>>(new Set())
@@ -360,43 +411,7 @@ export default function ScheduleExamsPage() {
 						</Button>
 					</div>
 
-					{mustSelectInstitution || (mustSelectSession && !selectedSessionId) ? (
-						<Card>
-							<CardContent className="p-8 space-y-4">
-								<p className="text-center text-muted-foreground">Select an institution and exam session to schedule exams.</p>
-								<div className="mx-auto w-full max-w-xl grid grid-cols-1 sm:grid-cols-2 gap-4">
-									{canSwitchInstitution && (
-										<div>
-											<Label className="text-xs">Institution <span className="text-red-500">*</span></Label>
-											<Select
-												value={selectedInstitution?.id || ''}
-												onValueChange={(id) => {
-													const inst = availableInstitutions.find((i) => i.id === id)
-													if (inst) selectInstitution(inst)
-												}}
-											>
-												<SelectTrigger><SelectValue placeholder="Select institution" /></SelectTrigger>
-												<SelectContent>
-													{availableInstitutions.map((i) => (
-														<SelectItem key={i.id} value={i.id}>{i.institution_code} — {i.institution_name}</SelectItem>
-													))}
-												</SelectContent>
-											</Select>
-										</div>
-									)}
-									<div>
-										<Label className="text-xs">Exam Session <span className="text-red-500">*</span></Label>
-										<Select value={selectedSessionId} onValueChange={setSelectedSessionId} disabled={!institutionId}>
-											<SelectTrigger><SelectValue placeholder="Select session" /></SelectTrigger>
-											<SelectContent>
-												{sessions.map((s) => <SelectItem key={s.id} value={s.id}>{s.session_name} ({s.session_code})</SelectItem>)}
-											</SelectContent>
-										</Select>
-									</div>
-								</div>
-							</CardContent>
-						</Card>
-					) : (
+					{(
 						<div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
 							{/* Left: filters + subjects */}
 							<div className="lg:col-span-2 space-y-4">
@@ -404,11 +419,30 @@ export default function ScheduleExamsPage() {
 									<CardContent className="p-4 grid grid-cols-2 md:grid-cols-4 gap-3">
 										{mustSelectSession && (
 											<div className="col-span-2 md:col-span-4">
-												<Label className="text-xs">Examination Session</Label>
-												<Select value={selectedSessionId} onValueChange={setSelectedSessionId}>
-													<SelectTrigger><SelectValue placeholder="Select session" /></SelectTrigger>
+												<Label className="text-xs">Examination Session <span className="text-red-500">*</span></Label>
+												<Select value={selectedSessionId} onValueChange={setSelectedSessionId} disabled={!institutionId}>
+													<SelectTrigger><SelectValue placeholder={institutionId ? 'Select session' : 'Select institution first'} /></SelectTrigger>
 													<SelectContent>
 														{sessions.map((s) => <SelectItem key={s.id} value={s.id}>{s.session_name} ({s.session_code})</SelectItem>)}
+													</SelectContent>
+												</Select>
+											</div>
+										)}
+										{mustSelectInstitution && (
+											<div className="col-span-2 md:col-span-4">
+												<Label className="text-xs">Institution <span className="text-red-500">*</span></Label>
+												<Select
+													value={selectedInstitution?.id || ''}
+													onValueChange={(id) => {
+														const inst = availableInstitutions.find((i) => i.id === id)
+														if (inst) selectInstitution(inst)
+													}}
+												>
+													<SelectTrigger><SelectValue placeholder="Select institution" /></SelectTrigger>
+													<SelectContent>
+														{availableInstitutions.map((i) => (
+															<SelectItem key={i.id} value={i.id}>{i.institution_code} — {i.institution_name}</SelectItem>
+														))}
 													</SelectContent>
 												</Select>
 											</div>
@@ -463,7 +497,11 @@ export default function ScheduleExamsPage() {
 										<Badge variant="secondary">{selected.size} selected</Badge>
 									</CardHeader>
 									<CardContent className="p-0">
-										{loading ? (
+										{!institutionId || !selectedSessionId ? (
+											<div className="p-8 text-center text-muted-foreground text-sm">
+												{!institutionId ? 'Select an institution to view subjects.' : 'Select an exam session to view subjects.'}
+											</div>
+										) : loading ? (
 											<div className="p-8 flex items-center justify-center text-muted-foreground"><Loader2 className="h-5 w-5 animate-spin mr-2" />Loading subjects…</div>
 										) : filtered.length === 0 ? (
 											<div className="p-8 text-center text-muted-foreground text-sm">

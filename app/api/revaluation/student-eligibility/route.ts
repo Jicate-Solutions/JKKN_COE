@@ -13,6 +13,9 @@ export async function GET(request: Request) {
 	const registerNumber = searchParams.get('register_number')?.toUpperCase()
 	const examinationSessionId = searchParams.get('examination_session_id')
 	const institutionsId = searchParams.get('institutions_id')
+	// Which revaluation type the learner is applying for — drives the fee
+	// (Revaluation / Retotaling / Copy of Answer Script). Defaults to REVALUATION.
+	const revaluationType = (searchParams.get('revaluation_type') || 'REVALUATION').toUpperCase()
 
 	// Validation
 	if (!registerNumber) {
@@ -29,23 +32,21 @@ export async function GET(request: Request) {
 
 	try {
 		// =====================================================
-		// 1. FETCH STUDENT INFORMATION
+		// 1. RESOLVE STUDENT IDENTITY FROM EXAM REGISTRATIONS
 		// =====================================================
+		// NOTE: There is no `learners` table in COE. The authoritative source
+		// of a learner's register number is exam_registrations.stu_register_no,
+		// which also denormalizes student_id (a public.users id), student_name
+		// and program_code. (final_marks_detailed_view derives stu_register_no
+		// via a LEFT JOIN, so it can be NULL and is unreliable for lookup.)
 
-		const { data: student, error: studentError } = await supabase
-			.from('learners')
-			.select(
-				`
-				id,
-				register_number,
-				name,
-				program_code,
-				program_name,
-				institutions_id
-			`
-			)
-			.eq('register_number', registerNumber)
+		const { data: examReg, error: studentError } = await supabase
+			.from('exam_registrations')
+			.select('student_id, stu_register_no, student_name, program_code')
+			.eq('stu_register_no', registerNumber)
 			.eq('institutions_id', institutionsId)
+			.eq('examination_session_id', examinationSessionId)
+			.limit(1)
 			.maybeSingle()
 
 		if (studentError) {
@@ -53,11 +54,34 @@ export async function GET(request: Request) {
 			return NextResponse.json({ error: 'Failed to fetch student' }, { status: 500 })
 		}
 
-		if (!student) {
+		if (!examReg) {
 			return NextResponse.json(
-				{ error: 'Student not found in this institution' },
+				{
+					error: 'No exam registration found for this register number in the selected examination session.',
+				},
 				{ status: 404 }
 			)
+		}
+
+		// Best-effort program name for display (program_code -> program_name)
+		let programName: string | null = null
+		if (examReg.program_code) {
+			const { data: prog } = await supabase
+				.from('programs')
+				.select('program_name')
+				.eq('program_code', examReg.program_code)
+				.limit(1)
+				.maybeSingle()
+
+			programName = prog?.program_name || null
+		}
+
+		const student = {
+			id: examReg.student_id,
+			register_number: examReg.stu_register_no,
+			name: examReg.student_name,
+			program_code: examReg.program_code,
+			program_name: programName,
 		}
 
 		// =====================================================
@@ -77,20 +101,25 @@ export async function GET(request: Request) {
 			const myjkknIds = institution?.myjkkn_institution_ids || []
 
 			if (myjkknIds.length > 0) {
-				// Fetch learner profile from MyJKKN API
+				// Fetch learner profile via the internal MyJKKN proxy route
+				// (handles API key + correct upstream path). register_number is an
+				// exact match; institution filtering is applied client-side below.
+				const origin = new URL(request.url).origin
 				const myjkknResponse = await fetch(
-					`${process.env.NEXT_PUBLIC_MYJKKN_API_URL}/learner-profiles?` +
-						`institution_ids=${myjkknIds.join(',')}&` +
-						`register_number=${registerNumber}`
+					`${origin}/api/myjkkn/learner-profiles?` +
+						`register_number=${encodeURIComponent(registerNumber)}&` +
+						`limit=1000&fetchAll=true`
 				)
 
 				if (myjkknResponse.ok) {
 					const myjkknData = await myjkknResponse.json()
 					const profiles = myjkknData.data || myjkknData || []
 
-					// Find matching profile
+					// Find matching profile (match register number; institution match
+					// is best-effort since MyJKKN institution_id may differ)
 					const profile = profiles.find(
-						(p: any) => p.register_number === registerNumber && myjkknIds.includes(p.institution_id)
+						(p: any) =>
+							(p.register_number || '').toUpperCase() === registerNumber
 					)
 
 					if (profile?.student_photo_url) {
@@ -130,7 +159,9 @@ export async function GET(request: Request) {
 					id,
 					course_code,
 					course_name,
-					course_category,
+					course_category
+				),
+				course_offerings:course_offering_id (
 					semester
 				)
 			`
@@ -182,19 +213,54 @@ export async function GET(request: Request) {
 		}
 
 		// =====================================================
-		// 5. FETCH ACTIVE REVALUATION FEE CONFIG
+		// 5. RESOLVE THE PER-PAPER FEE (type + UG/PG based)
 		// =====================================================
+		// Program level is encoded in the CAS register number (…UG… / …PG…),
+		// with the program name as a fallback (Master… => PG).
+		const programLevel: 'UG' | 'PG' =
+			registerNumber.includes('PG') ||
+			/\bM\.?|MASTER/i.test(student.program_name || '')
+				? 'PG'
+				: 'UG'
 
-		const { data: feeConfig } = await supabase
-			.from('revaluation_fee_config')
-			.select('*')
+		const today = new Date().toISOString().split('T')[0]
+
+		// Preferred: type + level rate (matches the fee circular). A row with
+		// program_level 'ALL' applies to both UG and PG (e.g. Retotaling).
+		const { data: rateRows } = await supabase
+			.from('revaluation_fee_rates')
+			.select('fee_per_paper, program_level')
 			.eq('institutions_id', institutionsId)
+			.eq('revaluation_type', revaluationType)
+			.in('program_level', [programLevel, 'ALL'])
 			.eq('is_active', true)
-			.lte('effective_from', new Date().toISOString().split('T')[0])
-			.gte('effective_to', new Date().toISOString().split('T')[0])
-			.maybeSingle()
+			.lte('effective_from', today)
+			.or(`effective_to.is.null,effective_to.gte.${today}`)
 
-		if (!feeConfig) {
+		// Prefer an exact UG/PG match over an 'ALL' row when both exist
+		const rate =
+			rateRows?.find((r: any) => r.program_level === programLevel) ||
+			rateRows?.find((r: any) => r.program_level === 'ALL') ||
+			null
+
+		let perPaperFee: number | null = rate ? Number(rate.fee_per_paper) : null
+		let feeConfig: any = null
+
+		// Fallback: legacy attempt-based config (other institutions not yet
+		// migrated to the rate table).
+		if (perPaperFee === null) {
+			const { data: legacy } = await supabase
+				.from('revaluation_fee_config')
+				.select('*')
+				.eq('institutions_id', institutionsId)
+				.eq('is_active', true)
+				.lte('effective_from', today)
+				.gte('effective_to', today)
+				.maybeSingle()
+			feeConfig = legacy
+		}
+
+		if (perPaperFee === null && !feeConfig) {
 			return NextResponse.json(
 				{ error: 'No active fee configuration found. Please contact administrator.' },
 				{ status: 400 }
@@ -260,7 +326,7 @@ export async function GET(request: Request) {
 				course_id: mark.course_id,
 				course_code: mark.courses.course_code,
 				course_name: mark.courses.course_name,
-				semester: mark.courses.semester,
+				semester: mark.course_offerings?.semester ?? null,
 				internal_marks: mark.internal_marks_obtained,
 				external_marks: mark.external_marks_obtained,
 				total_marks: mark.total_marks_obtained,

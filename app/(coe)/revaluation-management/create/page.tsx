@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef } from 'react'
 import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -32,7 +32,7 @@ import {
 	BreadcrumbPage,
 	BreadcrumbSeparator,
 } from '@/components/ui/breadcrumb'
-import { FilePlus, Loader2, CalendarClock, Plus, Trash2 } from 'lucide-react'
+import { FilePlus, Loader2, CalendarClock, Plus, Trash2, ArrowLeft } from 'lucide-react'
 
 interface ExamSession {
 	id: string
@@ -96,6 +96,9 @@ export default function CreateRevaluationPage() {
 	])
 	// Ids loaded in edit mode — used to compute deletions on save
 	const [initialIds, setInitialIds] = useState<string[]>([])
+	// Revaluation type_codes that ALREADY have a period for the chosen session
+	// (create mode) — used to flag duplicates inline before saving
+	const [existingTypes, setExistingTypes] = useState<Set<string>>(new Set())
 
 	// Shared settings applied to every window
 	const [shared, setShared] = useState({
@@ -219,6 +222,46 @@ export default function CreateRevaluationPage() {
 		}
 	}, [syncedSessionId, sessions, isEditMode])
 
+	// In create mode, load the types that already have a period for the chosen
+	// session so we can warn inline instead of failing on save with a 400.
+	useEffect(() => {
+		if (isEditMode) {
+			setExistingTypes(new Set())
+			return
+		}
+		if (!session.examination_session_id) {
+			setExistingTypes(new Set())
+			return
+		}
+		let cancelled = false
+		const loadExisting = async () => {
+			try {
+				const res = await fetch(
+					`/api/revaluation/registration-periods?examination_session_id=${session.examination_session_id}`
+				)
+				if (!res.ok) return
+				const data = await res.json()
+				const rows: any[] = Array.isArray(data) ? data : []
+				if (!cancelled) {
+					setExistingTypes(
+						new Set(rows.map((r) => (r.revaluation_type || '').toUpperCase()))
+					)
+				}
+			} catch (error) {
+				console.error('Failed to load existing periods:', error)
+			}
+		}
+		loadExisting()
+		return () => {
+			cancelled = true
+		}
+	}, [session.examination_session_id, isEditMode])
+
+	// A window duplicates an existing period when (create mode) its type already
+	// has a period for the selected session.
+	const isDuplicateWindow = (w: PeriodWindow) =>
+		!w.id && !!w.revaluation_type && existingTypes.has(w.revaluation_type.toUpperCase())
+
 	const handleSessionChange = (sessionId: string) => {
 		const match = sessions.find((s) => s.id === sessionId)
 		setSession({
@@ -267,6 +310,9 @@ export default function CreateRevaluationPage() {
 			}
 			if (seen.has(w.revaluation_type)) {
 				e[`type_${w.uid}`] = 'Duplicate revaluation type'
+			} else if (isDuplicateWindow(w)) {
+				e[`type_${w.uid}`] =
+					'This type already has a period for this session — edit it from the Periods list instead'
 			}
 			seen.add(w.revaluation_type)
 			if (!w.start_date) e[`start_${w.uid}`] = 'Start date is required'
@@ -447,27 +493,29 @@ export default function CreateRevaluationPage() {
 						</div>
 
 						{/* Header */}
-						<div>
-							<h1 className="text-3xl font-bold text-gray-900">
-								{isEditMode ? 'Edit Revaluation Period' : 'Create Revaluation Period'}
-							</h1>
-							<p className="text-gray-600 mt-1">
-								Select a revaluation type and set its application from/to dates — add as
-								many types as you need
-							</p>
+						<div className="flex items-start gap-3">
+							<Button
+								variant="outline"
+								size="icon"
+								className="mt-1 shrink-0"
+								onClick={() => router.push('/revaluation-management/periods')}
+								title="Back to Revaluation Periods"
+							>
+								<ArrowLeft className="h-4 w-4" />
+							</Button>
+							<div>
+								<h1 className="text-3xl font-bold text-gray-900">
+									{isEditMode ? 'Edit Revaluation Period' : 'Create Revaluation Period'}
+								</h1>
+								<p className="text-gray-600 mt-1">
+									Select a revaluation type and set its application from/to dates — add as
+									many types as you need
+								</p>
+							</div>
 						</div>
 
 						{/* Form Card */}
 						<Card>
-							<CardHeader className="bg-gradient-to-r from-blue-50 to-indigo-50 border-b">
-								<CardTitle className="flex items-center gap-2 text-blue-900">
-									<FilePlus className="h-5 w-5" />
-									Revaluation Period Details
-								</CardTitle>
-								<CardDescription className="text-blue-700">
-									Configure the revaluation application windows for an examination session
-								</CardDescription>
-							</CardHeader>
 							<CardContent className="pt-6 space-y-6">
 								{/* Session / Institution */}
 								<div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -540,12 +588,17 @@ export default function CreateRevaluationPage() {
 									)}
 								</div>
 
-								{/* Revaluation type windows */}
+								{/* Revaluation type windows — child table */}
 								<div className="space-y-3">
 									<div className="flex items-center justify-between">
-										<Label className="text-base font-semibold text-gray-900">
-											Revaluation Types & Date Windows <span className="text-red-500">*</span>
-										</Label>
+										<div className="flex items-center gap-2">
+											<Label className="text-base font-semibold text-gray-900">
+												Revaluation Types & Date Windows <span className="text-red-500">*</span>
+											</Label>
+											<span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-blue-100 px-1.5 text-xs font-medium text-blue-700">
+												{windows.length}
+											</span>
+										</div>
 										<Button
 											type="button"
 											variant="outline"
@@ -559,18 +612,41 @@ export default function CreateRevaluationPage() {
 									</div>
 									{errors.windows && <p className="text-sm text-red-500">{errors.windows}</p>}
 
-									<div className="space-y-3">
-										{windows.map((w) => {
-											const used = usedTypes(w.uid)
-											return (
-												<div
-													key={w.uid}
-													className="rounded-lg border border-gray-200 bg-gray-50/50 p-4"
-												>
-													<div className="grid grid-cols-1 md:grid-cols-12 gap-4 items-start">
+									<div className="overflow-hidden rounded-lg border border-gray-200">
+										{/* Header row (desktop) */}
+										<div className="hidden md:grid grid-cols-12 gap-3 border-b border-gray-200 bg-gray-50 px-4 py-2.5 text-xs font-semibold uppercase tracking-wide text-gray-500">
+											<div className="col-span-1">#</div>
+											<div className="col-span-4">
+												Revaluation Type <span className="text-red-500">*</span>
+											</div>
+											<div className="col-span-3">
+												From Date <span className="text-red-500">*</span>
+											</div>
+											<div className="col-span-3">
+												To Date <span className="text-red-500">*</span>
+											</div>
+											<div className="col-span-1 text-right">Action</div>
+										</div>
+
+										{/* Body rows */}
+										<div className="divide-y divide-gray-200">
+											{windows.map((w, index) => {
+												const used = usedTypes(w.uid)
+												return (
+													<div
+														key={w.uid}
+														className="grid grid-cols-1 md:grid-cols-12 gap-3 px-4 py-3 transition-colors hover:bg-blue-50/30 odd:bg-white even:bg-gray-50/40"
+													>
+														{/* Serial number */}
+														<div className="hidden md:flex md:col-span-1 items-center pt-2">
+															<span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-gray-100 text-xs font-medium text-gray-600">
+																{index + 1}
+															</span>
+														</div>
+
 														{/* Type */}
-														<div className="md:col-span-4 space-y-2">
-															<Label className="text-sm">
+														<div className="md:col-span-4 space-y-1.5">
+															<Label className="text-xs font-medium text-gray-500 md:hidden">
 																Revaluation Type <span className="text-red-500">*</span>
 															</Label>
 															<Select
@@ -581,7 +657,7 @@ export default function CreateRevaluationPage() {
 																}
 															>
 																<SelectTrigger
-																	className={errors[`type_${w.uid}`] ? 'border-red-500' : ''}
+																	className={`bg-white ${errors[`type_${w.uid}`] ? 'border-red-500' : ''}`}
 																>
 																	<SelectValue placeholder="Select type" />
 																</SelectTrigger>
@@ -599,51 +675,58 @@ export default function CreateRevaluationPage() {
 																		))}
 																</SelectContent>
 															</Select>
-															{errors[`type_${w.uid}`] && (
-																<p className="text-sm text-red-500">{errors[`type_${w.uid}`]}</p>
+															{errors[`type_${w.uid}`] ? (
+																<p className="text-xs text-red-500">{errors[`type_${w.uid}`]}</p>
+															) : (
+																isDuplicateWindow(w) && (
+																	<p className="text-xs text-amber-600">
+																		Already has a period for this session — edit it from the
+																		Periods list instead
+																	</p>
+																)
 															)}
 														</div>
 
 														{/* From */}
-														<div className="md:col-span-4 space-y-2">
-															<Label className="text-sm">
+														<div className="md:col-span-3 space-y-1.5">
+															<Label className="text-xs font-medium text-gray-500 md:hidden">
 																From Date <span className="text-red-500">*</span>
 															</Label>
 															<div className="relative">
-																<CalendarClock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+																<CalendarClock className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
 																<Input
 																	type="datetime-local"
 																	value={w.start_date}
 																	onChange={(e) => updateWindow(w.uid, { start_date: e.target.value })}
-																	className={`pl-10 ${errors[`start_${w.uid}`] ? 'border-red-500' : ''}`}
+																	className={`bg-white pl-10 ${errors[`start_${w.uid}`] ? 'border-red-500' : ''}`}
 																/>
 															</div>
 															{errors[`start_${w.uid}`] && (
-																<p className="text-sm text-red-500">{errors[`start_${w.uid}`]}</p>
+																<p className="text-xs text-red-500">{errors[`start_${w.uid}`]}</p>
 															)}
 														</div>
 
 														{/* To */}
-														<div className="md:col-span-3 space-y-2">
-															<Label className="text-sm">
+														<div className="md:col-span-3 space-y-1.5">
+															<Label className="text-xs font-medium text-gray-500 md:hidden">
 																To Date <span className="text-red-500">*</span>
 															</Label>
 															<div className="relative">
-																<CalendarClock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+																<CalendarClock className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
 																<Input
 																	type="datetime-local"
 																	value={w.end_date}
 																	onChange={(e) => updateWindow(w.uid, { end_date: e.target.value })}
-																	className={`pl-10 ${errors[`end_${w.uid}`] ? 'border-red-500' : ''}`}
+																	className={`bg-white pl-10 ${errors[`end_${w.uid}`] ? 'border-red-500' : ''}`}
 																/>
 															</div>
 															{errors[`end_${w.uid}`] && (
-																<p className="text-sm text-red-500">{errors[`end_${w.uid}`]}</p>
+																<p className="text-xs text-red-500">{errors[`end_${w.uid}`]}</p>
 															)}
 														</div>
 
 														{/* Remove */}
-														<div className="md:col-span-1 flex md:justify-end md:pt-7">
+														<div className="md:col-span-1 flex items-start md:justify-end md:pt-1">
 															<Button
 																type="button"
 																variant="ghost"
@@ -657,9 +740,20 @@ export default function CreateRevaluationPage() {
 															</Button>
 														</div>
 													</div>
-												</div>
-											)
-										})}
+												)
+											})}
+										</div>
+
+										{/* Footer add-row */}
+										<button
+											type="button"
+											onClick={addWindow}
+											disabled={types.length > 0 && windows.length >= types.length}
+											className="flex w-full items-center justify-center gap-1.5 border-t border-gray-200 bg-gray-50/60 px-4 py-2.5 text-sm font-medium text-blue-600 transition-colors hover:bg-blue-50 disabled:cursor-not-allowed disabled:text-gray-400 disabled:hover:bg-gray-50/60"
+										>
+											<Plus className="h-4 w-4" />
+											Add another revaluation type
+										</button>
 									</div>
 
 									{types.length === 0 && (

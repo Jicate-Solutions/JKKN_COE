@@ -870,6 +870,7 @@ export default function CoursesPage() {
       'Annual Semester*': c.annual_semester ? 'TRUE' : 'FALSE',
       'Registration Based*': c.registration_based ? 'TRUE' : 'FALSE',
       'Status': c.is_active ? 'TRUE' : 'FALSE',
+      'Course Status': c.courses_status ?? 'Pending',
     }))
 
     const ws = XLSX.utils.json_to_sheet(data)

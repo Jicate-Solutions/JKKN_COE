@@ -58,7 +58,6 @@ import {
 	Globe,
 	Search,
 	RefreshCcw,
-	FilePlus,
 	List,
 	MessageSquare,
 	Award,
@@ -300,7 +299,6 @@ export const navMain: NavItem[] = [
 		coe_roles: ['super_admin', 'coe'],
 		items: [
 			{ title: 'Revaluation Periods', url: '/revaluation-management/periods', icon: CalendarClock, permission: 'page.revaluation_management.create.view' },
-			{ title: 'Create Revaluation', url: '/revaluation-management/create', icon: FilePlus, permission: 'page.revaluation_management.create.view' },
 			{ title: 'All Applications', url: '/revaluation-management?tab=applications', icon: List, permission: 'page.revaluation_management.view' },
 			{ title: 'Bulk Application', url: '/revaluation-management?tab=bulk-application', icon: Users, permission: 'page.revaluation_management.view' },
 			{ title: 'Payment Status', url: '/revaluation-management?tab=payment-status', icon: CreditCard, permission: 'page.revaluation_management.view' },

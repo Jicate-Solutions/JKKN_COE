@@ -627,13 +627,15 @@ export default function SemesterResultsPage() {
 	const inferGradeSystemFromProgram = useCallback((programCode?: string, programName?: string): ProgramType => {
 		const code = (programCode || '').toUpperCase()
 		const name = (programName || '').toUpperCase()
-		// PG patterns: M.A., M.Sc., MBA, MCA, M.Com, M.Phil, Ph.D, etc.
-		const pgPatterns = ['M.', 'MA', 'MSC', 'MBA', 'MCA', 'MCOM', 'MPHIL', 'PHD', 'PH.D', 'MASTER', 'POST']
-		for (const pattern of pgPatterns) {
-			if (code.includes(pattern) || name.includes(pattern)) {
-				return 'PG'
-			}
-		}
+		const text = `${code} ${name}`
+		// Strong UG signal first (Bachelor degrees). Checked before PG so that names like
+		// "B.COM." or "B.Sc. MATHEMATICS" are not mis-tagged as PG via substring matches.
+		const ugRegex = /\b(B\.?A|B\.?SC|B\.?COM|B\.?B\.?A|BCA|B\.?TECH|B\.?E|B\.?ED|BACHELOR|UG|UNDER\s*GRAD|DIPLOMA)\b/
+		if (ugRegex.test(text)) return 'UG'
+		// PG signal: Master/doctoral degrees. Word boundaries avoid substring false positives
+		// (e.g. "MA" inside "MATHEMATICS", "M." inside "B.COM.").
+		const pgRegex = /\b(M\.?A|M\.?SC|MBA|MCA|M\.?COM|M\.?PHIL|PH\.?D|M\.?TECH|M\.?E|M\.?ED|MASTER|PG|POST\s*GRAD)\b/
+		if (pgRegex.test(text)) return 'PG'
 		return 'UG'
 	}, [])
 
@@ -722,13 +724,21 @@ export default function SemesterResultsPage() {
 			console.log('[SemesterResults] Fetching programs from MyJKKN for institution IDs:', myjkknIds)
 			const progs = await fetchMyJKKNPrograms(myjkknIds)
 
-			// Transform MyJKKN programs to DropdownOption format and sort by program_code
-			const transformedPrograms = progs.map(p => ({
-				id: p.id, // MyJKKN UUID
-				code: p.program_code, // Code like "BCA"
-				name: p.program_name,
-				type: inferGradeSystemFromProgram(p.program_code, p.program_name)
-			})).sort((a, b) => a.code.localeCompare(b.code))
+			// Transform MyJKKN programs to DropdownOption format and sort by program_code.
+			// Prefer the authoritative program_type from MyJKKN; fall back to heuristic only
+			// when the API doesn't return a usable UG/PG value.
+			const transformedPrograms = progs.map(p => {
+				const apiType = String(p.program_type || '').toUpperCase()
+				const type: ProgramType = (apiType === 'UG' || apiType === 'PG')
+					? (apiType as ProgramType)
+					: inferGradeSystemFromProgram(p.program_code, p.program_name)
+				return {
+					id: p.id, // MyJKKN UUID
+					code: p.program_code, // Code like "BCA"
+					name: p.program_name,
+					type
+				}
+			}).sort((a, b) => a.code.localeCompare(b.code))
 
 			console.log('[SemesterResults] Fetched', transformedPrograms.length, 'programs from MyJKKN')
 			setPrograms(transformedPrograms)
