@@ -30,8 +30,10 @@ export function generateMarksheetDistributionPDF(data: MarksheetDistributionData
 	const pageHeight = doc.internal.pageSize.getHeight()
 	const margin = 8
 
-	// Determine program duration (number of semesters) - default to 6 semesters (3-year program)
-	const programDuration = data.programDuration || 6
+	// Determine program duration (number of semesters)
+	// UG (program code starts with 'U') runs 6 semesters; PG (starts with 'P') runs 4.
+	const isPG = (data.programCode || '').trim().toUpperCase().startsWith('P')
+	const programDuration = data.programDuration || (isPG ? 4 : 6)
 
 	// Generate semester labels with superscript-style formatting
 	const semesterLabels: string[] = []
@@ -252,7 +254,7 @@ export function generateMarksheetDistributionPDF(data: MarksheetDistributionData
 		doc.setFont('times', 'normal')
 		doc.setFontSize(8)
 		doc.setTextColor(0, 0, 0)
-		doc.text(`Page ${i}`, pageWidth / 2, pageHeight - 5, { align: 'center' })
+		doc.text(`${i}/${totalPages}`, pageWidth / 2, pageHeight - 5, { align: 'center' })
 	}
 
 	// Save PDF

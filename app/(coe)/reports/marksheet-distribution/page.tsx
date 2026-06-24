@@ -12,11 +12,13 @@ import { Label } from "@/components/ui/label"
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { useToast } from "@/hooks/common/use-toast"
-import { Loader2, FileText, Check, ChevronsUpDown, X, GraduationCap, Users, ListChecks } from "lucide-react"
+import { Loader2, FileText, Check, ChevronsUpDown, X, GraduationCap, Users, ListChecks, FileSpreadsheet } from "lucide-react"
 import { cn } from "@/lib/utils"
 import Link from "next/link"
 import { generateMarksheetDistributionPDF } from "@/lib/utils/generate-marksheet-distribution-pdf"
 import { generateMarksheetDistributionRegisterPDF } from "@/lib/utils/generate-marksheet-distribution-register-pdf"
+import { generateMarksheetDistributionRegisterExcel, downloadRegisterExcel } from "@/lib/utils/generate-marksheet-distribution-register-excel"
+import { generateMarksheetDistributionExcel, downloadDistributionExcel } from "@/lib/utils/generate-marksheet-distribution-excel"
 import { useInstitutionFilter } from "@/hooks/use-institution-filter"
 import { useMyJKKNInstitutionFilter } from "@/hooks/use-myjkkn-institution-filter"
 
@@ -75,7 +77,9 @@ export default function MarksheetDistributionPage() {
 	const [loadingPrograms, setLoadingPrograms] = useState(false)
 	const [loadingBatches, setLoadingBatches] = useState(false)
 	const [generatingPDF, setGeneratingPDF] = useState(false)
+	const [generatingExcel, setGeneratingExcel] = useState(false)
 	const [generatingRegister, setGeneratingRegister] = useState(false)
+	const [generatingRegisterExcel, setGeneratingRegisterExcel] = useState(false)
 
 	// Popover open states
 	const [institutionOpen, setInstitutionOpen] = useState(false)
@@ -187,7 +191,7 @@ export default function MarksheetDistributionPage() {
 		}
 	}, [selectedProgramCode, selectedInstitutionId])
 
-	const fetchBatches = async (institutionId: string, _programCode: string) => {
+	const fetchBatches = async (institutionId: string, programCode: string) => {
 		try {
 			setLoadingBatches(true)
 
@@ -199,6 +203,10 @@ export default function MarksheetDistributionPage() {
 				return
 			}
 
+			// Program level: UG (code starts with 'U') uses UGB* batches, PG (starts with 'P') uses PGB*
+			const isPGProgram = (programCode || '').trim().toUpperCase().startsWith('P')
+			const wantedPrefix = isPGProgram ? 'PG' : 'UG'
+
 			// Fetch ALL batches for this institution (no program filter)
 			const batchResults = await fetchMyJKKNBatches(myjkknIds)
 
@@ -208,6 +216,15 @@ export default function MarksheetDistributionPage() {
 
 			for (const b of batchResults) {
 				const code = b.batch_code || ''
+
+				// Keep only batches matching the selected program's level (UGB* vs PGB*).
+				// Batches with an unrecognised prefix are kept so nothing is hidden unexpectedly.
+				const upperCode = code.toUpperCase()
+				const knownLevel = upperCode.startsWith('UG') || upperCode.startsWith('PG')
+				if (code && knownLevel && !upperCode.startsWith(wantedPrefix)) {
+					continue
+				}
+
 				const batchName = b.batch_name || b.batch_code || `${b.start_year}-${b.end_year}`
 				if (code && !seenCodes.has(code)) {
 					seenCodes.add(code)
@@ -469,6 +486,166 @@ export default function MarksheetDistributionPage() {
 		}
 	}
 
+	// Generate "Marksheet Distribution Register" Excel (same format as the register PDF)
+	const handleGenerateRegisterExcel = async () => {
+		if (!selectedInstitutionId || !selectedProgramCode || !selectedBatchId) {
+			toast({
+				title: "Missing Information",
+				description: "Please select Institution, Program, and Batch.",
+				variant: "destructive",
+			})
+			return
+		}
+
+		try {
+			setGeneratingRegisterExcel(true)
+
+			const institution = institutions.find(i => i.id === selectedInstitutionId)
+			const program = programs.find(p => p.program_code === selectedProgramCode)
+			const batch = batches.find(b => b.id === selectedBatchId)
+
+			if (!institution || !program || !batch) {
+				throw new Error('Unable to find selected filter details')
+			}
+
+			const params = new URLSearchParams({
+				institution_id: selectedInstitutionId,
+				program_code: selectedProgramCode,
+				batch_code: batch.batch_code || ''
+			})
+
+			const response = await fetch(`/api/reports/marksheet-distribution?${params.toString()}`)
+
+			if (!response.ok) {
+				const errorData = await response.json()
+				throw new Error(errorData.error || 'Failed to fetch learner data')
+			}
+
+			const reportData = await response.json()
+
+			if (!reportData.learners || reportData.learners.length === 0) {
+				toast({
+					title: "No Data",
+					description: "No learners found for the selected criteria.",
+					className: "bg-blue-50 border-blue-200 text-blue-800",
+				})
+				return
+			}
+
+			const { logoBase64, rightLogoBase64 } = await loadLogos()
+
+			const buffer = await generateMarksheetDistributionRegisterExcel({
+				institutionName: institution.institution_name,
+				institutionCode: institution.institution_code,
+				programName: program.program_name,
+				programCode: program.program_code,
+				batchYear: batch.batch_name,
+				learners: reportData.learners,
+				logoImage: logoBase64,
+				rightLogoImage: rightLogoBase64
+			})
+
+			const fileName = `Marksheet_Distribution_Register_${program.program_code}_${batch.batch_name || 'batch'}_${new Date().toISOString().split('T')[0]}.xlsx`
+			downloadRegisterExcel(buffer, fileName)
+
+			toast({
+				title: "Register Excel Generated",
+				description: `${fileName} has been downloaded (${reportData.learners.length} learners).`,
+				className: "bg-green-50 border-green-200 text-green-800",
+				duration: 5000,
+			})
+		} catch (error) {
+			console.error('Error generating register Excel:', error)
+			toast({
+				title: "Generation Failed",
+				description: error instanceof Error ? error.message : 'Failed to generate register Excel',
+				variant: "destructive",
+			})
+		} finally {
+			setGeneratingRegisterExcel(false)
+		}
+	}
+
+	// Generate "Marksheet Distribution" List Excel (same format as the distribution list PDF)
+	const handleGenerateDistributionExcel = async () => {
+		if (!selectedInstitutionId || !selectedProgramCode || !selectedBatchId) {
+			toast({
+				title: "Missing Information",
+				description: "Please select Institution, Program, and Batch.",
+				variant: "destructive",
+			})
+			return
+		}
+
+		try {
+			setGeneratingExcel(true)
+
+			const institution = institutions.find(i => i.id === selectedInstitutionId)
+			const program = programs.find(p => p.program_code === selectedProgramCode)
+			const batch = batches.find(b => b.id === selectedBatchId)
+
+			if (!institution || !program || !batch) {
+				throw new Error('Unable to find selected filter details')
+			}
+
+			const params = new URLSearchParams({
+				institution_id: selectedInstitutionId,
+				program_code: selectedProgramCode,
+				batch_code: batch.batch_code || ''
+			})
+
+			const response = await fetch(`/api/reports/marksheet-distribution?${params.toString()}`)
+
+			if (!response.ok) {
+				const errorData = await response.json()
+				throw new Error(errorData.error || 'Failed to fetch learner data')
+			}
+
+			const reportData = await response.json()
+
+			if (!reportData.learners || reportData.learners.length === 0) {
+				toast({
+					title: "No Data",
+					description: "No learners found for the selected criteria.",
+					className: "bg-blue-50 border-blue-200 text-blue-800",
+				})
+				return
+			}
+
+			const { logoBase64, rightLogoBase64 } = await loadLogos()
+
+			const buffer = await generateMarksheetDistributionExcel({
+				institutionName: institution.institution_name,
+				institutionCode: institution.institution_code,
+				programName: program.program_name,
+				programCode: program.program_code,
+				batchYear: batch.batch_name,
+				learners: reportData.learners,
+				logoImage: logoBase64,
+				rightLogoImage: rightLogoBase64
+			})
+
+			const fileName = `Marksheet_Distribution_${program.program_code}_${batch.batch_name || 'batch'}_${new Date().toISOString().split('T')[0]}.xlsx`
+			downloadDistributionExcel(buffer, fileName)
+
+			toast({
+				title: "Distribution Excel Generated",
+				description: `${fileName} has been downloaded (${reportData.learners.length} learners).`,
+				className: "bg-green-50 border-green-200 text-green-800",
+				duration: 5000,
+			})
+		} catch (error) {
+			console.error('Error generating distribution Excel:', error)
+			toast({
+				title: "Generation Failed",
+				description: error instanceof Error ? error.message : 'Failed to generate distribution Excel',
+				variant: "destructive",
+			})
+		} finally {
+			setGeneratingExcel(false)
+		}
+	}
+
 	// Get display values
 	const selectedInstitution = institutions.find(i => i.id === selectedInstitutionId)
 	const selectedProgram = programs.find(p => p.program_code === selectedProgramCode)
@@ -726,42 +903,87 @@ export default function MarksheetDistributionPage() {
 					</Card>
 
 					{/* Download Buttons */}
-					<div className="flex flex-wrap items-center gap-2">
-						<Button
-							onClick={handleGeneratePDF}
-							disabled={generatingPDF || !selectedInstitutionId || !selectedProgramCode || !selectedBatchId}
-							className="w-fit bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700"
-						>
-							{generatingPDF ? (
-								<>
-									<Loader2 className="mr-2 h-4 w-4 animate-spin" />
-									Generating PDF...
-								</>
-							) : (
-								<>
-									<FileText className="mr-2 h-4 w-4" />
-									Distribution List PDF
-								</>
-							)}
-						</Button>
-						<Button
-							onClick={handleGenerateRegister}
-							disabled={generatingRegister || !selectedInstitutionId || !selectedProgramCode || !selectedBatchId}
-							className="w-fit bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700"
-						>
-							{generatingRegister ? (
-								<>
-									<Loader2 className="mr-2 h-4 w-4 animate-spin" />
-									Generating PDF...
-								</>
-							) : (
-								<>
-									<ListChecks className="mr-2 h-4 w-4" />
-									Distribution Register PDF
-								</>
-							)}
-						</Button>
-					</div>
+					{(() => {
+						const filtersReady = !!selectedInstitutionId && !!selectedProgramCode && !!selectedBatchId
+						const anyGenerating = generatingPDF || generatingExcel || generatingRegister || generatingRegisterExcel
+						return (
+							<div className="grid gap-4 md:grid-cols-2">
+								{/* Distribution List */}
+								<Card className="border-purple-100">
+									<CardHeader className="pb-3">
+										<CardTitle className="flex items-center gap-2 text-sm font-semibold">
+											<FileText className="h-4 w-4 text-purple-600" />
+											Distribution List
+										</CardTitle>
+										<CardDescription className="text-xs">
+											Per-learner sheet with semester-wise issue date &amp; signature columns
+										</CardDescription>
+									</CardHeader>
+									<CardContent className="flex flex-wrap gap-2">
+										<Button
+											onClick={handleGeneratePDF}
+											disabled={generatingPDF || anyGenerating || !filtersReady}
+											className="flex-1 min-w-[140px] bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700"
+										>
+											{generatingPDF ? (
+												<><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Generating...</>
+											) : (
+												<><FileText className="mr-2 h-4 w-4" /> PDF</>
+											)}
+										</Button>
+										<Button
+											onClick={handleGenerateDistributionExcel}
+											disabled={generatingExcel || anyGenerating || !filtersReady}
+											className="flex-1 min-w-[140px] bg-gradient-to-r from-emerald-600 to-green-600 hover:from-emerald-700 hover:to-green-700"
+										>
+											{generatingExcel ? (
+												<><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Generating...</>
+											) : (
+												<><FileSpreadsheet className="mr-2 h-4 w-4" /> Excel</>
+											)}
+										</Button>
+									</CardContent>
+								</Card>
+
+								{/* Distribution Register */}
+								<Card className="border-purple-100">
+									<CardHeader className="pb-3">
+										<CardTitle className="flex items-center gap-2 text-sm font-semibold">
+											<ListChecks className="h-4 w-4 text-purple-600" />
+											Distribution Register
+										</CardTitle>
+										<CardDescription className="text-xs">
+											Printing-details register — marksheet no., folio no. &amp; date of print
+										</CardDescription>
+									</CardHeader>
+									<CardContent className="flex flex-wrap gap-2">
+										<Button
+											onClick={handleGenerateRegister}
+											disabled={generatingRegister || anyGenerating || !filtersReady}
+											className="flex-1 min-w-[140px] bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700"
+										>
+											{generatingRegister ? (
+												<><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Generating...</>
+											) : (
+												<><FileText className="mr-2 h-4 w-4" /> PDF</>
+											)}
+										</Button>
+										<Button
+											onClick={handleGenerateRegisterExcel}
+											disabled={generatingRegisterExcel || anyGenerating || !filtersReady}
+											className="flex-1 min-w-[140px] bg-gradient-to-r from-emerald-600 to-green-600 hover:from-emerald-700 hover:to-green-700"
+										>
+											{generatingRegisterExcel ? (
+												<><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Generating...</>
+											) : (
+												<><FileSpreadsheet className="mr-2 h-4 w-4" /> Excel</>
+											)}
+										</Button>
+									</CardContent>
+								</Card>
+							</div>
+						)
+					})()}
 				</div>
 
 				<AppFooter />
