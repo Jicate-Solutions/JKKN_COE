@@ -153,7 +153,7 @@ function drawHeader(doc: jsPDF, data: AttendanceSheetPdfData, pageWidth: number,
 	// Exam session name — normal (not bold)
 	doc.setFont('times', 'normal')
 	doc.setFontSize(9)
-	doc.text(`SEMESTER EXAMINATION - ${data.session_name}`, pageWidth / 2, currentY, { align: 'center' })
+	doc.text(`${data.exam_heading || 'SEMESTER EXAMINATION'} - ${data.session_name}`, pageWidth / 2, currentY, { align: 'center' })
 
 	currentY += 4
 

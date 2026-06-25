@@ -45,6 +45,8 @@ export interface AttendanceSheetPdfData {
 	exam_date: string
 	session_type: string // FN or AN
 	exam_type?: string // 'Theory' | 'Practical' — changes signature labels
+	/** Heading prefix, e.g. "SEMESTER EXAMINATION" or "SUPPLEMENTARY EXAMINATION" */
+	exam_heading?: string
 	logo_image?: string | null
 	right_logo_image?: string | null
 	sheets: AttendanceSheet[]

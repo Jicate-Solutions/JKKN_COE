@@ -281,11 +281,15 @@ export async function POST(request: Request) {
 			const isPractical = requiresBatch(it.exam_type)
 			const batch_capacity = isPractical ? Number(it.batch_capacity) || null : null
 			if (it.exam_timetable_id) {
-				// Reschedule existing draft row — change only date/session/mode/publish/batch
+				// Reschedule existing row — change date/session/mode/batch.
+				// Publishing is additive from this page: the batch toggle can publish a row,
+				// but leaving it off must NOT unpublish an already-published row
+				// (unpublishing is done from the Exam Timetables list page).
+				const rowPublished = is_published || !!it.was_published
 				updates.push({
 					id: it.exam_timetable_id,
 					course_code: it.course_code,
-					payload: { exam_date, session: sess, exam_mode, is_published, batch_capacity, updated_at: nowIso },
+					payload: { exam_date, session: sess, exam_mode, is_published: rowPublished, batch_capacity, updated_at: nowIso },
 				})
 			} else {
 				newRows.push({

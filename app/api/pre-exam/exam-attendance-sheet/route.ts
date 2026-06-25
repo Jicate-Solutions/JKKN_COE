@@ -48,10 +48,10 @@ export async function GET(request: Request) {
 			return NextResponse.json({ error: 'Institution not found' }, { status: 404 })
 		}
 
-		// Step 2: Get examination session
+		// Step 2: Get examination session (with exam type name for the PDF heading)
 		const { data: examSession, error: sessionError } = await supabase
 			.from('examination_sessions')
-			.select('id, session_code, session_name')
+			.select('id, session_code, session_name, exam_type_id, exam_types(examination_name)')
 			.eq('id', examinationSessionId)
 			.single()
 
@@ -394,6 +394,9 @@ export async function GET(request: Request) {
 			institution_code: institution.institution_code,
 			session_name: examSession.session_name,
 			session_code: examSession.session_code,
+			exam_heading: /supplement/i.test((examSession.exam_types as any)?.examination_name || '')
+				? 'SUPPLEMENTARY EXAMINATION'
+				: 'SEMESTER EXAMINATION',
 			exam_date: examDate,
 			session_type: session,
 			logo_image: pdfSettings?.logo_url || null,

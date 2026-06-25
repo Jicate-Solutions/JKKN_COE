@@ -97,7 +97,7 @@ export function generateHallTicketDistributionPDF(options: GenerateDistributionO
 		// Examination Session Title
 		doc.setFont('times', 'bold')
 		doc.setFontSize(12)
-		doc.text(`SEMESTER EXAMINATION ${data.session.session_name}`, pageWidth / 2, currentY, { align: 'center' })
+		doc.text(`${data.session.exam_heading || 'SEMESTER EXAMINATION'} ${data.session.session_name}`, pageWidth / 2, currentY, { align: 'center' })
 
 		currentY += 6
 

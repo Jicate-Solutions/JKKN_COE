@@ -35,6 +35,9 @@ export async function GET(request: NextRequest) {
 		const program_name = searchParams.get('program_name') // Passed from page dropdown (fallback for MyJKKN API)
 		const semester_ids = searchParams.get('semester_ids') // comma-separated
 		const student_ids = searchParams.get('student_ids') // comma-separated
+		// Supplementary sessions: show all registered learners (no semester level)
+		// and include them regardless of fee_paid (often unpaid at hall-ticket time).
+		const supplementary = searchParams.get('supplementary') === 'true'
 
 		// Validate required parameters
 		if (!institution_code) {
@@ -104,10 +107,10 @@ export async function GET(request: NextRequest) {
 			} as HallTicketApiResponse, { status: 404 })
 		}
 
-		// Get examination session details
+		// Get examination session details (with exam type name for the PDF heading)
 		const { data: examSession, error: sessionError } = await supabase
 			.from('examination_sessions')
-			.select('id, session_code, session_name')
+			.select('id, session_code, session_name, exam_type_id, exam_types(examination_name)')
 			.eq('id', examination_session_id)
 			.single()
 
@@ -172,7 +175,11 @@ export async function GET(request: NextRequest) {
 			.eq('examination_session_id', examination_session_id)
 			.eq('institutions_id', institution.id)
 			.eq('registration_status', 'Approved')
-			.eq('fee_paid', true)
+
+		// ESE requires fee payment; supplementary includes regardless of fee_paid
+		if (!supplementary) {
+			registrationsQuery = registrationsQuery.eq('fee_paid', true)
+		}
 
 		// Apply mandatory program filter
 		registrationsQuery = registrationsQuery.eq('program_code', program_code)
@@ -631,7 +638,12 @@ export async function GET(request: NextRequest) {
 			},
 			session: {
 				session_code: examSession.session_code,
-				session_name: examSession.session_name
+				session_name: examSession.session_name,
+				exam_heading: (() => {
+					const examTypeName = (examSession.exam_types as any)?.examination_name || ''
+					// Supplementary sessions get a distinct heading; everything else keeps "SEMESTER EXAMINATION"
+					return /supplement/i.test(examTypeName) ? 'SUPPLEMENTARY EXAMINATION' : 'SEMESTER EXAMINATION'
+				})()
 			},
 			students: students
 		}

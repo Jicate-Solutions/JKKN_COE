@@ -20,6 +20,9 @@ export async function GET(request: NextRequest) {
 		const examination_session_id = searchParams.get('examination_session_id')
 		const program_code = searchParams.get('program_code')
 		const semester = searchParams.get('semester') // optional semester number filter
+		// Supplementary sessions: include ALL registered learners (incl. is_regular=false),
+		// ignore the semester level entirely.
+		const supplementary = searchParams.get('supplementary') === 'true'
 
 		if (!institution_code || !examination_session_id || !program_code) {
 			return NextResponse.json(
@@ -42,16 +45,22 @@ export async function GET(request: NextRequest) {
 			)
 		}
 
-		// Query distinct students from approved & fee-paid registrations
-		const { data: registrations, error: regError } = await supabase
+		// Query distinct students from approved registrations.
+		// ESE: require fee_paid = true. Supplementary: include regardless of fee_paid
+		// (supplementary registrations are often unpaid at hall-ticket time).
+		let regQuery = supabase
 			.from('exam_registrations')
 			.select('stu_register_no, student_name, is_regular, course_offering_id, course_offerings(semester)')
 			.eq('institutions_id', institution.id)
 			.eq('examination_session_id', examination_session_id)
 			.eq('program_code', program_code)
 			.eq('registration_status', 'Approved')
-			.eq('fee_paid', true)
-			.range(0, 9999)
+
+		if (!supplementary) {
+			regQuery = regQuery.eq('fee_paid', true)
+		}
+
+		const { data: registrations, error: regError } = await regQuery.range(0, 9999)
 
 		if (regError) {
 			console.error('[HallTicket Students] Query error:', regError)
@@ -67,7 +76,10 @@ export async function GET(request: NextRequest) {
 			if (!reg.stu_register_no) continue
 			const co = reg.course_offerings as any
 			const regSemester = co?.semester
-			if (semesterNum !== null) {
+			if (supplementary) {
+				// Supplementary session: every registered learner qualifies (no is_regular/semester gate)
+				qualifiedStudents.add(reg.stu_register_no)
+			} else if (semesterNum !== null) {
 				if (regSemester === semesterNum && reg.is_regular !== false) {
 					qualifiedStudents.add(reg.stu_register_no)
 				}

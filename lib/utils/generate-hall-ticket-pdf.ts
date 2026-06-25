@@ -129,7 +129,7 @@ export function generateHallTicketPDF(options: GenerateHallTicketOptions): strin
 		doc.setFont('times', 'bold')
 		doc.setFontSize(12)
 		doc.setTextColor(0, 0, 0)
-		doc.text(`SEMESTER EXAMINATION ${data.session.session_name}`, pageWidth / 2, currentY, { align: 'center' })
+		doc.text(`${data.session.exam_heading || 'SEMESTER EXAMINATION'} ${data.session.session_name}`, pageWidth / 2, currentY, { align: 'center' })
 
 		currentY += 5
 
@@ -662,7 +662,7 @@ export function generateHallTicketPDFBlob(options: GenerateHallTicketOptions): B
 			doc.setFont('times', 'bold')
 			doc.setFontSize(12)
 			doc.setTextColor(0, 0, 0)
-			doc.text(`SEMESTER EXAMINATION ${data.session.session_name}`, pageWidth / 2, currentY, { align: 'center' })
+			doc.text(`${data.session.exam_heading || 'SEMESTER EXAMINATION'} ${data.session.session_name}`, pageWidth / 2, currentY, { align: 'center' })
 
 			currentY += 5
 

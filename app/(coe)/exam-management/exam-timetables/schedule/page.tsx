@@ -78,17 +78,17 @@ const SubjectRow = memo(function SubjectRow({
 }) {
 	const isPractical = requiresBatch(subject.exam_type)
 	const scheduled = subject.is_scheduled
-	const locked = subject.scheduled_published // published rows cannot be changed
+	const published = subject.scheduled_published // published rows stay editable; just badged differently
 	return (
 		<div
 			style={style}
 			className={cn(
 				'flex items-center gap-3 px-4 py-2 border-b overflow-hidden',
-				locked ? 'bg-amber-50/40 dark:bg-amber-950/20' : checked && 'bg-blue-50/40 dark:bg-blue-950/20'
+				published ? 'bg-amber-50/40 dark:bg-amber-950/20' : checked && 'bg-blue-50/40 dark:bg-blue-950/20'
 			)}
 		>
-			<Checkbox checked={checked} disabled={locked} onCheckedChange={() => onToggle(subject.course_offering_id)} className="mt-0.5" />
-			<label className={cn('min-w-0 flex-1', locked ? 'cursor-not-allowed' : 'cursor-pointer')} onClick={() => !locked && onToggle(subject.course_offering_id)}>
+			<Checkbox checked={checked} onCheckedChange={() => onToggle(subject.course_offering_id)} className="mt-0.5" />
+			<label className="min-w-0 flex-1 cursor-pointer" onClick={() => onToggle(subject.course_offering_id)}>
 				<div className="flex items-center gap-2 flex-wrap">
 					<span className="text-xs font-mono text-muted-foreground">{subject.course_code}</span>
 					<Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4">{subject.program_code}</Badge>
@@ -98,14 +98,14 @@ const SubjectRow = memo(function SubjectRow({
 						<Users className="h-2.5 w-2.5" />{subject.approved_count}
 					</Badge>
 					{scheduled && (
-						<Badge variant="outline" className={cn('text-[10px] px-1.5 py-0 h-4 inline-flex items-center gap-1', locked ? 'border-amber-300 text-amber-700 bg-amber-50' : 'border-blue-300 text-blue-700 bg-blue-50')}>
-							<CalendarCheck className="h-2.5 w-2.5" />{formatExamDate(subject.scheduled_exam_date)} · {subject.scheduled_session}{locked ? ' · Published' : ' · Draft'}
+						<Badge variant="outline" className={cn('text-[10px] px-1.5 py-0 h-4 inline-flex items-center gap-1', published ? 'border-amber-300 text-amber-700 bg-amber-50' : 'border-blue-300 text-blue-700 bg-blue-50')}>
+							<CalendarCheck className="h-2.5 w-2.5" />{formatExamDate(subject.scheduled_exam_date)} · {subject.scheduled_session}{published ? ' · Published' : ' · Draft'}
 						</Badge>
 					)}
 				</div>
 				<div className="text-sm truncate">{subject.course_name}</div>
 			</label>
-			{isPractical && checked && !locked && (
+			{isPractical && checked && (
 				<Input
 					type="number"
 					min={1}
@@ -276,8 +276,9 @@ export default function ScheduleExamsPage() {
 		})
 	}, [subjects, categoryFilter, programFilter, semesterFilter, search])
 
-	// Subjects available to select (drafts can be re-scheduled; only published rows are locked)
-	const selectableFiltered = useMemo(() => filtered.filter((s) => !s.scheduled_published), [filtered])
+	// Subjects available to select — both drafts and published rows can be re-scheduled.
+	// Re-saving a published row keeps it published unless explicitly changed (see handleSave).
+	const selectableFiltered = filtered
 
 	const toggle = useCallback((id: string) => {
 		setSelected((prev) => {
@@ -342,7 +343,8 @@ export default function ScheduleExamsPage() {
 				course_code: s.course_code,
 				exam_type: s.exam_type,
 				batch_capacity: requiresBatch(s.exam_type) ? Number(batchCaps.get(s.course_offering_id)) : null,
-				exam_timetable_id: s.exam_timetable_id || undefined, // present → reschedule existing draft row
+				exam_timetable_id: s.exam_timetable_id || undefined, // present → reschedule existing row
+				was_published: s.scheduled_published, // preserve published state unless toggle explicitly publishes
 			}))
 			const res = await fetch('/api/exam-management/exam-timetables/schedule', {
 				method: 'POST',

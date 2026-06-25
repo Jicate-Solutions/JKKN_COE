@@ -12,6 +12,7 @@ import { Label } from "@/components/ui/label"
 import { Badge } from "@/components/ui/badge"
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { useToast } from "@/hooks/common/use-toast"
 import { Loader2, FileText, Check, ChevronsUpDown, Ticket, GraduationCap, Users, Download, ClipboardList } from "lucide-react"
 import { cn } from "@/lib/utils"
@@ -34,6 +35,12 @@ interface ExaminationSession {
 	id: string
 	session_name: string
 	session_code: string
+	exam_type_id?: string
+}
+
+interface ExamType {
+	id: string
+	examination_name: string
 }
 
 interface Program {
@@ -217,6 +224,7 @@ export default function HallTicketsPage() {
 	// Dropdown data
 	const [institutions, setInstitutions] = useState<Institution[]>([])
 	const [sessions, setSessions] = useState<ExaminationSession[]>([])
+	const [examTypes, setExamTypes] = useState<ExamType[]>([])
 	const [programs, setPrograms] = useState<Program[]>([])
 	const [semesters, setSemesters] = useState<SemesterWithGroup[]>([])
 	const [students, setStudents] = useState<Student[]>([])
@@ -245,6 +253,53 @@ export default function HallTicketsPage() {
 	const [sessionOpen, setSessionOpen] = useState(false)
 	const [programOpen, setProgramOpen] = useState(false)
 	const [studentOpen, setStudentOpen] = useState(false)
+
+	// =====================================================
+	// EXAM TYPE TABS — ESE vs Supplementary
+	// The two modes use different queries/flows, so they are split into tabs:
+	//   ESE:           institution → session → program → semester → learners
+	//   Supplementary: institution → session → program → all registered learners
+	// The active tab filters the session list to that exam type and drives the query.
+	// =====================================================
+	const [activeTab, setActiveTab] = useState<'ese' | 'supplementary'>('ese')
+
+	// Exam type IDs whose examination_name marks them as supplementary
+	const supplementaryExamTypeIds = useMemo(() => {
+		const set = new Set<string>()
+		for (const et of examTypes) {
+			if (/supplement/i.test(et.examination_name || '')) set.add(et.id)
+		}
+		return set
+	}, [examTypes])
+
+	const isSessionSupplementary = (s?: ExaminationSession) =>
+		!!s?.exam_type_id && supplementaryExamTypeIds.has(s.exam_type_id)
+
+	// Sessions filtered to the active tab (only used when the user must pick a session)
+	const filteredSessions = useMemo(
+		() => sessions.filter(s => isSessionSupplementary(s) === (activeTab === 'supplementary')),
+		[sessions, supplementaryExamTypeIds, activeTab]
+	)
+
+	// Mode: explicit tab when choosing a session locally,
+	// else derived from the fixed global session's exam type.
+	const isSupplementary = mustSelectSession
+		? activeTab === 'supplementary'
+		: isSessionSupplementary(sessions.find(s => s.id === selectedSessionId))
+
+	// Switching tabs resets every downstream selection
+	const handleTabChange = (tab: string) => {
+		setActiveTab(tab as 'ese' | 'supplementary')
+		setSelectedSessionId("")
+		setSelectedProgramId("")
+		setSelectedSemesters([])
+		setSelectedStudentRegNo("")
+		setPrograms([])
+		setSemesters([])
+		setStudents([])
+		setPreviewData(null)
+		setStudentCount(0)
+	}
 
 	// Load institutions on mount and auto-fill from context
 	useEffect(() => {
@@ -295,8 +350,10 @@ export default function HallTicketsPage() {
 			setPreviewData(null)
 			setStudentCount(0)
 			fetchSessions()
+			fetchExamTypes()
 		} else {
 			setSessions([])
+			setExamTypes([])
 		}
 	}, [selectedInstitutionCode])
 
@@ -317,6 +374,24 @@ export default function HallTicketsPage() {
 			console.error('Error fetching sessions:', error)
 		} finally {
 			setLoadingSessions(false)
+		}
+	}
+
+	// Fetch exam types so we can resolve the examination_name of the selected session
+	// (used to detect "Supplementary Examinations" sessions, which skip the semester level)
+	const fetchExamTypes = async () => {
+		try {
+			const institution = institutions.find(i => i.institution_code === selectedInstitutionCode)
+			const params = new URLSearchParams()
+			if (institution?.id) params.set('institutions_id', institution.id)
+			const res = await fetch(`/api/exam-management/exam-types?${params.toString()}`)
+			if (res.ok) {
+				const data = await res.json()
+				setExamTypes(Array.isArray(data) ? data : [])
+			}
+		} catch (error) {
+			console.error('Error fetching exam types:', error)
+			setExamTypes([])
 		}
 	}
 
@@ -383,11 +458,16 @@ export default function HallTicketsPage() {
 			setStudents([])
 			setPreviewData(null)
 			setStudentCount(0)
-			fetchSemestersForProgram()
+			// Supplementary sessions skip the semester level — show all registered learners
+			if (isSupplementary) {
+				setSemesters([])
+			} else {
+				fetchSemestersForProgram()
+			}
 		} else {
 			setSemesters([])
 		}
-	}, [selectedProgramId])
+	}, [selectedProgramId, isSupplementary])
 
 	// Fetch semesters from actual exam_registrations + course_offerings data
 	// Only shows semesters where is_regular=true, Approved, fee_paid=true registrations exist
@@ -460,7 +540,7 @@ export default function HallTicketsPage() {
 			fetchStudents()
 			fetchHallTicketData().catch(() => {}) // auto-populate studentCount for badge
 		}
-	}, [selectedProgramId, selectedSessionId, selectedSemesters])
+	}, [selectedProgramId, selectedSessionId, selectedSemesters, isSupplementary])
 
 	const fetchStudents = async () => {
 		try {
@@ -473,8 +553,11 @@ export default function HallTicketsPage() {
 			params.set('examination_session_id', selectedSessionId)
 			params.set('program_code', selectedProgram.program_code)
 
-			// Pass first selected semester for filtering (if not all)
-			if (selectedSemesters.length > 0 && selectedSemesters.length < semesters.length) {
+			if (isSupplementary) {
+				// Supplementary: show ALL registered learners (incl. is_regular=false), no semester filter
+				params.set('supplementary', 'true')
+			} else if (selectedSemesters.length > 0 && selectedSemesters.length < semesters.length) {
+				// Pass first selected semester for filtering (if not all)
 				const semNum = semesters.find(s => s.id === selectedSemesters[0])?.display_order
 				if (semNum) params.set('semester', semNum.toString())
 			}
@@ -498,6 +581,11 @@ export default function HallTicketsPage() {
 			const params = new URLSearchParams()
 			params.append('institution_code', selectedInstitutionCode)
 			params.append('examination_session_id', selectedSessionId)
+
+			// Supplementary: include all registered learners regardless of fee_paid, no semester level
+			if (isSupplementary) {
+				params.append('supplementary', 'true')
+			}
 
 			// program_code is mandatory, also pass program_name for display
 			const selectedProgram = programs.find(p => p.id === selectedProgramId)
@@ -832,13 +920,44 @@ export default function HallTicketsPage() {
 									</div>
 									<div>
 										<CardTitle className="text-lg">Select Parameters</CardTitle>
-										<CardDescription>Choose institution, session, program and semester</CardDescription>
+										<CardDescription>
+											{isSupplementary
+												? 'Choose institution, session and program — all registered learners are shown'
+												: 'Choose institution, session, program and semester'}
+										</CardDescription>
 									</div>
 								</div>
 							</CardHeader>
 							<CardContent>
+								{/* Exam Type Tabs — only when the session is chosen locally (no global session) */}
+								{mustSelectSession && (
+									<Tabs value={activeTab} onValueChange={handleTabChange} className="mb-4">
+										<TabsList className="grid w-full max-w-md grid-cols-2 bg-muted/60 p-1">
+											<TabsTrigger
+												value="ese"
+												className="font-semibold data-[state=active]:bg-gradient-to-r data-[state=active]:from-blue-500 data-[state=active]:to-indigo-600 data-[state=active]:text-white data-[state=active]:shadow-md"
+											>
+												<GraduationCap className="h-4 w-4 mr-1.5" />
+												ESE (Regular)
+											</TabsTrigger>
+											<TabsTrigger
+												value="supplementary"
+												className="font-semibold data-[state=active]:bg-gradient-to-r data-[state=active]:from-amber-500 data-[state=active]:to-orange-600 data-[state=active]:text-white data-[state=active]:shadow-md"
+											>
+												<Ticket className="h-4 w-4 mr-1.5" />
+												Supplementary
+											</TabsTrigger>
+										</TabsList>
+									</Tabs>
+								)}
+
 								{/* Horizontal Filter Row */}
-								<div className={`grid grid-cols-1 gap-4 ${mustSelectInstitution ? 'md:grid-cols-5' : 'md:grid-cols-4'}`}>
+								<div className={`grid grid-cols-1 gap-4 ${
+									(() => {
+										const cols = (mustSelectInstitution ? 5 : 4) - (isSupplementary ? 1 : 0)
+										return cols === 5 ? 'md:grid-cols-5' : cols === 4 ? 'md:grid-cols-4' : 'md:grid-cols-3'
+									})()
+								}`}>
 									{/* Institution - Show only when mustSelectInstitution is true */}
 									{mustSelectInstitution && (
 										<div className="space-y-2">
@@ -939,9 +1058,9 @@ export default function HallTicketsPage() {
 												>
 													<CommandInput placeholder="Search session..." />
 													<CommandList>
-														<CommandEmpty>No session found.</CommandEmpty>
+														<CommandEmpty>No {activeTab === 'supplementary' ? 'supplementary' : 'ESE'} session found.</CommandEmpty>
 														<CommandGroup>
-															{sessions.map((sess) => (
+															{filteredSessions.map((sess) => (
 																<CommandItem
 																	key={sess.id}
 																	value={`${sess.session_code} ${sess.session_name}`}
@@ -1031,16 +1150,18 @@ export default function HallTicketsPage() {
 										</Popover>
 									</div>
 
-									{/* Semester Dropdown */}
-									<div className="space-y-2">
-										<Label className="text-sm font-medium">Semester(s)</Label>
-										<MultiSelectSemester
-											semesters={semesters}
-											selectedSemesters={selectedSemesters}
-											onSelectionChange={handleSemesterChange}
-											disabled={!selectedProgramId}
-										/>
-									</div>
+									{/* Semester Dropdown — hidden for Supplementary sessions (no semester level) */}
+									{!isSupplementary && (
+										<div className="space-y-2">
+											<Label className="text-sm font-medium">Semester(s)</Label>
+											<MultiSelectSemester
+												semesters={semesters}
+												selectedSemesters={selectedSemesters}
+												onSelectionChange={handleSemesterChange}
+												disabled={!selectedProgramId}
+											/>
+										</div>
+									)}
 
 									{/* Learner Dropdown (Optional - like semester marksheet) */}
 									<div className="space-y-2">

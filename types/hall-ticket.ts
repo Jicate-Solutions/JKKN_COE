@@ -48,6 +48,8 @@ export interface HallTicketSession {
 	session_code: string
 	session_name: string
 	exam_type?: string
+	/** Heading prefix for the PDF, e.g. "SEMESTER EXAMINATION" or "SUPPLEMENTARY EXAMINATION" */
+	exam_heading?: string
 }
 
 // Complete hall ticket data for PDF generation
