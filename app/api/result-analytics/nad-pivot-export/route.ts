@@ -354,8 +354,24 @@ export async function GET(req: NextRequest) {
 		// Group by student (pivot the data)
 		const studentMap = new Map<string, StudentData>()
 
+		// Name resolution by majority vote. STUDENT_NAME comes from the view, which
+		// falls back to exam_registrations.student_name when the students table is empty.
+		// A single mislabeled exam_registration row (wrong learner's name attached) would
+		// otherwise hijack the whole student's CNAME because the query takes the first row
+		// after sorting by STUDENT_NAME. Counting every row and picking the most frequent
+		// name makes a lone stray row a guaranteed loser. Keyed by studentKey.
+		const nameVotes = new Map<string, Map<string, number>>()
+
 		for (const row of viewData) {
 			const studentKey = `${row.student_id}-${row.examination_session_id}`
+
+			// Tally STUDENT_NAME for EVERY row (not just the first) so the mode wins.
+			const votedName = (row.STUDENT_NAME || '').trim()
+			if (votedName) {
+				let votes = nameVotes.get(studentKey)
+				if (!votes) { votes = new Map(); nameVotes.set(studentKey, votes) }
+				votes.set(votedName, (votes.get(votedName) || 0) + 1)
+			}
 
 			if (!studentMap.has(studentKey)) {
 				// Initialize student record
@@ -451,6 +467,42 @@ export async function GET(req: NextRequest) {
 			if (subjectData.pass_status === 'FAIL') {
 				student.overall_result = 'FAIL'
 			}
+		}
+
+		// ── Resolve CNAME by majority vote ─────────────────────────────────────
+		// Replace each student's name with the most frequent STUDENT_NAME across all
+		// their rows. This neutralises a stray exam_registrations row carrying the
+		// wrong learner's name (which would otherwise win because the query sorts by
+		// STUDENT_NAME and the first row seeds the record). The correct name appears
+		// on N-1 rows, the stray on 1, so the mode is always the correct name.
+		for (const [key, student] of Array.from(studentMap.entries())) {
+			const votes = nameVotes.get(key)
+			if (votes && votes.size > 1) {
+				let bestName = student.student_name
+				let bestCount = -1
+				for (const [nm, count] of Array.from(votes.entries())) {
+					if (count > bestCount) { bestName = nm; bestCount = count }
+				}
+				if (bestName && bestName !== student.student_name) {
+					console.log(`[NAD Export] CNAME corrected for ${student.register_number}: "${student.student_name}" → "${bestName}" (mode of ${votes.size} variants)`)
+					student.student_name = bestName
+				}
+			}
+		}
+
+		// ── Align subject columns across students ──────────────────────────────
+		// Pivot columns (SUB1, SUB2, …) must map to the SAME course for every student.
+		// Subjects are pushed in viewData iteration order, which is sorted by
+		// (STUDENT_NAME, subject_order) — so a mislabeled-name row sorts out of place
+		// and lands the wrong course in SUB1, shifting the rest. Sort each student's
+		// subjects by the view's per-student subject_order (regular-first, then
+		// course_order, then course_code) so the columns line up regardless of how the
+		// rows arrived. Tie-break on course_code keeps it deterministic.
+		for (const student of Array.from(studentMap.values())) {
+			student.subjects.sort((a, b) =>
+				(a.subject_order - b.subject_order) ||
+				a.course_code.localeCompare(b.course_code)
+			)
 		}
 
 		// ── Semester correction + arrear-student filtering ─────────────────────
