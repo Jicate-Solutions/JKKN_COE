@@ -2347,7 +2347,7 @@ export default function CoursesPage() {
                     value={formData.course_part_master}
                     onValueChange={(v) => setFormData({ ...formData, course_part_master: v })}
                     options={toSearchableOptions([
-                      "Part I", "Part II", "Part III", "Part IV", "Part V"
+                      "Part I", "Part II", "Part III", "Part IV", "Part V", "Part A", "Part B"
                     ])}
                     placeholder="Select part"
                     searchPlaceholder="Search parts..."

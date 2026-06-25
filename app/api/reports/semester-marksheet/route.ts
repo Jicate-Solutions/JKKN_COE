@@ -342,9 +342,10 @@ export async function GET(req: NextRequest) {
 						for (const myjkknInstId of myjkknInstIds) {
 							if (matchingProfile) break // Stop if we found a match
 
-							// Paginate through all profiles (API returns max ~200 per page)
+							// Paginate through all profiles (raised from 200 → 1000 per page
+							// so we cover larger institutions in fewer round-trips).
 							let page = 1
-							const pageSize = 200
+							const pageSize = 1000
 							let hasMorePages = true
 
 							while (hasMorePages && !matchingProfile) {
@@ -396,6 +397,48 @@ export async function GET(req: NextRequest) {
 						console.log(`[Semester Marksheet] No myjkkn_institution_ids found for institution`)
 					}
 
+					// Targeted fallback: if pagination missed the learner (e.g. they're
+					// filed under a different institution_id in MyJKKN), do a direct
+					// register_number lookup across all institutions.
+					if (!matchingProfile && myjkknApiKey && registerNo) {
+						console.log(`[Semester Marksheet] Pagination missed ${registerNo} — running targeted register_number lookup`)
+						try {
+							const targetParams = new URLSearchParams()
+							targetParams.set('register_number', registerNo)
+							targetParams.set('limit', '200')
+							const targetResp = await fetch(
+								`${myjkknApiUrl}/api-management/learners/profiles?${targetParams.toString()}`,
+								{
+									method: 'GET',
+									headers: {
+										'Authorization': `Bearer ${myjkknApiKey}`,
+										'Accept': 'application/json',
+										'Content-Type': 'application/json',
+									},
+									cache: 'no-store',
+								}
+							)
+							if (targetResp.ok) {
+								const targetData = await targetResp.json()
+								const targetProfiles = targetData.data || []
+								// IMPORTANT: only accept an exact register_number match.
+								// Do NOT fall back to targetProfiles[0] — MyJKKN's
+								// register_number query sometimes returns unrelated
+								// profiles when no exact match exists, and picking
+								// the first one would attach a stranger's data
+								// (name, DOB, photo) to the wrong learner.
+								matchingProfile = targetProfiles.find((p: any) =>
+									p.register_number === registerNo
+								) || null
+								if (matchingProfile) {
+									console.log(`[Semester Marksheet] Targeted lookup found profile for ${registerNo}`)
+								}
+							}
+						} catch (e) {
+							console.warn(`[Semester Marksheet] Targeted lookup error for ${registerNo}:`, e)
+						}
+					}
+
 					if (matchingProfile) {
 						console.log(`[Semester Marksheet] Found MyJKKN profile for: ${registerNo}`)
 
@@ -412,8 +455,9 @@ export async function GET(req: NextRequest) {
 						// Get DOB from MyJKKN
 						if (matchingProfile.date_of_birth) {
 							const dob = new Date(matchingProfile.date_of_birth)
-							if (!isNaN(dob.getTime())) {
-								dateOfBirth = `${String(dob.getDate()).padStart(2, '0')}-${String(dob.getMonth() + 1).padStart(2, '0')}-${dob.getFullYear()}`
+							const dobYear = dob.getFullYear()
+							if (!isNaN(dob.getTime()) && dobYear >= 1900 && dobYear <= 2050) {
+								dateOfBirth = `${String(dob.getDate()).padStart(2, '0')}-${String(dob.getMonth() + 1).padStart(2, '0')}-${dobYear}`
 								console.log(`[Semester Marksheet] DOB from MyJKKN: ${dateOfBirth}`)
 							}
 						}
@@ -1141,7 +1185,7 @@ export async function GET(req: NextRequest) {
 					}
 
 					if (myjkknApiKey && myjkknIds.length > 0) {
-						const pageSize = 200
+						const pageSize = 1000
 						const MAX_PAGES = 1000      // safety cap
 						const PAGE_CONCURRENCY = 5  // fetch 5 pages at a time instead of 1
 
@@ -1180,6 +1224,46 @@ export async function GET(req: NextRequest) {
 								startPage += PAGE_CONCURRENCY
 							}
 						}
+
+						// Targeted fallback — for any learner the institution-paginated
+						// sweep didn't find (commonly because they're filed under a
+						// different MyJKKN institution_id), do a direct register_number
+						// query. This catches alumni / cross-institution promotions.
+						const stillMissingFromMyJKKN = registerNumbers.filter(
+							(rn) => !(photoMap[rn] && dobMap[rn] && nameMap[rn])
+						)
+						if (stillMissingFromMyJKKN.length > 0) {
+							console.log(`[Semester Marksheet Batch] ${stillMissingFromMyJKKN.length} learner(s) missing after pagination — running targeted register_number lookup`)
+							for (const regNo of stillMissingFromMyJKKN) {
+								try {
+									const p = new URLSearchParams()
+									p.set('register_number', regNo)
+									p.set('limit', '200')
+									const resp = await fetch(
+										`${myjkknApiUrl}/api-management/learners/profiles?${p.toString()}`,
+										{
+											method: 'GET',
+											headers: {
+												'Authorization': `Bearer ${myjkknApiKey}`,
+												'Accept': 'application/json',
+												'Content-Type': 'application/json',
+											},
+											cache: 'no-store',
+										}
+									)
+									if (resp.ok) {
+										const json = await resp.json()
+										const profiles: any[] = json.data || []
+										profiles.forEach(applyProfile)
+										if (profiles.length > 0) {
+											console.log(`[Semester Marksheet Batch] Targeted lookup found ${profiles.length} profile(s) for ${regNo}`)
+										}
+									}
+								} catch (e) {
+									console.warn(`[Semester Marksheet Batch] Targeted lookup error for ${regNo}:`, e)
+								}
+							}
+						}
 					} else if (!myjkknApiKey) {
 						console.log(`[Semester Marksheet Batch] No MyJKKN API key configured`)
 					} else {
@@ -1206,6 +1290,8 @@ export async function GET(req: NextRequest) {
 							.select('register_number, roll_number, first_name, last_name, date_of_birth, student_photo_url')
 							.in('register_number', chunk)
 						if (lpErr) {
+							// learners_profiles table doesn't exist in this deployment — silently skip
+							if (lpErr.code === 'PGRST205') break
 							console.warn('[Semester Marksheet Batch] learners_profiles fallback error (non-critical):', lpErr)
 							break
 						}

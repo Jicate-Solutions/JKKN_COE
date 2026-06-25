@@ -283,32 +283,35 @@ export async function GET(req: NextRequest) {
 			maxSubjects
 		})
 
-		// Build query to get per-subject data
-		let query = supabase
-			.from('nad_abc_upload_view')
-			.select('*')
-
-		if (institutionId) {
-			query = query.eq('institution_id', institutionId)
+		// Build per-subject query. Batch in 1000-row pages — the NAD view is one row per
+		// student-subject, so a single request is capped by the server row limit and truncates
+		// (UCC Sem 3 exceeds 1000 rows). NOTE: we do NOT filter by semester_number here; the
+		// view's semester_number falls back to co.semester when semester_results is missing,
+		// which mis-buckets arrear students. Real semester is derived post-grouping via
+		// max(subject_semester), the same logic galley-report uses.
+		const buildViewQuery = () => {
+			let q = supabase
+				.from('nad_abc_upload_view')
+				.select('*')
+			if (institutionId) q = q.eq('institution_id', institutionId)
+			if (examinationSessionId) q = q.eq('examination_session_id', examinationSessionId)
+			if (programId) q = q.eq('program_id', programId)
+			return q
+				.order('STUDENT_NAME', { ascending: true })
+				.order('subject_order', { ascending: true })
 		}
-		if (examinationSessionId) {
-			query = query.eq('examination_session_id', examinationSessionId)
-		}
-		if (programId) {
-			query = query.eq('program_id', programId)
-		}
-		// NOTE: We do NOT filter by semester_number here.
-		// The view's semester_number falls back to co.semester when semester_results
-		// is missing, causing arrear students (e.g. Semester 3 students retaking
-		// Semester 1 courses) to appear under the wrong semester.
-		// Instead we determine each student's real semester post-grouping using
-		// max(subject_semester) — the same logic used in galley-report.
 
-		// Order by student then subject
-		query = query.order('STUDENT_NAME', { ascending: true })
-			.order('subject_order', { ascending: true })
-
-		const { data: viewData, error: viewError } = await query
+		const viewData: any[] = []
+		let viewError: any = null
+		let nadFrom = 0
+		while (true) {
+			const { data: batch, error: batchErr } = await buildViewQuery().range(nadFrom, nadFrom + 1000 - 1)
+			if (batchErr) { viewError = batchErr; break }
+			if (!batch || batch.length === 0) break
+			viewData.push(...batch)
+			nadFrom += 1000
+			if (batch.length < 1000) break
+		}
 
 		if (viewError) {
 			console.error('Error fetching from nad_abc_upload_view:', viewError)

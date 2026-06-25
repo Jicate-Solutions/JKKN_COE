@@ -45,12 +45,16 @@ CREATE TABLE IF NOT EXISTS public.consolidated_results (
 	cgpa DECIMAL(4,2) NOT NULL DEFAULT 0,
 	percentage DECIMAL(5,2) NOT NULL DEFAULT 0,
 
-	-- Part-wise CGPA & Credits (matches Periyar Univ. consolidated card layout)
-	-- Part I  = Language I (Tamil/Hindi/etc.)
-	-- Part II = Language II (English)
-	-- Part III= Core/Major
-	-- Part IV = Allied/Skill Enhancement
-	-- Part V  = Extension Activities
+	-- Part-wise CGPA & Credits
+	-- UG layout (matches Periyar Univ. consolidated card):
+	--   Part I   = Language I (Tamil/Hindi/etc.)
+	--   Part II  = Language II (English)
+	--   Part III = Core/Major
+	--   Part IV  = Allied/Skill Enhancement
+	--   Part V   = Extension Activities
+	-- PG layout:
+	--   Part A   = Core/Major
+	--   Part B   = Electives/Skill Enhancement/Project
 	part_i_credits_earned INT DEFAULT 0,
 	part_i_cgpa DECIMAL(4,3),
 	part_i_classification VARCHAR(50),
@@ -66,6 +70,13 @@ CREATE TABLE IF NOT EXISTS public.consolidated_results (
 	part_v_credits_earned INT DEFAULT 0,
 	part_v_cgpa DECIMAL(4,3),
 	part_v_classification VARCHAR(50),
+	-- PG-only Part A / Part B
+	part_a_credits_earned INT DEFAULT 0,
+	part_a_cgpa DECIMAL(4,3),
+	part_a_classification VARCHAR(50),
+	part_b_credits_earned INT DEFAULT 0,
+	part_b_cgpa DECIMAL(4,3),
+	part_b_classification VARCHAR(50),
 
 	-- Overall Result Classification
 	result_class VARCHAR(100), -- Distinction, First Class, Second Class, Pass
@@ -120,8 +131,12 @@ CREATE TABLE IF NOT EXISTS public.consolidated_results (
 	-- Foreign Key Constraints
 	CONSTRAINT consolidated_results_institutions_id_fkey
 		FOREIGN KEY (institutions_id) REFERENCES institutions(id) ON DELETE CASCADE,
-	CONSTRAINT consolidated_results_student_id_fkey
-		FOREIGN KEY (student_id) REFERENCES students(id) ON DELETE CASCADE,
+	-- NOTE: No FK on student_id.
+	-- Learner profiles live in the MyJKKN API, not in any local table.
+	-- final_marks.student_id is the source of truth for this column.
+	-- We deliberately do NOT add a local FK so that consolidated_results
+	-- can be written for any learner whose marks were published, regardless
+	-- of whether they're mirrored into `users` or `students`.
 	CONSTRAINT consolidated_results_program_id_fkey
 		FOREIGN KEY (program_id) REFERENCES programs(id) ON DELETE RESTRICT,
 	CONSTRAINT consolidated_results_last_examination_session_id_fkey
@@ -317,7 +332,7 @@ BEGIN
 				END;
 			ELSE
 				-- Fallback: derive from session start month if available
-				SELECT get_consolidated_folio_month_code(EXTRACT(MONTH FROM es.start_date)::INT)
+				SELECT get_consolidated_folio_month_code(EXTRACT(MONTH FROM es.exam_start_date)::INT)
 				INTO v_month_code
 				FROM public.examination_sessions es
 				WHERE es.id = v_result.last_examination_session_id;

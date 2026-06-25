@@ -1102,6 +1102,11 @@ export default function SemesterResultsPage() {
 		setGenerating(true)
 
 		try {
+			// Get program_code (text like "UCC") from programs state — final_marks must be
+			// filtered by program_code, not the MyJKKN program_id UUID, which is unreliable.
+			const generateProgramData = programs.find(p => p.id === selectedPrograms[0])
+			const generateProgramCode = generateProgramData?.code || ''
+
 			const res = await fetch('/api/grading/semester-results', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
@@ -1109,6 +1114,7 @@ export default function SemesterResultsPage() {
 					action: 'generate-results',
 					sessionId: selectedSession,
 					programId: selectedPrograms[0],
+					programCode: generateProgramCode,
 					semester: selectedSemesters.length === 1 ? selectedSemesters[0] : null,
 					programType: programType || 'UG'
 				})

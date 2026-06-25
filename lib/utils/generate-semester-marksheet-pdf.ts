@@ -218,6 +218,29 @@ const COLORS = {
 // ============================================================
 
 /**
+ * Convert common Google Drive share-URL forms to the direct-download form
+ * that image fetchers can actually load. MyJKKN sometimes stores photos as
+ * Drive share links and the raw URL won't render as an image.
+ *
+ *   https://drive.google.com/file/d/{ID}/view?...   → https://drive.google.com/uc?export=view&id={ID}
+ *   https://drive.google.com/open?id={ID}            → https://drive.google.com/uc?export=view&id={ID}
+ *
+ * Same logic the /pre-exam/hall-tickets page uses for student photos.
+ */
+function convertGoogleDriveUrl(url: string): string {
+	if (!url) return url
+	const fileIdMatch = url.match(/\/file\/d\/([^\/?#]+)/)
+	if (fileIdMatch) {
+		return `https://drive.google.com/uc?export=view&id=${fileIdMatch[1]}`
+	}
+	const openMatch = url.match(/drive\.google\.com\/open\?id=([^&]+)/)
+	if (openMatch) {
+		return `https://drive.google.com/uc?export=view&id=${openMatch[1]}`
+	}
+	return url
+}
+
+/**
  * Convert image URL to base64 data URI for use in PDF
  * Uses server-side API to bypass CORS restrictions with Supabase storage URLs
  */
@@ -229,6 +252,10 @@ export async function fetchImageAsBase64(url: string): Promise<string | null> {
 		if (url.startsWith('data:')) {
 			return url
 		}
+
+		// Normalise Google Drive share links to direct-download form so the
+		// image API can actually fetch the bytes.
+		url = convertGoogleDriveUrl(url)
 
 		// Use server-side API to fetch and convert image (bypasses CORS)
 		const apiUrl = `/api/utils/image-to-base64?url=${encodeURIComponent(url)}`
@@ -377,7 +404,7 @@ function getEnhancedResultStatus(course: MarksheetCourse): string {
 /**
  * Add a student's marksheet to a PDF document
  */
-function addStudentMarksheetToDoc(
+export function addStudentMarksheetToDoc(
 	doc: jsPDF,
 	data: StudentMarksheetData,
 	options: MarksheetPDFOptions = {}
@@ -385,8 +412,15 @@ function addStudentMarksheetToDoc(
 	const pageWidth = doc.internal.pageSize.getWidth()
 	let currentY = MARGIN
 
-	// Determine if this is a PG program (no Part column)
+	// Determine if this is a PG program — used for passing minimum (50% vs 40%)
 	const isPG = data.program.isPG || isPGProgram(data.program.code, data.program.name)
+
+	// Hide the PART column only when the data has no part info to show.
+	// UG always has Part I-V. PG semester marksheets typically have no parts.
+	// PG consolidated marksheets DO have Part A / Part B — those rows must
+	// surface in the PART column. So the decision is data-driven, not type-driven.
+	const hasAnyPartInfo = data.courses.some(c => c.part && c.part.trim().length > 0)
+	const hidePartColumn = isPG && !hasAnyPartInfo
 
 	// ========== OFFICIAL JKKN HEADER (Optional) ==========
 
@@ -661,9 +695,9 @@ function addStudentMarksheetToDoc(
 	// Column widths for course table - must sum to CONTENT_WIDTH (194mm)
 	// UG: 14 columns with PART
 	// PG: 13 columns without PART (TITLE column gets extra width)
-	const colWidths = isPG
-		? [6, 20, 95, 6, 6, 6, 7, 7, 7, 7, 7, 7, 9]  // PG: 13 columns = 190mm (no PART)
-		: [6, 6, 20, 89, 6, 6, 6, 7, 7, 7, 7, 7, 7, 9]  // UG: 14 columns = 190mm (with PART)
+	const colWidths = hidePartColumn
+		? [6, 20, 95, 6, 6, 6, 7, 7, 7, 7, 7, 7, 9]  // 13 columns = 190mm (no PART)
+		: [6, 6, 20, 89, 6, 6, 6, 7, 7, 7, 7, 7, 7, 9]  // 14 columns = 190mm (with PART)
 
 	// ===== MANUALLY DRAW VERTICAL HEADER =====
 	const headerHeight = 25  // Total header height (two rows)
@@ -679,10 +713,10 @@ function addStudentMarksheetToDoc(
 	// Calculate column indices for MAXIMUM and MARKS SECURED
 	// UG: PART(0), SEM(1), CODE(2), TITLE(3), CR(4), ESE(5), CIA(6), TOT(7), ESE(8), CIA(9), TOT(10), GP(11), GR(12), RES(13)
 	// PG: SEM(0), CODE(1), TITLE(2), CR(3), ESE(4), CIA(5), TOT(6), ESE(7), CIA(8), TOT(9), GP(10), GR(11), RES(12)
-	const maxColStartIdx = isPG ? 4 : 5  // Index where MAXIMUM columns start
-	const maxColEndIdx = isPG ? 6 : 7    // Index where MAXIMUM columns end
-	const securedColStartIdx = isPG ? 7 : 8  // Index where MARKS SECURED columns start
-	const securedColEndIdx = isPG ? 9 : 10   // Index where MARKS SECURED columns end
+	const maxColStartIdx = hidePartColumn ? 4 : 5  // Index where MAXIMUM columns start
+	const maxColEndIdx = hidePartColumn ? 6 : 7    // Index where MAXIMUM columns end
+	const securedColStartIdx = hidePartColumn ? 7 : 8  // Index where MARKS SECURED columns start
+	const securedColEndIdx = hidePartColumn ? 9 : 10   // Index where MARKS SECURED columns end
 
 	// Draw vertical lines for columns (black) - thin internal lines
 	// For columns under MAXIMUM/MARKS SECURED: only draw in row 2
@@ -753,13 +787,13 @@ function addStudentMarksheetToDoc(
 	// Column header definitions
 	// UG: [PART, SEMESTER, COURSE CODE, COURSE TITLE, CREDITS, ESE, CIA, TOTAL, ESE, CIA, TOTAL, GRADE POINT, GRADE, RESULT]
 	// PG: [SEMESTER, COURSE CODE, COURSE TITLE, CREDITS, ESE, CIA, TOTAL, ESE, CIA, TOTAL, GRADE POINT, GRADE, RESULT]
-	const headerTexts = isPG
+	const headerTexts = hidePartColumn
 		? ['SEMESTER', 'COURSE CODE', 'COURSE TITLE', 'CREDITS', 'ESE', 'CIA', 'TOTAL', 'ESE', 'CIA', 'TOTAL', 'GRADE POINT', 'GRADE', 'RESULT']
 		: ['PART', 'SEMESTER', 'COURSE CODE', 'COURSE TITLE', 'CREDITS', 'ESE', 'CIA', 'TOTAL', 'ESE', 'CIA', 'TOTAL', 'GRADE POINT', 'GRADE', 'RESULT']
 
 	// Draw "MAXIMUM" and "MARKS SECURED" spanning headers (row 1) - font size 9 per JRXML
-	const maxColStart = isPG ? 4 : 5  // Index where MAXIMUM columns start
-	const securedColStart = isPG ? 7 : 8  // Index where MARKS SECURED columns start
+	const maxColStart = hidePartColumn ? 4 : 5  // Index where MAXIMUM columns start
+	const securedColStart = hidePartColumn ? 7 : 8  // Index where MARKS SECURED columns start
 
 	// Calculate x positions for MAXIMUM and MARKS SECURED headers
 	let maxX = MARGIN
@@ -843,9 +877,11 @@ function addStudentMarksheetToDoc(
 		const resultStatus = getEnhancedResultStatus(course)
 		const displayGradePoint = course.isAbsent ? '0' : (course.gradePoint > 0 ? course.gradePoint.toFixed(1) : '0')
 		const displayGrade = course.isAbsent ? 'AAA' : course.letterGrade
-		// For PART column (UG only): show Roman numeral if available, otherwise "-"
-		// PG programs don't have PART column, but if shown, always use "-"
-		const partDisplay = isPG ? '-' : (course.part ? partToRoman(course.part) : '-')
+		// PART column:
+		//   UG with Part I-V → roman numeral (I, II, III, IV, V)
+		//   PG with Part A/B → letter (A, B)
+		//   Otherwise → "-"
+		const partDisplay = course.part ? partToRoman(course.part) : '-'
 
 		// All courses display with white background (no visual distinction for arrears)
 		// Sorting ensures arrears appear first, grouped by semester
@@ -891,7 +927,7 @@ function addStudentMarksheetToDoc(
 				mergedCell
 			]
 
-			if (isPG) {
+			if (hidePartColumn) {
 				return specialCommonCols
 			} else {
 				return [
@@ -927,9 +963,9 @@ function addStudentMarksheetToDoc(
 			{ content: resultStatus, styles: baseStyles }
 		]
 
-		// PG: no PART column (13 columns)
-		// UG: include PART column at the beginning (14 columns)
-		if (isPG) {
+		// Hide PART column when there's no part data (typical PG semester case),
+		// else include it at the beginning (UG + PG-consolidated case).
+		if (hidePartColumn) {
 			return commonCols
 		} else {
 			return [
@@ -946,8 +982,8 @@ function addStudentMarksheetToDoc(
 	// COURSE CODE and COURSE TITLE indices differ for UG vs PG
 	// UG: PART(0), SEM(1), CODE(2), TITLE(3)... - CODE at 2, TITLE at 3
 	// PG: SEM(0), CODE(1), TITLE(2)... - CODE at 1, TITLE at 2
-	const courseCodeColIdx = isPG ? 1 : 2
-	const courseTitleColIdx = isPG ? 2 : 3
+	const courseCodeColIdx = hidePartColumn ? 1 : 2
+	const courseTitleColIdx = hidePartColumn ? 2 : 3
 	const columnStyles: Record<number, any> = {}
 	colWidths.forEach((width, i) => {
 		columnStyles[i] = {
@@ -1057,9 +1093,10 @@ function addStudentMarksheetToDoc(
 				const rowY = gpaRowY + (idx * 4)  // 4mm row height
 
 				// PART - centered under PART header
-				// PG programs: always show "-" (no part system)
-				// UG programs: show Roman numeral if available, otherwise "-"
-				const partText = isPG ? '-' : (part.partName ? partToRoman(part.partName) : '-')
+				//   UG with Part I-V → roman numeral (I, II, III, IV, V)
+				//   PG with Part A/B → letter (A, B)
+				//   Otherwise → "-"
+				const partText = part.partName ? partToRoman(part.partName) : '-'
 				const partTextWidth = doc.getTextWidth(partText)
 				doc.text(partText, MARGIN + 13 - partTextWidth / 2, rowY)
 

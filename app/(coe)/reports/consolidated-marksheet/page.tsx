@@ -6,9 +6,9 @@ import { AppFooter } from '@/components/layout/app-footer'
 import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar'
 import { Breadcrumb, BreadcrumbItem, BreadcrumbLink, BreadcrumbList, BreadcrumbPage, BreadcrumbSeparator } from '@/components/ui/breadcrumb'
 import Link from 'next/link'
-import { SemesterMarksheetTab } from './_components/semester-marksheet-tab'
+import { ConsolidatedMarksheetTab } from '../semester-marksheet/_components/consolidated-marksheet-tab'
 
-export default function SemesterMarksheetPage() {
+export default function ConsolidatedMarksheetPage() {
 	return (
 		<SidebarProvider>
 			<AppSidebar />
@@ -31,12 +31,12 @@ export default function SemesterMarksheetPage() {
 							</BreadcrumbItem>
 							<BreadcrumbSeparator />
 							<BreadcrumbItem>
-								<BreadcrumbPage>Semester Marksheet</BreadcrumbPage>
+								<BreadcrumbPage>Consolidated Marksheet</BreadcrumbPage>
 							</BreadcrumbItem>
 						</BreadcrumbList>
 					</Breadcrumb>
 
-					<SemesterMarksheetTab />
+					<ConsolidatedMarksheetTab />
 				</div>
 
 				<AppFooter />

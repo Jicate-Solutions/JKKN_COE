@@ -68,30 +68,33 @@ export async function GET(req: NextRequest) {
 			semester
 		})
 
-		// Build query with filters applied at database level
-		let query = supabase
-			.from('nad_abc_upload_view')
-			.select('*')
-
-		// Apply filters directly in the database query
-		if (institutionId) {
-			query = query.eq('institution_id', institutionId)
-		}
-		if (examinationSessionId) {
-			query = query.eq('examination_session_id', examinationSessionId)
-		}
-		if (programId) {
-			query = query.eq('program_id', programId)
-		}
-		if (semester) {
-			query = query.eq('semester_number', semester)
+		// Build query with filters applied at database level.
+		// Batch in 1000-row pages — the NAD view is one row per student-subject, so a single
+		// request is capped at the server row limit and truncates (UCC Sem 3 exceeds 1000 rows).
+		const buildViewQuery = () => {
+			let q = supabase
+				.from('nad_abc_upload_view')
+				.select('*')
+			if (institutionId) q = q.eq('institution_id', institutionId)
+			if (examinationSessionId) q = q.eq('examination_session_id', examinationSessionId)
+			if (programId) q = q.eq('program_id', programId)
+			if (semester) q = q.eq('semester_number', semester)
+			return q
+				.order('STUDENT_NAME', { ascending: true })
+				.order('subject_order', { ascending: true })
 		}
 
-		// Order by student then subject order
-		query = query.order('STUDENT_NAME', { ascending: true })
-			.order('subject_order', { ascending: true })
-
-		const { data: viewData, error: viewError } = await query
+		const viewData: any[] = []
+		let viewError: any = null
+		let nadFrom = 0
+		while (true) {
+			const { data: batch, error: batchErr } = await buildViewQuery().range(nadFrom, nadFrom + 1000 - 1)
+			if (batchErr) { viewError = batchErr; break }
+			if (!batch || batch.length === 0) break
+			viewData.push(...batch)
+			nadFrom += 1000
+			if (batch.length < 1000) break
+		}
 
 		console.log('NAD CSV Export - View query result:', {
 			dataCount: viewData?.length || 0,

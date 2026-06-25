@@ -458,12 +458,11 @@ export default function NADReportPage() {
 							</CardHeader>
 							<CardContent className={cn(
 								"grid grid-cols-1 gap-4",
-								// Column count adapts to how many filters are visible
-								institutionIsGlobal && sessionIsGlobal
-									? "md:grid-cols-2"  // Program + Semester only
-									: (institutionIsGlobal || sessionIsGlobal)
-										? "md:grid-cols-3"  // Three visible filters
-										: "md:grid-cols-2 lg:grid-cols-4"  // All four
+								// Session is always shown now; column count depends only on whether
+								// the institution filter is visible.
+								institutionIsGlobal
+									? "md:grid-cols-3"  // Session + Program + Semester
+									: "md:grid-cols-2 lg:grid-cols-4"  // Institution + Session + Program + Semester
 							)}>
 								{/* Institution — hidden when it's already determined globally */}
 								{!institutionIsGlobal && (
@@ -507,8 +506,8 @@ export default function NADReportPage() {
 									</div>
 								)}
 
-								{/* Examination Session — hidden when it's already set globally via useSessionSync */}
-								{!sessionIsGlobal && (
+								{/* Examination Session — always shown so the session can be picked/overridden here */}
+								{(
 									<div className="space-y-2">
 										<Label>Examination Session <span className="text-red-500">*</span></Label>
 										<Popover open={sessionOpen} onOpenChange={setSessionOpen}>

@@ -354,6 +354,9 @@ export async function GET(req: NextRequest) {
 				query = query.eq('is_published', false)
 			}
 
+			// Override Supabase's default 1000-row limit
+			query = query.range(0, 100000)
+
 			const { data, error } = await query
 
 			if (error) throw error
@@ -907,7 +910,7 @@ export async function GET(req: NextRequest) {
 			// IMPORTANT: grade_points and letter_grade are fetched from final_marks table
 			// These values are populated by database trigger from grade_system table
 			// NOTE: Filter by program_code (not program_id) since programs come from MyJKKN API
-			let query = supabase
+			const buildProgramResultsQuery = () => supabase
 				.from('final_marks')
 				.select(`
 					id,
@@ -958,19 +961,38 @@ export async function GET(req: NextRequest) {
 				.eq('examination_session_id', sessionId)
 				.eq('is_active', true)
 
-			// Filter by program_code (preferred) or program_id (fallback)
-			// program_code stores text like "BCA", program_id stores MyJKKN UUID
-			if (programCode) {
-				query = query.eq('program_code', programCode)
-			} else if (programId) {
-				query = query.eq('program_id', programId)
+			// Filter by program_code (preferred) or program_id (fallback), then batch in
+			// 1000-row pages. A single .range is capped by PostgREST db-max-rows, which
+			// truncated the preview to ~249 learners each showing only a partial course list.
+			const prBatch = 1000
+			const prData: any[] = []
+			let error: any = null
+			let prFrom = 0
+			while (true) {
+				let q = buildProgramResultsQuery()
+				if (programCode) {
+					q = q.eq('program_code', programCode)
+				} else if (programId) {
+					q = q.eq('program_id', programId)
+				}
+				if (semester) {
+					q = q.eq('course_offerings.semester', parseInt(semester))
+				}
+				q = q.range(prFrom, prFrom + prBatch - 1)
+				const { data: prBatchData, error: prBatchError } = await q
+				if (prBatchError) {
+					error = prBatchError
+					break
+				}
+				if (prBatchData && prBatchData.length > 0) {
+					prData.push(...prBatchData)
+					prFrom += prBatch
+					if (prBatchData.length < prBatch) break
+				} else {
+					break
+				}
 			}
-
-			if (semester) {
-				query = query.eq('course_offerings.semester', parseInt(semester))
-			}
-
-			const { data, error } = await query
+			const data = prData
 
 			if (error) {
 				console.error('Program results query error:', error)
@@ -1341,17 +1363,26 @@ export async function POST(req: NextRequest) {
 		// CGPA is calculated using ALL subjects taken by the student (not semester-wise)
 		// Semester value comes from student's current_semester in students table
 		if (action === 'generate-results') {
-			const { sessionId, programId, semester, programType = 'UG' } = body
+			const { sessionId, programId, programCode, semester, programType = 'UG' } = body
 
 			if (!sessionId) {
 				return NextResponse.json({ error: 'sessionId is required' }, { status: 400 })
 			}
 
+			// Helper: split an array into fixed-size chunks so .in(...) filters never overflow
+			// PostgREST's GET URL length limit (~1000 UUIDs in one .in() blows past the URL cap).
+			const chunkArray = (arr: any[], size: number): any[][] => {
+				const out: any[][] = []
+				for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size))
+				return out
+			}
+			const IN_CHUNK = 150
+
 			// Fetch all final marks with course and student info for calculation
 			// Include external marks to calculate is_pass dynamically (same as preview)
 			// Using LEFT JOINs to ensure records are returned even if some relations are missing
 			// Note: program_code is stored directly in final_marks (programs come from MyJKKN API)
-			let finalMarksQuery = supabase
+			const buildFinalMarksQuery = () => supabase
 				.from('final_marks')
 				.select(`
 					id,
@@ -1384,16 +1415,49 @@ export async function POST(req: NextRequest) {
 				.eq('examination_session_id', sessionId)
 				.eq('is_active', true)
 
-			if (programId) {
-				finalMarksQuery = finalMarksQuery.eq('program_id', programId)
-			}
+			// Filter by program_code (preferred) — final_marks.program_id (MyJKKN UUID) is
+			// unreliable/partly null, so filtering by it silently drops learners (e.g. UCC
+			// galley shows 174 + 92 = 266, but program_id only matched 252). program_code
+			// ("UCC") is the value the galley report filters by, so it captures all learners.
+			// CRITICAL: fetch in 1000-row BATCHES, not a single .range(0, N). PostgREST caps any
+			// single response at its db-max-rows setting, so one large range silently truncates —
+			// UCC has ~2,200 final_marks rows (266 learners x ~9 courses) and a single request
+			// returned only ~249 learners. The galley report paginates for this exact reason.
+			const BATCH_SIZE = 1000
+			const finalMarksData: any[] = []
+			let fmError: any = null
+			let fmFrom = 0
+			let fmBatches = 0
+			while (true) {
+				let batchQuery = buildFinalMarksQuery()
+				if (programCode) {
+					batchQuery = batchQuery.eq('program_code', programCode)
+				} else if (programId) {
+					batchQuery = batchQuery.eq('program_id', programId)
+				}
+				batchQuery = batchQuery.range(fmFrom, fmFrom + BATCH_SIZE - 1)
 
-			const { data: finalMarksData, error: fmError } = await finalMarksQuery
+				const { data: batchData, error: batchError } = await batchQuery
+				if (batchError) {
+					fmError = batchError
+					break
+				}
+				fmBatches++
+				if (batchData && batchData.length > 0) {
+					finalMarksData.push(...batchData)
+					fmFrom += BATCH_SIZE
+					if (batchData.length < BATCH_SIZE) break
+				} else {
+					break
+				}
+			}
 
 			if (fmError) {
 				console.error('Final marks fetch error:', fmError)
 				throw fmError
 			}
+
+			console.log(`[Generate] Fetched ${finalMarksData.length} final_marks rows for ${programCode || programId} in ${fmBatches} batch(es)`)
 
 			if (!finalMarksData || finalMarksData.length === 0) {
 				return NextResponse.json({
@@ -1416,22 +1480,31 @@ export async function POST(req: NextRequest) {
 			// Get student's regular (current) semester from exam_registrations + course_offerings
 			// Regular semester = MAX(course_offerings.semester) where is_regular = true
 			// If student has regular papers in sem 2 and arrear in sem 1, saves semester 2
-			let semesterQuery = supabase
-				.from('exam_registrations')
-				.select('student_id, stu_register_no, course_offerings(semester), program_code')
-				.eq('examination_session_id', sessionId)
-				.eq('is_regular', true)
-
-			// Filter by program_code if available (exam_registrations uses program_code, not program_id)
-			if (programCodeFromData) {
-				semesterQuery = semesterQuery.eq('program_code', programCodeFromData)
-				console.log(`🎯 Filtering semester query by program_code="${programCodeFromData}"`)
+			// Paginate so a large program's regular registrations are never truncated by the
+			// server row cap (a single .range silently caps at db-max-rows).
+			const studentSemesterData: any[] = []
+			let semesterError: any = null
+			{
+				let regFrom = 0
+				while (true) {
+					let q = supabase
+						.from('exam_registrations')
+						.select('student_id, stu_register_no, course_offerings(semester), program_code')
+						.eq('examination_session_id', sessionId)
+						.eq('is_regular', true)
+					// Filter by program_code if available (exam_registrations uses program_code, not program_id)
+					if (programCodeFromData) {
+						q = q.eq('program_code', programCodeFromData)
+					}
+					q = q.range(regFrom, regFrom + 1000 - 1)
+					const { data: regBatch, error: regErr } = await q
+					if (regErr) { semesterError = regErr; break }
+					if (!regBatch || regBatch.length === 0) break
+					studentSemesterData.push(...regBatch)
+					regFrom += 1000
+					if (regBatch.length < 1000) break
+				}
 			}
-
-			// Override default 1000-row limit
-			semesterQuery = semesterQuery.range(0, 9999)
-
-			const { data: studentSemesterData, error: semesterError } = await semesterQuery
 
 			if (semesterError) {
 				console.error('Student semester fetch error:', semesterError)
@@ -1513,20 +1586,41 @@ export async function POST(req: NextRequest) {
 			console.log('[CGPA] Bulk fetching marks for', Object.keys(studentMarksMap).length, 'students')
 			const allStudentIds = Object.keys(studentMarksMap)
 
-			const { data: allStudentMarks, error: allMarksError } = await supabase
-				.from('final_marks')
-				.select(`
-					student_id,
-					grade_points,
-					is_pass,
-					courses (
-						credit,
-						credit_included
-					)
-				`)
-				.in('student_id', allStudentIds)
-				.eq('is_active', true)
-				.range(0, 99999)
+			const allStudentMarks: any[] = []
+			let allMarksError: any = null
+			// Chunk student IDs so the .in() filter stays within the URL length limit, and
+			// paginate within each chunk so no chunk is truncated by the server row cap.
+			for (const idChunk of chunkArray(allStudentIds, IN_CHUNK)) {
+				let cgpaFrom = 0
+				while (true) {
+					const { data: cgpaBatch, error: cgpaBatchError } = await supabase
+						.from('final_marks')
+						.select(`
+							student_id,
+							grade_points,
+							is_pass,
+							courses (
+								credit,
+								credit_included
+							)
+						`)
+						.in('student_id', idChunk)
+						.eq('is_active', true)
+						.range(cgpaFrom, cgpaFrom + 1000 - 1)
+					if (cgpaBatchError) {
+						allMarksError = cgpaBatchError
+						break
+					}
+					if (cgpaBatch && cgpaBatch.length > 0) {
+						allStudentMarks.push(...cgpaBatch)
+						cgpaFrom += 1000
+						if (cgpaBatch.length < 1000) break
+					} else {
+						break
+					}
+				}
+				if (allMarksError) break
+			}
 
 			if (allMarksError) {
 				console.error('[CGPA] Error fetching marks:', allMarksError)
@@ -1727,17 +1821,20 @@ export async function POST(req: NextRequest) {
 			let backlogNote = ''
 			if (successCount > 0) {
 				try {
-					// First update final_marks result_status to 'Published' so backlogs can be created
-					for (const sr of semesterResultsToInsert) {
+					// Bulk update final_marks result_status to 'Published' so backlogs can be created.
+					// One chunked UPDATE per ~150 students instead of one round-trip per student
+					// (1000 students => ~7 queries, not 1000 — avoids the serverless timeout).
+					// Scope by session + student_id (not program_id, which can be null) so every
+					// matched learner's marks are published.
+					for (const idChunk of chunkArray(studentIds, IN_CHUNK)) {
 						await supabase
 							.from('final_marks')
 							.update({
 								result_status: 'Published',
 								updated_at: new Date().toISOString()
 							})
-							.eq('student_id', sr.student_id)
-							.eq('examination_session_id', sr.examination_session_id)
-							.eq('program_id', sr.program_id)
+							.eq('examination_session_id', sessionId)
+							.in('student_id', idChunk)
 					}
 
 					// Try to call the RPC function, if it exists
@@ -1769,22 +1866,38 @@ export async function POST(req: NextRequest) {
 				try {
 					console.log('[Generate Results] Updating backlogs...')
 
-					// Get ALL final_marks from this session (both passed and failed)
-					const { data: allMarks } = await supabase
-						.from('final_marks')
-						.select('id, student_id, course_id, examination_session_id, internal_marks_obtained, external_marks_obtained, total_marks_obtained, percentage, grade_points, letter_grade, is_pass, course_offerings(semester)')
-						.eq('examination_session_id', sessionId)
-						.eq('is_active', true)
-						.range(0, 99999)
+					// Get ALL final_marks from this session (both passed and failed),
+					// paginated so a large session isn't truncated by the server row cap.
+					const allMarks: any[] = []
+					{
+						let amFrom = 0
+						while (true) {
+							const { data: amBatch, error: amErr } = await supabase
+								.from('final_marks')
+								.select('id, student_id, course_id, examination_session_id, internal_marks_obtained, external_marks_obtained, total_marks_obtained, percentage, grade_points, letter_grade, is_pass, course_offerings(semester)')
+								.eq('examination_session_id', sessionId)
+								.eq('is_active', true)
+								.range(amFrom, amFrom + 1000 - 1)
+							if (amErr || !amBatch || amBatch.length === 0) break
+							allMarks.push(...amBatch)
+							amFrom += 1000
+							if (amBatch.length < 1000) break
+						}
+					}
 
 					if (allMarks && allMarks.length > 0) {
-						// Get semester_results map for cleared_semester_result_id
+						// Get semester_results map for cleared_semester_result_id (chunk the
+						// .in() so a large student set doesn't overflow the GET URL).
 						const allStudentIds = [...new Set(allMarks.map(fm => fm.student_id))]
-						const { data: srData } = await supabase
-							.from('semester_results')
-							.select('id, student_id, semester')
-							.eq('examination_session_id', sessionId)
-							.in('student_id', allStudentIds)
+						const srData: any[] = []
+						for (const idChunk of chunkArray(allStudentIds, IN_CHUNK)) {
+							const { data: srChunk } = await supabase
+								.from('semester_results')
+								.select('id, student_id, semester')
+								.eq('examination_session_id', sessionId)
+								.in('student_id', idChunk)
+							if (srChunk) srData.push(...srChunk)
+						}
 
 						const srMap: Record<string, { id: string; semester: number }> = {}
 						srData?.forEach(sr => { srMap[sr.student_id] = { id: sr.id, semester: sr.semester } })
@@ -1795,14 +1908,26 @@ export async function POST(req: NextRequest) {
 						console.log('[Backlog Update] Bulk fetching backlogs for', allMarks.length, 'marks')
 						const allCourseIds = [...new Set(allMarks.map(fm => fm.course_id))]
 
-						const { data: allBacklogs } = await supabase
-							.from('student_backlogs')
-							.select('id, student_id, course_id, attempt_count, max_attempts_allowed, created_at, institutions_id, program_id, course_offering_id, original_examination_session_id, original_final_marks_id, original_semester, register_number, program_code, original_internal_marks, original_external_marks, original_total_marks, original_percentage, original_grade_points, original_letter_grade, failure_reason, is_absent')
-							.in('student_id', allStudentIds)
-							.in('course_id', allCourseIds)
-							.eq('is_cleared', false)
-							.eq('is_active', true)
-							.range(0, 99999)
+						// Chunk by student_id (URL-safe) and paginate each chunk so no backlog row is
+						// dropped for large student sets.
+						const allBacklogs: any[] = []
+						for (const idChunk of chunkArray(allStudentIds, IN_CHUNK)) {
+							let blFrom = 0
+							while (true) {
+								const { data: blBatch, error: blErr } = await supabase
+									.from('student_backlogs')
+									.select('id, student_id, course_id, attempt_count, max_attempts_allowed, created_at, institutions_id, program_id, course_offering_id, original_examination_session_id, original_final_marks_id, original_semester, register_number, program_code, original_internal_marks, original_external_marks, original_total_marks, original_percentage, original_grade_points, original_letter_grade, failure_reason, is_absent')
+									.in('student_id', idChunk)
+									.in('course_id', allCourseIds)
+									.eq('is_cleared', false)
+									.eq('is_active', true)
+									.range(blFrom, blFrom + 1000 - 1)
+								if (blErr || !blBatch || blBatch.length === 0) break
+								allBacklogs.push(...blBatch)
+								blFrom += 1000
+								if (blBatch.length < 1000) break
+							}
+						}
 
 						// STEP 2: Create lookup map for O(1) access (in-memory, fast)
 						const backlogMap = new Map<string, any>()
