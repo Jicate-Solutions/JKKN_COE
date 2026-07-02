@@ -229,11 +229,24 @@ export async function GET(request: NextRequest) {
 		// Fetch session details
 		const { data: sessionRaw, error: sessError } = await supabase
 			.from('examination_sessions')
-			.select('id, session_name, session_code, semester_type, exam_start_date, exam_end_date')
+			.select('id, session_name, session_code, semester_type, exam_type_id, exam_start_date, exam_end_date')
 			.eq('id', sessionId)
 			.single()
 
 		if (sessError) throw sessError
+
+		// Fetch exam type name (e.g. "End Semester Examination", "Supplementary Examination")
+		// linked via examination_sessions.exam_type_id → exam_types.examination_name.
+		// Used to build the report title dynamically instead of a hardcoded "END SEMESTER".
+		let examTypeName = ''
+		if (sessionRaw?.exam_type_id) {
+			const { data: examTypeRow } = await supabase
+				.from('exam_types')
+				.select('examination_name')
+				.eq('id', sessionRaw.exam_type_id)
+				.single()
+			examTypeName = examTypeRow?.examination_name || ''
+		}
 
 		// Map to expected format
 		const session = sessionRaw ? {
@@ -241,6 +254,7 @@ export async function GET(request: NextRequest) {
 			session_name: sessionRaw.session_name,
 			session_code: sessionRaw.session_code,
 			session_type: sessionRaw.semester_type,
+			exam_type_name: examTypeName,
 			start_date: sessionRaw.exam_start_date,
 			end_date: sessionRaw.exam_end_date
 		} : null

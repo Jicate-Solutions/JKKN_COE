@@ -231,7 +231,7 @@ function boardChildren(report: PassPercentageReport, left?: Uint8Array, right?: 
 		centered(title, { bold: true, size: 22 }),
 	]
 	if (degreeSubtitle) out.push(centered(degreeSubtitle, { size: 18 }))
-	out.push(centered(`SEMESTER EXAMINATION - ${report.session.name}`, { bold: true, size: 20 }))
+	out.push(centered(`${(report.session.exam_type_name || 'SEMESTER EXAMINATION').toUpperCase()} - ${report.session.name}`, { bold: true, size: 20 }))
 	out.push(new Paragraph({ spacing: { before: 120, after: 80 }, children: [new TextRun({ text: 'BOARD-WISE SUMMARY', bold: true, size: 20 })] }))
 	out.push(summaryTable(rows))
 	// keepNext chains the gap → signature table to the last row above

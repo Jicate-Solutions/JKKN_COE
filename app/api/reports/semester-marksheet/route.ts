@@ -342,13 +342,24 @@ export async function GET(req: NextRequest) {
 						for (const myjkknInstId of myjkknInstIds) {
 							if (matchingProfile) break // Stop if we found a match
 
-							// Paginate through all profiles (raised from 200 → 1000 per page
-							// so we cover larger institutions in fewer round-trips).
+							// Paginate through all profiles.
+							// NOTE: the MyJKKN profiles endpoint HARD-CAPS every page at
+							// 200 rows regardless of the `limit` we request. The previous
+							// code requested limit=1000 and stopped as soon as a page
+							// returned fewer than 1000 rows (`length === pageSize`) — which
+							// is ALWAYS true on the very first page (200 !== 1000), so it
+							// only ever scanned the first 200 learners and silently dropped
+							// everyone after them (e.g. 25JUGCOM019). Keep paginating until a
+							// page comes back empty, matching the batch path's logic.
+							const pageSize = 200
+							const MAX_PAGES = 1000 // safety cap against an infinite loop
+							// Match register_number tolerantly (case/whitespace) — same as batch.
+							const normReg = (s: any) => (s ?? '').toString().trim().toUpperCase()
+							const wantReg = normReg(registerNo)
 							let page = 1
-							const pageSize = 1000
 							let hasMorePages = true
 
-							while (hasMorePages && !matchingProfile) {
+							while (hasMorePages && !matchingProfile && page <= MAX_PAGES) {
 								const profileParams = new URLSearchParams()
 								profileParams.set('institution_id', myjkknInstId)
 								profileParams.set('limit', String(pageSize))
@@ -374,17 +385,18 @@ export async function GET(req: NextRequest) {
 									const profiles = profileData.data || []
 									console.log(`[Semester Marksheet] MyJKKN institution ${myjkknInstId} page ${page} returned ${profiles.length} profiles`)
 
-									// Find matching profile by register_number only
+									// Find matching profile by register_number (tolerant match)
 									matchingProfile = profiles.find((p: any) =>
-										p.register_number === registerNo
+										normReg(p.register_number) === wantReg
 									)
 
 									if (matchingProfile) {
 										console.log(`[Semester Marksheet] Found profile in institution ${myjkknInstId}: register_number=${matchingProfile.register_number}, photo=${matchingProfile.student_photo_url?.substring(0, 60)}...`)
 									}
 
-									// Check if there are more pages
-									hasMorePages = profiles.length === pageSize
+									// Keep going until a page returns NO rows. Do not compare
+									// against the requested limit — the API caps pages at 200.
+									hasMorePages = profiles.length > 0
 									page++
 								} else {
 									hasMorePages = false

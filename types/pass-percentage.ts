@@ -26,7 +26,7 @@ export interface PassPercentageCourse {
 
 export interface PassPercentageReport {
 	institution: { id: string; name: string; code: string }
-	session: { id: string; name: string; code: string }
+	session: { id: string; name: string; code: string; exam_type_name?: string }
 	report_type: 'board' | 'program'
 	board?: { id: string; board_code: string; board_name: string; board_type: string }
 	program?: { program_code: string; program_name: string }

@@ -186,12 +186,23 @@ export async function GET(request: NextRequest) {
 		// ── Step 2: Get session info ──
 		const { data: sessionData } = await supabase
 			.from('examination_sessions')
-			.select('id, session_name, session_code')
+			.select('id, session_name, session_code, exam_type_id')
 			.eq('id', sessionId)
 			.single()
 
 		if (!sessionData) {
 			return NextResponse.json({ error: 'Session not found' }, { status: 404 })
+		}
+
+		// Exam type name (e.g. "Supplementary Examination") for the report title
+		let sessionExamTypeName = ''
+		if (sessionData.exam_type_id) {
+			const { data: examTypeRow } = await supabase
+				.from('exam_types')
+				.select('examination_name')
+				.eq('id', sessionData.exam_type_id)
+				.single()
+			sessionExamTypeName = examTypeRow?.examination_name || ''
 		}
 
 		// ── Step 3: Get board/program info ──
@@ -461,7 +472,7 @@ export async function GET(request: NextRequest) {
 
 		return NextResponse.json({
 			institution: { id: instData.id, name: instData.name, code: instData.institution_code },
-			session: { id: sessionData.id, name: sessionData.session_name, code: sessionData.session_code },
+			session: { id: sessionData.id, name: sessionData.session_name, code: sessionData.session_code, exam_type_name: sessionExamTypeName },
 			report_type: reportType,
 			board: boardInfo,
 			program: programInfo,

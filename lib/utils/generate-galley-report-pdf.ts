@@ -84,6 +84,7 @@ interface GalleyReportData {
 		session_name: string
 		session_code: string
 		session_type: string
+		exam_type_name?: string
 	}
 	program: {
 		id: string
@@ -209,9 +210,13 @@ export function generateGalleyReportPDF(data: GalleyReportData): string {
 		currentY += 20
 
 		// ========== EXAMINATION TITLE ==========
+		// Build the title from the session's exam type (e.g. "Supplementary Examination")
+		// instead of a hardcoded "END SEMESTER". Falls back to "END SEMESTER EXAMINATION".
 		doc.setFont('times', 'bold')
 		doc.setFontSize(12)
-		const title = sessionName ? `END SEMESTER EXAMINATION RESULTS - ${sessionName.toUpperCase()}` : 'END SEMESTER EXAMINATIONS'
+		const examBase = (data.session?.exam_type_name || 'END SEMESTER EXAMINATION').toUpperCase().trim()
+		const examLabel = examBase.includes('RESULT') ? examBase : `${examBase} RESULTS`
+		const title = sessionName ? `${examLabel} - ${sessionName.toUpperCase()}` : examLabel
 		doc.text(title, pageWidth / 2, currentY, { align: 'center' })
 
 		currentY += 6
@@ -649,7 +654,10 @@ export function generateGalleyReportPDF(data: GalleyReportData): string {
 	const analysisProgramCode = data.program?.program_code || ''
 	const analysisProgramName = data.program?.program_name || ''
 	const analysisSessionName = data.session?.session_name || ''
-	const analysisTitle = `PROGRAM: ${analysisProgramCode} - ${analysisProgramName.toUpperCase()} - RESULT ANALYSIS${analysisSessionName ? ` - ${analysisSessionName.toUpperCase()} EXAMINATIONS` : ''}`
+	const analysisExamSuffix = data.session?.exam_type_name
+		? data.session.exam_type_name.toUpperCase()
+		: 'EXAMINATIONS'
+	const analysisTitle = `PROGRAM: ${analysisProgramCode} - ${analysisProgramName.toUpperCase()} - RESULT ANALYSIS${analysisSessionName ? ` - ${analysisSessionName.toUpperCase()} ${analysisExamSuffix}` : ''}`
 	doc.setFont('times', 'bold')
 	doc.setFontSize(11)
 	doc.setTextColor(0, 0, 0)

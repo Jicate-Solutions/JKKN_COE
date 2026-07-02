@@ -119,7 +119,7 @@ function generatePdfContent(
 		// Session info
 		doc.setFont('times', 'bold')
 		doc.setFontSize(10)
-		doc.text(`SEMESTER EXAMINATION - ${report.session.name}`, pageWidth / 2, currentY, { align: 'center' })
+		doc.text(`${(report.session.exam_type_name || 'SEMESTER EXAMINATION').toUpperCase()} - ${report.session.name}`, pageWidth / 2, currentY, { align: 'center' })
 		currentY += 7
 	}
 
@@ -309,7 +309,7 @@ function generateProgramPdfContent(
 
 		doc.setFont('times', 'bold')
 		doc.setFontSize(10)
-		doc.text(`SEMESTER EXAMINATION - ${report.session.name}`, textCenter, currentY, { align: 'center' })
+		doc.text(`${(report.session.exam_type_name || 'SEMESTER EXAMINATION').toUpperCase()} - ${report.session.name}`, textCenter, currentY, { align: 'center' })
 		currentY += 7
 	}
 
@@ -538,7 +538,7 @@ function generateCourseSummaryContent(
 
 		doc.setFont('times', 'bold')
 		doc.setFontSize(10)
-		doc.text(`SEMESTER EXAMINATION - ${report.session.name}`, textCenter, currentY, { align: 'center' })
+		doc.text(`${(report.session.exam_type_name || 'SEMESTER EXAMINATION').toUpperCase()} - ${report.session.name}`, textCenter, currentY, { align: 'center' })
 		currentY += 6
 
 		// Report-specific subtitle (left-aligned)
