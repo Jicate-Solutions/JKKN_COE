@@ -66,6 +66,7 @@ interface Institution {
 	id: string
 	institution_code: string
 	institution_name: string
+	myjkkn_institution_ids: string[]
 }
 
 interface ExamType {
@@ -75,11 +76,13 @@ interface ExamType {
 	institutions_id: string
 }
 
+// Academic Year sourced from the MyJKKN API (/api-management/academic/academic-years)
 interface AcademicYear {
 	id: string
-	academic_year: string
-	start_date: string
-	end_date: string
+	academic_year_name: string
+	start_date?: string
+	end_date?: string
+	institution_id: string
 }
 
 export default function ExaminationSessionsPage() {
@@ -199,7 +202,8 @@ export default function ExaminationSessionsPage() {
 					? data.filter((i: any) => i?.institution_code).map((i: any) => ({
 						id: i.id,
 						institution_code: i.institution_code,
-						institution_name: i.institution_name || i.name
+						institution_name: i.institution_name || i.name,
+						myjkkn_institution_ids: Array.isArray(i.myjkkn_institution_ids) ? i.myjkkn_institution_ids : []
 					}))
 					: []
 
@@ -237,24 +241,25 @@ export default function ExaminationSessionsPage() {
 		}
 	}, [appendToUrl])
 
-	// Fetch academic years
+	// Fetch academic years from the MyJKKN API (source of truth).
+	// The selected MyJKKN academic year id is stored directly in academic_year_id.
 	const fetchAcademicYears = useCallback(async () => {
 		try {
-			const res = await fetch('/api/master/academic-years')
+			const res = await fetch('/api/myjkkn/academic-years?fetchAll=true&is_active=true')
 			if (res.ok) {
-				const data = await res.json()
-				const mapped = Array.isArray(data)
-					? data.map((i: any) => ({
-						id: i.id,
-						academic_year: i.academic_year,
-						start_date: i.start_date,
-						end_date: i.end_date
-					}))
-					: []
+				const result = await res.json()
+				const rows = Array.isArray(result) ? result : (result.data || [])
+				const mapped: AcademicYear[] = rows.map((i: any) => ({
+					id: i.id,
+					academic_year_name: i.academic_year_name,
+					start_date: i.start_date,
+					end_date: i.end_date,
+					institution_id: i.institution_id
+				}))
 				setAcademicYears(mapped)
 			}
 		} catch (e) {
-			console.error('Failed to load academic years:', e)
+			console.error('Failed to load academic years from MyJKKN:', e)
 		}
 	}, [])
 
@@ -533,6 +538,29 @@ export default function ExaminationSessionsPage() {
 		if (!instId) return examTypes
 		return examTypes.filter((et) => et.institutions_id === instId)
 	}, [examTypes, formData.institutions_id, currentInstitutionId])
+
+	// Academic years (from MyJKKN) scoped to the form's selected institution.
+	// MyJKKN academic years are keyed by the MyJKKN institution_id, which we
+	// resolve from the local institution's myjkkn_institution_ids mapping.
+	const formAcademicYears = useMemo(() => {
+		const instId = formData.institutions_id || currentInstitutionId
+		const myjkknIds = institutions.find((i) => i.id === instId)?.myjkkn_institution_ids || []
+		const scoped = myjkknIds.length === 0
+			? academicYears
+			: academicYears.filter((ay) => myjkknIds.includes(ay.institution_id))
+
+		// A COE institution can map to several MyJKKN institution ids, each of
+		// which owns its own copy of the same academic year (e.g. "2024-2025").
+		// Deduplicate by name so the dropdown shows each year once, newest first.
+		const seen = new Set<string>()
+		return [...scoped]
+			.sort((a, b) => b.academic_year_name.localeCompare(a.academic_year_name))
+			.filter((ay) => {
+				if (seen.has(ay.academic_year_name)) return false
+				seen.add(ay.academic_year_name)
+				return true
+			})
+	}, [academicYears, institutions, formData.institutions_id, currentInstitutionId])
 
 	// Filtering and sorting
 	const filtered = useMemo(() => {
@@ -903,7 +931,7 @@ export default function ExaminationSessionsPage() {
 															{examTypes.find(et => et.id === session.exam_type_id)?.examination_name || 'N/A'}
 														</TableCell>
 														<TableCell className="text-xs">
-															{academicYears.find(ay => ay.id === session.academic_year_id)?.academic_year || 'N/A'}
+															{academicYears.find(ay => ay.id === session.academic_year_id)?.academic_year_name || 'N/A'}
 														</TableCell>
 														<TableCell className="text-xs">{session.semester_type}</TableCell>
 														<TableCell>
@@ -1100,9 +1128,9 @@ export default function ExaminationSessionsPage() {
 											<SelectValue placeholder="Select academic year" />
 										</SelectTrigger>
 										<SelectContent>
-											{academicYears.map((ay) => (
+											{formAcademicYears.map((ay) => (
 												<SelectItem key={ay.id} value={ay.id}>
-													{ay.academic_year}
+													{ay.academic_year_name}
 												</SelectItem>
 											))}
 										</SelectContent>

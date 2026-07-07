@@ -371,28 +371,32 @@ export default function ConsolidatedMarksheetSharePage() {
 											<TableHeader>
 												<TableRow className="bg-muted/50">
 													<TableHead className="text-center w-[50px]">Sem</TableHead>
-													<TableHead className="w-[60px]">Part</TableHead>
+													{!marksheet.program.isPG && <TableHead className="w-[60px]">Part</TableHead>}
 													<TableHead className="w-[100px]">Code</TableHead>
 													<TableHead>Course Name</TableHead>
 													<TableHead className="text-center w-[45px]">Cr</TableHead>
-													<TableHead className="text-center w-[70px]">Total</TableHead>
-													<TableHead className="text-center w-[60px]">Grade</TableHead>
+													<TableHead className="text-center w-[80px]">Maximum</TableHead>
+													<TableHead className="text-center w-[80px]">Secured</TableHead>
 													<TableHead className="text-center w-[45px]">GP</TableHead>
+													<TableHead className="text-center w-[60px]">Grade</TableHead>
+													<TableHead className="text-center w-[90px]">Month &amp; Year</TableHead>
 												</TableRow>
 											</TableHeader>
 											<TableBody>
 												{sortedCourses.map((course: any, idx: number) => (
 													<TableRow key={idx}>
 														<TableCell className="text-center font-medium">{course.semester}</TableCell>
-														<TableCell className="text-xs text-muted-foreground">{course.part}</TableCell>
+														{!marksheet.program.isPG && <TableCell className="text-xs text-muted-foreground">{course.part}</TableCell>}
 														<TableCell className="text-xs font-mono">{course.courseCode}</TableCell>
 														<TableCell className="text-sm">{course.courseName}</TableCell>
 														<TableCell className="text-center">{course.credits}</TableCell>
-														<TableCell className="text-center text-sm">{course.totalMarks}/{course.totalMax}</TableCell>
+														<TableCell className="text-center text-sm">{course.totalMax}</TableCell>
+														<TableCell className="text-center text-sm">{course.isAbsent ? 'AAA' : course.totalMarks}</TableCell>
+														<TableCell className="text-center text-sm">{course.gradePoint.toFixed(1)}</TableCell>
 														<TableCell className="text-center">
 															<Badge variant="outline" className="text-xs">{course.letterGrade}</Badge>
 														</TableCell>
-														<TableCell className="text-center text-sm">{course.gradePoint.toFixed(1)}</TableCell>
+														<TableCell className="text-center text-xs">{course.monthYear || '-'}</TableCell>
 													</TableRow>
 												))}
 											</TableBody>

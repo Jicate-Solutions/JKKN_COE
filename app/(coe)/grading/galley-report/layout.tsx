@@ -13,7 +13,7 @@ import {
 	BreadcrumbPage,
 	BreadcrumbSeparator,
 } from '@/components/ui/breadcrumb'
-import { FileText, Percent } from 'lucide-react'
+import { FileText, Percent, CheckCircle2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 const tabs = [
@@ -30,6 +30,13 @@ const tabs = [
 		icon: Percent,
 		activeClasses: 'bg-emerald-500 text-white shadow-lg shadow-emerald-500/25',
 		inactiveClasses: 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100 dark:bg-emerald-950/30 dark:text-emerald-300 dark:hover:bg-emerald-900/40',
+	},
+	{
+		name: 'All Clear Report',
+		href: '/grading/galley-report/all-clear',
+		icon: CheckCircle2,
+		activeClasses: 'bg-sky-500 text-white shadow-lg shadow-sky-500/25',
+		inactiveClasses: 'bg-sky-50 text-sky-700 hover:bg-sky-100 dark:bg-sky-950/30 dark:text-sky-300 dark:hover:bg-sky-900/40',
 	},
 ]
 

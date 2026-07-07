@@ -19,7 +19,17 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { Badge } from '@/components/ui/badge'
 import { Switch } from '@/components/ui/switch'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { ArrowLeft, CalendarCheck, CalendarPlus, Loader2, Save, Search, Users, X } from 'lucide-react'
+import {
+	AlertDialog,
+	AlertDialogAction,
+	AlertDialogCancel,
+	AlertDialogContent,
+	AlertDialogDescription,
+	AlertDialogFooter,
+	AlertDialogHeader,
+	AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
+import { AlertTriangle, ArrowLeft, CalendarCheck, CalendarPlus, Loader2, Save, Search, Users, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 const ROMAN = ['', 'I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X']
@@ -197,6 +207,24 @@ export default function ScheduleExamsPage() {
 	const [isPublished, setIsPublished] = useState(false)
 	const [saving, setSaving] = useState(false)
 
+	// Learner-clash guard: when the save is rejected (409), hold the conflicts here to
+	// show a confirm dialog offering "Schedule anyway".
+	interface ClashInfo {
+		exam_date: string
+		session: string
+		conflict_count: number
+		conflicts: { stu_register_no: string; student_name: string; course_codes: string[] }[]
+	}
+	const [clash, setClash] = useState<ClashInfo | null>(null)
+
+	// Live clash pre-check (read-only) — reflects clashes for the current selection + slot
+	// before the user hits Save.
+	const [precheck, setPrecheck] = useState<{ loading: boolean; count: number; conflicts: ClashInfo['conflicts'] }>({
+		loading: false,
+		count: 0,
+		conflicts: [],
+	})
+
 	// Load examination sessions for the dropdown — scoped to the selected institution
 	// so super admins don't see duplicate same-named sessions across institutions.
 	useEffect(() => {
@@ -315,7 +343,50 @@ export default function ScheduleExamsPage() {
 		[subjects, selected]
 	)
 
-	const handleSave = async () => {
+	// Debounced live pre-check: whenever the selection / date / session changes, ask the
+	// server whether any learner would clash on that slot. Read-only; never writes.
+	useEffect(() => {
+		if (!institutionId || !selectedSessionId || !examDate || !examSession || selectedSubjects.length === 0) {
+			setPrecheck({ loading: false, count: 0, conflicts: [] })
+			return
+		}
+		const controller = new AbortController()
+		setPrecheck((p) => ({ ...p, loading: true }))
+		const timer = setTimeout(async () => {
+			try {
+				const res = await fetch('/api/exam-management/exam-timetables/schedule/precheck', {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					signal: controller.signal,
+					body: JSON.stringify({
+						institutions_id: institutionId,
+						examination_session_id: selectedSessionId,
+						exam_date: examDate,
+						session: examSession,
+						offerings: selectedSubjects.map((s) => ({
+							course_offering_id: s.course_offering_id,
+							course_code: s.course_code,
+							exam_timetable_id: s.exam_timetable_id || undefined,
+						})),
+					}),
+				})
+				if (!res.ok) {
+					setPrecheck({ loading: false, count: 0, conflicts: [] })
+					return
+				}
+				const data = await res.json()
+				setPrecheck({ loading: false, count: data.conflict_count || 0, conflicts: data.conflicts || [] })
+			} catch (e) {
+				if ((e as any)?.name !== 'AbortError') setPrecheck({ loading: false, count: 0, conflicts: [] })
+			}
+		}, 400)
+		return () => {
+			controller.abort()
+			clearTimeout(timer)
+		}
+	}, [institutionId, selectedSessionId, examDate, examSession, selectedSubjects])
+
+	const handleSave = async (allowConflicts = false) => {
 		if (selectedSubjects.length === 0) {
 			toast({ title: '⚠️ No subjects selected', description: 'Select at least one subject to schedule.', variant: 'destructive' })
 			return
@@ -356,12 +427,26 @@ export default function ScheduleExamsPage() {
 					session: examSession,
 					exam_mode: examMode,
 					is_published: isPublished,
+					allow_conflicts: allowConflicts,
 					items,
 				}),
 			})
 			const result = await res.json()
+
+			// 409 → learner exam clash. Surface the conflicts and let the user override.
+			if (res.status === 409 && result.conflict) {
+				setClash({
+					exam_date: result.exam_date || examDate,
+					session: result.session || examSession,
+					conflict_count: result.conflict_count ?? (result.conflicts?.length || 0),
+					conflicts: result.conflicts || [],
+				})
+				return
+			}
+
 			if (!res.ok) throw new Error(result.error || 'Failed to schedule')
 
+			setClash(null)
 			const parts: string[] = []
 			if (result.created) parts.push(`${result.created} scheduled`)
 			if (result.updated) parts.push(`${result.updated} rescheduled`)
@@ -588,7 +673,30 @@ export default function ScheduleExamsPage() {
 												</div>
 											</div>
 										)}
-										<Button className="w-full" onClick={handleSave} disabled={saving || selected.size === 0}>
+										{examDate && examSession && selected.size > 0 && (
+											precheck.loading ? (
+												<div className="flex items-center gap-2 rounded-md border bg-slate-50 dark:bg-slate-900/40 px-3 py-2 text-xs text-muted-foreground">
+													<Loader2 className="h-3.5 w-3.5 animate-spin" />Checking learner clashes…
+												</div>
+											) : precheck.count > 0 ? (
+												<button
+													type="button"
+													onClick={() => setClash({ exam_date: examDate, session: examSession, conflict_count: precheck.count, conflicts: precheck.conflicts })}
+													className="flex w-full items-center gap-2 rounded-md border border-red-300 bg-red-50 px-3 py-2 text-left text-xs text-red-700 hover:bg-red-100"
+												>
+													<AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+													<span className="flex-1">
+														{precheck.count} learner{precheck.count === 1 ? '' : 's'} clash on {formatExamDate(examDate)} · {examSession}
+													</span>
+													<span className="underline shrink-0">Review</span>
+												</button>
+											) : (
+												<div className="flex items-center gap-2 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-700">
+													<CalendarCheck className="h-3.5 w-3.5 shrink-0" />No learner clashes on this slot.
+												</div>
+											)
+										)}
+										<Button className="w-full" onClick={() => handleSave(false)} disabled={saving || selected.size === 0}>
 											{saving ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Scheduling…</> : <><Save className="h-4 w-4 mr-2" />Save Schedule</>}
 										</Button>
 									</CardContent>
@@ -599,6 +707,59 @@ export default function ScheduleExamsPage() {
 				</div>
 				<AppFooter />
 			</SidebarInset>
+
+			{/* Learner exam clash — block by default, allow explicit override */}
+			<AlertDialog open={!!clash} onOpenChange={(open) => { if (!open) setClash(null) }}>
+				<AlertDialogContent className="max-w-lg">
+					<AlertDialogHeader>
+						<AlertDialogTitle className="flex items-center gap-2 text-red-600">
+							<AlertTriangle className="h-5 w-5" />
+							Learner Exam Clash
+						</AlertDialogTitle>
+						<AlertDialogDescription asChild>
+							<div className="space-y-3">
+								<p>
+									{clash?.conflict_count} learner{(clash?.conflict_count || 0) === 1 ? '' : 's'} would sit two different
+									courses on <span className="font-semibold">{clash?.exam_date && formatExamDate(clash.exam_date)}</span>{' '}
+									(<span className="font-semibold">{clash?.session}</span>). Resolve the clash, or schedule anyway if this is intentional.
+								</p>
+								<div className="max-h-64 overflow-y-auto rounded-md border divide-y">
+									{clash?.conflicts.map((c) => (
+										<div key={c.stu_register_no} className="flex items-start justify-between gap-3 px-3 py-2 text-sm">
+											<div className="min-w-0">
+												<div className="font-mono text-xs">{c.stu_register_no}</div>
+												<div className="truncate text-muted-foreground">{c.student_name}</div>
+											</div>
+											<div className="flex flex-wrap justify-end gap-1">
+												{c.course_codes.map((code) => (
+													<Badge key={code} variant="outline" className="text-[10px] font-mono border-red-300 text-red-700 bg-red-50">
+														{code}
+													</Badge>
+												))}
+											</div>
+										</div>
+									))}
+								</div>
+								{clash && clash.conflict_count > clash.conflicts.length && (
+									<p className="text-xs text-muted-foreground">
+										Showing {clash.conflicts.length} of {clash.conflict_count} clashing learners.
+									</p>
+								)}
+							</div>
+						</AlertDialogDescription>
+					</AlertDialogHeader>
+					<AlertDialogFooter>
+						<AlertDialogCancel disabled={saving}>Cancel</AlertDialogCancel>
+						<AlertDialogAction
+							disabled={saving}
+							className="bg-red-600 hover:bg-red-700 focus:ring-red-600"
+							onClick={(e) => { e.preventDefault(); setClash(null); handleSave(true) }}
+						>
+							{saving ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Scheduling…</> : 'Schedule anyway'}
+						</AlertDialogAction>
+					</AlertDialogFooter>
+				</AlertDialogContent>
+			</AlertDialog>
 		</SidebarProvider>
 	)
 }

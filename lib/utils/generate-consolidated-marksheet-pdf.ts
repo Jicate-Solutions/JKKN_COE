@@ -163,7 +163,8 @@ function toSemesterData(c: ConsolidatedStudentMarksheetData): StudentMarksheetDa
 		result: crs.result,
 		resultType: crs.resultType,
 		passStatus: crs.passStatus,
-		creditValue: crs.credits
+		creditValue: crs.credits,
+		monthYear: crs.monthYear   // per-course examination MONTH & YEAR (consolidated column)
 	}))
 
 	// Map consolidated part breakdown → semester PartBreakdown shape
@@ -246,7 +247,8 @@ export function generateConsolidatedMarksheetPDF(
 	const semOptions: MarksheetPDFOptions = {
 		showHeader: options.showHeader,
 		showPhoto: options.showPhoto !== false,
-		showQRCode: options.showQRCode !== false
+		showQRCode: options.showQRCode !== false,
+		consolidatedLayout: true
 	}
 	addStudentMarksheetToDoc(doc, semData, semOptions)
 	return doc.output('datauristring')
@@ -262,7 +264,8 @@ export function downloadConsolidatedMarksheetPDF(
 	const semOptions: MarksheetPDFOptions = {
 		showHeader: options.showHeader,
 		showPhoto: options.showPhoto !== false,
-		showQRCode: options.showQRCode !== false
+		showQRCode: options.showQRCode !== false,
+		consolidatedLayout: true
 	}
 	addStudentMarksheetToDoc(doc, semData, semOptions)
 	const fname = filename || `Consolidated_Marksheet_${data.student.registerNo}.pdf`
@@ -280,7 +283,8 @@ export function generateMergedConsolidatedMarksheetPDF(
 	const semOptions: MarksheetPDFOptions = {
 		showHeader: options.showHeader,
 		showPhoto: options.showPhoto !== false,
-		showQRCode: options.showQRCode !== false
+		showQRCode: options.showQRCode !== false,
+		consolidatedLayout: true
 	}
 	students.forEach((c, index) => {
 		if (index > 0) doc.addPage()
@@ -301,7 +305,8 @@ export function downloadMergedConsolidatedMarksheetPDF(
 	const semOptions: MarksheetPDFOptions = {
 		showHeader: options.showHeader,
 		showPhoto: options.showPhoto !== false,
-		showQRCode: options.showQRCode !== false
+		showQRCode: options.showQRCode !== false,
+		consolidatedLayout: true
 	}
 	students.forEach((c, index) => {
 		if (index > 0) doc.addPage()

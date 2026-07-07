@@ -61,6 +61,7 @@ export interface MarksheetCourse {
 	isTermFail?: boolean     // Failed in term
 	isFinalFail?: boolean    // Final fail status
 	isArrear?: boolean       // True if this is an arrear paper from a previous semester
+	monthYear?: string       // Per-course examination MONTH & YEAR (consolidated layout only)
 }
 
 export interface PartBreakdown {
@@ -193,6 +194,11 @@ export interface MarksheetPDFOptions {
 	showCGPA?: boolean        // Show CGPA in summary
 	showPercentage?: boolean  // Show percentage in summary
 	dateFormat?: 'DD-MM-YYYY' | 'DD/MM/YYYY' | 'MMMM YYYY'
+	// Consolidated marksheet layout:
+	//   - MAXIMUM / MARKS SECURED collapse from ESE|CIA|TOTAL to a single TOTAL column
+	//   - RESULT column is replaced by a per-course MONTH & YEAR column
+	//   - PART column is hidden for PG (kept for UG)
+	consolidatedLayout?: boolean
 }
 
 // ============================================================
@@ -415,12 +421,12 @@ export function addStudentMarksheetToDoc(
 	// Determine if this is a PG program — used for passing minimum (50% vs 40%)
 	const isPG = data.program.isPG || isPGProgram(data.program.code, data.program.name)
 
-	// Hide the PART column only when the data has no part info to show.
-	// UG always has Part I-V. PG semester marksheets typically have no parts.
-	// PG consolidated marksheets DO have Part A / Part B — those rows must
-	// surface in the PART column. So the decision is data-driven, not type-driven.
-	const hasAnyPartInfo = data.courses.some(c => c.part && c.part.trim().length > 0)
-	const hidePartColumn = isPG && !hasAnyPartInfo
+	// Consolidated layout: single MAXIMUM / MARKS SECURED columns + MONTH & YEAR column.
+	const consolidated = options.consolidatedLayout === true
+
+	// PG marksheets (both semester and consolidated) drop the PART column entirely.
+	// UG keeps Part I-V.
+	const hidePartColumn = isPG
 
 	// ========== OFFICIAL JKKN HEADER (Optional) ==========
 
@@ -695,9 +701,13 @@ export function addStudentMarksheetToDoc(
 	// Column widths for course table - must sum to CONTENT_WIDTH (194mm)
 	// UG: 14 columns with PART
 	// PG: 13 columns without PART (TITLE column gets extra width)
-	const colWidths = hidePartColumn
-		? [6, 20, 95, 6, 6, 6, 7, 7, 7, 7, 7, 7, 9]  // 13 columns = 190mm (no PART)
-		: [6, 6, 20, 89, 6, 6, 6, 7, 7, 7, 7, 7, 7, 9]  // 14 columns = 190mm (with PART)
+	const colWidths = consolidated
+		? (hidePartColumn
+			? [8, 20, 93, 7, 12, 12, 12, 12, 14]        // PG consolidated: 9 cols (no PART)
+			: [8, 8, 20, 85, 7, 12, 12, 12, 12, 14])    // UG consolidated: 10 cols (with PART)
+		: (hidePartColumn
+			? [6, 20, 95, 6, 6, 6, 7, 7, 7, 7, 7, 7, 9]  // 13 columns = 190mm (no PART)
+			: [6, 6, 20, 89, 6, 6, 6, 7, 7, 7, 7, 7, 7, 9])  // 14 columns = 190mm (with PART)
 
 	// ===== MANUALLY DRAW VERTICAL HEADER =====
 	const headerHeight = 25  // Total header height (two rows)
@@ -713,10 +723,12 @@ export function addStudentMarksheetToDoc(
 	// Calculate column indices for MAXIMUM and MARKS SECURED
 	// UG: PART(0), SEM(1), CODE(2), TITLE(3), CR(4), ESE(5), CIA(6), TOT(7), ESE(8), CIA(9), TOT(10), GP(11), GR(12), RES(13)
 	// PG: SEM(0), CODE(1), TITLE(2), CR(3), ESE(4), CIA(5), TOT(6), ESE(7), CIA(8), TOT(9), GP(10), GR(11), RES(12)
-	const maxColStartIdx = hidePartColumn ? 4 : 5  // Index where MAXIMUM columns start
-	const maxColEndIdx = hidePartColumn ? 6 : 7    // Index where MAXIMUM columns end
-	const securedColStartIdx = hidePartColumn ? 7 : 8  // Index where MARKS SECURED columns start
-	const securedColEndIdx = hidePartColumn ? 9 : 10   // Index where MARKS SECURED columns end
+	// Consolidated layout has NO split sub-columns, so these sentinels (-1)
+	// disable the "internal line" and spanning-header logic below.
+	const maxColStartIdx = consolidated ? -1 : (hidePartColumn ? 4 : 5)  // Index where MAXIMUM columns start
+	const maxColEndIdx = consolidated ? -1 : (hidePartColumn ? 6 : 7)    // Index where MAXIMUM columns end
+	const securedColStartIdx = consolidated ? -1 : (hidePartColumn ? 7 : 8)  // Index where MARKS SECURED columns start
+	const securedColEndIdx = consolidated ? -1 : (hidePartColumn ? 9 : 10)   // Index where MARKS SECURED columns end
 
 	// Draw vertical lines for columns (black) - thin internal lines
 	// For columns under MAXIMUM/MARKS SECURED: only draw in row 2
@@ -754,10 +766,12 @@ export function addStudentMarksheetToDoc(
 	let secEndX = secStartX
 	for (let i = securedColStartIdx; i <= securedColEndIdx; i++) secEndX += colWidths[i]
 
-	// Draw horizontal line ONLY under MAXIMUM columns
-	doc.line(maxStartX, currentY + row1Height, maxEndX, currentY + row1Height)
-	// Draw horizontal line ONLY under MARKS SECURED columns
-	doc.line(secStartX, currentY + row1Height, secEndX, currentY + row1Height)
+	// Draw horizontal line ONLY under MAXIMUM / MARKS SECURED columns.
+	// Consolidated layout uses single columns, so there is no spanning sub-header.
+	if (!consolidated) {
+		doc.line(maxStartX, currentY + row1Height, maxEndX, currentY + row1Height)
+		doc.line(secStartX, currentY + row1Height, secEndX, currentY + row1Height)
+	}
 
 	// Helper function to draw vertical text - MIDDLE ALIGNED & CENTERED
 	// cellCenterX: horizontal center of the cell
@@ -785,35 +799,43 @@ export function addStudentMarksheetToDoc(
 	doc.setTextColor(...COLORS.black)
 
 	// Column header definitions
-	// UG: [PART, SEMESTER, COURSE CODE, COURSE TITLE, CREDITS, ESE, CIA, TOTAL, ESE, CIA, TOTAL, GRADE POINT, GRADE, RESULT]
-	// PG: [SEMESTER, COURSE CODE, COURSE TITLE, CREDITS, ESE, CIA, TOTAL, ESE, CIA, TOTAL, GRADE POINT, GRADE, RESULT]
-	const headerTexts = hidePartColumn
-		? ['SEMESTER', 'COURSE CODE', 'COURSE TITLE', 'CREDITS', 'ESE', 'CIA', 'TOTAL', 'ESE', 'CIA', 'TOTAL', 'GRADE POINT', 'GRADE', 'RESULT']
-		: ['PART', 'SEMESTER', 'COURSE CODE', 'COURSE TITLE', 'CREDITS', 'ESE', 'CIA', 'TOTAL', 'ESE', 'CIA', 'TOTAL', 'GRADE POINT', 'GRADE', 'RESULT']
+	// Semester UG: [PART, SEMESTER, COURSE CODE, COURSE TITLE, CREDITS, ESE, CIA, TOTAL, ESE, CIA, TOTAL, GRADE POINT, GRADE, RESULT]
+	// Semester PG: same without PART
+	// Consolidated: MAXIMUM MARK + MARKS SECURED are single columns; RESULT → MONTH & YEAR
+	const headerTexts = consolidated
+		? (hidePartColumn
+			? ['SEMESTER', 'COURSE CODE', 'COURSE TITLE', 'CREDITS', 'MAXIMUM MARK', 'MARKS SECURED', 'GRADE POINT', 'GRADE', 'MONTH & YEAR']
+			: ['PART', 'SEMESTER', 'COURSE CODE', 'COURSE TITLE', 'CREDITS', 'MAXIMUM MARK', 'MARKS SECURED', 'GRADE POINT', 'GRADE', 'MONTH & YEAR'])
+		: (hidePartColumn
+			? ['SEMESTER', 'COURSE CODE', 'COURSE TITLE', 'CREDITS', 'ESE', 'CIA', 'TOTAL', 'ESE', 'CIA', 'TOTAL', 'GRADE POINT', 'GRADE', 'RESULT']
+			: ['PART', 'SEMESTER', 'COURSE CODE', 'COURSE TITLE', 'CREDITS', 'ESE', 'CIA', 'TOTAL', 'ESE', 'CIA', 'TOTAL', 'GRADE POINT', 'GRADE', 'RESULT'])
 
-	// Draw "MAXIMUM" and "MARKS SECURED" spanning headers (row 1) - font size 9 per JRXML
-	const maxColStart = hidePartColumn ? 4 : 5  // Index where MAXIMUM columns start
-	const securedColStart = hidePartColumn ? 7 : 8  // Index where MARKS SECURED columns start
+	// Draw "MAXIMUM" and "MARKS SECURED" spanning headers (row 1) — semester layout only.
+	// Consolidated layout uses single columns, so these span-labels are skipped.
+	if (!consolidated) {
+		const maxColStart = hidePartColumn ? 4 : 5  // Index where MAXIMUM columns start
+		const securedColStart = hidePartColumn ? 7 : 8  // Index where MARKS SECURED columns start
 
-	// Calculate x positions for MAXIMUM and MARKS SECURED headers
-	let maxX = MARGIN
-	for (let i = 0; i < maxColStart; i++) maxX += colWidths[i]
-	const maxWidth = colWidths[maxColStart] + colWidths[maxColStart + 1] + colWidths[maxColStart + 2]
+		// Calculate x positions for MAXIMUM and MARKS SECURED headers
+		let maxX = MARGIN
+		for (let i = 0; i < maxColStart; i++) maxX += colWidths[i]
+		const maxWidth = colWidths[maxColStart] + colWidths[maxColStart + 1] + colWidths[maxColStart + 2]
 
-	let secX = MARGIN
-	for (let i = 0; i < securedColStart; i++) secX += colWidths[i]
-	const secWidth = colWidths[securedColStart] + colWidths[securedColStart + 1] + colWidths[securedColStart + 2]
+		let secX = MARGIN
+		for (let i = 0; i < securedColStart; i++) secX += colWidths[i]
+		const secWidth = colWidths[securedColStart] + colWidths[securedColStart + 1] + colWidths[securedColStart + 2]
 
-	doc.setFontSize(9)
-	const maxText = 'MAXIMUM'
-	const maxTextWidth = doc.getTextWidth(maxText)
-	doc.text(maxText, maxX + (maxWidth - maxTextWidth) / 2, currentY + 5)
+		doc.setFontSize(9)
+		const maxText = 'MAXIMUM'
+		const maxTextWidth = doc.getTextWidth(maxText)
+		doc.text(maxText, maxX + (maxWidth - maxTextWidth) / 2, currentY + 5)
 
-	// MARKS SECURED on two lines - CENTRE aligned
-	const secText1 = 'MARKS'
-	const secText2 = 'SECURED'
-	doc.text(secText1, secX + (secWidth - doc.getTextWidth(secText1)) / 2, currentY + 3)
-	doc.text(secText2, secX + (secWidth - doc.getTextWidth(secText2)) / 2, currentY + 7)
+		// MARKS SECURED on two lines - CENTRE aligned
+		const secText1 = 'MARKS'
+		const secText2 = 'SECURED'
+		doc.text(secText1, secX + (secWidth - doc.getTextWidth(secText1)) / 2, currentY + 3)
+		doc.text(secText2, secX + (secWidth - doc.getTextWidth(secText2)) / 2, currentY + 7)
+	}
 
 	// Draw vertical header text for each column - CENTRE ALIGNED
 	colX = MARGIN
@@ -849,13 +871,24 @@ export function addStudentMarksheetToDoc(
 			const codeText2 = 'CODE'
 			doc.text(codeText1, cellCenterX - doc.getTextWidth(codeText1) / 2, fullHeaderCenterY - 1)
 			doc.text(codeText2, cellCenterX - doc.getTextWidth(codeText2) / 2, fullHeaderCenterY + 3)
+		} else if (consolidated && (text === 'MAXIMUM MARK' || text === 'MARKS SECURED')) {
+			// Consolidated: two rotated (bottom-to-top) lines side by side
+			// e.g. "MAXIMUM" | "MARK",  "MARKS" | "SECURED"
+			doc.setFontSize(8)
+			const words = text.split(' ')
+			const line1 = words[0]
+			const line2 = words.slice(1).join(' ')
+			drawVerticalText(line1, cellCenterX - 2, fullHeaderCenterY)
+			drawVerticalText(line2, cellCenterX + 2, fullHeaderCenterY)
 		} else if (text === 'PART') {
 			// PART uses font size 8 per JRXML - MIDDLE ALIGN & CENTRE in full header
 			doc.setFontSize(8)
 			drawVerticalText(text, cellCenterX, fullHeaderCenterY)
 		} else {
-			// Draw vertical text for other columns (SEMESTER, CREDITS, GRADE POINT, GRADE, RESULT) - font size 9 - MIDDLE ALIGN & CENTRE in full header
-			doc.setFontSize(9)
+			// Draw vertical text for other columns (SEMESTER, CREDITS, GRADE POINT, GRADE, RESULT/MONTH & YEAR)
+			// Consolidated labels (MAXIMUM MARK / MARKS SECURED / MONTH & YEAR) are longer, so drop to
+			// font size 8 to keep the rotated text within the 25mm header band.
+			doc.setFontSize(consolidated && text.length > 9 ? 8 : 9)
 			drawVerticalText(text, cellCenterX, fullHeaderCenterY)
 		}
 
@@ -903,7 +936,10 @@ export function addStudentMarksheetToDoc(
 			if (course.resultType === 'comment') {
 				mergedText = course.letterGrade || '-'
 			} else if (course.resultType === 'credit') {
-				mergedText = course.creditValue != null ? `Credit: ${course.creditValue}` : (course.passStatus || 'Credit')
+				// Consolidated: credit is already shown in the CREDITS column, so blank the mark area with "-".
+				mergedText = consolidated
+					? '-'
+					: (course.creditValue != null ? `Credit: ${course.creditValue}` : (course.passStatus || 'Credit'))
 			} else {
 				// Status
 				mergedText = course.passStatus || course.letterGrade || '-'
@@ -911,7 +947,9 @@ export function addStudentMarksheetToDoc(
 
 			const mergedCell = {
 				content: mergedText,
-				colSpan: 9,
+				// Consolidated: merge only the 4 mark cols (MAX MARK, SECURED, GP, GRADE) so the
+				// MONTH & YEAR column stays separate; semester keeps the 9 split mark columns.
+				colSpan: consolidated ? 4 : 9,
 				styles: {
 					halign: 'center' as const,
 					fontSize: 8,
@@ -924,7 +962,9 @@ export function addStudentMarksheetToDoc(
 				{ content: course.courseCode, styles: leftAlignStyles },
 				{ content: course.courseName.toUpperCase(), styles: leftAlignStyles },
 				{ content: course.credits.toString(), styles: baseStyles },
-				mergedCell
+				mergedCell,
+				// Consolidated keeps the per-course MONTH & YEAR alongside the merged status cell.
+				...(consolidated ? [{ content: course.monthYear || '-', styles: baseStyles }] : [])
 			]
 
 			if (hidePartColumn) {
@@ -947,21 +987,36 @@ export function addStudentMarksheetToDoc(
 		const eseSecuredText = isCiaOnly ? '-' : (course.isAbsent ? 'AAA' : course.eseMarks.toString())
 		const ciaSecuredText = isEseOnly ? '-' : course.ciaMarks.toString()
 
-		const commonCols = [
-			{ content: toRoman(course.semester), styles: baseStyles },
-			{ content: course.courseCode, styles: leftAlignStyles },
-			{ content: course.courseName.toUpperCase(), styles: leftAlignStyles },
-			{ content: course.credits.toString(), styles: baseStyles },
-			{ content: eseMaxText, styles: baseStyles },
-			{ content: ciaMaxText, styles: baseStyles },
-			{ content: course.totalMax.toString(), styles: baseStyles },
-			{ content: eseSecuredText, styles: baseStyles },
-			{ content: ciaSecuredText, styles: baseStyles },
-			{ content: course.isAbsent ? 'AAA' : course.totalMarks.toString(), styles: baseStyles },
-			{ content: displayGradePoint, styles: baseStyles },
-			{ content: displayGrade, styles: baseStyles },
-			{ content: resultStatus, styles: baseStyles }
-		]
+		const commonCols = consolidated
+			? [
+				{ content: toRoman(course.semester), styles: baseStyles },
+				{ content: course.courseCode, styles: leftAlignStyles },
+				{ content: course.courseName.toUpperCase(), styles: leftAlignStyles },
+				{ content: course.credits.toString(), styles: baseStyles },
+				// MAXIMUM MARK — single TOTAL value
+				{ content: course.totalMax.toString(), styles: baseStyles },
+				// MARKS SECURED — single TOTAL value
+				{ content: course.isAbsent ? 'AAA' : course.totalMarks.toString(), styles: baseStyles },
+				{ content: displayGradePoint, styles: baseStyles },
+				{ content: displayGrade, styles: baseStyles },
+				// MONTH & YEAR (per-course examination session) replaces RESULT
+				{ content: course.monthYear || '-', styles: baseStyles }
+			]
+			: [
+				{ content: toRoman(course.semester), styles: baseStyles },
+				{ content: course.courseCode, styles: leftAlignStyles },
+				{ content: course.courseName.toUpperCase(), styles: leftAlignStyles },
+				{ content: course.credits.toString(), styles: baseStyles },
+				{ content: eseMaxText, styles: baseStyles },
+				{ content: ciaMaxText, styles: baseStyles },
+				{ content: course.totalMax.toString(), styles: baseStyles },
+				{ content: eseSecuredText, styles: baseStyles },
+				{ content: ciaSecuredText, styles: baseStyles },
+				{ content: course.isAbsent ? 'AAA' : course.totalMarks.toString(), styles: baseStyles },
+				{ content: displayGradePoint, styles: baseStyles },
+				{ content: displayGrade, styles: baseStyles },
+				{ content: resultStatus, styles: baseStyles }
+			]
 
 		// Hide PART column when there's no part data (typical PG semester case),
 		// else include it at the beginning (UG + PG-consolidated case).
@@ -1036,7 +1091,7 @@ export function addStudentMarksheetToDoc(
 			textColor: COLORS.black,
 			overflow: 'ellipsize',
 			valign: 'middle',
-			minCellHeight: 4  // Reduced from 6 to 4 for single line spacing
+			minCellHeight: 3  // Reduced from 6 to 4 for single line spacing
 		},
 		headStyles: {
 			fillColor: COLORS.white,
@@ -1047,8 +1102,31 @@ export function addStudentMarksheetToDoc(
 		},
 		columnStyles: columnStyles,
 		margin: { left: MARGIN, right: MARGIN, top: 0, bottom: 0 },
-		tableWidth: 'wrap'
+		tableWidth: 'wrap',
+		// Merged status/comment/credit cells (e.g. "Highly Commended", "-") span several
+		// columns. The subject-table column dividers are drawn full-height BEFORE the body,
+		// so they show through the merged cell. Paint white over the cell interior (leaving
+		// its left/right borders intact) just before the label is drawn, hiding those
+		// internal divider segments.
+		willDrawCell: (hookData: any) => {
+			if (hookData.section === 'body' && hookData.cell?.colSpan > 1) {
+				const c = hookData.cell
+				doc.setFillColor(255, 255, 255)
+				doc.rect(c.x + 0.4, c.y, c.width - 0.8, c.height, 'F')
+			}
+		}
 	})
+
+	// "END OF THE STATEMENT" marker centred below the last course row
+	// (shown on both the semester and consolidated marksheets).
+	{
+		const finalY = (doc as any).lastAutoTable?.finalY ?? (currentY + 4)
+		const endText = '--- END OF THE STATEMENT ---'
+		doc.setFont('helvetica', 'bold')
+		doc.setFontSize(8)
+		doc.setTextColor(...COLORS.black)
+		doc.text(endText, MARGIN + CONTENT_WIDTH / 2, finalY + 4, { align: 'center' })
+	}
 
 	// Move past the fixed height subject table (NO GAP - tables are joined)
 	currentY = subjectTableStartY + subjectTableFixedHeight
@@ -1068,17 +1146,18 @@ export function addStudentMarksheetToDoc(
 		doc.setLineWidth(0.5)  // Thick outer border
 		doc.rect(MARGIN, gpaTableStartY, CONTENT_WIDTH, gpaTableFixedHeight)
 
-		// Line 1: "(IN THE CURRENT SEMESTER)" title
+		// Line 1: summary title — consolidated shows whole-programme performance,
+		// semester shows the current-semester performance.
 		doc.setFont('helvetica', 'bold')
 		doc.setFontSize(8)
 		doc.setTextColor(...COLORS.black)
-		doc.text('(IN THE CURRENT SEMESTER)', MARGIN + 2, gpaTableStartY + 4)
+		doc.text(consolidated ? 'PERFORMANCE IN THE PROGRAMME' : '(IN THE CURRENT SEMESTER)', MARGIN + 2, gpaTableStartY + 4)
 
-		// Show PART, CREDITS EARNED, GPA for both UG and PG (PG shows "-" for PART when no value)
+		// Show PART, CREDITS EARNED, GPA (consolidated omits the GPA column)
 		const gpaHeaderY = gpaTableStartY + 8
 		doc.text('PART', MARGIN + 8, gpaHeaderY)
 		doc.text('CREDITS EARNED', MARGIN + 25, gpaHeaderY)
-		doc.text('GPA', MARGIN + 65, gpaHeaderY)
+		if (!consolidated) doc.text('GPA', MARGIN + 65, gpaHeaderY)
 
 		// Data rows - values center aligned
 		doc.setFont('helvetica', 'normal')
@@ -1105,11 +1184,49 @@ export function addStudentMarksheetToDoc(
 				const creditsTextWidth = doc.getTextWidth(creditsText)
 				doc.text(creditsText, MARGIN + 38 - creditsTextWidth / 2, rowY)
 
-				// GPA
-				const gpaText = part.partGPA.toFixed(2)
-				const gpaTextWidth = doc.getTextWidth(gpaText)
-				doc.text(gpaText, MARGIN + 68 - gpaTextWidth / 2, rowY)
+				// GPA (omitted on the consolidated marksheet)
+				if (!consolidated) {
+					const gpaText = part.partGPA.toFixed(2)
+					const gpaTextWidth = doc.getTextWidth(gpaText)
+					doc.text(gpaText, MARGIN + 68 - gpaTextWidth / 2, rowY)
+				}
 			})
+
+			// ===== TOTAL ROW (after the last part) =====
+			// Sums credits earned across all parts (e.g. Part A 82 + Part B 10 = 92).
+			// The GPA column shows CGPA to 3 decimals (no per-part GPA for the total).
+			const totalRowY = gpaRowY + (partsWithData.length * 4)
+			const totalCredits = partsWithData.reduce((sum, part) => sum + (part.creditsEarned || 0), 0)
+			const cgpaValue = (data.summary.cgpa ?? data.summary.semesterGPA ?? 0)
+
+			// (No separator line above the total row on either marksheet.)
+
+			doc.setFont('helvetica', 'bold')
+
+			// PART column → "Total"
+			doc.text('Total', MARGIN + 8, totalRowY)
+
+			// Total CREDITS EARNED
+			const totalCreditsText = totalCredits.toString()
+			const totalCreditsWidth = doc.getTextWidth(totalCreditsText)
+			doc.text(totalCreditsText, MARGIN + 38 - totalCreditsWidth / 2, totalRowY)
+
+			// CGPA (3 decimal places) under the GPA column — omitted on the consolidated marksheet
+			if (!consolidated) {
+				const cgpaText = cgpaValue.toFixed(3)
+				const cgpaTextWidth = doc.getTextWidth(cgpaText)
+				doc.text(cgpaText, MARGIN + 68 - cgpaTextWidth / 2, totalRowY)
+			}
+
+			// Consolidated: overall CGPA shown as a labelled value to the right,
+			// vertically level with the first data row (Part A) — e.g. "CGPA: 6.000"
+			if (consolidated) {
+				doc.setFont('helvetica', 'bold')
+				doc.setFontSize(9)
+				doc.text(`CGPA: ${cgpaValue.toFixed(3)}`, MARGIN + 85, gpaRowY)
+			}
+
+			doc.setFont('helvetica', 'normal')
 		} else {
 			// No part breakdown - show totals with "-" for PART
 			const rowY = gpaRowY
@@ -1124,10 +1241,12 @@ export function addStudentMarksheetToDoc(
 			const creditsTextWidth = doc.getTextWidth(creditsText)
 			doc.text(creditsText, MARGIN + 38 - creditsTextWidth / 2, rowY)
 
-			// GPA
-			const gpaText = (data.summary.semesterGPA || 0).toFixed(2)
-			const gpaTextWidth = doc.getTextWidth(gpaText)
-			doc.text(gpaText, MARGIN + 68 - gpaTextWidth / 2, rowY)
+			// GPA (omitted on the consolidated marksheet)
+			if (!consolidated) {
+				const gpaText = (data.summary.semesterGPA || 0).toFixed(2)
+				const gpaTextWidth = doc.getTextWidth(gpaText)
+				doc.text(gpaText, MARGIN + 68 - gpaTextWidth / 2, rowY)
+			}
 		}
 
 		// Move past the fixed height GPA summary table
@@ -1151,7 +1270,10 @@ export function addStudentMarksheetToDoc(
 	const passingMinimum = isPG ? '50%' : '40%'
 	const footnote = `Passing Minimum is ${passingMinimum} of Maximum (in ESE and Total separately) P: Pass, RA: Re-Appear, AAA: Absent, ESE: End Semester Examination,CIA: Continuous Internal Assessment, GPA: Grade Points Average, ***Not Secured Passing Minimum.`
 	const splitNote = doc.splitTextToSize(footnote, CONTENT_WIDTH)
-	doc.text(splitNote, MARGIN, footnoteY)
+	// The consolidated marksheet omits this passing-minimum legend.
+	if (!consolidated) {
+		doc.text(splitNote, MARGIN, footnoteY)
+	}
 
 	// ========== DATE (Only for PDF without header - pre-printed sheets have the date field) ==========
 

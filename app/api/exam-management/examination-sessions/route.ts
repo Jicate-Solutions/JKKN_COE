@@ -112,11 +112,12 @@ export async function POST(request: Request) {
 			}, { status: 400 })
 		}
 
-		// Validate foreign keys in parallel (independent queries)
-		const [institutionResult, examTypeResult, academicYearResult] = await Promise.all([
+		// Validate foreign keys in parallel (independent queries).
+		// Note: academic_year_id is a MyJKKN academic-year id (not a local
+		// academic_years row), so it is not validated against the local table.
+		const [institutionResult, examTypeResult] = await Promise.all([
 			supabase.from('institutions').select('id').eq('id', body.institutions_id).maybeSingle(),
 			supabase.from('exam_types').select('id').eq('id', body.exam_type_id).maybeSingle(),
-			supabase.from('academic_years').select('id').eq('id', body.academic_year_id).maybeSingle(),
 		])
 
 		if (institutionResult.error || !institutionResult.data) {
@@ -128,12 +129,6 @@ export async function POST(request: Request) {
 		if (examTypeResult.error || !examTypeResult.data) {
 			return NextResponse.json({
 				error: `Exam type not found. Please select a valid exam type.`
-			}, { status: 400 })
-		}
-
-		if (academicYearResult.error || !academicYearResult.data) {
-			return NextResponse.json({
-				error: `Academic year not found. Please select a valid academic year.`
 			}, { status: 400 })
 		}
 
@@ -290,7 +285,9 @@ export async function PUT(request: Request) {
 			return NextResponse.json({ error: 'Examination session ID is required' }, { status: 400 })
 		}
 
-		// Validate foreign keys in parallel (independent queries)
+		// Validate foreign keys in parallel (independent queries).
+		// Note: academic_year_id is a MyJKKN academic-year id (not a local
+		// academic_years row), so it is not validated against the local table.
 		const fkValidations = await Promise.all([
 			body.institutions_id
 				? supabase.from('institutions').select('id').eq('id', body.institutions_id).maybeSingle()
@@ -298,12 +295,9 @@ export async function PUT(request: Request) {
 			body.exam_type_id
 				? supabase.from('exam_types').select('id').eq('id', body.exam_type_id).maybeSingle()
 				: Promise.resolve({ data: true, error: null }),
-			body.academic_year_id
-				? supabase.from('academic_years').select('id').eq('id', body.academic_year_id).maybeSingle()
-				: Promise.resolve({ data: true, error: null }),
 		])
 
-		const [institutionResult, examTypeResult, academicYearResult] = fkValidations
+		const [institutionResult, examTypeResult] = fkValidations
 
 		if (body.institutions_id && (institutionResult.error || !institutionResult.data)) {
 			return NextResponse.json({
@@ -314,12 +308,6 @@ export async function PUT(request: Request) {
 		if (body.exam_type_id && (examTypeResult.error || !examTypeResult.data)) {
 			return NextResponse.json({
 				error: `Exam type not found. Please select a valid exam type.`
-			}, { status: 400 })
-		}
-
-		if (body.academic_year_id && (academicYearResult.error || !academicYearResult.data)) {
-			return NextResponse.json({
-				error: `Academic year not found. Please select a valid academic year.`
 			}, { status: 400 })
 		}
 

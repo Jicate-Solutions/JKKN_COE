@@ -17,6 +17,7 @@ import type {
 	MyJKKNStaff,
 	MyJKKNRegulation,
 	MyJKKNBatch,
+	MyJKKNAcademicYear,
 	MyJKKNLearnerProfile,
 	MyJKKNInstitutionFetchOptions,
 	MyJKKNDepartmentFetchOptions,
@@ -28,6 +29,7 @@ import type {
 	MyJKKNStaffFetchOptions,
 	MyJKKNRegulationFetchOptions,
 	MyJKKNBatchFetchOptions,
+	MyJKKNAcademicYearFetchOptions,
 	MyJKKNLearnerProfileFetchOptions,
 	MyJKKNBaseFetchOptions,
 	MYJKKN_API_ENDPOINTS,
@@ -458,6 +460,31 @@ export async function fetchMyJKKNBatchById(id: string): Promise<MyJKKNBatch> {
 	const batch = (response as { data?: MyJKKNBatch }).data || response as MyJKKNBatch
 	console.log('[MyJKKN API] Batch by ID response:', { id, batch_name: batch?.batch_name, raw: response })
 	return batch
+}
+
+// =====================================================
+// ACADEMIC YEARS
+// =====================================================
+
+export async function fetchMyJKKNAcademicYears(
+	options: MyJKKNAcademicYearFetchOptions = {}
+): Promise<MyJKKNPaginatedResponse<MyJKKNAcademicYear>> {
+	const { page = 1, limit = 50, search, is_active, institution_id, academic_year_name } = options
+
+	return fetchFromMyJKKN<MyJKKNPaginatedResponse<MyJKKNAcademicYear>>(
+		'/api-management/academic/academic-years',
+		{ page, limit, search, is_active, institution_id, academic_year_name }
+	)
+}
+
+export async function fetchAllMyJKKNAcademicYears(
+	options: MyJKKNAcademicYearFetchOptions = {}
+): Promise<MyJKKNAcademicYear[]> {
+	if (options.all) {
+		return fetchAllPages<MyJKKNAcademicYear>(fetchMyJKKNAcademicYears, options)
+	}
+	const response = await fetchMyJKKNAcademicYears(options)
+	return response.data
 }
 
 // =====================================================

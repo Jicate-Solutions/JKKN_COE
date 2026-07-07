@@ -329,7 +329,7 @@ function formatExamMonthYear(session: any): string {
 		// Match "JUN 2024" / "JUN2024" / "JUN-2024" / "JUN/2024"
 		const parts = m.match(/^([A-Z]{3,})[\s\-\/]?(\d{4})$/)
 		if (parts) {
-			return `${parts[1].slice(0, 3)}'${parts[2].slice(-2)}`
+			return `${parts[1].slice(0, 3)}-${parts[2].slice(-2)}`
 		}
 		return m
 	}
@@ -338,8 +338,7 @@ function formatExamMonthYear(session: any): string {
 		const d = new Date(sess.exam_start_date)
 		if (!isNaN(d.getTime())) {
 			const month = d.toLocaleString('en-US', { month: 'short' }).toUpperCase()
-			const yy = String(d.getFullYear()).slice(-2)
-			return `${month}'${yy}`
+			return `${month}-${String(d.getFullYear()).slice(-2)}`
 		}
 	}
 

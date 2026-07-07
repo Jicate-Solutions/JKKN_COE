@@ -1,48 +1,11 @@
 import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
 import { fetchAllMyJKKNPrograms } from '@/lib/myjkkn-api'
+import { fetchAllPaginated, fetchBatchedIn, detectLearnerClashes } from '@/lib/exam-clash'
 
 // DB constraint check_practical_batch_capacity: exam_type 'Theory' → batch_capacity must be NULL;
 // any other exam_type (Practical, Project, Field Work, Theory + Practical, …) → batch_capacity > 0.
 const requiresBatch = (examType?: string) => (examType || 'Theory') !== 'Theory'
-
-// Helper: fetch all pages from a Supabase query (bypasses 1000-row limit)
-async function fetchAllPaginated(
-	queryFn: (from: number, to: number) => Promise<{ data: any[] | null; error: any }>,
-	pageSize = 1000
-): Promise<any[]> {
-	const all: any[] = []
-	let page = 0
-	let hasMore = true
-	while (hasMore && all.length < 1000000) {
-		const { data, error } = await queryFn(page * pageSize, (page + 1) * pageSize - 1)
-		if (error) throw error
-		if (data && data.length > 0) {
-			all.push(...data)
-			page++
-			hasMore = data.length === pageSize
-		} else {
-			hasMore = false
-		}
-	}
-	return all
-}
-
-// Helper: fetch rows for a large list of ids using batched .in() queries
-async function fetchBatchedIn(
-	ids: string[],
-	queryFn: (batch: string[]) => Promise<{ data: any[] | null; error: any }>,
-	batchSize = 300
-): Promise<any[]> {
-	const out: any[] = []
-	for (let i = 0; i < ids.length; i += batchSize) {
-		const batch = ids.slice(i, i + batchSize)
-		const { data, error } = await queryFn(batch)
-		if (error) throw error
-		if (data) out.push(...data)
-	}
-	return out
-}
 
 // Derive UG/PG: program starting with "P" → PG, otherwise UG (last-resort heuristic)
 function heuristicType(programCode: string): 'UG' | 'PG' {
@@ -233,6 +196,8 @@ export async function POST(request: Request) {
 			session,
 			exam_mode = 'Offline',
 			is_published = false,
+			// When true, skip the learner-clash guard and save anyway (explicit "Schedule anyway").
+			allow_conflicts = false,
 			items,
 		} = body || {}
 
@@ -259,6 +224,39 @@ export async function POST(request: Request) {
 			}
 		}
 
+		const sess = String(session).toUpperCase()
+
+		// ─── Learner-clash guard ───
+		// Reject (unless allow_conflicts) if any learner would sit two DIFFERENT course codes
+		// in the same date + session (checked against the batch AND already-scheduled exams).
+		if (!allow_conflicts) {
+			const conflicts = await detectLearnerClashes(supabase, {
+				institutions_id,
+				examination_session_id,
+				exam_date,
+				session: sess,
+				offerings: items.map((it: any) => ({
+					course_offering_id: it.course_offering_id,
+					course_code: it.course_code,
+					exam_timetable_id: it.exam_timetable_id,
+				})),
+			})
+
+			if (conflicts.length > 0) {
+				return NextResponse.json(
+					{
+						error: 'Learner exam clash detected',
+						conflict: true,
+						exam_date,
+						session: sess,
+						conflict_count: conflicts.length,
+						conflicts: conflicts.slice(0, 100), // cap payload; count reflects the true total
+					},
+					{ status: 409 }
+				)
+			}
+		}
+
 		// Derive duration_minutes from courses.exam_duration (hours → minutes)
 		const courseIds = [...new Set(items.map((it: any) => it.course_id).filter(Boolean))]
 		const durationByCourse = new Map<string, number>()
@@ -271,7 +269,6 @@ export async function POST(request: Request) {
 			}
 		}
 
-		const sess = String(session).toUpperCase()
 		const nowIso = new Date().toISOString()
 
 		// Split into updates (re-scheduling an existing unpublished row) and new inserts

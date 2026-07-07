@@ -213,6 +213,17 @@ export interface MyJKKNBatch {
 	updated_at: string
 }
 
+export interface MyJKKNAcademicYear {
+	id: string
+	academic_year_name: string
+	start_date?: string
+	end_date?: string
+	institution_id: string
+	is_active: boolean
+	created_at: string
+	updated_at: string
+}
+
 export interface MyJKKNLearnerProfile {
 	id: string
 	register_number: string
@@ -346,6 +357,11 @@ export interface MyJKKNBatchFetchOptions extends MyJKKNBaseFetchOptions {
 	start_year?: number
 }
 
+export interface MyJKKNAcademicYearFetchOptions extends MyJKKNBaseFetchOptions {
+	institution_id?: string
+	academic_year_name?: string
+}
+
 export interface MyJKKNLearnerProfileFetchOptions extends MyJKKNBaseFetchOptions {
 	institution_id?: string
 	institution_code?: string
@@ -371,6 +387,7 @@ export type MyJKKNEntityType =
 	| 'semesters'
 	| 'regulations'
 	| 'batches'
+	| 'academic-years'
 	| 'students'
 	| 'learner-profiles'
 	| 'staff'
@@ -384,6 +401,7 @@ export const MYJKKN_API_ENDPOINTS: Record<MyJKKNEntityType, string> = {
 	semesters: '/api-management/organizations/semesters',
 	regulations: '/api-management/academic/regulations',
 	batches: '/api-management/academic/batches',
+	'academic-years': '/api-management/academic/academic-years',
 	students: '/api-management/students',
 	'learner-profiles': '/api-management/learners/profiles',
 	staff: '/api-management/staff',

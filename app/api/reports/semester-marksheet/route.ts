@@ -409,6 +409,49 @@ export async function GET(req: NextRequest) {
 						console.log(`[Semester Marksheet] No myjkkn_institution_ids found for institution`)
 					}
 
+					// Inactive-learner sweep. The institution-paginated endpoint (and the
+					// register_number query) only return lifecycle_status='active' profiles, so
+					// an absent / discontinued learner is never matched above. Look for them
+					// explicitly via lifecycle_status=inactive (the API ignores institution_id
+					// and register_number here, returning the small inactive set to filter locally).
+					if (!matchingProfile && myjkknApiKey && registerNo) {
+						try {
+							const normRegInactive = (s: any) => (s ?? '').toString().trim().toUpperCase()
+							const wantRegInactive = normRegInactive(registerNo)
+							let inPage = 1
+							let inMore = true
+							while (inMore && !matchingProfile && inPage <= 1000) {
+								const p = new URLSearchParams()
+								p.set('lifecycle_status', 'inactive')
+								p.set('limit', '200')
+								p.set('page', String(inPage))
+								const resp = await fetch(
+									`${myjkknApiUrl}/api-management/learners/profiles?${p.toString()}`,
+									{
+										method: 'GET',
+										headers: {
+											'Authorization': `Bearer ${myjkknApiKey}`,
+											'Accept': 'application/json',
+											'Content-Type': 'application/json',
+										},
+										cache: 'no-store',
+									}
+								)
+								if (!resp.ok) break
+								const json = await resp.json()
+								const profiles: any[] = json.data || []
+								matchingProfile = profiles.find((pp: any) => normRegInactive(pp.register_number) === wantRegInactive) || null
+								inMore = profiles.length > 0
+								inPage++
+							}
+							if (matchingProfile) {
+								console.log(`[Semester Marksheet] Found INACTIVE learner profile for ${registerNo}`)
+							}
+						} catch (e) {
+							console.warn(`[Semester Marksheet] Inactive sweep error for ${registerNo}:`, e)
+						}
+					}
+
 					// Targeted fallback: if pagination missed the learner (e.g. they're
 					// filed under a different institution_id in MyJKKN), do a direct
 					// register_number lookup across all institutions.
@@ -1234,6 +1277,41 @@ export async function GET(req: NextRequest) {
 								// Early-exit once every learner has both photo and DOB
 								if (registerNumbers.every((rn) => photoMap[rn] && dobMap[rn])) done = true
 								startPage += PAGE_CONCURRENCY
+							}
+						}
+
+						// Non-active learner sweep. The institution-paginated endpoint only returns
+						// lifecycle_status='active' profiles, so learners in any other state never
+						// appear above and would show no photo/DOB. MyJKKN buckets learners into
+						// three states — 'active', 'inactive' (absent / discontinued) and
+						// 'graduated' (passed out) — so fetch the latter two explicitly. These
+						// queries ignore institution_id and return the full (small) set across all
+						// institutions; applyProfile only fills learners in this cohort, so the
+						// unrelated rows are harmless.
+						for (const lifecycleStatus of ['inactive', 'graduated']) {
+							if (!registerNumbers.some((rn) => !photoMap[rn] || !dobMap[rn])) break
+							let inPage = 1
+							let inDone = false
+							while (!inDone && inPage <= MAX_PAGES) {
+								const p = new URLSearchParams()
+								p.set('lifecycle_status', lifecycleStatus)
+								p.set('limit', String(pageSize))
+								p.set('page', String(inPage))
+								const resp = await fetch(`${myjkknApiUrl}/api-management/learners/profiles?${p.toString()}`, {
+									method: 'GET',
+									headers: {
+										'Authorization': `Bearer ${myjkknApiKey}`,
+										'Accept': 'application/json',
+										'Content-Type': 'application/json',
+									},
+									cache: 'no-store',
+								})
+								if (!resp.ok) break
+								const json = await resp.json()
+								const profiles: any[] = json.data || []
+								if (profiles.length === 0) { inDone = true; break }
+								profiles.forEach(applyProfile)
+								inPage++
 							}
 						}
 

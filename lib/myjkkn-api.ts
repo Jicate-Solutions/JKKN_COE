@@ -64,6 +64,9 @@ export {
 	fetchMyJKKNBatches,
 	fetchAllMyJKKNBatches,
 	fetchMyJKKNBatchById,
+	// Academic Years
+	fetchMyJKKNAcademicYears,
+	fetchAllMyJKKNAcademicYears,
 	// Students
 	fetchMyJKKNStudents,
 	fetchAllMyJKKNStudents,
