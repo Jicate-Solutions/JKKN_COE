@@ -112,6 +112,7 @@ export interface ConsolidatedStudentMarksheetData {
 		cgpa: number
 		overallResult: string
 		classification: string
+		cumulativeGrade?: string
 		formattedFolio?: string | null
 	}
 	logoImage?: string
@@ -226,7 +227,8 @@ function toSemesterData(c: ConsolidatedStudentMarksheetData): StudentMarksheetDa
 			failedCount: c.courses.filter(crs => !crs.isPassing).length,
 			overallResult: c.summary.overallResult,
 			folio: c.summary.formattedFolio || '',
-			classGrade: c.summary.classification
+			classGrade: c.summary.classification,
+			cumulativeGrade: c.summary.cumulativeGrade
 		},
 		qrCode: c.qrCode,
 		logoImage: c.logoImage,

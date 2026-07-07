@@ -168,6 +168,7 @@ export interface StudentMarksheetData {
 		totalSecured?: number     // totPercntMarksObt
 		percentage?: number       // studPercnt
 		classGrade?: string       // resultClsfctn / currSemGrade
+		cumulativeGrade?: string  // Cumulative CGPA-based letter grade (consolidated marksheet)
 		resultPublicationDate?: string // RsltPblctnDt
 	}
 	// Signature and seal images
@@ -936,10 +937,10 @@ export function addStudentMarksheetToDoc(
 			if (course.resultType === 'comment') {
 				mergedText = course.letterGrade || '-'
 			} else if (course.resultType === 'credit') {
-				// Consolidated: credit is already shown in the CREDITS column, so blank the mark area with "-".
-				mergedText = consolidated
-					? '-'
-					: (course.creditValue != null ? `Credit: ${course.creditValue}` : (course.passStatus || 'Credit'))
+				// Credit-type courses (e.g. Extension Activity): the credit is already shown
+				// in the CREDITS column, so blank the mark area with "-" on both the semester
+				// and consolidated marksheets.
+				mergedText = '-'
 			} else {
 				// Status
 				mergedText = course.passStatus || course.letterGrade || '-'
@@ -1195,38 +1196,41 @@ export function addStudentMarksheetToDoc(
 			// ===== TOTAL ROW (after the last part) =====
 			// Sums credits earned across all parts (e.g. Part A 82 + Part B 10 = 92).
 			// The GPA column shows CGPA to 3 decimals (no per-part GPA for the total).
+			// The semester marksheet omits this Total row entirely — it is only
+			// shown on the consolidated marksheet (where it carries the CGPA).
 			const totalRowY = gpaRowY + (partsWithData.length * 4)
 			const totalCredits = partsWithData.reduce((sum, part) => sum + (part.creditsEarned || 0), 0)
 			const cgpaValue = (data.summary.cgpa ?? data.summary.semesterGPA ?? 0)
 
-			// (No separator line above the total row on either marksheet.)
-
-			doc.setFont('helvetica', 'bold')
-
-			// PART column → "Total"
-			doc.text('Total', MARGIN + 8, totalRowY)
-
-			// Total CREDITS EARNED
-			const totalCreditsText = totalCredits.toString()
-			const totalCreditsWidth = doc.getTextWidth(totalCreditsText)
-			doc.text(totalCreditsText, MARGIN + 38 - totalCreditsWidth / 2, totalRowY)
-
-			// CGPA (3 decimal places) under the GPA column — omitted on the consolidated marksheet
-			if (!consolidated) {
-				const cgpaText = cgpaValue.toFixed(3)
-				const cgpaTextWidth = doc.getTextWidth(cgpaText)
-				doc.text(cgpaText, MARGIN + 68 - cgpaTextWidth / 2, totalRowY)
-			}
-
-			// Consolidated: overall CGPA shown as a labelled value to the right,
-			// vertically level with the first data row (Part A) — e.g. "CGPA: 6.000"
 			if (consolidated) {
 				doc.setFont('helvetica', 'bold')
+
+				// PART column → "Total"
+				doc.text('Total', MARGIN + 8, totalRowY)
+
+				// Total CREDITS EARNED
+				const totalCreditsText = totalCredits.toString()
+				const totalCreditsWidth = doc.getTextWidth(totalCreditsText)
+				doc.text(totalCreditsText, MARGIN + 38 - totalCreditsWidth / 2, totalRowY)
+
+				// Consolidated: overall CGPA shown as a labelled value to the right,
+				// vertically level with the first data row (Part A) — e.g. "CGPA: 6.000"
 				doc.setFontSize(9)
 				doc.text(`CGPA: ${cgpaValue.toFixed(3)}`, MARGIN + 85, gpaRowY)
-			}
 
-			doc.setFont('helvetica', 'normal')
+				// Cumulative GRADE + CLASSIFICATION (from cgpa_grade_system) below the CGPA
+				const cumGrade = (data.summary.cumulativeGrade || '').trim()
+				const cumClass = (data.summary.classGrade || '').trim()
+				if (cumGrade || cumClass) {
+					doc.setFontSize(8)
+					const gradeLine = cumGrade
+						? `CUMULATIVE GRADE: ${cumGrade}${cumClass ? '  —  ' + cumClass.toUpperCase() : ''}`
+						: cumClass.toUpperCase()
+					doc.text(gradeLine, MARGIN + 85, gpaRowY + 5)
+				}
+
+				doc.setFont('helvetica', 'normal')
+			}
 		} else {
 			// No part breakdown - show totals with "-" for PART
 			const rowY = gpaRowY

@@ -144,9 +144,9 @@ const CourseTableRow = memo(function CourseTableRow({
 							<CommandList>
 								<CommandEmpty>No course found.</CommandEmpty>
 								<CommandGroup>
-									{courses.map((c) => (
+									{courses.map((c, courseIndex) => (
 										<CommandItem
-											key={c.id}
+											key={`${c.id}-${courseIndex}`}
 											value={`${c.course_code} ${c.course_title || c.course_name || ''}`}
 											onSelect={() => {
 												onUpdateRow('course_id', c.id)
@@ -820,8 +820,17 @@ export default function CourseMappingEditPage() {
 							const res = await fetch(`/api/master/courses?ids=${idsParam}`)
 							if (res.ok) {
 								const mappedCourses = await res.json()
-								// Merge with existing courses array
-								setCourses(prevCourses => [...prevCourses, ...mappedCourses])
+								// Merge with existing courses array, deduplicating by id
+								// (avoids duplicate React keys in the course picker dropdown)
+								setCourses(prevCourses => {
+									const seen = new Set(prevCourses.map(c => c.id))
+									const newCourses = (Array.isArray(mappedCourses) ? mappedCourses : []).filter((c: any) => {
+										if (!c?.id || seen.has(c.id)) return false
+										seen.add(c.id)
+										return true
+									})
+									return [...prevCourses, ...newCourses]
+								})
 							}
 						} catch (err) {
 							console.error('Error fetching mapped course details:', err)

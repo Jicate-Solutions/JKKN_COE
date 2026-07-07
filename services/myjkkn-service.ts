@@ -494,11 +494,11 @@ export async function fetchAllMyJKKNAcademicYears(
 export async function fetchMyJKKNLearnerProfiles(
 	options: MyJKKNLearnerProfileFetchOptions = {}
 ): Promise<MyJKKNPaginatedResponse<MyJKKNLearnerProfile>> {
-	const { page = 1, limit = 10, search, is_active, institution_id, institution_code, program_id, program_code, department_id, department_code, batch_id, current_semester, admission_year } = options
+	const { page = 1, limit = 10, search, is_active, institution_id, institution_code, program_id, program_code, department_id, department_code, batch_id, current_semester, admission_year, lifecycle_status } = options
 
 	return fetchFromMyJKKN<MyJKKNPaginatedResponse<MyJKKNLearnerProfile>>(
 		'/api-management/learners/profiles',
-		{ page, limit, search, is_active, institution_id, institution_code, program_id, program_code, department_id, department_code, batch_id, current_semester, admission_year }
+		{ page, limit, search, is_active, institution_id, institution_code, program_id, program_code, department_id, department_code, batch_id, current_semester, admission_year, lifecycle_status }
 	)
 }
 

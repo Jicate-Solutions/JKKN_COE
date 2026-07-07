@@ -372,6 +372,7 @@ export interface MyJKKNLearnerProfileFetchOptions extends MyJKKNBaseFetchOptions
 	batch_id?: string
 	current_semester?: number
 	admission_year?: number
+	lifecycle_status?: string
 }
 
 // =====================================================

@@ -409,11 +409,12 @@ export async function GET(req: NextRequest) {
 						console.log(`[Semester Marksheet] No myjkkn_institution_ids found for institution`)
 					}
 
-					// Inactive-learner sweep. The institution-paginated endpoint (and the
+					// Non-active-learner sweep. The institution-paginated endpoint (and the
 					// register_number query) only return lifecycle_status='active' profiles, so
-					// an absent / discontinued learner is never matched above. Look for them
-					// explicitly via lifecycle_status=inactive (the API ignores institution_id
-					// and register_number here, returning the small inactive set to filter locally).
+					// an absent / discontinued / graduated learner is never matched above. Look
+					// for them explicitly via lifecycle_status=all — one pass covering every
+					// lifecycle state (the API ignores institution_id and register_number here,
+					// returning the full set to filter locally).
 					if (!matchingProfile && myjkknApiKey && registerNo) {
 						try {
 							const normRegInactive = (s: any) => (s ?? '').toString().trim().toUpperCase()
@@ -422,7 +423,7 @@ export async function GET(req: NextRequest) {
 							let inMore = true
 							while (inMore && !matchingProfile && inPage <= 1000) {
 								const p = new URLSearchParams()
-								p.set('lifecycle_status', 'inactive')
+								p.set('lifecycle_status', 'all')
 								p.set('limit', '200')
 								p.set('page', String(inPage))
 								const resp = await fetch(
@@ -1281,20 +1282,18 @@ export async function GET(req: NextRequest) {
 						}
 
 						// Non-active learner sweep. The institution-paginated endpoint only returns
-						// lifecycle_status='active' profiles, so learners in any other state never
-						// appear above and would show no photo/DOB. MyJKKN buckets learners into
-						// three states — 'active', 'inactive' (absent / discontinued) and
-						// 'graduated' (passed out) — so fetch the latter two explicitly. These
-						// queries ignore institution_id and return the full (small) set across all
-						// institutions; applyProfile only fills learners in this cohort, so the
-						// unrelated rows are harmless.
-						for (const lifecycleStatus of ['inactive', 'graduated']) {
-							if (!registerNumbers.some((rn) => !photoMap[rn] || !dobMap[rn])) break
+						// lifecycle_status='active' profiles, so learners in any other state
+						// (inactive = absent / discontinued, graduated = passed out, etc.) never
+						// appear above and would show no photo/DOB. lifecycle_status=all returns
+						// every state in a single pass. This query ignores institution_id and
+						// returns the full set across all institutions; applyProfile only fills
+						// learners in this cohort, so the unrelated rows are harmless.
+						if (registerNumbers.some((rn) => !photoMap[rn] || !dobMap[rn])) {
 							let inPage = 1
 							let inDone = false
 							while (!inDone && inPage <= MAX_PAGES) {
 								const p = new URLSearchParams()
-								p.set('lifecycle_status', lifecycleStatus)
+								p.set('lifecycle_status', 'all')
 								p.set('limit', String(pageSize))
 								p.set('page', String(inPage))
 								const resp = await fetch(`${myjkknApiUrl}/api-management/learners/profiles?${p.toString()}`, {
@@ -1311,6 +1310,8 @@ export async function GET(req: NextRequest) {
 								const profiles: any[] = json.data || []
 								if (profiles.length === 0) { inDone = true; break }
 								profiles.forEach(applyProfile)
+								// Stop early once every learner has photo + DOB.
+								if (!registerNumbers.some((rn) => !photoMap[rn] || !dobMap[rn])) { inDone = true; break }
 								inPage++
 							}
 						}

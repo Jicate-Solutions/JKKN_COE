@@ -86,6 +86,11 @@ export async function GET(req: NextRequest) {
         .from('courses')
         .select(COURSE_SELECT)
         .order('created_at', { ascending: false })
+        // Unique tiebreaker: created_at has collisions (bulk imports share a
+        // timestamp), and without a stable secondary key .range() pagination is
+        // non-deterministic — the same row can land on two pages (duplicate id →
+        // duplicate React keys) while another is skipped (missing from dropdowns).
+        .order('id', { ascending: true })
 
       // Apply filters against the real column names
       if (id) {

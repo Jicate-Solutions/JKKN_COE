@@ -94,6 +94,7 @@ export async function GET(request: NextRequest) {
 					fetchAllMyJKKNLearnerProfiles({
 						institution_id: myjkknInstId,
 						program_id: progUUID,
+						lifecycle_status: 'all',
 						all: true,
 						limit: 200,
 					}).catch(() => [])

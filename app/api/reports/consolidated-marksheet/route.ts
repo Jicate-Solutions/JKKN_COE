@@ -768,6 +768,67 @@ async function resolveProgramName(
 	return ''
 }
 
+/**
+ * Resolve the cumulative GRADE + CLASSIFICATION for a CGPA using the
+ * cgpa_grade_system table — institution-specific bands first, then the global
+ * defaults (institutions_id IS NULL). Falls back to the hardcoded
+ * classification bands if the table is absent or no band matches.
+ *
+ * Pass a pre-fetched `bands` array (institution + global rows) to avoid a DB
+ * round-trip per learner in batch mode.
+ */
+function pickCgpaBand(rows: any[] | null | undefined, cgpa: number): any {
+	return (rows || []).find(
+		r => cgpa >= Number(r.min_cgpa) && cgpa <= Number(r.max_cgpa)
+	)
+}
+
+async function fetchCgpaBands(
+	supabase: ReturnType<typeof getSupabaseServer>,
+	institutionId: string,
+	isPG: boolean
+): Promise<{ instBands: any[]; defaultBands: any[] }> {
+	const code = isPG ? 'PG' : 'UG'
+	let instBands: any[] = []
+	let defaultBands: any[] = []
+	try {
+		const [{ data: instRows }, { data: defRows }] = await Promise.all([
+			supabase
+				.from('cgpa_grade_system')
+				.select('grade, classification, min_cgpa, max_cgpa')
+				.eq('institutions_id', institutionId)
+				.eq('grade_system_code', code)
+				.eq('is_active', true),
+			supabase
+				.from('cgpa_grade_system')
+				.select('grade, classification, min_cgpa, max_cgpa')
+				.is('institutions_id', null)
+				.eq('grade_system_code', code)
+				.eq('is_active', true)
+		])
+		instBands = instRows || []
+		defaultBands = defRows || []
+	} catch (e) {
+		console.warn('[Consolidated Marksheet] cgpa_grade_system lookup failed (non-critical):', e)
+	}
+	return { instBands, defaultBands }
+}
+
+function resolveCumulativeGrade(
+	bands: { instBands: any[]; defaultBands: any[] },
+	cgpa: number
+): { cumulativeGrade: string; classification: string } {
+	const row = pickCgpaBand(bands.instBands, cgpa) || pickCgpaBand(bands.defaultBands, cgpa)
+	if (row) {
+		return {
+			cumulativeGrade: row.grade || '',
+			classification: row.classification || getClassification(cgpa)
+		}
+	}
+	// Table missing / no band matched → hardcoded classification, no letter grade
+	return { cumulativeGrade: '', classification: getClassification(cgpa) }
+}
+
 // =====================================================
 // API HANDLER
 // =====================================================
@@ -1375,6 +1436,11 @@ export async function GET(req: NextRequest) {
 			const partBreakdown = buildPartBreakdown(courses)
 			const summary = computeSummary(courses, formattedFolio)
 
+			// Cumulative GRADE + CLASSIFICATION from the cgpa_grade_system table
+			const cgpaBands = await fetchCgpaBands(supabase, institutionId, isPG)
+			const { cumulativeGrade, classification: cumulativeClassification } = resolveCumulativeGrade(cgpaBands, summary.cgpa)
+			const summaryWithGrade = { ...summary, cumulativeGrade, classification: cumulativeClassification }
+
 			return NextResponse.json({
 				eligible: true,
 				student: {
@@ -1404,7 +1470,7 @@ export async function GET(req: NextRequest) {
 				},
 				courses,
 				partBreakdown,
-				summary,
+				summary: summaryWithGrade,
 				generatedDate: new Date().toLocaleDateString('en-IN', {
 					day: '2-digit',
 					month: '2-digit',
@@ -1555,6 +1621,9 @@ export async function GET(req: NextRequest) {
 			// --- Await folio promise ---
 			await consolidatedFolioPromise
 
+			// --- Cumulative-grade bands (fetched once, reused per learner) ---
+			const batchCgpaBands = await fetchCgpaBands(supabase, institutionId, batchIsPG)
+
 			// --- Build individual marksheets, skipping ineligible learners ---
 			const marksheets: any[] = []
 			const skippedLearners: { id: string; registerNo: string; name: string; failedCount: number }[] = []
@@ -1591,6 +1660,8 @@ export async function GET(req: NextRequest) {
 				const partBreakdown = buildPartBreakdown(courses)
 				const folio = folioMap[sid] ?? null
 				const summary = computeSummary(courses, folio)
+				const { cumulativeGrade, classification: cumulativeClassification } = resolveCumulativeGrade(batchCgpaBands, summary.cgpa)
+				const summaryWithGrade = { ...summary, cumulativeGrade, classification: cumulativeClassification }
 				const ext = extInfoMap[student.registerNo] || {}
 
 				const maxSem = Math.max(...courses.map(c => c.semester), 0)
@@ -1624,7 +1695,7 @@ export async function GET(req: NextRequest) {
 					},
 					courses,
 					partBreakdown,
-					summary
+					summary: summaryWithGrade
 				})
 			}
 
