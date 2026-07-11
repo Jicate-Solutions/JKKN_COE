@@ -218,12 +218,19 @@ export async function GET(req: NextRequest) {
 			let learnerName = studentName
 
 			// Get semester result for GPA summary (fetch early to get program_code for learner lookup)
-			const { data: semesterResult } = await supabase
+			// A learner can have multiple semester_results rows in the same session
+			// (regular semester + arrear semesters re-attempted), so .single() would
+			// error and drop folio/CGPA — pick the requested semester's row,
+			// falling back to the highest semester in the session.
+			const { data: semesterResultRows } = await supabase
 				.from('semester_results')
 				.select('*')
 				.eq('student_id', studentId)
 				.eq('examination_session_id', sessionId)
-				.single()
+				.order('semester', { ascending: false })
+			const semesterResult = (semester
+				? semesterResultRows?.find(sr => sr.semester === parseInt(semester))
+				: null) || semesterResultRows?.[0] || null
 
 			// Fetch program name from MyJKKN API using program_code
 			let programName = semesterResult?.program_name || ''
@@ -657,6 +664,7 @@ export async function GET(req: NextRequest) {
 				isIneligible?: boolean
 				isTermFail?: boolean
 				isFinalFail?: boolean
+				creditIncluded?: boolean
 			}
 
 			const processedCourses: ProcessedCourse[] = []

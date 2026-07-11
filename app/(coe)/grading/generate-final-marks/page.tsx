@@ -13,6 +13,8 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { GenerateAfterRevaluationTab } from "@/components/grading/generate-after-revaluation-tab"
 import { Badge } from "@/components/ui/badge"
 import { Label } from "@/components/ui/label"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -144,6 +146,9 @@ export default function GenerateFinalMarksPage() {
 
 	// MyJKKN institution filter hook for fetching programs from MyJKKN API
 	const { fetchPrograms: fetchMyJKKNPrograms } = useMyJKKNInstitutionFilter()
+
+	// Tab state: 'generate' = original wizard, 'revaluation' = generate after revaluation
+	const [activeTab, setActiveTab] = useState('generate')
 
 	// Step state
 	const [currentStep, setCurrentStep] = useState(0)
@@ -708,13 +713,23 @@ export default function GenerateFinalMarksPage() {
 						</div>
 					</div>
 
+					{/* Tab Switcher */}
+					<Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
+						<TabsList className="grid w-full max-w-md grid-cols-2">
+							<TabsTrigger value="generate">Generate Final Marks</TabsTrigger>
+							<TabsTrigger value="revaluation">Generate After Revaluation</TabsTrigger>
+						</TabsList>
+					</Tabs>
+
 					{/* Step Indicator */}
-					<Card className="p-4">
-						<StepIndicator currentStep={currentStep} steps={steps} />
-					</Card>
+					{activeTab === 'generate' && (
+						<Card className="p-4">
+							<StepIndicator currentStep={currentStep} steps={steps} />
+						</Card>
+					)}
 
 					{/* Step 1: Select Program */}
-					{currentStep === 0 && (
+					{activeTab === 'generate' && currentStep === 0 && (
 						<Card>
 							<CardHeader>
 								<div className="flex items-center gap-3">
@@ -806,7 +821,7 @@ export default function GenerateFinalMarksPage() {
 					)}
 
 					{/* Step 2: Select Courses */}
-					{currentStep === 1 && (
+					{activeTab === 'generate' && currentStep === 1 && (
 						<Card>
 							<CardHeader>
 								<div className="flex items-center justify-between">
@@ -976,7 +991,7 @@ export default function GenerateFinalMarksPage() {
 					)}
 
 					{/* Step 3: Review Results */}
-					{currentStep === 2 && (
+					{activeTab === 'generate' && currentStep === 2 && (
 						<>
 							{/* Summary Cards */}
 							<div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3">
@@ -1249,7 +1264,7 @@ export default function GenerateFinalMarksPage() {
 					)}
 
 					{/* Step 4: Save & Export */}
-					{currentStep === 3 && (
+					{activeTab === 'generate' && currentStep === 3 && (
 						<Card>
 							<CardHeader>
 								<div className="flex items-center gap-3">
@@ -1351,6 +1366,9 @@ export default function GenerateFinalMarksPage() {
 							</CardContent>
 						</Card>
 					)}
+
+					{/* Generate After Revaluation tab */}
+					{activeTab === 'revaluation' && <GenerateAfterRevaluationTab />}
 				</div>
 				<AppFooter />
 			</SidebarInset>

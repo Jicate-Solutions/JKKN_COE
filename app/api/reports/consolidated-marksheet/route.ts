@@ -743,18 +743,77 @@ async function resolveTotalSemesters(
 	return isPG ? 4 : 6
 }
 
-/** Fetch program name from MyJKKN for a given code, across institution myjkkn_ids */
+/**
+ * In-memory cache for MyJKKN program lists, keyed by MyJKKN institution id.
+ * Successful fetches are cached for 10 minutes; failures are negative-cached
+ * for 60 seconds so a flaky/slow MyJKKN API (10s timeout x retry per call)
+ * cannot stall every report request for 20+ seconds.
+ */
+const myjkknProgramsCache = new Map<string, { data: any[]; expires: number }>()
+const PROGRAMS_CACHE_TTL_MS = 10 * 60 * 1000
+const PROGRAMS_NEGATIVE_CACHE_TTL_MS = 60 * 1000
+
+/** Fetch the MyJKKN program list for one institution id, with caching */
+async function fetchMyJKKNProgramsCached(myjkknInstId: string): Promise<any[]> {
+	const cached = myjkknProgramsCache.get(myjkknInstId)
+	if (cached && cached.expires > Date.now()) {
+		return cached.data
+	}
+	try {
+		const programs = await fetchAllMyJKKNPrograms({
+			institution_id: myjkknInstId,
+			limit: 100,
+			is_active: true
+		})
+		myjkknProgramsCache.set(myjkknInstId, {
+			data: programs,
+			expires: Date.now() + PROGRAMS_CACHE_TTL_MS
+		})
+		return programs
+	} catch (fetchErr) {
+		// Negative-cache the failure so subsequent requests don't repeat
+		// the 10s-timeout-plus-retry stall
+		myjkknProgramsCache.set(myjkknInstId, {
+			data: [],
+			expires: Date.now() + PROGRAMS_NEGATIVE_CACHE_TTL_MS
+		})
+		throw fetchErr
+	}
+}
+
+/**
+ * Resolve the program name for a code — LOCAL FIRST, MyJKKN as fallback.
+ * The local programs mirror table already stores program_name (and the
+ * generate action auto-creates mirror rows), so most lookups never need
+ * the external API. A mirror row whose name equals the code is treated as
+ * a placeholder and still falls through to MyJKKN.
+ */
 async function resolveProgramName(
+	supabase: ReturnType<typeof getSupabaseServer>,
+	institutionId: string,
 	myjkknIds: string[],
 	programCode: string
 ): Promise<string> {
+	// 1. Local programs mirror (fast, no external dependency)
+	try {
+		const { data: localProg } = await supabase
+			.from('programs')
+			.select('program_name')
+			.eq('program_code', programCode)
+			.eq('institutions_id', institutionId)
+			.maybeSingle()
+		const localName = localProg?.program_name?.trim()
+		if (localName && localName.toUpperCase() !== programCode.toUpperCase()) {
+			return localName
+		}
+	} catch (err) {
+		console.warn('[Consolidated Marksheet] Local program name lookup error:', err)
+	}
+
+	// 2. MyJKKN fallback (cached per MyJKKN institution id)
 	for (const myjkknInstId of myjkknIds) {
 		try {
-			const programs = await fetchAllMyJKKNPrograms({
-				institution_id: myjkknInstId,
-				limit: 100,
-				is_active: true
-			})
+			const programs = await fetchMyJKKNProgramsCached(myjkknInstId)
 			const match = programs.find((p: any) =>
 				p.program_id === programCode || p.program_code === programCode
 			)
@@ -814,19 +873,50 @@ async function fetchCgpaBands(
 	return { instBands, defaultBands }
 }
 
+/**
+ * Regulation rule: "First Class with Exemplary" and "First Class with
+ * Distinction" are awarded ONLY to candidates who passed every course in the
+ * FIRST appearance (no arrear/re-appearance history). Others with the same
+ * CGPA are classified "First Class".
+ */
+function hasArrearHistory(rawRows: any[], passingPercentage: number): boolean {
+	const attemptCount = new Map<string, number>()
+	for (const row of rawRows) {
+		if (!row.course_id) continue
+		const n = (attemptCount.get(row.course_id) || 0) + 1
+		if (n > 1) return true // re-attempt of the same course = arrear
+		attemptCount.set(row.course_id, n)
+	}
+	// Any failing attempt on record also breaks "first appearance"
+	for (const row of rawRows) {
+		const c = processFinalMarkRow(row, passingPercentage)
+		if (c && !c.isPassing) return true
+	}
+	return false
+}
+
 function resolveCumulativeGrade(
 	bands: { instBands: any[]; defaultBands: any[] },
-	cgpa: number
+	cgpa: number,
+	firstAppearance: boolean = true
 ): { cumulativeGrade: string; classification: string } {
 	const row = pickCgpaBand(bands.instBands, cgpa) || pickCgpaBand(bands.defaultBands, cgpa)
 	if (row) {
+		let classification = row.classification || getClassification(cgpa)
+		if (!firstAppearance && /exemplary|distinction/i.test(classification)) {
+			classification = 'First Class'
+		}
 		return {
 			cumulativeGrade: row.grade || '',
-			classification: row.classification || getClassification(cgpa)
+			classification
 		}
 	}
 	// Table missing / no band matched → hardcoded classification, no letter grade
-	return { cumulativeGrade: '', classification: getClassification(cgpa) }
+	let fallback = getClassification(cgpa)
+	if (!firstAppearance && /exemplary|distinction/i.test(fallback)) {
+		fallback = 'First Class'
+	}
+	return { cumulativeGrade: '', classification: fallback }
 }
 
 // =====================================================
@@ -922,11 +1012,7 @@ export async function GET(req: NextRequest) {
 
 			for (const myjkknInstId of myjkknInstitutionIds) {
 				try {
-					const programs = await fetchAllMyJKKNPrograms({
-						institution_id: myjkknInstId,
-						limit: 100,
-						is_active: true
-					})
+					const programs = await fetchMyJKKNProgramsCached(myjkknInstId)
 
 					const filteredPrograms = Array.isArray(programs)
 						? programs.filter((p: any) => p.institution_id === myjkknInstId && p.is_active !== false)
@@ -1012,9 +1098,7 @@ export async function GET(req: NextRequest) {
 					.eq('id', institutionId)
 					.single()
 				const myjkknIdsStudents: string[] = instRow?.myjkkn_institution_ids || []
-				if (myjkknIdsStudents.length > 0) {
-					programNameStudents = await resolveProgramName(myjkknIdsStudents, programCode)
-				}
+				programNameStudents = await resolveProgramName(supabase, institutionId, myjkknIdsStudents, programCode)
 			}
 
 			// Determine passing % from program code+name (UG=40, PG=50)
@@ -1128,10 +1212,10 @@ export async function GET(req: NextRequest) {
 
 			const myjkknIds: string[] = institutionRow?.myjkkn_institution_ids || []
 
-			// --- Fetch program name from MyJKKN ---
+			// --- Fetch program name (local mirror first, MyJKKN fallback) ---
 			let programName = ''
-			if (effectiveProgramCode && myjkknIds.length > 0) {
-				programName = await resolveProgramName(myjkknIds, effectiveProgramCode)
+			if (effectiveProgramCode) {
+				programName = await resolveProgramName(supabase, institutionId, myjkknIds, effectiveProgramCode)
 			}
 
 			const isPG = isPGProgram(effectiveProgramCode, programName)
@@ -1436,9 +1520,11 @@ export async function GET(req: NextRequest) {
 			const partBreakdown = buildPartBreakdown(courses)
 			const summary = computeSummary(courses, formattedFolio)
 
-			// Cumulative GRADE + CLASSIFICATION from the cgpa_grade_system table
+			// Cumulative GRADE + CLASSIFICATION from the cgpa_grade_system table.
+			// Exemplary/Distinction only for first-appearance passes (no arrears).
+			const firstAppearance = !hasArrearHistory(rawFinalMarks, passingPercentage)
 			const cgpaBands = await fetchCgpaBands(supabase, institutionId, isPG)
-			const { cumulativeGrade, classification: cumulativeClassification } = resolveCumulativeGrade(cgpaBands, summary.cgpa)
+			const { cumulativeGrade, classification: cumulativeClassification } = resolveCumulativeGrade(cgpaBands, summary.cgpa, firstAppearance)
 			const summaryWithGrade = { ...summary, cumulativeGrade, classification: cumulativeClassification }
 
 			return NextResponse.json({
@@ -1554,8 +1640,8 @@ export async function GET(req: NextRequest) {
 			// --- Program name + PG detection ---
 			const effectiveProgramCode = programCode || ''
 			let batchProgramName = ''
-			if (effectiveProgramCode && myjkknIds.length > 0) {
-				batchProgramName = await resolveProgramName(myjkknIds, effectiveProgramCode)
+			if (effectiveProgramCode) {
+				batchProgramName = await resolveProgramName(supabase, institutionId, myjkknIds, effectiveProgramCode)
 			}
 			const batchIsPG = isPGProgram(effectiveProgramCode, batchProgramName)
 			const batchPassingPercentage = batchIsPG ? 50 : 40
@@ -1660,7 +1746,9 @@ export async function GET(req: NextRequest) {
 				const partBreakdown = buildPartBreakdown(courses)
 				const folio = folioMap[sid] ?? null
 				const summary = computeSummary(courses, folio)
-				const { cumulativeGrade, classification: cumulativeClassification } = resolveCumulativeGrade(batchCgpaBands, summary.cgpa)
+				// Exemplary/Distinction only for first-appearance passes (no arrears)
+				const batchFirstAppearance = !hasArrearHistory(student.rows, batchPassingPercentage)
+				const { cumulativeGrade, classification: cumulativeClassification } = resolveCumulativeGrade(batchCgpaBands, summary.cgpa, batchFirstAppearance)
 				const summaryWithGrade = { ...summary, cumulativeGrade, classification: cumulativeClassification }
 				const ext = extInfoMap[student.registerNo] || {}
 
@@ -1761,10 +1849,7 @@ export async function POST(req: NextRequest) {
 			.single()
 		const myjkknIds: string[] = institutionRow?.myjkkn_institution_ids || []
 
-		let programName = ''
-		if (myjkknIds.length > 0) {
-			programName = await resolveProgramName(myjkknIds, programCode)
-		}
+		let programName = await resolveProgramName(supabase, institutionId, myjkknIds, programCode)
 
 		const isPG = isPGProgram(programCode, programName)
 		const passingPercentage = isPG ? 50 : 40

@@ -67,7 +67,8 @@ export class MyJKKNApiError extends Error {
 // CORE FETCH FUNCTION
 // =====================================================
 
-const MYJKKN_FETCH_TIMEOUT_MS = 10000 // 10s timeout for external API calls
+const MYJKKN_FETCH_TIMEOUT_MS = Number(process.env.MYJKKN_FETCH_TIMEOUT_MS) || 30000 // per-attempt timeout; MyJKKN takes >10s under load
+const MYJKKN_FETCH_RETRIES = 1 // extra attempts on timeout / network failure / 5xx (all calls are GET, safe to retry)
 
 async function fetchFromMyJKKN<T>(endpoint: string, params?: Record<string, string | number | boolean | undefined>): Promise<T> {
 	const apiKey = getApiKey()
@@ -85,48 +86,64 @@ async function fetchFromMyJKKN<T>(endpoint: string, params?: Record<string, stri
 		})
 	}
 
-	console.log(`[MyJKKN API] Fetching: ${url.toString()}`)
-
-	const controller = new AbortController()
-	const timeout = setTimeout(() => controller.abort(), MYJKKN_FETCH_TIMEOUT_MS)
-
-	try {
-		const response = await fetch(url.toString(), {
-			method: 'GET',
-			headers: {
-				'Authorization': `Bearer ${apiKey}`,
-				'Accept': 'application/json',
-				'Content-Type': 'application/json',
-			},
-			cache: 'no-store',
-			signal: controller.signal,
-		})
-
-		if (!response.ok) {
-			const errorBody = await response.json().catch(() => ({}))
-			console.error(`[MyJKKN API] Error ${response.status}:`, errorBody)
-			throw new MyJKKNApiError(
-				errorBody.message || errorBody.error || `API Error: ${response.status}`,
-				response.status,
-				errorBody
-			)
+	for (let attempt = 0; ; attempt++) {
+		const isLastAttempt = attempt >= MYJKKN_FETCH_RETRIES
+		if (attempt === 0) {
+			console.log(`[MyJKKN API] Fetching: ${url.toString()}`)
+		} else {
+			console.warn(`[MyJKKN API] Retry ${attempt}/${MYJKKN_FETCH_RETRIES}: ${endpoint}`)
+			await new Promise(resolve => setTimeout(resolve, 1000))
 		}
 
-		const data = await response.json()
-		console.log(`[MyJKKN API] Success: ${endpoint} - ${data.metadata?.total || data.data?.length || 0} records`)
+		const controller = new AbortController()
+		const timeout = setTimeout(() => controller.abort(), MYJKKN_FETCH_TIMEOUT_MS)
 
-		return data
-	} catch (error) {
-		if (error instanceof MyJKKNApiError) throw error
-		if (error instanceof Error && error.name === 'AbortError') {
-			throw new MyJKKNApiError(
-				`MyJKKN API request timed out after ${MYJKKN_FETCH_TIMEOUT_MS / 1000}s: ${endpoint}`,
-				504
-			)
+		try {
+			const response = await fetch(url.toString(), {
+				method: 'GET',
+				headers: {
+					'Authorization': `Bearer ${apiKey}`,
+					'Accept': 'application/json',
+					'Content-Type': 'application/json',
+				},
+				cache: 'no-store',
+				signal: controller.signal,
+			})
+
+			if (!response.ok) {
+				const errorBody = await response.json().catch(() => ({}))
+				console.error(`[MyJKKN API] Error ${response.status}:`, errorBody)
+				if (response.status >= 500 && !isLastAttempt) continue
+				throw new MyJKKNApiError(
+					errorBody.message || errorBody.error || `API Error: ${response.status}`,
+					response.status,
+					errorBody
+				)
+			}
+
+			const data = await response.json()
+			console.log(`[MyJKKN API] Success: ${endpoint} - ${data.metadata?.total || data.data?.length || 0} records`)
+
+			return data
+		} catch (error) {
+			if (error instanceof MyJKKNApiError) throw error
+			if (error instanceof Error && error.name === 'AbortError') {
+				console.error(`[MyJKKN API] Timed out after ${MYJKKN_FETCH_TIMEOUT_MS / 1000}s (attempt ${attempt + 1}): ${endpoint}`)
+				if (!isLastAttempt) continue
+				throw new MyJKKNApiError(
+					`MyJKKN API request timed out after ${MYJKKN_FETCH_TIMEOUT_MS / 1000}s: ${endpoint}`,
+					504
+				)
+			}
+			// Network-level failure (DNS, connection reset, ...) — retry once
+			if (!isLastAttempt) {
+				console.error(`[MyJKKN API] Network error (attempt ${attempt + 1}): ${endpoint}`, error)
+				continue
+			}
+			throw error
+		} finally {
+			clearTimeout(timeout)
 		}
-		throw error
-	} finally {
-		clearTimeout(timeout)
 	}
 }
 

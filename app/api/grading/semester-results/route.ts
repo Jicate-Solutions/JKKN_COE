@@ -1406,6 +1406,9 @@ export async function POST(req: NextRequest) {
 						credit,
 						credit_included
 					),
+					course_offerings (
+						semester
+					),
 					exam_registrations (
 						id,
 						stu_register_no,
@@ -1650,8 +1653,16 @@ export async function POST(req: NextRequest) {
 			Object.values(studentMarksMap).forEach((studentData, index) => {
 				const { student_id, institutions_id, program_id, examination_session_id, register_no, program_code, marks } = studentData
 
-				// Get student's highest regular semester from course_offerings
-				const currentSemester = studentSemesterMap[register_no] || 1
+				// Get student's highest regular semester from course_offerings.
+				// Fallback when the learner has no is_regular registration in the map:
+				// use the highest semester among this session's marks. Never default
+				// straight to 1 — that mis-stamps the row, detaching the folio and
+				// hiding the learner from the current-semester marksheet and dropdown.
+				const maxMarkSemester = marks.reduce((max: number, fm: any) => {
+					const co = Array.isArray(fm.course_offerings) ? fm.course_offerings[0] : fm.course_offerings
+					return Math.max(max, co?.semester || 0)
+				}, 0)
+				const currentSemester = studentSemesterMap[register_no] || maxMarkSemester || 1
 
 				// Debug: Log first 3 lookups to see if register_no matches map keys
 				if (index < 3) {

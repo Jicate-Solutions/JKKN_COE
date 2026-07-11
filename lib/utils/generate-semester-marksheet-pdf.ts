@@ -1167,7 +1167,12 @@ export function addStudentMarksheetToDoc(
 
 		const partsWithData = data.partBreakdown.filter(part => part.courses.length > 0)
 
-		if (partsWithData.length > 0) {
+		// PG semester marksheets suppress the Part A / Part B breakdown and show a
+		// single combined total row instead — EXCEPT the final semester (4), which
+		// keeps the part-wise split. UG and the consolidated marksheet are unaffected.
+		const suppressPartRowsForPG = isPG && !consolidated && data.semester !== 4
+
+		if (partsWithData.length > 0 && !suppressPartRowsForPG) {
 			// Has part-wise breakdown - show each part
 			partsWithData.forEach((part, idx) => {
 				const rowY = gpaRowY + (idx * 4)  // 4mm row height

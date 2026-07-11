@@ -132,7 +132,7 @@ export default function ExaminersPage() {
 
 	// Registration link state
 	const [regLinkOpen, setRegLinkOpen] = useState(false)
-	const [copied, setCopied] = useState(false)
+	const [copied, setCopied] = useState<string | null>(null)
 
 	// Institutions for template export dropdowns
 	const [institutions, setInstitutions] = useState<Array<{ id: string; institution_code: string; institution_name: string }>>([])
@@ -141,15 +141,43 @@ export default function ExaminersPage() {
 	const [importInProgress, setImportInProgress] = useState(false)
 	const [importProgress, setImportProgress] = useState({ current: 0, total: 0 })
 
-	const registrationLink = typeof window !== 'undefined'
-		? `${window.location.origin}/arts-examiner-registration`
-		: '/arts-examiner-registration'
+	const registrationOrigin = typeof window !== 'undefined' ? window.location.origin : ''
 
-	const handleCopyLink = async () => {
+	// Resolve registration form slug for an institution: form config slug → name heuristic → arts default
+	const getRegistrationSlug = (instId?: string | null, instCode?: string | null): string => {
+		const config = formConfigs.find(c =>
+			c.is_active && ((instCode && c.institution_code === instCode) || (instId && c.institution_id === instId))
+		)
+		if (config) return config.url_slug
+		const inst = institutions.find(i => i.id === instId || i.institution_code === instCode)
+		if (inst?.institution_name?.toLowerCase().includes('engineering')) return 'engg-examiner-registration'
+		return 'arts-examiner-registration'
+	}
+
+	// Selected institution → its link; All Institutions (global) → one link per institution, grouped by shared form
+	const registrationLinks: Array<{ label: string; url: string }> = mustSelectInstitution
+		? (() => {
+			const bySlug = new Map<string, string[]>()
+			institutions.forEach(inst => {
+				const slug = getRegistrationSlug(inst.id, inst.institution_code)
+				bySlug.set(slug, [...(bySlug.get(slug) || []), inst.institution_code])
+			})
+			if (bySlug.size === 0) bySlug.set('arts-examiner-registration', [])
+			return Array.from(bySlug.entries()).map(([slug, codes]) => ({
+				label: codes.join(', '),
+				url: `${registrationOrigin}/${slug}`,
+			}))
+		})()
+		: [{
+			label: institutionCode || '',
+			url: `${registrationOrigin}/${getRegistrationSlug(institutionId, institutionCode)}`,
+		}]
+
+	const handleCopyLink = async (url: string) => {
 		try {
-			await navigator.clipboard.writeText(registrationLink)
-			setCopied(true)
-			setTimeout(() => setCopied(false), 2000)
+			await navigator.clipboard.writeText(url)
+			setCopied(url)
+			setTimeout(() => setCopied(null), 2000)
 		} catch {
 			toast({ title: '❌ Copy Failed', description: 'Could not copy to clipboard.', variant: 'destructive' })
 		}
@@ -999,7 +1027,7 @@ export default function ExaminersPage() {
 		if (isReady) {
 			fetchFormConfigs()
 		}
-	}, [isReady])
+	}, [isReady, filter])
 
 	const handleSaveConfig = async () => {
 		try {
@@ -2262,32 +2290,42 @@ export default function ExaminersPage() {
 					Examiner Registration Link
 				</DialogTitle>
 				<DialogDescription>
-					Share this link with external examiners so they can self-register. All submissions will appear in this panel with <strong>Pending</strong> status for your review.
+					{mustSelectInstitution
+						? 'Share each institution\'s link with its external examiners so they can self-register.'
+						: 'Share this link with external examiners so they can self-register.'}
+					{' '}All submissions will appear in this panel with <strong>Pending</strong> status for your review.
 				</DialogDescription>
 			</DialogHeader>
-			<div className="space-y-4 pt-2">
-				<div className="flex items-center gap-2 p-3 bg-slate-50 rounded-xl border border-slate-200">
-					<code className="flex-1 text-sm text-slate-700 break-all select-all">
-						{registrationLink}
-					</code>
-				</div>
-				<div className="flex gap-2">
-					<Button onClick={handleCopyLink} className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white">
-						{copied ? (
-							<><Check className="h-4 w-4 mr-2" /> Copied!</>
-						) : (
-							<><Copy className="h-4 w-4 mr-2" /> Copy Link</>
+			<div className="space-y-4 pt-2 max-h-[60vh] overflow-y-auto">
+				{registrationLinks.map((link) => (
+					<div key={link.url} className="space-y-2">
+						{mustSelectInstitution && link.label && (
+							<p className="text-xs font-semibold text-slate-600 uppercase tracking-wide">{link.label}</p>
 						)}
-					</Button>
-					<Button variant="outline" asChild className="flex-1">
-						<a href="/arts-examiner-registration" target="_blank" rel="noopener noreferrer">
-							<ExternalLink className="h-4 w-4 mr-2" />
-							Open Form
-						</a>
-					</Button>
-				</div>
+						<div className="flex items-center gap-2 p-3 bg-slate-50 rounded-xl border border-slate-200">
+							<code className="flex-1 text-sm text-slate-700 break-all select-all">
+								{link.url}
+							</code>
+						</div>
+						<div className="flex gap-2">
+							<Button onClick={() => handleCopyLink(link.url)} className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white">
+								{copied === link.url ? (
+									<><Check className="h-4 w-4 mr-2" /> Copied!</>
+								) : (
+									<><Copy className="h-4 w-4 mr-2" /> Copy Link</>
+								)}
+							</Button>
+							<Button variant="outline" asChild className="flex-1">
+								<a href={link.url} target="_blank" rel="noopener noreferrer">
+									<ExternalLink className="h-4 w-4 mr-2" />
+									Open Form
+								</a>
+							</Button>
+						</div>
+					</div>
+				))}
 				<p className="text-xs text-slate-500 text-center">
-					This is a public link — no login required for examiners.
+					{registrationLinks.length > 1 ? 'These are public links' : 'This is a public link'} — no login required for examiners.
 				</p>
 			</div>
 		</DialogContent>

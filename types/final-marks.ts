@@ -416,3 +416,82 @@ export interface RegulationOption {
 	regulation_code: string
 	regulation_year: number
 }
+
+/**
+ * RevaluationLearnerRow - Learner row for revaluation mark entry
+ * (Generate After Revaluation tab). Joins final_marks + marks_entry.
+ */
+export interface RevaluationLearnerRow {
+	final_marks_id: string
+	marks_entry_id: string
+	exam_registration_id: string
+	student_id: string
+	register_no: string
+	student_name: string
+	// Marks context
+	internal_marks: number
+	original_external_marks: number // marks_entry.total_marks_obtained (old mark, never changed)
+	external_max: number
+	// Current final_marks state
+	current_external_marks: number
+	current_total_marks: number
+	current_percentage: number
+	current_grade: string | null
+	current_pass_status: string | null
+	result_status: string
+	// Revaluation state
+	revaluation_mark: number | null
+	revaluation_remarks: string | null
+	is_revaluation_applied: boolean
+}
+
+/**
+ * RevaluationResultRow - Old vs new comparison after recalculation
+ */
+export interface RevaluationResultRow {
+	final_marks_id: string
+	marks_entry_id: string
+	exam_registration_id: string
+	student_id: string
+	register_no: string
+	student_name: string
+	course_code: string
+	internal_marks: number
+	internal_max: number
+	external_max: number
+	total_max: number
+	// Old (current final_marks values)
+	old_external: number
+	old_total: number
+	old_percentage: number
+	old_grade: string | null
+	old_grade_point: number | null
+	old_pass_status: string | null
+	// New (recalculated with revaluation mark)
+	new_external: number
+	new_total: number
+	new_percentage: number
+	new_grade: string
+	new_grade_point: number
+	new_pass_status: 'Pass' | 'Reappear'
+	new_is_pass: boolean
+	fail_reason?: 'INTERNAL' | 'EXTERNAL' | 'TOTAL' | null
+	marks_difference: number
+	is_revaluation_applied: boolean
+}
+
+/**
+ * GenerateRevaluationPayload - POST payload for the revaluation generate API
+ */
+export interface GenerateRevaluationPayload {
+	action: 'generate'
+	institutions_id: string
+	examination_session_id: string
+	program_code: string
+	course_id: string
+	regulation_id?: string
+	grade_system_code?: 'UG' | 'PG'
+	save_to_db?: boolean
+	selected_final_marks_ids?: string[]
+	applied_by?: string | null
+}

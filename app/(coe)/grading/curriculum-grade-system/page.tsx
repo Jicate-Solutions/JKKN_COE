@@ -148,7 +148,8 @@ export default function CurriculumGradeSystemPage() {
     if (!formData.regulation_id) return []
     const selectedReg = regulations.find(r => r.id === formData.regulation_id)
     if (!selectedReg) return allGrades
-    return allGrades.filter(g => g.regulation_code === selectedReg.regulation_code)
+    // Grades without a regulation_code are regulation-agnostic — always offer them
+    return allGrades.filter(g => !g.regulation_code || g.regulation_code === selectedReg.regulation_code)
   }, [allGrades, formData.regulation_id, regulations])
 
   const fetchGradeSystems = async () => {
@@ -310,8 +311,8 @@ export default function CurriculumGradeSystemPage() {
     setFormData({
       institutions_code: row.institutions_code,
       grade_system_code: row.grade_system_code as '' | 'UG' | 'PG',
-      cgpa_grade_id: row.cgpa_grade_id,
-      regulation_id: String(row.regulation_id),
+      cgpa_grade_id: row.cgpa_grade_id || "",
+      regulation_id: row.regulation_id ? String(row.regulation_id) : "",
       classification: row.classification || "",
       min_cgpa: String(row.min_cgpa),
       max_cgpa: String(row.max_cgpa),

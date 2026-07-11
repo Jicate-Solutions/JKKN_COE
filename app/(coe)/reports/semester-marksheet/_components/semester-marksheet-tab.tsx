@@ -1191,13 +1191,23 @@ export function SemesterMarksheetTab() {
 									</TableRow>
 								</TableHeader>
 								<TableBody>
-									{marksheetData.partBreakdown.filter(p => p.courses.length > 0).map((part) => (
-										<TableRow key={part.partName}>
-											<TableCell className="text-center">{marksheetData.program.isPG ? '-' : part.partName.replace('Part ', '')}</TableCell>
-											<TableCell className="text-center">{part.creditsEarned}</TableCell>
-											<TableCell className="text-center">{part.partGPA.toFixed(2)}</TableCell>
+									{/* PG semester marksheets hide the Part A/B split and show a single
+									    total row instead — except the final semester (4), which keeps it. */}
+									{marksheetData.program.isPG && marksheetData.semester !== 4 ? (
+										<TableRow>
+											<TableCell className="text-center">-</TableCell>
+											<TableCell className="text-center">{marksheetData.summary.creditsEarned}</TableCell>
+											<TableCell className="text-center">{marksheetData.summary.semesterGPA.toFixed(2)}</TableCell>
 										</TableRow>
-									))}
+									) : (
+										marksheetData.partBreakdown.filter(p => p.courses.length > 0).map((part) => (
+											<TableRow key={part.partName}>
+												<TableCell className="text-center">{marksheetData.program.isPG ? '-' : part.partName.replace('Part ', '')}</TableCell>
+												<TableCell className="text-center">{part.creditsEarned}</TableCell>
+												<TableCell className="text-center">{part.partGPA.toFixed(2)}</TableCell>
+											</TableRow>
+										))
+									)}
 								</TableBody>
 							</Table>
 						</div>

@@ -171,6 +171,7 @@ export const navMain: NavItem[] = [
 			{ title: 'COE Calendar', url: '/pre-exam/coe-calendar', icon: CalendarDays, permission: 'page.pre_exam.coe_calendar.view' },
 			{ title: 'Fee Details', url: '/fee-details', icon: Tags },
 			{ title: 'Fee Structure', url: '#', icon: CreditCard },
+			{ title: 'BoS TA/DA Rates', url: '/bos/ta-da-rates', icon: CreditCard, coe_roles: ['super_admin'] },
 			{ title: 'Moderation Mark Setup', url: '#', icon: ListChecks },
 		],
 	},
@@ -204,6 +205,8 @@ export const navMain: NavItem[] = [
 		items: [
 			{ title: 'Grades', url: '/grading/grades', icon: BookText, permission: 'page.grading.grades.view' },
 			{ title: 'Grade System', url: '/grading/grade-system', icon: CalendarDays, permission: 'page.grading.grade_system.view' },
+			{ title: 'Curriculum Grade', url: '/grading/curriculum-grades', icon: BookText, permission: 'page.grading.grades.view' },
+			{ title: 'Curriculum Grade System', url: '/grading/curriculum-grade-system', icon: CalendarDays, permission: 'page.grading.grade_system.view' },
 			{ title: 'Generate Final Marks', url: '/grading/generate-final-marks', icon: Calculator, permission: 'page.grading.generate_final_marks.view' },
 			{ title: 'Semester Results', url: '/grading/semester-results', icon: BarChart3, permission: 'page.grading.semester_results.view' },
 			{ title: 'Consolidated Marksheet', url: '/grading/consolidated-marksheet', icon: Award, permission: 'page.grading.semester_results.view' },
