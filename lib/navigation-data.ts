@@ -171,6 +171,7 @@ export const navMain: NavItem[] = [
 			{ title: 'COE Calendar', url: '/pre-exam/coe-calendar', icon: CalendarDays, permission: 'page.pre_exam.coe_calendar.view' },
 			{ title: 'Fee Details', url: '/fee-details', icon: Tags },
 			{ title: 'Fee Structure', url: '#', icon: CreditCard },
+			{ title: 'BoS Compositions', url: '/bos/compositions', icon: ShieldCheck, coe_roles: ['super_admin'] },
 			{ title: 'BoS TA/DA Rates', url: '/bos/ta-da-rates', icon: CreditCard, coe_roles: ['super_admin'] },
 			{ title: 'Moderation Mark Setup', url: '#', icon: ListChecks },
 		],

@@ -32,6 +32,18 @@ function getProgramTypeFromCode(programCode?: string): 'UG' | 'PG' {
 	return 'UG'
 }
 
+/**
+ * Return the user id only if it exists in the local `users` table, else null.
+ * The audit columns (revaluation_entered_by / revaluation_applied_by / updated_by)
+ * FK to users(id); the logged-in id is a parent-auth id that is not always
+ * mirrored into `users`, so writing it raw causes a 23503 FK violation.
+ */
+async function resolveUserId(supabase: any, userId: string | null | undefined): Promise<string | null> {
+	if (!userId) return null
+	const { data } = await supabase.from('users').select('id').eq('id', userId).maybeSingle()
+	return data?.id || null
+}
+
 /** Fetch rows from a table with .in() filter, batched to avoid URL limits */
 async function fetchInBatches(
 	supabase: any,
@@ -119,7 +131,7 @@ export async function GET(request: NextRequest) {
 			return NextResponse.json([])
 		}
 
-		const examRegIds = [...new Set(finalMarks.map((fm: any) => fm.exam_registration_id).filter(Boolean))]
+		const examRegIds = [...new Set(finalMarks.map((fm: any) => fm.exam_registration_id).filter(Boolean))] as string[]
 
 		// 2. marks_entry rows (original external mark + revaluation column)
 		const marksEntries = await fetchInBatches(
@@ -219,6 +231,9 @@ async function handleSaveMarks(supabase: any, body: any) {
 	let savedCount = 0
 	const errors: Array<{ marks_entry_id: string; error: string }> = []
 
+	// Only stamp entered_by if the id actually exists in users (FK to users.id)
+	const enteredBy = await resolveUserId(supabase, body.entered_by)
+
 	for (const mark of marks) {
 		if (!mark.marks_entry_id) continue
 
@@ -236,7 +251,7 @@ async function handleSaveMarks(supabase: any, body: any) {
 				revaluation_marks_in_words: null,
 				revaluation_remarks: mark.revaluation_remarks || null,
 				revaluation_entry_date: mark.revaluation_marks_obtained !== null ? new Date().toISOString() : null,
-				revaluation_entered_by: body.entered_by || null
+				revaluation_entered_by: enteredBy
 			})
 			.eq('id', mark.marks_entry_id)
 
@@ -344,7 +359,7 @@ async function handleGenerate(supabase: any, body: any) {
 			id, exam_registration_id, student_id, register_number,
 			internal_marks_obtained, external_marks_obtained,
 			total_marks_obtained, total_marks_maximum, percentage,
-			letter_grade, grade_points, pass_status, result_status,
+			letter_grade, grade_points, pass_status, result_status, is_locked,
 			is_revaluation_applied
 		`)
 		.eq('institutions_id', institutions_id)
@@ -365,7 +380,13 @@ async function handleGenerate(supabase: any, body: any) {
 		}, { status: 400 })
 	}
 
-	const examRegIds = [...new Set(finalMarks.map((fm: any) => fm.exam_registration_id).filter(Boolean))]
+	const examRegIds = [...new Set(finalMarks.map((fm: any) => fm.exam_registration_id).filter(Boolean))] as string[]
+
+	// Publication/lock state per final_marks row — needed so the apply step can
+	// withdraw publication (and unlock) before changing marks, then restore it.
+	const fmStateMap = new Map<string, { result_status: string; is_locked: boolean }>(
+		finalMarks.map((fm: any) => [fm.id, { result_status: fm.result_status, is_locked: fm.is_locked === true }])
+	)
 
 	// 4. marks_entry rows that HAVE a revaluation mark
 	const marksEntries = await fetchInBatches(
@@ -498,6 +519,7 @@ async function handleGenerate(supabase: any, body: any) {
 
 	// 7. Apply to final_marks if requested
 	let appliedCount = 0
+	let noChangeSkipped = 0
 	const errors: Array<{ register_no: string; student_name: string; error: string }> = []
 
 	if (save_to_db && results.length > 0) {
@@ -505,8 +527,22 @@ async function handleGenerate(supabase: any, body: any) {
 			? new Set(selected_final_marks_ids)
 			: null
 
+		// Only stamp applied_by/updated_by if the id exists in users (FK to users.id)
+		const appliedBy = await resolveUserId(supabase, applied_by)
+
 		for (const row of results) {
 			if (selectedIds && !selectedIds.has(row.final_marks_id)) continue
+
+			// Every row in `results` already carries a revaluation mark (the
+			// marks_entry fetch filters revaluation_marks_obtained IS NOT NULL).
+			// Additionally skip when the revaluation mark equals the current
+			// external mark — a no-op that would needlessly withdraw and
+			// re-publish a Published result. Internal is unchanged, so an equal
+			// external mark means nothing downstream changes.
+			if (row.new_external === row.old_external) {
+				noChangeSkipped++
+				continue
+			}
 
 			const gradeEntryDesc = row.new_is_pass
 				? (grades.find((g: any) => g.grade === row.new_grade)?.description || '')
@@ -524,10 +560,10 @@ async function handleGenerate(supabase: any, body: any) {
 				pass_status: row.new_pass_status,
 				is_revaluation_applied: true,
 				revaluation_applied_at: new Date().toISOString(),
-				revaluation_applied_by: applied_by || null,
+				revaluation_applied_by: appliedBy,
 				remarks: 'Updated with revaluation marks',
 				updated_at: new Date().toISOString(),
-				updated_by: applied_by || null
+				updated_by: appliedBy
 			}
 
 			// Snapshot original values ONLY on first application — the old mark
@@ -541,10 +577,63 @@ async function handleGenerate(supabase: any, body: any) {
 				updatePayload.original_pass_status = row.old_pass_status
 			}
 
+			// A DB trigger blocks mark changes while a result is Published, and a
+			// second blocks changes while Locked. Revaluation revises a published
+			// mark, so withdraw publication (and unlock) first — an update that
+			// touches only result_status/is_locked passes both triggers — then
+			// change the marks, then restore the original publication/lock state.
+			const state = fmStateMap.get(row.final_marks_id)
+			const wasPublished = state?.result_status === 'Published'
+			const wasLocked = state?.is_locked === true
+
+			if (wasPublished || wasLocked) {
+				const withdrawPayload: Record<string, any> = { updated_at: new Date().toISOString() }
+				if (wasPublished) withdrawPayload.result_status = 'Under Review'
+				if (wasLocked) withdrawPayload.is_locked = false
+
+				const { error: withdrawErr } = await supabase
+					.from('final_marks')
+					.update(withdrawPayload)
+					.eq('id', row.final_marks_id)
+
+				if (withdrawErr) {
+					console.error('[Reval Final Marks] Withdraw error:', withdrawErr)
+					errors.push({
+						register_no: row.register_no,
+						student_name: row.student_name,
+						error: `Failed to withdraw publication: ${withdrawErr.message || 'unknown error'}`
+					})
+					continue
+				}
+			}
+
 			const { error } = await supabase
 				.from('final_marks')
 				.update(updatePayload)
 				.eq('id', row.final_marks_id)
+
+			// Restore the original publication/lock state regardless of apply outcome,
+			// so a row is never left silently withdrawn/unlocked.
+			if (wasPublished || wasLocked) {
+				const restorePayload: Record<string, any> = { updated_at: new Date().toISOString() }
+				if (wasPublished) restorePayload.result_status = 'Published'
+				if (wasLocked) restorePayload.is_locked = true
+
+				const { error: restoreErr } = await supabase
+					.from('final_marks')
+					.update(restorePayload)
+					.eq('id', row.final_marks_id)
+
+				if (restoreErr) {
+					console.error('[Reval Final Marks] Re-publish error:', restoreErr)
+					errors.push({
+						register_no: row.register_no,
+						student_name: row.student_name,
+						error: `Marks ${error ? 'not ' : ''}applied but failed to restore publication: ${restoreErr.message || 'unknown error'}`
+					})
+					continue
+				}
+			}
 
 			if (error) {
 				console.error('[Reval Final Marks] Apply error:', error)
@@ -567,7 +656,8 @@ async function handleGenerate(supabase: any, body: any) {
 		grade_changed: results.filter(r => r.old_grade !== r.new_grade).length,
 		already_applied: results.filter(r => r.is_revaluation_applied).length,
 		skipped: skipped.length,
-		applied_count: appliedCount
+		applied_count: appliedCount,
+		no_change_skipped: noChangeSkipped
 	}
 
 	return NextResponse.json({

@@ -158,6 +158,7 @@ interface GalleyReportData {
 	}
 	semester: number
 	batch: string
+	revaluation_view?: 'after' | 'before'
 	students: StudentData[]
 	courseAnalysis: CourseAnalysis[]
 	statistics: {
@@ -216,6 +217,8 @@ export default function GalleyReportPage() {
 	const { selectedSessionId, setSelectedSessionId, mustSelectSession } = useSessionSync()
 	const [selectedProgramId, setSelectedProgramId] = useState<string>("")
 	const [selectedSemester, setSelectedSemester] = useState<string>("")
+	// Marks view: 'after' = live/revalued (default), 'before' = pre-revaluation snapshot
+	const [revaluationView, setRevaluationView] = useState<'after' | 'before'>('after')
 
 	// Report data
 	const [reportData, setReportData] = useState<GalleyReportData | null>(null)
@@ -366,7 +369,7 @@ export default function GalleyReportPage() {
 			const programCode = program?.program_code || selectedProgramId
 
 			const res = await fetch(
-				`/api/grading/galley-report?institution_id=${selectedInstitutionId}&session_id=${selectedSessionId}&program_id=${programCode}&semester=${selectedSemester}`
+				`/api/grading/galley-report?institution_id=${selectedInstitutionId}&session_id=${selectedSessionId}&program_id=${programCode}&semester=${selectedSemester}&revaluation_view=${revaluationView}`
 			)
 
 			if (res.ok) {
@@ -726,6 +729,38 @@ export default function GalleyReportPage() {
 								</PopoverContent>
 							</Popover>
 						</div>
+					</div>
+
+					{/* Marks view: After (default) vs Before revaluation */}
+					<div className="flex items-center gap-2 pt-2">
+						<span className="text-sm font-medium text-muted-foreground">Marks view:</span>
+						<div className="inline-flex rounded-md border overflow-hidden">
+							<button
+								type="button"
+								onClick={() => { setRevaluationView('after'); setReportData(null) }}
+								className={cn(
+									"px-3 py-1.5 text-sm transition-colors",
+									revaluationView === 'after' ? "bg-blue-600 text-white" : "bg-transparent hover:bg-muted"
+								)}
+							>
+								After Revaluation
+							</button>
+							<button
+								type="button"
+								onClick={() => { setRevaluationView('before'); setReportData(null) }}
+								className={cn(
+									"px-3 py-1.5 text-sm transition-colors border-l",
+									revaluationView === 'before' ? "bg-amber-600 text-white" : "bg-transparent hover:bg-muted"
+								)}
+							>
+								Before Revaluation
+							</button>
+						</div>
+						{revaluationView === 'before' && (
+							<span className="text-xs text-amber-600 dark:text-amber-400">
+								Shows pre-revaluation marks for revalued learners
+							</span>
+						)}
 					</div>
 
 					{/* Action Buttons */}

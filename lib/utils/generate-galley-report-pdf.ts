@@ -95,6 +95,7 @@ interface GalleyReportData {
 	}
 	semester: number
 	batch: string
+	revaluation_view?: 'after' | 'before'
 	students: StudentData[]
 	courseAnalysis: CourseAnalysis[]
 	statistics: {
@@ -216,7 +217,8 @@ export function generateGalleyReportPDF(data: GalleyReportData): string {
 		doc.setFontSize(12)
 		const examBase = (data.session?.exam_type_name || 'END SEMESTER EXAMINATION').toUpperCase().trim()
 		const examLabel = examBase.includes('RESULT') ? examBase : `${examBase} RESULTS`
-		const title = sessionName ? `${examLabel} - ${sessionName.toUpperCase()}` : examLabel
+		const revalSuffix = data.revaluation_view === 'before' ? ' (BEFORE REVALUATION)' : ''
+		const title = (sessionName ? `${examLabel} - ${sessionName.toUpperCase()}` : examLabel) + revalSuffix
 		doc.text(title, pageWidth / 2, currentY, { align: 'center' })
 
 		currentY += 6
@@ -739,7 +741,8 @@ export function generateGalleyReportPDF(data: GalleyReportData): string {
 	const programCode = data.program?.program_code || 'PROGRAM'
 	const semester = data.semester || ''
 	const sessionCode = data.session?.session_code?.replace(/\s+/g, '_') || ''
-	const fileName = `Galley_Report_${programCode}_Sem${semester}_${sessionCode}_${new Date().toISOString().split('T')[0]}.pdf`
+	const revalTag = data.revaluation_view === 'before' ? '_BEFORE-REVAL' : ''
+	const fileName = `Galley_Report_${programCode}_Sem${semester}_${sessionCode}${revalTag}_${new Date().toISOString().split('T')[0]}.pdf`
 	doc.save(fileName)
 
 	return fileName

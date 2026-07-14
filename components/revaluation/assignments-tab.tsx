@@ -68,14 +68,24 @@ export default function AssignmentsTab() {
 
 	const fetchExaminers = async () => {
 		try {
-			const url = appendToUrl('/api/examiners?status=active')
+			// Status values are stored uppercase (ACTIVE / PENDING); lowercase returns nothing.
+			const url = appendToUrl('/api/examiners?status=ACTIVE&limit=9999')
 			const response = await fetch(url)
-			if (!response.ok) throw new Error('Failed to fetch examiners')
+			if (!response.ok) {
+				const body = await response.text().catch(() => '')
+				throw new Error(`Failed to fetch examiners (${response.status})${body ? `: ${body}` : ''}`)
+			}
 
-			const data = await response.json()
-			setExaminers(data)
+			// API returns { data, total, stats } — not a bare array.
+			const result = await response.json()
+			setExaminers(Array.isArray(result) ? result : (result.data || []))
 		} catch (error) {
 			console.error('Fetch examiners error:', error)
+			toast({
+				title: '❌ Failed to fetch examiners',
+				description: error instanceof Error ? error.message : 'Unknown error',
+				variant: 'destructive',
+			})
 		}
 	}
 
@@ -173,7 +183,7 @@ export default function AssignmentsTab() {
 							<SelectContent>
 								{examiners.map((examiner) => (
 									<SelectItem key={examiner.id} value={examiner.id}>
-										{examiner.name} - {examiner.email}
+										{examiner.full_name || examiner.name} - {examiner.email}
 									</SelectItem>
 								))}
 							</SelectContent>

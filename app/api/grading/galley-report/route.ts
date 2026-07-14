@@ -11,6 +11,8 @@ export async function GET(request: NextRequest) {
 	const sessionId = searchParams.get('session_id')
 	const programId = searchParams.get('program_id')
 	const semester = searchParams.get('semester')
+	// 'after' (default) = live/revalued marks; 'before' = pre-revaluation snapshot
+	const revaluationView = searchParams.get('revaluation_view') === 'before' ? 'before' : 'after'
 
 	try {
 		// Dropdown: Get institutions
@@ -322,6 +324,14 @@ export async function GET(request: NextRequest) {
 			is_pass,
 			pass_status,
 			result_status,
+			${revaluationView === 'before' ? `
+			is_revaluation_applied,
+			original_external_marks_obtained,
+			original_total_marks_obtained,
+			original_percentage,
+			original_letter_grade,
+			original_grade_points,
+			original_pass_status,` : ''}
 			student_id,
 			course_id,
 			course_offering_id,
@@ -400,6 +410,28 @@ export async function GET(request: NextRequest) {
 			console.log('Exact match returned 0 results, trying ilike fallback...')
 			finalMarksRaw = await fetchAllFinalMarks(programId, true)
 			console.log('Found final_marks with ilike program_code match:', finalMarksRaw.length)
+		}
+
+		// BEFORE-REVALUATION VIEW: for rows where revaluation was applied, swap the
+		// live (revalued) marks back to the pre-revaluation snapshot (original_*).
+		// Rows never revalued keep their current values (their original_* are null).
+		// This runs once, before any report building, so all downstream logic uses
+		// the chosen values transparently. Default 'after' leaves everything as-is.
+		if (revaluationView === 'before') {
+			finalMarksRaw = (finalMarksRaw || []).map((m: any) => {
+				if (!m?.is_revaluation_applied) return m
+				const origPass = m.original_pass_status
+				return {
+					...m,
+					external_marks_obtained: m.original_external_marks_obtained,
+					total_marks_obtained: m.original_total_marks_obtained,
+					percentage: m.original_percentage,
+					letter_grade: m.original_letter_grade,
+					grade_points: m.original_grade_points,
+					pass_status: origPass,
+					is_pass: origPass === 'Pass'
+				}
+			})
 		}
 
 		// Get unique course IDs from final_marks (these reference courses.id)
@@ -959,6 +991,7 @@ export async function GET(request: NextRequest) {
 			program,
 			semester: parseInt(semester),
 			batch: batchName,
+			revaluation_view: revaluationView,
 			students,
 			courseAnalysis,
 			statistics: {
