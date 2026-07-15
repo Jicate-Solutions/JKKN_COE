@@ -63,6 +63,7 @@ export async function GET(req: NextRequest) {
         updated_at,
         class_hours,
         theory_hours,
+        tutorial_hours,
         practical_hours,
         internal_max_mark,
         internal_pass_mark,
@@ -275,6 +276,7 @@ CREATE INDEX IF NOT EXISTS idx_courses_created_at ON courses(created_at);
       // Required fields for marks and hours
       class_hours: row.class_hours ?? 0,
       theory_hours: row.theory_hours ?? 0,
+      tutorial_hours: row.tutorial_hours ?? 0,
       practical_hours: row.practical_hours ?? 0,
       internal_max_mark: row.internal_max_mark ?? 0,
       internal_pass_mark: row.internal_pass_mark ?? 0,
@@ -424,6 +426,7 @@ export async function POST(req: NextRequest) {
       // Required fields for marks and hours
       class_hours: input.class_hours !== undefined ? Number(input.class_hours) : 0,
       theory_hours: input.theory_hours !== undefined ? Number(input.theory_hours) : 0,
+      tutorial_hours: input.tutorial_hours !== undefined ? Number(input.tutorial_hours) : 0,
       practical_hours: input.practical_hours !== undefined ? Number(input.practical_hours) : 0,
       internal_max_mark: input.internal_max_mark !== undefined ? Number(input.internal_max_mark) : 0,
       internal_pass_mark: input.internal_pass_mark !== undefined ? Number(input.internal_pass_mark) : 0,

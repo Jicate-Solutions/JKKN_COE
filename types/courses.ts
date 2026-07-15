@@ -75,6 +75,7 @@ export interface Course {
 	// Required fields for marks and hours
 	class_hours: number
 	theory_hours: number
+	tutorial_hours?: number
 	practical_hours: number
 	internal_max_mark: number
 	internal_pass_mark: number

@@ -66,6 +66,7 @@ export function generateCourseTemplate(referenceData: CourseReferenceData): Exce
 		'Description',              // 31
 		'Class Hours*',             // 32
 		'Theory Hours*',            // 33
+		'Tutorial Hours',           // (optional)
 		'Practical Hours*',         // 34
 		'Internal Max Mark*',       // 35
 		'Internal Pass Mark*',      // 36
@@ -115,6 +116,7 @@ export function generateCourseTemplate(referenceData: CourseReferenceData): Exce
 		'Introductory C course for UG students', // Description
 		45,                              // Class Hours*
 		30,                              // Theory Hours*
+		0,                               // Tutorial Hours (optional)
 		15,                              // Practical Hours*
 		40,                              // Internal Max Mark*
 		16,                              // Internal Pass Mark*
@@ -183,6 +185,7 @@ export function generateCourseTemplate(referenceData: CourseReferenceData): Exce
 		40,  // 31 Description
 		15,  // 32 Class Hours*
 		15,  // 33 Theory Hours*
+		15,  // Tutorial Hours (optional)
 		17,  // 34 Practical Hours*
 		20,  // 35 Internal Max Mark*
 		20,  // 36 Internal Pass Mark*

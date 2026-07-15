@@ -9,7 +9,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Badge } from '@/components/ui/badge'
 import { useToast } from '@/hooks/common/use-toast'
-import { Loader2, ListChecks, Check, ChevronsUpDown, GraduationCap, Download, Users, AlertTriangle, Copy, ExternalLink } from 'lucide-react'
+import { Loader2, ListChecks, Check, ChevronsUpDown, GraduationCap, Download, Users, AlertTriangle, Copy, ExternalLink, FileSpreadsheet } from 'lucide-react'
 import Link from 'next/link'
 import { cn } from '@/lib/utils'
 import { useInstitutionFilter } from '@/hooks/use-institution-filter'
@@ -185,6 +185,7 @@ export function ConsolidatedMarksheetTab() {
 	const [loadingMarksheet, setLoadingMarksheet] = useState(false)
 	const [generatingPDF, setGeneratingPDF] = useState(false)
 	const [generatingBatchPDF, setGeneratingBatchPDF] = useState(false)
+	const [exportingExcel, setExportingExcel] = useState(false)
 
 	// Progress tracking for PDF generation
 	const [pdfProgress, setPdfProgress] = useState({
@@ -677,6 +678,66 @@ export function ConsolidatedMarksheetTab() {
 		}
 	}
 
+	// Export the university degree-data upload sheet (.xlsx) for the whole
+	// program cohort. Sourced from consolidated_results + institutions.code +
+	// MyJKKN learner/program data (built server-side, streamed as a file).
+	const handleUniversityExport = async () => {
+		if (!selectedInstitutionId || !selectedProgramCode) {
+			toast({
+				title: '❌ Missing Filters',
+				description: 'Please select institution and program',
+				variant: 'destructive'
+			})
+			return
+		}
+
+		try {
+			setExportingExcel(true)
+			const url = `/api/reports/consolidated-marksheet?action=university-data-export&institutionId=${selectedInstitutionId}&programCode=${encodeURIComponent(selectedProgramCode)}`
+			const res = await fetch(url)
+
+			if (!res.ok) {
+				let message = 'Failed to export university data'
+				try {
+					const err = await res.json()
+					message = err?.error || message
+				} catch {
+					// non-JSON error body
+				}
+				throw new Error(message)
+			}
+
+			const blob = await res.blob()
+			const disposition = res.headers.get('Content-Disposition') || ''
+			const match = disposition.match(/filename="?([^"]+)"?/)
+			const filename = match?.[1] || `University_Data_${selectedProgramCode}.xlsx`
+
+			const downloadUrl = window.URL.createObjectURL(blob)
+			const link = document.createElement('a')
+			link.href = downloadUrl
+			link.download = filename
+			document.body.appendChild(link)
+			link.click()
+			document.body.removeChild(link)
+			window.URL.revokeObjectURL(downloadUrl)
+
+			toast({
+				title: '✅ Excel Downloaded',
+				description: 'University data sheet has been downloaded',
+				className: 'bg-green-50 border-green-200 text-green-800'
+			})
+		} catch (error) {
+			console.error('[Consolidated Marksheet] Error exporting university data:', error)
+			toast({
+				title: '❌ Error',
+				description: error instanceof Error ? error.message : 'Failed to export university data',
+				variant: 'destructive'
+			})
+		} finally {
+			setExportingExcel(false)
+		}
+	}
+
 	// =====================================================
 	// RENDER HELPERS
 	// =====================================================
@@ -900,7 +961,7 @@ export function ConsolidatedMarksheetTab() {
 										<p className="text-sm text-muted-foreground">Only learners who have cleared every course are listed. Download all consolidated marksheets in a single merged PDF.</p>
 									</div>
 								</div>
-								<div className="flex gap-3">
+								<div className="flex flex-wrap gap-3 justify-end">
 									<Button
 										onClick={() => handleBatchDownload(false)}
 										disabled={generatingBatchPDF}
@@ -925,6 +986,19 @@ export function ConsolidatedMarksheetTab() {
 										)}
 										Download (With Header)
 									</Button>
+										<Button
+											onClick={handleUniversityExport}
+											disabled={exportingExcel}
+											variant="outline"
+											className="border-emerald-600 text-emerald-700 hover:bg-emerald-50"
+										>
+											{exportingExcel ? (
+												<Loader2 className="h-4 w-4 mr-2 animate-spin" />
+											) : (
+												<FileSpreadsheet className="h-4 w-4 mr-2" />
+											)}
+											Export University Data (Excel)
+										</Button>
 								</div>
 							</div>
 						</div>

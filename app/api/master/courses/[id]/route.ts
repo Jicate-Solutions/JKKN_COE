@@ -51,6 +51,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
         updated_at,
         class_hours,
         theory_hours,
+        tutorial_hours,
         practical_hours,
         internal_max_mark,
         internal_pass_mark,
@@ -114,6 +115,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
       // Required fields for marks and hours
       class_hours: data.class_hours ?? 0,
       theory_hours: data.theory_hours ?? 0,
+      tutorial_hours: data.tutorial_hours ?? 0,
       practical_hours: data.practical_hours ?? 0,
       internal_max_mark: data.internal_max_mark ?? 0,
       internal_pass_mark: data.internal_pass_mark ?? 0,
@@ -249,6 +251,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
     // Required fields for marks and hours
     if (input.class_hours !== undefined) data.class_hours = Number(input.class_hours)
     if (input.theory_hours !== undefined) data.theory_hours = Number(input.theory_hours)
+    if (input.tutorial_hours !== undefined) data.tutorial_hours = Number(input.tutorial_hours)
     if (input.practical_hours !== undefined) data.practical_hours = Number(input.practical_hours)
     if (input.internal_max_mark !== undefined) data.internal_max_mark = Number(input.internal_max_mark)
     if (input.internal_pass_mark !== undefined) data.internal_pass_mark = Number(input.internal_pass_mark)
@@ -361,6 +364,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
       updated_at: updated.updated_at,
       class_hours: updated.class_hours ?? 0,
       theory_hours: updated.theory_hours ?? 0,
+      tutorial_hours: updated.tutorial_hours ?? 0,
       practical_hours: updated.practical_hours ?? 0,
       internal_max_mark: updated.internal_max_mark ?? 0,
       internal_pass_mark: updated.internal_pass_mark ?? 0,

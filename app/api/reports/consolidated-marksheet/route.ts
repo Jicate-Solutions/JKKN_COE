@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
 import { fetchAllMyJKKNPrograms } from '@/services/myjkkn-service'
+import { generateUniversityDataExcel, type UniversityDataRow } from '@/lib/utils/generate-university-data-excel'
 
 // =====================================================
 // GRADE CONVERSION TABLE (UG)
@@ -919,6 +920,38 @@ function resolveCumulativeGrade(
 	return { cumulativeGrade: '', classification: fallback }
 }
 
+/**
+ * Derive the BRANCH from a program name by stripping the leading degree
+ * abbreviation. e.g. ("M.Sc. MATHEMATICS", "M.Sc") -> "MATHEMATICS".
+ * Matching is tolerant of dots/spaces/case. Falls back to dropping the first
+ * dotted token when the degree code doesn't match the prefix.
+ */
+function stripDegreePrefix(programName: string, degreeCode: string): string {
+	const name = (programName || '').trim()
+	if (!name) return ''
+
+	const normalize = (s: string) => s.replace(/[^a-z0-9]/gi, '').toLowerCase()
+	const dc = normalize(degreeCode)
+
+	if (dc) {
+		let normAcc = ''
+		for (let i = 0; i < name.length; i++) {
+			normAcc += normalize(name[i])
+			if (normAcc === dc) {
+				return name.slice(i + 1).replace(/^[\s.\-]+/, '').trim()
+			}
+			if (normAcc.length >= dc.length) break
+		}
+	}
+
+	// Fallback: drop the first whitespace token if it looks like a degree abbrev
+	const parts = name.split(/\s+/)
+	if (parts.length > 1 && /\./.test(parts[0])) {
+		return parts.slice(1).join(' ').trim()
+	}
+	return name
+}
+
 // =====================================================
 // API HANDLER
 // =====================================================
@@ -1799,6 +1832,300 @@ export async function GET(req: NextRequest) {
 				total: marksheets.length,
 				skipped: skippedLearners.length,
 				skippedLearners
+			})
+		}
+
+		// =====================================================
+		// ACTION: university-data-export
+		// Excel (.xlsx) in the university degree-data upload format.
+		// One row per consolidated_results record for the selected
+		// institution + program.
+		//   NEW_CODE  <- institutions.code
+		//   REG_NO / MAJ_PER (cgpa) / MAJ_CLSS_E (part_a_classification) /
+		//     YR_COMP (last_appearance_month + year)  <- consolidated_results
+		//   ENG_NAME / GENDER  <- MyJKKN learners/profiles
+		//   E_DEGNAME / E_BRANCHNA / DEGREE  <- MyJKKN programs
+		//   TAMIL_NAME / T_INITIAL / MEDIUM  <- no source, emitted blank
+		// =====================================================
+		if (action === 'university-data-export') {
+			const institutionId = searchParams.get('institutionId')
+			const programCode = searchParams.get('programCode')
+
+			if (!institutionId || !programCode) {
+				return NextResponse.json(
+					{ error: 'institutionId and programCode are required' },
+					{ status: 400 }
+				)
+			}
+
+			// --- Institution: NEW_CODE (institutions.code) + MyJKKN ids ---
+			// select('*') so we read `code` when present without crashing the
+			// query if the column is absent in a given deployment.
+			const { data: inst, error: instErr } = await supabase
+				.from('institutions')
+				.select('*')
+				.eq('id', institutionId)
+				.single()
+
+			if (instErr) {
+				console.error('[University Data Export] Institution lookup error:', instErr)
+				return NextResponse.json({ error: 'Institution not found' }, { status: 404 })
+			}
+
+			const newCode = (inst as any)?.code || inst?.institution_code || ''
+			const myjkknIds: string[] = inst?.myjkkn_institution_ids || []
+
+			// --- Resolve program UUID (fallback to program_code filter) ---
+			const programUuid = await resolveProgramUuid(supabase, programCode, institutionId)
+
+			// --- Consolidated results for the cohort ---
+			let crQuery = supabase
+				.from('consolidated_results')
+				.select('register_number, cgpa, result_class, part_a_classification, last_appearance_month, last_appearance_year')
+				.eq('institutions_id', institutionId)
+				.eq('is_active', true)
+				.order('register_number', { ascending: true })
+				.range(0, 999999)
+
+			if (programUuid) {
+				crQuery = crQuery.eq('program_id', programUuid)
+			} else {
+				crQuery = crQuery.eq('program_code', programCode)
+			}
+
+			const { data: crRows, error: crErr } = await crQuery
+			if (crErr) {
+				console.error('[University Data Export] consolidated_results error:', crErr)
+				throw crErr
+			}
+
+			const consolidatedRows = crRows || []
+			if (consolidatedRows.length === 0) {
+				return NextResponse.json(
+					{ error: 'No consolidated results found for the selected institution and program. Generate consolidated results first.' },
+					{ status: 404 }
+				)
+			}
+
+			// --- Degree / branch / medium from LOCAL tables (no MyJKKN) ---
+			//   For a program name like "M.Sc. MATHEMATICS":
+			//   E_DEGNAME  <- degrees.degree_name ("MASTER OF SCIENCE"), via degree_id/degree_code
+			//   E_BRANCHNA <- program name minus the degree prefix ("MATHEMATICS")
+			//   DEGREE     <- programs.program_name (full, e.g. "M.Sc. MATHEMATICS")
+			//   MEDIUM     <- ENGLISH by default, TAMIL for a Tamil program
+			let degreeName = ''
+			let programName = ''
+			let branchName = ''
+			let medium = 'ENGLISH'
+			{
+				const { data: progRow } = await supabase
+					.from('programs')
+					.select('program_name, degree_code, degree_id')
+					.eq('program_code', programCode)
+					.eq('institutions_id', institutionId)
+					.maybeSingle()
+
+				programName = (progRow?.program_name || '').trim()
+				const degreeCode = progRow?.degree_code || ''
+				const degreeId = (progRow as any)?.degree_id || null
+
+				// Load the institution's degrees (fall back to institution_code scope)
+				let degList: any[] = []
+				const { data: byInst } = await supabase
+					.from('degrees')
+					.select('id, degree_code, degree_name')
+					.eq('institutions_id', institutionId)
+				degList = byInst || []
+				if (degList.length === 0 && inst?.institution_code) {
+					const { data: byCode } = await supabase
+						.from('degrees')
+						.select('id, degree_code, degree_name')
+						.eq('institution_code', inst.institution_code)
+					degList = byCode || []
+				}
+
+				const normalize = (s: string) => (s || '').replace(/[^a-z0-9]/gi, '').toLowerCase()
+
+				// E_DEGNAME: match by degree_id, then degree_code, then by the
+				// degree abbreviation that prefixes the program name.
+				let degRow: any = null
+				if (degreeId) degRow = degList.find(d => d.id === degreeId)
+				if (!degRow && degreeCode) {
+					degRow = degList.find(d => normalize(d.degree_code) === normalize(degreeCode))
+				}
+				if (!degRow && programName) {
+					const normName = normalize(programName)
+					const candidates = degList
+						.filter(d => d.degree_code && normName.startsWith(normalize(d.degree_code)))
+						.sort((a, b) => normalize(b.degree_code).length - normalize(a.degree_code).length)
+					degRow = candidates[0] || null
+				}
+				degreeName = (degRow?.degree_name || '').toUpperCase()
+
+				// E_BRANCHNA = program name minus the degree abbreviation
+				// (use the matched degree's code when available)
+				const effectiveDegreeCode = degRow?.degree_code || degreeCode
+				branchName = stripDegreePrefix(programName, effectiveDegreeCode).toUpperCase()
+
+				// MEDIUM: Tamil program -> TAMIL, else ENGLISH
+				if (/tamil/i.test(programName)) medium = 'TAMIL'
+			}
+
+			// --- ENG_NAME + GENDER (first_name, last_name, gender) ---
+			// Perf: the local learners_profiles mirror (an indexed copy of the
+			// MyJKKN learners/profiles data) is queried FIRST. Full MyJKKN
+			// pagination over a whole institution takes ~90s, so it is only used
+			// as a targeted, parallel fallback for register numbers the mirror
+			// doesn't have.
+			const registerNumbers = consolidatedRows
+				.map((r: any) => r.register_number)
+				.filter(Boolean)
+			const extInfoMap: Record<string, { firstName?: string; lastName?: string; gender?: string }> = {}
+
+			// 1. Local mirror (fast, chunked)
+			{
+				const LP_CHUNK = 100
+				for (let i = 0; i < registerNumbers.length; i += LP_CHUNK) {
+					const chunk = registerNumbers.slice(i, i + LP_CHUNK)
+					const { data: lpRows, error: lpErr } = await supabase
+						.from('learners_profiles')
+						.select('register_number, first_name, last_name, gender')
+						.in('register_number', chunk)
+					if (lpErr) {
+						if (lpErr.code === 'PGRST205') break // mirror table absent
+						console.warn('[University Data Export] learners_profiles error:', lpErr)
+						break
+					}
+					for (const lp of (lpRows || [])) {
+						if (!lp.register_number) continue
+						extInfoMap[lp.register_number] = {
+							firstName: lp.first_name || undefined,
+							lastName: lp.last_name || undefined,
+							gender: lp.gender || undefined
+						}
+					}
+				}
+			}
+
+			// 1.5 Local COE students table (register_number, first_name, last_name, gender).
+			// Covers graduated learners that neither the mirror nor MyJKKN's active
+			// profiles API returns.
+			const missingAfterMirror = registerNumbers.filter(rn => {
+				const e = extInfoMap[rn]
+				return !e || (!e.firstName && !e.lastName) || !e.gender
+			})
+			if (missingAfterMirror.length > 0) {
+				const ST_CHUNK = 100
+				for (let i = 0; i < missingAfterMirror.length; i += ST_CHUNK) {
+					const chunk = missingAfterMirror.slice(i, i + ST_CHUNK)
+					const { data: stRows, error: stErr } = await supabase
+						.from('students')
+						.select('register_number, first_name, last_name, gender')
+						.in('register_number', chunk)
+					if (stErr) {
+						console.warn('[University Data Export] students fallback error:', stErr)
+						break
+					}
+					for (const st of (stRows || [])) {
+						if (!st.register_number) continue
+						const e = extInfoMap[st.register_number] || {}
+						extInfoMap[st.register_number] = {
+							firstName: e.firstName || st.first_name || undefined,
+							lastName: e.lastName || st.last_name || undefined,
+							gender: e.gender || st.gender || undefined
+						}
+					}
+				}
+			}
+
+			// 2. MyJKKN targeted fallback for anyone still missing name/gender
+			const stillMissing = registerNumbers.filter(rn => {
+				const e = extInfoMap[rn]
+				return !e || (!e.firstName && !e.lastName) || !e.gender
+			})
+			if (stillMissing.length > 0 && myjkknIds.length > 0) {
+				const myjkknApiUrl = process.env.MYJKKN_API_URL || 'https://www.jkkn.ai/api'
+				const myjkknApiKey = process.env.MYJKKN_API_KEY || ''
+				if (myjkknApiKey) {
+					const CONCURRENCY = 6
+					for (let i = 0; i < stillMissing.length; i += CONCURRENCY) {
+						const batch = stillMissing.slice(i, i + CONCURRENCY)
+						await Promise.all(batch.map(async (regNo) => {
+							try {
+								const p = new URLSearchParams()
+								p.set('register_number', regNo)
+								p.set('limit', '200')
+								const resp = await fetch(
+									`${myjkknApiUrl}/api-management/learners/profiles?${p.toString()}`,
+									{
+										method: 'GET',
+										headers: {
+											'Authorization': `Bearer ${myjkknApiKey}`,
+											'Accept': 'application/json',
+											'Content-Type': 'application/json',
+										},
+										cache: 'no-store',
+									}
+								)
+								if (!resp.ok) return
+								const json = await resp.json()
+								const profiles: any[] = json.data || []
+								// Only accept an exact register_number match
+								const match = profiles.find((pp: any) => pp.register_number === regNo)
+								if (match) {
+									const e = extInfoMap[regNo] || {}
+									extInfoMap[regNo] = {
+										firstName: e.firstName || match.first_name || undefined,
+										lastName: e.lastName || match.last_name || undefined,
+										gender: e.gender || match.gender || undefined
+									}
+								}
+							} catch (e) {
+								console.warn(`[University Data Export] targeted profile lookup failed for ${regNo}:`, e)
+							}
+						}))
+					}
+				}
+			}
+
+			// --- Build rows ---
+			const excelRows: UniversityDataRow[] = consolidatedRows.map((r: any) => {
+				const ext = extInfoMap[r.register_number] || {}
+				// ENG_NAME = learners_profile.first_name + last_name
+				const engName = [ext.firstName, ext.lastName].filter(Boolean).join(' ').toUpperCase()
+				const yrComp = [r.last_appearance_month, r.last_appearance_year]
+					.filter(v => v !== null && v !== undefined && v !== '')
+					.join(' ')
+				return {
+					NEW_CODE: newCode,
+					REG_NO: r.register_number || '',
+					// MAJ_PER = overall CGPA as a numeric cell (per user mapping)
+					MAJ_PER: r.cgpa !== null && r.cgpa !== undefined ? Number(r.cgpa) : '',
+					// MAJ_CLSS_E = Part A classification (uppercase); fall back to overall result_class
+					MAJ_CLSS_E: (r.part_a_classification || r.result_class || '').toString().toUpperCase(),
+					YR_COMP: yrComp,
+					E_DEGNAME: degreeName,
+					E_BRANCHNA: branchName,
+					ENG_NAME: engName,
+					TAMIL_NAME: '',
+					T_INITIAL: '',
+					// DEGREE = full program name (e.g. "M.Sc. MATHEMATICS")
+					DEGREE: programName,
+					MEDIUM: medium,
+					GENDER: (ext.gender || '').toString().toUpperCase()
+				}
+			})
+
+			const buffer = await generateUniversityDataExcel(excelRows)
+			const filename = `University_Data_${programCode}_${consolidatedRows.length}.xlsx`
+
+			return new NextResponse(new Uint8Array(buffer), {
+				status: 200,
+				headers: {
+					'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+					'Content-Disposition': `attachment; filename="${filename}"`,
+					'Cache-Control': 'no-store'
+				}
 			})
 		}
 

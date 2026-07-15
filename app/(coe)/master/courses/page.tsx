@@ -241,6 +241,7 @@ export default function CoursesPage() {
     // Required fields for marks and hours
     class_hours: '0',
     theory_hours: '0',
+    tutorial_hours: '0',
     practical_hours: '0',
     internal_max_mark: '0',
     internal_pass_mark: '0',
@@ -544,6 +545,7 @@ export default function CoursesPage() {
       // Required fields for marks and hours
       class_hours: '0',
       theory_hours: '0',
+      tutorial_hours: '0',
       practical_hours: '0',
       internal_max_mark: '0',
       internal_pass_mark: '0',
@@ -602,6 +604,7 @@ export default function CoursesPage() {
       // Required fields for marks and hours
       class_hours: String(row.class_hours ?? 0),
       theory_hours: String(row.theory_hours ?? 0),
+      tutorial_hours: String(row.tutorial_hours ?? 0),
       practical_hours: String(row.practical_hours ?? 0),
       internal_max_mark: String(row.internal_max_mark ?? 0),
       internal_pass_mark: String(row.internal_pass_mark ?? 0),
@@ -858,6 +861,7 @@ export default function CoursesPage() {
       'Description': c.description || '',
       'Class Hours*': c.class_hours || 0,
       'Theory Hours*': c.theory_hours || 0,
+      'Tutorial Hours': c.tutorial_hours || 0,
       'Practical Hours*': c.practical_hours || 0,
       'Internal Max Mark*': c.internal_max_mark || 0,
       'Internal Pass Mark*': c.internal_pass_mark || 0,
@@ -923,6 +927,7 @@ export default function CoursesPage() {
       is_active: c.is_active,
       class_hours: c.class_hours || null,
       theory_hours: c.theory_hours || null,
+      tutorial_hours: c.tutorial_hours || null,
       practical_hours: c.practical_hours || null,
       internal_max_mark: c.internal_max_mark || null,
       internal_pass_mark: c.internal_pass_mark || null,
@@ -1067,6 +1072,7 @@ export default function CoursesPage() {
             description: str(row['Description'] || row.description),
             class_hours: Number(row['Class Hours*'] || row['Class Hours'] || row['Total Class Hours'] || row.class_hours) || 0,
             theory_hours: Number(row['Theory Hours*'] || row['Theory Hours'] || row.theory_hours) || 0,
+            tutorial_hours: Number(row['Tutorial Hours'] || row.tutorial_hours) || 0,
             practical_hours: Number(row['Practical Hours*'] || row['Practical Hours'] || row.practical_hours) || 0,
             internal_max_mark: Number(row['Internal Max Mark*'] || row['Internal Max Mark'] || row.internal_max_mark) || 0,
             internal_pass_mark: Number(row['Internal Pass Mark*'] || row['Internal Pass Mark'] || row.internal_pass_mark) || 0,
@@ -1446,6 +1452,9 @@ export default function CoursesPage() {
           }
           if (row['Theory Hours*'] !== undefined || row['Theory Hours'] !== undefined || row.theory_hours !== undefined) {
             payload.theory_hours = Number(row['Theory Hours*'] || row['Theory Hours'] || row.theory_hours) || 0
+          }
+          if (row['Tutorial Hours'] !== undefined || row.tutorial_hours !== undefined) {
+            payload.tutorial_hours = Number(row['Tutorial Hours'] || row.tutorial_hours) || 0
           }
           if (row['Practical Hours*'] !== undefined || row['Practical Hours'] !== undefined || row.practical_hours !== undefined) {
             payload.practical_hours = Number(row['Practical Hours*'] || row['Practical Hours'] || row.practical_hours) || 0
@@ -2486,7 +2495,7 @@ export default function CoursesPage() {
 <div className="space-y-4 pt-2 border-t">
   <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Marks & Hours</h3>
 
-  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
     <div className="space-y-2">
       <Label className="text-sm font-semibold">Total Class Hours <span className="text-red-500">*</span></Label>
       <Input type="number" step="1" value={formData.class_hours} onChange={(e) => setFormData({ ...formData, class_hours: e.target.value })} className={`h-10 ${errors.class_hours ? 'border-destructive' : ''}`} placeholder="0" />
@@ -2498,10 +2507,18 @@ export default function CoursesPage() {
       {errors.theory_hours && <p className="text-xs text-destructive">{errors.theory_hours}</p>}
     </div>
     <div className="space-y-2">
+      <Label className="text-sm font-semibold">Tutorial Hours</Label>
+      <Input type="number" step="1" value={formData.tutorial_hours} onChange={(e) => setFormData({ ...formData, tutorial_hours: e.target.value })} className={`h-10 ${errors.tutorial_hours ? 'border-destructive' : ''}`} placeholder="0" />
+      {errors.tutorial_hours && <p className="text-xs text-destructive">{errors.tutorial_hours}</p>}
+    </div>
+    <div className="space-y-2">
       <Label className="text-sm font-semibold">Practical Hours <span className="text-red-500">*</span></Label>
       <Input type="number" step="1" value={formData.practical_hours} onChange={(e) => setFormData({ ...formData, practical_hours: e.target.value })} className={`h-10 ${errors.practical_hours ? 'border-destructive' : ''}`} placeholder="0" />
       {errors.practical_hours && <p className="text-xs text-destructive">{errors.practical_hours}</p>}
     </div>
+  </div>
+
+  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
     <div className="space-y-2">
       <Label className="text-sm font-semibold">Internal Max Mark <span className="text-red-500">*</span></Label>
       <Input type="number" step="1" value={formData.internal_max_mark} onChange={(e) => setFormData({ ...formData, internal_max_mark: e.target.value })} className={`h-10 ${errors.internal_max_mark ? 'border-destructive' : ''}`} placeholder="0" />

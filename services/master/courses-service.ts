@@ -104,6 +104,7 @@ export async function createCourse(data: Partial<CourseFormData>): Promise<Cours
 		// Required fields - always send as numbers (0 if empty)
 		class_hours: Number(data.class_hours) || 0,
 		theory_hours: Number(data.theory_hours) || 0,
+		tutorial_hours: Number(data.tutorial_hours) || 0,
 		practical_hours: Number(data.practical_hours) || 0,
 		internal_max_mark: Number(data.internal_max_mark) || 0,
 		internal_pass_mark: Number(data.internal_pass_mark) || 0,
@@ -171,6 +172,7 @@ export async function updateCourse(id: string, data: Partial<CourseFormData>): P
 		// Required fields
 		class_hours: Number(data.class_hours) || 0,
 		theory_hours: Number(data.theory_hours) || 0,
+		tutorial_hours: Number(data.tutorial_hours) || 0,
 		practical_hours: Number(data.practical_hours) || 0,
 		internal_max_mark: Number(data.internal_max_mark) || 0,
 		internal_pass_mark: Number(data.internal_pass_mark) || 0,
