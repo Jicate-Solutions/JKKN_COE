@@ -11,7 +11,7 @@ const COURSE_MAPPING_SELECT = `
 	batch_id, batch_code,
 	regulation_id, regulation_code,
 	semester_id, semester_code,
-	course_group, course_category, course_order,
+	course_group, course_category, course_order, group_order,
 	annual_semester, registration_based, is_active,
 	created_at, updated_at
 `

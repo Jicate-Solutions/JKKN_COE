@@ -156,6 +156,19 @@ const CourseTableRow = memo(function CourseTableRow({
 			<TableCell className="text-sm py-3">
 				{mapping.course_category || '-'}
 			</TableCell>
+			<TableCell className="py-3">
+				<Input
+					type="number"
+					value={mapping.group_order ?? mapping.course_order ?? ''}
+					onChange={(e) => onUpdateRow('group_order', e.target.value === '' ? null : parseInt(e.target.value))}
+					className="h-8 w-16 text-sm text-center px-1"
+					min={1}
+					max={999}
+					step={1}
+					placeholder="-"
+					title="Group order (optional) — give elective papers the same value to group them"
+				/>
+			</TableCell>
 			<TableCell className="text-center py-3">
 				<Checkbox
 					checked={mapping.annual_semester || false}
@@ -653,6 +666,7 @@ export default function CourseMappingAddPage() {
 						semester_code: table.semester.semester_code,
 						course_group: "General",
 						course_order: 1,
+						group_order: 1,
 						internal_max_mark: 40,
 						internal_pass_mark: 14,
 						internal_converted_mark: 25,
@@ -692,6 +706,7 @@ export default function CourseMappingAddPage() {
 			course_group: "General",
 			course_category: "",
 			course_order: semesterTables[semesterIndex].mappings.length + 1,
+			group_order: semesterTables[semesterIndex].mappings.length + 1,
 			internal_max_mark: 40,
 			internal_pass_mark: 20,
 			internal_converted_mark: 25,
@@ -1083,6 +1098,7 @@ export default function CourseMappingAddPage() {
 					'Course Category': mapping.course_category || '',
 					'Course Group': mapping.course_group || 'General',
 					'Course Order': mapping.course_order || 0,
+					'Group Order': mapping.group_order ?? mapping.course_order ?? '',
 					'Internal Pass Mark': mapping.internal_pass_mark || 0,
 					'Internal Max Mark': mapping.internal_max_mark || 0,
 					'Internal Converted Mark': mapping.internal_converted_mark || 0,
@@ -1339,6 +1355,7 @@ export default function CourseMappingAddPage() {
 						course_id: course!.id,
 						course_group: String(row['Course Group'] || 'General'),
 						course_order: Number(row['Course Order'] || 0),
+						group_order: (row['Group Order'] ?? '') === '' || row['Group Order'] == null ? (Number(row['Course Order'] || 0) || null) : Number(row['Group Order']),
 						internal_pass_mark: Number(row['Internal Pass Mark'] || 0),
 						internal_max_mark: Number(row['Internal Max Mark'] || 0),
 						internal_converted_mark: Number(row['Internal Converted Mark'] || 0),
@@ -1660,6 +1677,7 @@ export default function CourseMappingAddPage() {
 																	<TableHead className="w-[180px] text-xs h-8 font-semibold">Course Code</TableHead>
 																	<TableHead className="w-[220px] text-xs h-8 font-semibold">Course Name</TableHead>
 																	<TableHead className="w-[150px] text-xs h-8 font-semibold">Course Category</TableHead>
+																	<TableHead className="w-[80px] text-xs h-8 font-semibold">Group</TableHead>
 																	<TableHead className="w-[100px] text-center text-xs h-8 font-semibold">Annual</TableHead>
 																	<TableHead className="w-[120px] text-center text-xs h-8 font-semibold">
 																		<div className="flex flex-col items-center gap-1">
@@ -1689,7 +1707,7 @@ export default function CourseMappingAddPage() {
 														<TableBody>
 															{table.mappings.length === 0 ? (
 																<TableRow>
-																	<TableCell colSpan={8} className="text-center text-muted-foreground">
+																	<TableCell colSpan={9} className="text-center text-muted-foreground">
 																		No courses mapped. Click "Add Course" to start.
 																	</TableCell>
 																</TableRow>

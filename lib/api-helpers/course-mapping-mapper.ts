@@ -25,6 +25,7 @@ export function mapCourseMappingToResponse(dbMapping: any, format: 'mapped' | 'r
     semester_code: dbMapping.semester_code,
     semester_id: dbMapping.semester_id,
     course_order: dbMapping.course_order,
+    group_order: dbMapping.group_order,
     course_group: dbMapping.course_group,
     internal_max_mark: dbMapping.internal_max_mark ?? null,
     internal_pass_mark: dbMapping.internal_pass_mark ?? null,

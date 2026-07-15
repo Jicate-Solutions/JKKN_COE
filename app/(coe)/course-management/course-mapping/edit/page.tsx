@@ -56,6 +56,7 @@ type CourseMapping = {
 	course_group?: string
 	course_category?: string
 	course_order?: number
+	group_order?: number | null
 	internal_pass_mark?: number
 	internal_max_mark?: number
 	internal_converted_mark?: number
@@ -192,6 +193,19 @@ const CourseTableRow = memo(function CourseTableRow({
 					min={0.1}
 					max={999}
 					step={0.1}
+				/>
+			</TableCell>
+			<TableCell className="py-2 px-2">
+				<Input
+					type="number"
+					value={mapping.group_order ?? mapping.course_order ?? ''}
+					onChange={(e) => onUpdateRow('group_order', e.target.value === '' ? null : parseInt(e.target.value))}
+					className="h-7 w-14 text-xs text-center px-1"
+					min={1}
+					max={999}
+					step={1}
+					placeholder="-"
+					title="Group order (optional) — give elective papers the same value to group them"
 				/>
 			</TableCell>
 
@@ -959,6 +973,7 @@ export default function CourseMappingEditPage() {
 				semester_code: prev[semesterIndex].semester.semester_code,
 				course_category: "",
 				course_order: prev[semesterIndex].mappings.length + 1,
+				group_order: prev[semesterIndex].mappings.length + 1,
 				internal_max_mark: 40,
 				internal_pass_mark: 14,
 				internal_converted_mark: 25,
@@ -1211,6 +1226,7 @@ export default function CourseMappingEditPage() {
 						semester_id: table.semester.id, // MyJKKN semester.id
 						course_category: mapping.course_category,
 						course_order: mapping.course_order,
+						group_order: mapping.group_order ?? mapping.course_order ?? null,
 						internal_pass_mark: mapping.internal_pass_mark,
 						internal_max_mark: mapping.internal_max_mark,
 						internal_converted_mark: mapping.internal_converted_mark,
@@ -1412,6 +1428,7 @@ export default function CourseMappingEditPage() {
 						'Credits': course?.credits || 0,
 						'Course Category': mapping.course_category || '',
 						'Course Order': mapping.course_order || 1,
+						'Group Order': mapping.group_order ?? mapping.course_order ?? '',
 						'Annual Semester (TRUE/FALSE)': mapping.annual_semester ? 'TRUE' : 'FALSE',
 						'Registration Based (TRUE/FALSE)': mapping.registration_based ? 'TRUE' : 'FALSE',
 						'Active (TRUE/FALSE)': mapping.is_active !== false ? 'TRUE' : 'FALSE'
@@ -1637,6 +1654,7 @@ export default function CourseMappingEditPage() {
 						semester_id: semesterTable?.semester.id || "", // MyJKKN semester.id
 						course_category: row['Course Category'] || row.course_category || course.course_category || '',
 						course_order: Number(row['Course Order'] || row.course_order) || 1,
+						group_order: (row['Group Order'] ?? row.group_order) === '' || (row['Group Order'] ?? row.group_order) == null ? (Number(row['Course Order'] || row.course_order) || null) : Number(row['Group Order'] ?? row.group_order),
 						annual_semester: typeof row.annual_semester === 'boolean'
 							? row.annual_semester
 							: String(row['Annual Semester (TRUE/FALSE)'] || row.annual_semester || 'FALSE').toUpperCase() === 'TRUE',
@@ -1983,6 +2001,7 @@ export default function CourseMappingEditPage() {
 																	<TableHead className="min-w-[250px] text-xs h-8 font-semibold px-2 whitespace-normal">Course Name</TableHead>
 																	<TableHead className="w-[100px] text-xs h-8 font-semibold px-2 whitespace-normal">Category</TableHead>
 																	<TableHead className="w-16 text-xs h-8 font-semibold px-2">Order</TableHead>
+																	<TableHead className="w-16 text-xs h-8 font-semibold px-2">Group</TableHead>
 																	<TableHead className="w-16 text-center text-xs h-8 font-semibold px-1">
 																		<div className="flex flex-col items-center gap-0.5">
 																			<span className="text-xs font-semibold">Annual</span>
@@ -2017,7 +2036,7 @@ export default function CourseMappingEditPage() {
 															<TableBody>
 																{table.mappings.length === 0 ? (
 																	<TableRow>
-																		<TableCell colSpan={9} className="text-center text-muted-foreground py-3 text-xs">
+																		<TableCell colSpan={10} className="text-center text-muted-foreground py-3 text-xs">
 																			No courses mapped. Click "Add" to start.
 																		</TableCell>
 																	</TableRow>

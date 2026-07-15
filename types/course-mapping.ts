@@ -20,6 +20,7 @@ export interface CourseMapping {
 	course_group?: string
 	course_category?: string
 	course_order?: number
+	group_order?: number | null
 	internal_max_mark?: number
 	internal_pass_mark?: number
 	internal_converted_mark?: number
