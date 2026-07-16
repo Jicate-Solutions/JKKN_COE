@@ -13,6 +13,30 @@ import { getSupabaseServer } from '@/lib/supabase-server'
 // MyJKKN API has a server-side max limit per request
 const MYJKKN_MAX_PER_PAGE = 200
 
+// Fetch EVERY page of a MyJKKN list endpoint. The API silently caps each request
+// at MYJKKN_MAX_PER_PAGE (200) regardless of the requested `limit`, so a single
+// `{ limit: 1000 }` call only ever returns the first 200 rows. Lookups like
+// semesters exceed that (433 rows across 3 pages), and dropping the tail means a
+// learner's semester_id can't resolve → current_semester collapses to null and the
+// cohort disappears from filters. Paginate until a short page is returned.
+async function fetchAllLookupPages<T>(
+	fetchFn: (opts: { page: number; limit: number }) => Promise<{ data?: T[]; metadata?: any; pagination?: any }>
+): Promise<T[]> {
+	const all: T[] = []
+	const first = await fetchFn({ page: 1, limit: MYJKKN_MAX_PER_PAGE })
+	all.push(...(first.data || []))
+	const info = (first as any).metadata || (first as any).pagination || {}
+	const totalPages = info.totalPages
+		|| (info.total ? Math.ceil(info.total / MYJKKN_MAX_PER_PAGE) : 1)
+	for (let page = 2; page <= totalPages; page++) {
+		const res = await fetchFn({ page, limit: MYJKKN_MAX_PER_PAGE })
+		const rows = res.data || []
+		if (rows.length === 0) break
+		all.push(...rows)
+	}
+	return all
+}
+
 // Cache for lookup data with TTL (5 minutes)
 const LOOKUP_CACHE_TTL = 5 * 60 * 1000
 let lookupCache: { data: LookupMaps | null; timestamp: number } = { data: null, timestamp: 0 }
@@ -49,17 +73,19 @@ async function fetchLookupData(): Promise<LookupMaps> {
 
 	console.log('[Learner Profiles API] Fetching lookup data for enrichment...')
 
-	const [institutionsRes, programsRes, semestersRes, departmentsRes, batchesRes] = await Promise.all([
-		fetchMyJKKNInstitutions({ limit: 1000 }).catch(() => ({ data: [] })),
-		fetchMyJKKNPrograms({ limit: 1000 }).catch(() => ({ data: [] })),
-		fetchMyJKKNSemesters({ limit: 1000 }).catch(() => ({ data: [] })),
-		fetchMyJKKNDepartments({ limit: 1000 }).catch(() => ({ data: [] })),
-		fetchMyJKKNBatches({ limit: 1000 }).catch(() => ({ data: [] })),
+	// Each list must be fully paginated — a single { limit: 1000 } call is capped at
+	// 200 rows server-side, which silently drops semesters/programs beyond the first page.
+	const [institutionsData, programsData, semestersData, departmentsData, batchesData] = await Promise.all([
+		fetchAllLookupPages(opts => fetchMyJKKNInstitutions(opts)).catch(() => []),
+		fetchAllLookupPages(opts => fetchMyJKKNPrograms(opts)).catch(() => []),
+		fetchAllLookupPages(opts => fetchMyJKKNSemesters(opts)).catch(() => []),
+		fetchAllLookupPages(opts => fetchMyJKKNDepartments(opts)).catch(() => []),
+		fetchAllLookupPages(opts => fetchMyJKKNBatches(opts)).catch(() => []),
 	])
 
 	// Build institution lookup map (id -> { counselling_code, name })
 	const institutions = new Map<string, { counselling_code: string; name: string }>()
-	for (const inst of institutionsRes.data || []) {
+	for (const inst of institutionsData || []) {
 		const instAny = inst as Record<string, unknown>
 		institutions.set(
 			instAny.id as string,
@@ -72,7 +98,7 @@ async function fetchLookupData(): Promise<LookupMaps> {
 
 	// Build program lookup map (id -> { program_code, program_name })
 	const programs = new Map<string, { program_code: string; program_name: string }>()
-	for (const prog of programsRes.data || []) {
+	for (const prog of programsData || []) {
 		const progAny = prog as Record<string, unknown>
 		programs.set(
 			progAny.id as string,
@@ -85,7 +111,7 @@ async function fetchLookupData(): Promise<LookupMaps> {
 
 	// Build semester lookup map (id -> { semester_code, semester_name, semester_number })
 	const semesters = new Map<string, { semester_code: string; semester_name: string; semester_number: number }>()
-	for (const sem of semestersRes.data || []) {
+	for (const sem of semestersData || []) {
 		const semAny = sem as Record<string, unknown>
 		const semName = (semAny.semester_name || '') as string
 		const semCode = (semAny.semester_code || '') as string
@@ -119,7 +145,7 @@ async function fetchLookupData(): Promise<LookupMaps> {
 
 	// Build department lookup map (id -> { department_code, department_name })
 	const departments = new Map<string, { department_code: string; department_name: string }>()
-	for (const dept of departmentsRes.data || []) {
+	for (const dept of departmentsData || []) {
 		const deptAny = dept as Record<string, unknown>
 		departments.set(
 			deptAny.id as string,
@@ -132,7 +158,7 @@ async function fetchLookupData(): Promise<LookupMaps> {
 
 	// Build batch lookup map (id -> { batch_code, batch_name })
 	const batches = new Map<string, { batch_code: string; batch_name: string }>()
-	for (const batch of batchesRes.data || []) {
+	for (const batch of batchesData || []) {
 		const batchAny = batch as Record<string, unknown>
 		batches.set(
 			batchAny.id as string,
