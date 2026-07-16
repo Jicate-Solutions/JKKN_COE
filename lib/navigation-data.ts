@@ -235,6 +235,8 @@ export const navMain: NavItem[] = [
 			{ title: 'Practical Allotment', url: '/pre-exam/practical-allotment', icon: FlaskConical, permission: 'page.pre_exam.practical_allotment.view' },
 			{ title: 'Bulk Internal Marks', url: '/pre-exam/bulk-internal-marks', icon: FileText, permission: 'page.pre_exam.bulk_internal_marks.view' },
 			{ title: 'CIA Entry Setting', url: '/pre-exam/internal-mark-entry-setting', icon: Settings2, permission: 'page.pre_exam.internal_mark_entry_setting.view' },
+			{ title: 'Question Paper Templates', url: '/pre-exam/question-paper-templates', icon: FileText, permission: 'page.pre_exam.question_paper_templates.view' },
+			{ title: 'Question Papers', url: '/pre-exam/question-papers', icon: FileText, permission: 'page.pre_exam.question_papers.view' },
 			{ title: 'Mark Conversion Rules', url: '/pre-exam/mark-conversion-rules', icon: Scale, permission: 'page.pre_exam.mark_conversion_rules.view' },
 			{ title: 'Internal Mark Entry', url: '/pre-exam/internal-mark-entry', icon: Edit, permission: 'page.pre_exam.internal_mark_entry.view' },
 			{ title: 'Generate Internal Marks', url: '/pre-exam/generate-internal-marks', icon: Calculator, permission: 'page.pre_exam.generate_internal_marks.view' },
