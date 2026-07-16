@@ -19,6 +19,33 @@ const MYJKKN_MAX_PER_PAGE = 200
 // semesters exceed that (433 rows across 3 pages), and dropping the tail means a
 // learner's semester_id can't resolve → current_semester collapses to null and the
 // cohort disappears from filters. Paginate until a short page is returned.
+//
+// Resilience matters here: the caller wraps this in `.catch(() => [])`, so if a
+// SINGLE page rejected and bubbled up, the ENTIRE lookup (e.g. all 433 semesters)
+// would be discarded and every semester_id would fail to resolve. That is exactly
+// what surfaces in production — under serverless concurrency the MyJKKN API
+// rate-limits/times out a later page even when localhost fetches cleanly. So each
+// page is retried a couple of times and, if it still fails, we keep the pages we
+// already have (partial data) instead of throwing the whole lookup away.
+async function fetchPageWithRetry<T>(
+	fetchFn: (opts: { page: number; limit: number }) => Promise<{ data?: T[] }>,
+	page: number,
+	retries = 2
+): Promise<T[] | null> {
+	for (let attempt = 0; attempt <= retries; attempt++) {
+		try {
+			const res = await fetchFn({ page, limit: MYJKKN_MAX_PER_PAGE })
+			return res.data || []
+		} catch (err) {
+			if (attempt === retries) {
+				console.error(`[fetchAllLookupPages] page ${page} failed after ${retries + 1} attempts:`, err)
+				return null
+			}
+		}
+	}
+	return null
+}
+
 async function fetchAllLookupPages<T>(
 	fetchFn: (opts: { page: number; limit: number }) => Promise<{ data?: T[]; metadata?: any; pagination?: any }>
 ): Promise<T[]> {
@@ -29,8 +56,9 @@ async function fetchAllLookupPages<T>(
 	const totalPages = info.totalPages
 		|| (info.total ? Math.ceil(info.total / MYJKKN_MAX_PER_PAGE) : 1)
 	for (let page = 2; page <= totalPages; page++) {
-		const res = await fetchFn({ page, limit: MYJKKN_MAX_PER_PAGE })
-		const rows = res.data || []
+		const rows = await fetchPageWithRetry(fetchFn, page)
+		// null = page failed after retries; keep what we have rather than nuking the lookup.
+		if (rows === null) continue
 		if (rows.length === 0) break
 		all.push(...rows)
 	}
