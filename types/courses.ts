@@ -8,6 +8,22 @@ export const COURSE_STATUS_OPTIONS: { value: CourseStatus; label: string }[] = [
 	{ value: 'Locked', label: 'Locked' }
 ]
 
+// Values allowed in courses.course_category — the Theory/Practical distinction.
+// Single source of truth for the /master/courses "Course Category" picker and for
+// IA paper-template applicability (lib/ia/course-type-applicability.ts).
+export const COURSE_CATEGORIES = [
+	'Theory',
+	'Practical',
+	'Project',
+	'Non Academic',
+	'Theory + Practical',
+	'Theory + Project',
+	'Field Work',
+	'Community Service',
+	'Group Project',
+] as const
+export type CourseCategory = typeof COURSE_CATEGORIES[number]
+
 // Roman numerals I..XX — stored in courses.course_level. Combined with
 // course_info.display_code by a DB trigger to form courses.course_type_code.
 export const COURSE_LEVELS = [

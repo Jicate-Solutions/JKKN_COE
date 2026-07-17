@@ -5,7 +5,12 @@
 export type ExamScope = 'cia' | 'ese' | 'all'
 export type TemplateStatus = 'draft' | 'active' | 'archived'
 export type PaperStatus = 'draft' | 'submitted' | 'approved' | 'locked'
+// A single course-type token. 'theory_practical' is legacy (pre multi-select) and
+// is read as theory + practical.
 export type CourseTypeApplicability = 'theory' | 'practical' | 'project' | 'theory_practical' | 'all'
+// What is actually stored: one or more tokens joined by commas ('theory,practical'),
+// or 'all'. Parse/serialize via lib/ia/course-type-applicability.ts.
+export type CourseTypeApplicabilityValue = string
 export type ProgramTypeApplicability = 'ug' | 'pg' | 'diploma' | 'certificate' | 'all'
 
 // ============================================================================
@@ -76,7 +81,7 @@ export interface IaPaperTemplate {
 	description?: string
 
 	exam_scope: ExamScope
-	course_type_applicability: CourseTypeApplicability
+	course_type_applicability: CourseTypeApplicabilityValue
 	program_type_applicability: ProgramTypeApplicability
 
 	total_marks: number
@@ -124,7 +129,7 @@ export interface IaPaperTemplateFormData {
 	template_name: string
 	description: string
 	exam_scope: ExamScope
-	course_type_applicability: CourseTypeApplicability
+	course_type_applicability: CourseTypeApplicabilityValue
 	program_type_applicability: ProgramTypeApplicability
 	duration_minutes: string
 	capture_co: boolean

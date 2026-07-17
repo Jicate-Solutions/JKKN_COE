@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
 import { scaffoldQuestions } from '@/lib/ia/paper-scaffold'
+import { formatApplicability, pickTemplateForCourse } from '@/lib/ia/course-type-applicability'
 
 // Resolve the COE user id from the MyJKKN access_token cookie (best-effort; nullable).
 function resolveUserId(req: NextRequest): string | null {
@@ -115,7 +116,7 @@ export async function POST(req: NextRequest) {
 		const codes = [...new Set(offerings.map(o => o.course_code).filter(Boolean))]
 		const { data: courses } = await supabase
 			.from('courses')
-			.select('id, course_code, course_name, course_type, evaluation_type, multiple_qp_set, exam_duration, internal_max_mark')
+			.select('id, course_code, course_name, course_type, course_category, evaluation_type, multiple_qp_set, exam_duration, internal_max_mark')
 			.eq('institutions_id', institutions_id)
 			.in('course_code', codes)
 		const courseByCode = new Map((courses || []).map(c => [c.course_code, c]))
@@ -156,15 +157,15 @@ export async function POST(req: NextRequest) {
 			return NextResponse.json({ error: hint }, { status: 400 })
 		}
 
-		// Per-course template pick: match course_type applicability, else 'all'
-		const pickTemplate = (courseType?: string) => {
-			if (template_id) return templates[0]
-			return (
-				templates.find(t => t.course_type_applicability === courseType) ||
-				templates.find(t => t.course_type_applicability === 'all') ||
-				templates[0]
-			)
-		}
+		// Per-course template pick: the template whose Course Type covers this
+		// course's category (courses.course_category), else an 'all' template.
+		// null => no template applies, so the course gets no paper.
+		//
+		// This holds for an explicit template_id too — `templates` is then just that
+		// one template, so a Theory-only template still skips Practical courses
+		// rather than being force-applied to everything.
+		const pickTemplate = (courseCategory?: string | null) =>
+			pickTemplateForCourse(templates, courseCategory)
 
 		// 4. Existing papers (avoid duplicates — cia_setting_id may be null so match on session)
 		const offeringIds = offerings.map(o => o.id)
@@ -180,6 +181,9 @@ export async function POST(req: NextRequest) {
 		const created: any[] = []
 		let skipped = 0
 		const seenOffering = new Set<string>()
+		// Courses no active template covers (e.g. Practical courses when only a
+		// Theory template is active) — reported back so the UI can explain the gap.
+		const notApplicable: string[] = []
 
 		for (const off of offerings) {
 			if (seenOffering.has(off.id)) continue
@@ -190,7 +194,11 @@ export async function POST(req: NextRequest) {
 			const evalType = course?.evaluation_type || ''
 			if (evalType && evalType !== 'CIA' && evalType !== 'CIA + ESE') continue
 
-			const tmpl = pickTemplate(course?.course_type)
+			const tmpl = pickTemplate(course?.course_category)
+			if (!tmpl) {
+				notApplicable.push(`${off.course_code} (${course?.course_category || 'no category'})`)
+				continue
+			}
 			const parts = tmpl.ia_template_parts || []
 			const sets = setCount(course?.multiple_qp_set)
 
@@ -240,12 +248,24 @@ export async function POST(req: NextRequest) {
 			}
 		}
 
+		// What course types the active templates actually cover — used in the
+		// "no template applies" message so the fix is obvious.
+		const covered = [...new Set(templates.map(t => formatApplicability(t.course_type_applicability)))].join(', ')
+
 		return NextResponse.json(
 			{
 				success: true,
 				created: created.length,
 				skipped,
-				message: `Generated ${created.length} paper(s)${skipped ? `, ${skipped} already existed` : ''}`,
+				not_applicable: notApplicable.length,
+				not_applicable_courses: notApplicable,
+				...(notApplicable.length ? { templates_cover: covered } : {}),
+				message:
+					`Generated ${created.length} paper(s)` +
+					(skipped ? `, ${skipped} already existed` : '') +
+					(notApplicable.length
+						? `, ${notApplicable.length} course(s) skipped — no active template covers their course type (templates cover: ${covered})`
+						: ''),
 			},
 			{ status: 201 }
 		)

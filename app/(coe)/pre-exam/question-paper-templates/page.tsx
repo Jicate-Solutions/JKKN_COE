@@ -20,18 +20,23 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sh
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import {
-	DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger,
+	DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuItem,
+	DropdownMenuSeparator, DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { useToast } from '@/hooks/common/use-toast'
 import { useInstitutionFilter } from '@/hooks/use-institution-filter'
 import {
 	Loader2, MoreHorizontal, PlusCircle, Plus, X, Save, Trash2, FileText,
-	CheckCircle2, Archive, Settings2, Search, RefreshCw,
+	CheckCircle2, Archive, Settings2, Search, RefreshCw, ChevronsUpDown,
 } from 'lucide-react'
 import type {
 	IaPaperTemplate, IaTemplatePartFormData, IaQuestionType, ExamScope,
-	CourseTypeApplicability, ProgramTypeApplicability,
+	CourseTypeApplicabilityValue, ProgramTypeApplicability,
 } from '@/types/ia-question-paper'
+import {
+	ALL_TOKEN, COURSE_TYPE_TOKENS, COURSE_TYPE_LABELS, formatApplicability,
+	parseApplicability, serializeApplicability,
+} from '@/lib/ia/course-type-applicability'
 
 interface Institution {
 	id: string
@@ -54,12 +59,65 @@ const emptyPart = (order: number): IaTemplatePartFormData => ({
 	display_order: String(order),
 })
 
+// Course Type picker: multi-select over the course categories this template
+// applies to — the same list /master/courses offers (types/courses.ts
+// COURSE_CATEGORIES), matched against courses.course_category.
+// Stores a comma-joined value ('theory,practical') or the catch-all 'all'.
+// "All" is exclusive — picking it clears the specific types and vice versa.
+function CourseTypeMultiSelect({
+	value, onChange,
+}: {
+	value: string
+	onChange: (v: string) => void
+}) {
+	const tokens = parseApplicability(value)
+	const isAll = tokens.has(ALL_TOKEN)
+
+	const toggle = (token: string) => {
+		const next = new Set(tokens)
+		next.delete(ALL_TOKEN)
+		next.has(token) ? next.delete(token) : next.add(token)
+		// Clearing the last type falls back to 'all' rather than matching nothing
+		onChange(serializeApplicability(next))
+	}
+
+	return (
+		<DropdownMenu>
+			<DropdownMenuTrigger asChild>
+				<Button variant="outline" className="h-9 w-full justify-between px-3 text-sm font-normal">
+					<span className="truncate">{formatApplicability(value)}</span>
+					<ChevronsUpDown className="ml-1 h-4 w-4 shrink-0 opacity-50" />
+				</Button>
+			</DropdownMenuTrigger>
+			<DropdownMenuContent
+				align="start"
+				className="max-h-72 w-[var(--radix-dropdown-menu-trigger-width)] min-w-[220px] overflow-y-auto"
+			>
+				<DropdownMenuCheckboxItem checked={isAll} onSelect={e => e.preventDefault()} onCheckedChange={() => onChange(ALL_TOKEN)}>
+					{COURSE_TYPE_LABELS[ALL_TOKEN]}
+				</DropdownMenuCheckboxItem>
+				<DropdownMenuSeparator />
+				{COURSE_TYPE_TOKENS.map(token => (
+					<DropdownMenuCheckboxItem
+						key={token}
+						checked={!isAll && tokens.has(token)}
+						onSelect={e => e.preventDefault()}
+						onCheckedChange={() => toggle(token)}
+					>
+						{COURSE_TYPE_LABELS[token]}
+					</DropdownMenuCheckboxItem>
+				))}
+			</DropdownMenuContent>
+		</DropdownMenu>
+	)
+}
+
 interface TemplateForm {
 	template_code: string
 	template_name: string
 	description: string
 	exam_scope: ExamScope
-	course_type_applicability: CourseTypeApplicability
+	course_type_applicability: CourseTypeApplicabilityValue
 	program_type_applicability: ProgramTypeApplicability
 	regulation_code: string
 	duration_minutes: string
@@ -767,23 +825,13 @@ export default function QuestionPaperTemplatesPage() {
 						<div className="grid grid-cols-2 gap-3">
 							<div>
 								<Label>Course Type</Label>
-								<Select
+								<CourseTypeMultiSelect
 									value={form.course_type_applicability}
-									onValueChange={(v: CourseTypeApplicability) =>
-										setForm({ ...form, course_type_applicability: v })
-									}
-								>
-									<SelectTrigger>
-										<SelectValue />
-									</SelectTrigger>
-									<SelectContent>
-										<SelectItem value="all">All</SelectItem>
-										<SelectItem value="theory">Theory</SelectItem>
-										<SelectItem value="practical">Practical</SelectItem>
-										<SelectItem value="project">Project</SelectItem>
-										<SelectItem value="theory_practical">Theory + Practical</SelectItem>
-									</SelectContent>
-								</Select>
+									onChange={v => setForm({ ...form, course_type_applicability: v })}
+								/>
+								<p className="mt-1 text-xs text-muted-foreground">
+									Papers generate only for courses whose type is selected here.
+								</p>
 							</div>
 							<div>
 								<Label>Program Type</Label>

@@ -32,6 +32,7 @@ import {
 } from 'lucide-react'
 import { K_LEVELS } from '@/types/ia-question-paper'
 import type { IaQuestionPaper, IaPaperQuestion } from '@/types/ia-question-paper'
+import { formatApplicability } from '@/lib/ia/course-type-applicability'
 
 interface Institution {
 	id: string
@@ -42,6 +43,13 @@ interface SessionOpt {
 	id: string
 	session_name: string
 	session_code: string
+}
+interface TemplateOpt {
+	id: string
+	template_name: string
+	template_code: string
+	course_type_applicability: string
+	total_marks: number
 }
 
 const CIA_ROUNDS = [1, 2, 3]
@@ -216,10 +224,31 @@ export default function QuestionPapersPage() {
 	const [programs, setPrograms] = useState<{ code: string; name: string }[]>([])
 	const [semesters, setSemesters] = useState<number[]>([])
 
+	const [templates, setTemplates] = useState<TemplateOpt[]>([])
+
 	const [sessionId, setSessionId] = useState('')
 	const [selectedPrograms, setSelectedPrograms] = useState<string[]>([])
 	const [semester, setSemester] = useState('')
 	const [ciaRound, setCiaRound] = useState('1')
+	const [templateId, setTemplateId] = useState('')
+
+	// Every filter is mandatory before generating — Generate stays disabled until
+	// all are set, and the button tooltip names what's still missing.
+	const missingFilters = useMemo(() => {
+		const missing: string[] = []
+		if (mustSelectInstitution && !effectiveInstitutionId) missing.push('institution')
+		if (!sessionId) missing.push('exam session')
+		if (selectedPrograms.length === 0) missing.push('program(s)')
+		if (!semester) missing.push('semester')
+		if (!ciaRound) missing.push('CIA round')
+		if (!templateId) missing.push('template')
+		return missing
+	}, [mustSelectInstitution, effectiveInstitutionId, sessionId, selectedPrograms, semester, ciaRound, templateId])
+
+	const selectedTemplate = useMemo(
+		() => templates.find(t => t.id === templateId) || null,
+		[templates, templateId]
+	)
 
 	const [papers, setPapers] = useState<IaQuestionPaper[]>([])
 	const [loading, setLoading] = useState(false)
@@ -245,6 +274,15 @@ export default function QuestionPapersPage() {
 		if (isReady && effectiveInstitutionId) fetchSessions()
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [isReady, effectiveInstitutionId])
+
+	// Active CIA templates for the Template picker. Reset the choice when the
+	// institution changes so a template from another institution can't linger.
+	useEffect(() => {
+		setTemplateId('')
+		if (effectiveInstitutionCode) fetchTemplates()
+		else setTemplates([])
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [effectiveInstitutionCode])
 
 	useEffect(() => {
 		if (effectiveInstitutionId && sessionId) fetchPrograms()
@@ -294,6 +332,31 @@ export default function QuestionPapersPage() {
 					}))
 				)
 			}
+		} catch (e) {
+			console.error(e)
+		}
+	}
+
+	// Active CIA templates (the API's exam_scope=cia also returns 'all'-scope ones).
+	const fetchTemplates = async () => {
+		try {
+			const res = await fetch(
+				`/api/pre-exam/question-paper-templates?institution_code=${encodeURIComponent(effectiveInstitutionCode)}&exam_scope=cia&status=active`
+			)
+			if (!res.ok) return
+			const data = await res.json()
+			const list: TemplateOpt[] = (Array.isArray(data) ? data : [])
+				.filter((t: any) => t.is_active)
+				.map((t: any) => ({
+					id: t.id,
+					template_name: t.template_name,
+					template_code: t.template_code,
+					course_type_applicability: t.course_type_applicability,
+					total_marks: Number(t.total_marks) || 0,
+				}))
+			setTemplates(list)
+			// Only one choice — pick it so the common case needs no extra click
+			if (list.length === 1) setTemplateId(list[0].id)
 		} catch (e) {
 			console.error(e)
 		}
@@ -370,8 +433,8 @@ export default function QuestionPapersPage() {
 	}
 
 	const generate = async () => {
-		if (!sessionId || selectedPrograms.length === 0 || !semester) {
-			toast({ title: 'Select session, program(s) and semester first', variant: 'destructive' })
+		if (missingFilters.length > 0) {
+			toast({ title: `Select ${missingFilters.join(', ')} first`, variant: 'destructive' })
 			return
 		}
 		try {
@@ -379,6 +442,9 @@ export default function QuestionPapersPage() {
 			let created = 0
 			let skipped = 0
 			const failures: string[] = []
+			// Courses no active template covers — surfaced so a missing template is obvious
+			const notApplicable: string[] = []
+			let templatesCover = ''
 
 			// One generate call per selected program (semester + round shared)
 			for (const pc of selectedPrograms) {
@@ -392,6 +458,7 @@ export default function QuestionPapersPage() {
 						semester: Number(semester),
 						cia_round: Number(ciaRound),
 						cia_round_name: `CIA ${ciaRound}`,
+						template_id: templateId,
 					}),
 				})
 				const data = await res.json()
@@ -401,6 +468,8 @@ export default function QuestionPapersPage() {
 				}
 				created += data.created || 0
 				skipped += data.skipped || 0
+				if (Array.isArray(data.not_applicable_courses)) notApplicable.push(...data.not_applicable_courses)
+				if (data.templates_cover) templatesCover = data.templates_cover
 			}
 
 			if (failures.length > 0) {
@@ -412,7 +481,14 @@ export default function QuestionPapersPage() {
 			} else {
 				toast({
 					title: 'Papers generated',
-					description: `${created} created${skipped ? `, ${skipped} already existed` : ''}`,
+					description: [
+						`${created} created${skipped ? `, ${skipped} already existed` : ''}`,
+						notApplicable.length
+							? `${notApplicable.length} skipped — no template for their course type${templatesCover ? ` (templates cover: ${templatesCover})` : ''}: ${notApplicable.slice(0, 5).join(', ')}${notApplicable.length > 5 ? '…' : ''}`
+							: '',
+					]
+						.filter(Boolean)
+						.join(' · '),
 				})
 			}
 			fetchPapers()
@@ -859,8 +935,27 @@ export default function QuestionPapersPage() {
 									options={CIA_ROUNDS.map(r => ({ value: String(r), label: `CIA ${r}` }))}
 								/>
 							</div>
+							<div>
+								<Label className="text-xs">Template</Label>
+								<SearchableSelect
+									value={templateId}
+									onValueChange={setTemplateId}
+									placeholder={templates.length === 0 ? 'No active template' : 'Select template'}
+									searchPlaceholder="Search template..."
+									disabled={!ciaRound || templates.length === 0}
+									options={templates.map(t => ({
+										value: t.id,
+										label: `${t.template_name} · ${formatApplicability(t.course_type_applicability)}`,
+									}))}
+								/>
+							</div>
 							<div className="flex items-end">
-								<Button onClick={generate} disabled={generating} className="w-full">
+								<Button
+									onClick={generate}
+									disabled={generating || missingFilters.length > 0}
+									className="w-full"
+									title={missingFilters.length > 0 ? `Select ${missingFilters.join(', ')} first` : undefined}
+								>
 									{generating ? (
 										<Loader2 className="mr-2 h-4 w-4 animate-spin" />
 									) : (
@@ -869,6 +964,22 @@ export default function QuestionPapersPage() {
 									Generate
 								</Button>
 							</div>
+
+							{templates.length === 0 ? (
+								<p className="col-span-full text-xs text-amber-600">
+									No active CIA template for this institution — create one in Question Paper Templates and
+									set its status to Active.
+								</p>
+							) : selectedTemplate ? (
+								<p className="col-span-full text-xs text-muted-foreground">
+									<span className="font-medium text-foreground">{selectedTemplate.template_name}</span>{' '}
+									applies to{' '}
+									<span className="font-medium text-foreground">
+										{formatApplicability(selectedTemplate.course_type_applicability)}
+									</span>{' '}
+									courses · {selectedTemplate.total_marks} marks. Courses of any other type are skipped.
+								</p>
+							) : null}
 						</CardContent>
 					</Card>
 

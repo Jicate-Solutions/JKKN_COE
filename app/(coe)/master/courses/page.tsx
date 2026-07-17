@@ -90,6 +90,7 @@ import {
 } from '@/components/ui/table'
 import XLSX from '@/lib/utils/excel-compat'
 import type { Course, CourseImportError, UploadSummary, CourseStatus, CourseInfo } from '@/types/courses'
+import { COURSE_CATEGORIES } from '@/types/courses'
 import { COURSE_STATUS_OPTIONS, COURSE_LEVELS } from '@/types/courses'
 import {
   fetchCourses as fetchCoursesService,
@@ -2301,11 +2302,7 @@ export default function CoursesPage() {
                   <SearchableSelect
                     value={formData.course_category}
                     onValueChange={(v) => setFormData({ ...formData, course_category: v })}
-                    options={toSearchableOptions([
-                      "Theory", "Practical", "Project", "Non Academic",
-                      "Theory + Practical", "Theory + Project", "Field Work",
-                      "Community Service", "Group Project"
-                    ])}
+                    options={toSearchableOptions([...COURSE_CATEGORIES])}
                     placeholder="Select category"
                     searchPlaceholder="Search categories..."
                     error={!!errors.course_category}

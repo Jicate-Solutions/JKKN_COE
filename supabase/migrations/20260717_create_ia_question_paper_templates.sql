@@ -88,8 +88,8 @@ CREATE TABLE IF NOT EXISTS public.ia_paper_templates (
 		CHECK (status IN ('draft', 'active', 'archived')),
 	is_default BOOLEAN NOT NULL DEFAULT false,
 
-	created_by UUID REFERENCES public.users(id) ON DELETE SET NULL,
-	approved_by UUID REFERENCES public.users(id) ON DELETE SET NULL,
+	created_by UUID,  -- MyJKKN staff profile id; plain UUID (no FK — users live in MyJKKN)
+	approved_by UUID,  -- MyJKKN staff profile id; plain UUID (no FK — users live in MyJKKN)
 	approved_at TIMESTAMPTZ,
 	is_active BOOLEAN NOT NULL DEFAULT true,
 	created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -222,14 +222,14 @@ CREATE TABLE IF NOT EXISTS public.ia_question_papers (
 
 	status VARCHAR(20) NOT NULL DEFAULT 'draft'
 		CHECK (status IN ('draft', 'submitted', 'approved', 'locked')),
-	paper_setter_id UUID REFERENCES public.users(id) ON DELETE SET NULL,
+	paper_setter_id UUID,  -- MyJKKN staff profile id; plain UUID (no FK — users live in MyJKKN)
 
 	submitted_at TIMESTAMPTZ,
-	approved_by UUID REFERENCES public.users(id) ON DELETE SET NULL,
+	approved_by UUID,  -- MyJKKN staff profile id; plain UUID (no FK — users live in MyJKKN)
 	approved_at TIMESTAMPTZ,
 	locked_at TIMESTAMPTZ,
 
-	created_by UUID REFERENCES public.users(id) ON DELETE SET NULL,
+	created_by UUID,  -- MyJKKN staff profile id; plain UUID (no FK — users live in MyJKKN)
 	is_active BOOLEAN NOT NULL DEFAULT true,
 	created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
 	updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -311,7 +311,7 @@ CREATE TABLE IF NOT EXISTS public.ia_paper_setters (
 	faculty_email VARCHAR(255),
 	set_number INTEGER NOT NULL DEFAULT 1,
 
-	assigned_by UUID REFERENCES public.users(id) ON DELETE SET NULL,
+	assigned_by UUID,  -- MyJKKN staff profile id; plain UUID (no FK — users live in MyJKKN)
 	is_active BOOLEAN NOT NULL DEFAULT true,
 	created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
 	updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,

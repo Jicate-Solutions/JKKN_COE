@@ -4,6 +4,7 @@ import { withExternalAuth } from '@/lib/api-auth/middleware'
 import type { ExternalApiContext } from '@/types/api-management'
 import { resolveInstitutionForKey } from '@/lib/ia/v1-helpers'
 import { scaffoldQuestions } from '@/lib/ia/paper-scaffold'
+import { formatApplicability, pickTemplateForCourse } from '@/lib/ia/course-type-applicability'
 
 /** /api/v1/ia/question-papers — list + generate. */
 
@@ -73,7 +74,7 @@ export const POST = withExternalAuth(async (request: Request, context: ExternalA
 	const codes = [...new Set(offerings.map((o: any) => o.course_code).filter(Boolean))]
 	const { data: courses } = await supabase
 		.from('courses')
-		.select('id, course_code, course_name, course_type, evaluation_type, multiple_qp_set')
+		.select('id, course_code, course_name, course_type, course_category, evaluation_type, multiple_qp_set')
 		.eq('institutions_id', inst.id)
 		.in('course_code', codes)
 	const courseByCode = new Map((courses || []).map((c: any) => [c.course_code, c]))
@@ -97,12 +98,12 @@ export const POST = withExternalAuth(async (request: Request, context: ExternalA
 	if (templates.length === 0) {
 		return NextResponse.json({ error: 'No active CIA template found for this institution' }, { status: 400 })
 	}
-	const pickTemplate = (courseType?: string) =>
-		template_id
-			? templates[0]
-			: templates.find(t => t.course_type_applicability === courseType) ||
-			  templates.find(t => t.course_type_applicability === 'all') ||
-			  templates[0]
+	// Match the template whose Course Type covers the course's category
+	// (courses.course_category); null => no template applies, so no paper.
+	// Applies to an explicit template_id too — `templates` is then just that one,
+	// so a Theory-only template still skips Practical courses.
+	const pickTemplate = (courseCategory?: string | null) =>
+		pickTemplateForCourse(templates, courseCategory)
 
 	const offeringIds = offerings.map((o: any) => o.id)
 	const { data: existing } = await supabase
@@ -115,6 +116,8 @@ export const POST = withExternalAuth(async (request: Request, context: ExternalA
 
 	const created: any[] = []
 	let skipped = 0
+	// Courses no active template covers (e.g. Practical when only Theory templates exist)
+	const notApplicable: string[] = []
 	const seen = new Set<string>()
 	for (const off of offerings) {
 		if (seen.has(off.id)) continue
@@ -123,7 +126,11 @@ export const POST = withExternalAuth(async (request: Request, context: ExternalA
 		const evalType = course?.evaluation_type || ''
 		if (evalType && evalType !== 'CIA' && evalType !== 'CIA + ESE') continue
 
-		const tmpl = pickTemplate(course?.course_type)
+		const tmpl = pickTemplate(course?.course_category)
+		if (!tmpl) {
+			notApplicable.push(`${off.course_code} (${course?.course_category || 'no category'})`)
+			continue
+		}
 		const parts = tmpl.ia_template_parts || []
 		const sets = setCount(course?.multiple_qp_set)
 
@@ -162,5 +169,18 @@ export const POST = withExternalAuth(async (request: Request, context: ExternalA
 		}
 	}
 
-	return NextResponse.json({ data: { created: created.length, skipped } }, { status: 201 })
+	const covered = [...new Set(templates.map(t => formatApplicability(t.course_type_applicability)))].join(', ')
+
+	return NextResponse.json(
+		{
+			data: {
+				created: created.length,
+				skipped,
+				not_applicable: notApplicable.length,
+				not_applicable_courses: notApplicable,
+				...(notApplicable.length ? { templates_cover: covered } : {}),
+			},
+		},
+		{ status: 201 }
+	)
 })
