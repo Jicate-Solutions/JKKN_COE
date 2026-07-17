@@ -20,10 +20,15 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import {
 	DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { Command, CommandEmpty, CommandInput, CommandItem, CommandList } from '@/components/ui/command'
+import { Checkbox } from '@/components/ui/checkbox'
 import { useToast } from '@/hooks/common/use-toast'
 import { useInstitutionFilter } from '@/hooks/use-institution-filter'
+import { cn } from '@/lib/utils'
 import {
 	Loader2, MoreHorizontal, FileText, FileDown, Wand2, Save, Trash2, Send, CheckCircle2, Lock,
+	Check, ChevronsUpDown, RefreshCw, Plus, X, Download,
 } from 'lucide-react'
 import { K_LEVELS } from '@/types/ia-question-paper'
 import type { IaQuestionPaper, IaPaperQuestion } from '@/types/ia-question-paper'
@@ -41,6 +46,156 @@ interface SessionOpt {
 
 const CIA_ROUNDS = [1, 2, 3]
 
+// Searchable single-select combobox (matches exam-registrations/bulk-create)
+function SearchableSelect({
+	value, onValueChange, placeholder, options, disabled, searchPlaceholder,
+}: {
+	value: string
+	onValueChange: (v: string) => void
+	placeholder: string
+	options: { value: string; label: string }[]
+	disabled?: boolean
+	searchPlaceholder?: string
+}) {
+	const [open, setOpen] = useState(false)
+	const [search, setSearch] = useState('')
+	const filtered = useMemo(() => {
+		if (!search.trim()) return options
+		const q = search.toLowerCase()
+		return options.filter(o => o.label.toLowerCase().includes(q))
+	}, [options, search])
+	const selected = options.find(o => o.value === value)
+
+	return (
+		<Popover open={open} onOpenChange={o => { setOpen(o); if (!o) setSearch('') }}>
+			<PopoverTrigger asChild>
+				<Button
+					variant="outline"
+					role="combobox"
+					aria-expanded={open}
+					disabled={disabled}
+					className="h-9 w-full justify-between rounded-md px-3 text-sm font-normal"
+				>
+					<span className={cn('truncate', !selected && 'text-muted-foreground')}>
+						{selected?.label || placeholder}
+					</span>
+					<ChevronsUpDown className="ml-1 h-4 w-4 shrink-0 opacity-50" />
+				</Button>
+			</PopoverTrigger>
+			<PopoverContent className="w-[var(--radix-popover-trigger-width)] min-w-[220px] p-0" align="start">
+				<Command shouldFilter={false}>
+					<CommandInput
+						placeholder={searchPlaceholder || 'Search...'}
+						value={search}
+						onValueChange={setSearch}
+						className="h-9 text-sm"
+					/>
+					<CommandList className="max-h-60 overflow-y-auto">
+						{filtered.length === 0 ? (
+							<CommandEmpty className="py-4 text-center text-sm text-muted-foreground">
+								No results found
+							</CommandEmpty>
+						) : (
+							filtered.map(opt => (
+								<CommandItem
+									key={opt.value}
+									value={opt.value}
+									onSelect={() => { onValueChange(opt.value); setOpen(false); setSearch('') }}
+									className="cursor-pointer text-sm"
+								>
+									<Check className={cn('mr-2 h-4 w-4 shrink-0', value === opt.value ? 'opacity-100' : 'opacity-0')} />
+									{opt.label}
+								</CommandItem>
+							))
+						)}
+					</CommandList>
+				</Command>
+			</PopoverContent>
+		</Popover>
+	)
+}
+
+// Searchable multi-select combobox (same look, checkboxes + "N selected")
+function MultiSearchableSelect({
+	values, onValuesChange, placeholder, options, disabled, searchPlaceholder,
+}: {
+	values: string[]
+	onValuesChange: (v: string[]) => void
+	placeholder: string
+	options: { value: string; label: string }[]
+	disabled?: boolean
+	searchPlaceholder?: string
+}) {
+	const [open, setOpen] = useState(false)
+	const [search, setSearch] = useState('')
+	const filtered = useMemo(() => {
+		if (!search.trim()) return options
+		const q = search.toLowerCase()
+		return options.filter(o => o.label.toLowerCase().includes(q))
+	}, [options, search])
+	const allSelected = options.length > 0 && values.length === options.length
+	const toggle = (v: string) =>
+		onValuesChange(values.includes(v) ? values.filter(x => x !== v) : [...values, v])
+	const label =
+		values.length === 0 ? placeholder : values.length === 1 ? values[0] : `${values.length} selected`
+
+	return (
+		<Popover open={open} onOpenChange={o => { setOpen(o); if (!o) setSearch('') }}>
+			<PopoverTrigger asChild>
+				<Button
+					variant="outline"
+					role="combobox"
+					aria-expanded={open}
+					disabled={disabled}
+					className="h-9 w-full justify-between rounded-md px-3 text-sm font-normal"
+				>
+					<span className={cn('truncate', values.length === 0 && 'text-muted-foreground')}>{label}</span>
+					<ChevronsUpDown className="ml-1 h-4 w-4 shrink-0 opacity-50" />
+				</Button>
+			</PopoverTrigger>
+			<PopoverContent className="w-[var(--radix-popover-trigger-width)] min-w-[220px] p-0" align="start">
+				<Command shouldFilter={false}>
+					<CommandInput
+						placeholder={searchPlaceholder || 'Search...'}
+						value={search}
+						onValueChange={setSearch}
+						className="h-9 text-sm"
+					/>
+					<CommandList className="max-h-60 overflow-y-auto">
+						{options.length > 0 && (
+							<CommandItem
+								value="__all"
+								onSelect={() => onValuesChange(allSelected ? [] : options.map(o => o.value))}
+								className="cursor-pointer text-sm font-medium"
+							>
+								<Check className={cn('mr-2 h-4 w-4 shrink-0', allSelected ? 'opacity-100' : 'opacity-0')} />
+								{allSelected ? 'Clear all' : 'Select all'}
+							</CommandItem>
+						)}
+						{filtered.length === 0 ? (
+							<CommandEmpty className="py-4 text-center text-sm text-muted-foreground">
+								No results found
+							</CommandEmpty>
+						) : (
+							filtered.map(opt => (
+								<CommandItem
+									key={opt.value}
+									value={opt.value}
+									onSelect={() => toggle(opt.value)}
+									className="cursor-pointer text-sm"
+								>
+									<Checkbox checked={values.includes(opt.value)} className="mr-2 h-4 w-4" />
+									{opt.label}
+								</CommandItem>
+							))
+						)}
+					</CommandList>
+				</Command>
+			</PopoverContent>
+		</Popover>
+	)
+}
+
 interface PaperDetail extends IaQuestionPaper {
 	template_parts?: any[]
 	course_outcomes?: { id: string; co_code: string; co_description?: string }[]
@@ -48,24 +203,29 @@ interface PaperDetail extends IaQuestionPaper {
 
 export default function QuestionPapersPage() {
 	const { toast } = useToast()
-	const { isReady, appendToUrl, mustSelectInstitution, institutionId } = useInstitutionFilter()
+	const { isReady, appendToUrl, mustSelectInstitution, institutionId, institutionCode } =
+		useInstitutionFilter()
 
 	const [institutions, setInstitutions] = useState<Institution[]>([])
 	const [localInstitutionId, setLocalInstitutionId] = useState('')
 	const effectiveInstitutionId = institutionId || localInstitutionId || ''
+	const effectiveInstitutionCode =
+		institutionCode || institutions.find(i => i.id === effectiveInstitutionId)?.institution_code || ''
 
 	const [sessions, setSessions] = useState<SessionOpt[]>([])
-	const [programs, setPrograms] = useState<string[]>([])
+	const [programs, setPrograms] = useState<{ code: string; name: string }[]>([])
 	const [semesters, setSemesters] = useState<number[]>([])
 
 	const [sessionId, setSessionId] = useState('')
-	const [programCode, setProgramCode] = useState('')
+	const [selectedPrograms, setSelectedPrograms] = useState<string[]>([])
 	const [semester, setSemester] = useState('')
 	const [ciaRound, setCiaRound] = useState('1')
 
 	const [papers, setPapers] = useState<IaQuestionPaper[]>([])
 	const [loading, setLoading] = useState(false)
 	const [generating, setGenerating] = useState(false)
+	const [selected, setSelected] = useState<Set<string>>(new Set())
+	const [downloadingZip, setDownloadingZip] = useState(false)
 
 	// Authoring
 	const [sheetOpen, setSheetOpen] = useState(false)
@@ -90,14 +250,15 @@ export default function QuestionPapersPage() {
 	}, [effectiveInstitutionId, sessionId])
 
 	useEffect(() => {
-		if (effectiveInstitutionId && sessionId && programCode) fetchSemesters()
+		if (effectiveInstitutionId && sessionId && selectedPrograms.length > 0) fetchSemesters()
+		else setSemesters([])
 		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [programCode])
+	}, [selectedPrograms])
 
 	useEffect(() => {
 		if (effectiveInstitutionId && sessionId) fetchPapers()
 		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [effectiveInstitutionId, sessionId, programCode, semester, ciaRound])
+	}, [effectiveInstitutionId, sessionId, selectedPrograms, semester, ciaRound])
 
 	const fetchInstitutions = async () => {
 		try {
@@ -141,7 +302,27 @@ export default function QuestionPapersPage() {
 			const res = await fetch(
 				`/api/pre-exam/internal-mark-entry?action=filter-cascade&step=programs&institutions_id=${effectiveInstitutionId}&examination_session_id=${sessionId}`
 			)
-			if (res.ok) setPrograms(await res.json())
+			const codes: string[] = res.ok ? await res.json() : []
+
+			// Enrich codes with program names from the programs cache
+			let nameByCode = new Map<string, string>()
+			if (effectiveInstitutionCode) {
+				try {
+					const cacheRes = await fetch(
+						`/api/master/programs-cache?institution_code=${encodeURIComponent(effectiveInstitutionCode)}`
+					)
+					if (cacheRes.ok) {
+						const cached = await cacheRes.json()
+						nameByCode = new Map(
+							(Array.isArray(cached) ? cached : []).map((p: any) => [p.program_code, p.program_name])
+						)
+					}
+				} catch {
+					/* names optional */
+				}
+			}
+
+			setPrograms(codes.map(code => ({ code, name: nameByCode.get(code) || code })))
 		} catch (e) {
 			console.error(e)
 		}
@@ -149,10 +330,17 @@ export default function QuestionPapersPage() {
 
 	const fetchSemesters = async () => {
 		try {
-			const res = await fetch(
-				`/api/pre-exam/internal-mark-entry?action=filter-cascade&step=semesters&institutions_id=${effectiveInstitutionId}&examination_session_id=${sessionId}&program_code=${encodeURIComponent(programCode)}`
+			// Union of semesters across all selected programs
+			const lists = await Promise.all(
+				selectedPrograms.map(async pc => {
+					const res = await fetch(
+						`/api/pre-exam/internal-mark-entry?action=filter-cascade&step=semesters&institutions_id=${effectiveInstitutionId}&examination_session_id=${sessionId}&program_code=${encodeURIComponent(pc)}`
+					)
+					return res.ok ? ((await res.json()) as number[]) : []
+				})
 			)
-			if (res.ok) setSemesters(await res.json())
+			const union = [...new Set(lists.flat())].sort((a, b) => a - b)
+			setSemesters(union)
 		} catch (e) {
 			console.error(e)
 		}
@@ -161,11 +349,17 @@ export default function QuestionPapersPage() {
 	const fetchPapers = async () => {
 		try {
 			setLoading(true)
+			// Fetch by session (+ optional semester/round); filter to selected programs client-side
 			let url = `/api/pre-exam/question-papers?institutions_id=${effectiveInstitutionId}&examination_session_id=${sessionId}&cia_round=${ciaRound}`
-			if (programCode) url += `&program_code=${encodeURIComponent(programCode)}`
 			if (semester) url += `&semester=${semester}`
 			const res = await fetch(url)
-			if (res.ok) setPapers(await res.json())
+			if (res.ok) {
+				let data: IaQuestionPaper[] = await res.json()
+				if (selectedPrograms.length > 0) {
+					data = data.filter(p => selectedPrograms.includes(p.program_code || ''))
+				}
+				setPapers(data)
+			}
 		} catch (e) {
 			console.error(e)
 		} finally {
@@ -174,27 +368,51 @@ export default function QuestionPapersPage() {
 	}
 
 	const generate = async () => {
-		if (!sessionId || !programCode || !semester) {
-			toast({ title: 'Select session, program and semester first', variant: 'destructive' })
+		if (!sessionId || selectedPrograms.length === 0 || !semester) {
+			toast({ title: 'Select session, program(s) and semester first', variant: 'destructive' })
 			return
 		}
 		try {
 			setGenerating(true)
-			const res = await fetch('/api/pre-exam/question-papers', {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({
-					institutions_id: effectiveInstitutionId,
-					examination_session_id: sessionId,
-					program_code: programCode,
-					semester: Number(semester),
-					cia_round: Number(ciaRound),
-					cia_round_name: `CIA ${ciaRound}`,
-				}),
-			})
-			const data = await res.json()
-			if (!res.ok) throw new Error(data.error || 'Generation failed')
-			toast({ title: 'Papers generated', description: data.message })
+			let created = 0
+			let skipped = 0
+			const failures: string[] = []
+
+			// One generate call per selected program (semester + round shared)
+			for (const pc of selectedPrograms) {
+				const res = await fetch('/api/pre-exam/question-papers', {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({
+						institutions_id: effectiveInstitutionId,
+						examination_session_id: sessionId,
+						program_code: pc,
+						semester: Number(semester),
+						cia_round: Number(ciaRound),
+						cia_round_name: `CIA ${ciaRound}`,
+					}),
+				})
+				const data = await res.json()
+				if (!res.ok) {
+					failures.push(`${pc}: ${data.error || 'failed'}`)
+					continue
+				}
+				created += data.created || 0
+				skipped += data.skipped || 0
+			}
+
+			if (failures.length > 0) {
+				toast({
+					title: `Generated ${created}, ${failures.length} program(s) failed`,
+					description: failures.join(' · '),
+					variant: created > 0 ? 'default' : 'destructive',
+				})
+			} else {
+				toast({
+					title: 'Papers generated',
+					description: `${created} created${skipped ? `, ${skipped} already existed` : ''}`,
+				})
+			}
 			fetchPapers()
 		} catch (e: any) {
 			toast({ title: 'Generation failed', description: e.message, variant: 'destructive' })
@@ -260,11 +478,195 @@ export default function QuestionPapersPage() {
 				setSheetOpen(false)
 				fetchPapers()
 			} else if (data) {
-				setPaper(data)
+				// Merge: the PUT response has no template_parts / course_outcomes — keep them
+				setPaper(prev =>
+					prev
+						? { ...prev, ...data, template_parts: prev.template_parts, course_outcomes: prev.course_outcomes }
+						: data
+				)
 				setQuestions(data.ia_paper_questions || questions)
 			}
 		} catch (e: any) {
 			toast({ title: 'Save failed', description: e.message, variant: 'destructive' })
+		} finally {
+			setSavingPaper(false)
+		}
+	}
+
+	const allSelected = papers.length > 0 && papers.every(p => selected.has(p.id))
+	const toggleSelect = (id: string) =>
+		setSelected(prev => {
+			const next = new Set(prev)
+			next.has(id) ? next.delete(id) : next.add(id)
+			return next
+		})
+	const toggleSelectAll = () =>
+		setSelected(allSelected ? new Set() : new Set(papers.map(p => p.id)))
+
+	const downloadSelectedZip = async () => {
+		const chosen = papers.filter(p => selected.has(p.id))
+		if (chosen.length === 0) {
+			toast({ title: 'Select at least one paper', variant: 'destructive' })
+			return
+		}
+		try {
+			setDownloadingZip(true)
+			const JSZip = (await import('jszip')).default
+			const zip = new JSZip()
+			let ok = 0
+			for (const [i, p] of chosen.entries()) {
+				const res = await fetch(`/api/pre-exam/question-papers/${p.id}/pdf`)
+				if (!res.ok) continue
+				const blob = await res.blob()
+				const name = `${String(i + 1).padStart(3, '0')}_${p.course_code || 'paper'}_${p.set_label || 'A'}.pdf`
+				zip.file(name, blob)
+				ok++
+			}
+			const content = await zip.generateAsync({ type: 'blob' })
+			const url = URL.createObjectURL(content)
+			const a = document.createElement('a')
+			a.href = url
+			a.download = `question-papers-CIA${ciaRound}.zip`
+			document.body.appendChild(a)
+			a.click()
+			a.remove()
+			URL.revokeObjectURL(url)
+			toast({ title: `Downloaded ${ok} paper(s)` })
+		} catch (e: any) {
+			toast({ title: 'Download failed', description: e.message, variant: 'destructive' })
+		} finally {
+			setDownloadingZip(false)
+		}
+	}
+
+	const [rebuildingAll, setRebuildingAll] = useState(false)
+	const rebuildAll = async () => {
+		const drafts = papers.filter(p => p.status === 'draft')
+		if (drafts.length === 0) {
+			toast({ title: 'No draft papers to rebuild', description: 'Only draft papers can be rebuilt.' })
+			return
+		}
+		if (!confirm(`Rebuild ${drafts.length} draft paper(s) from their templates? This clears any text already entered in them.`)) return
+		try {
+			setRebuildingAll(true)
+			let ok = 0
+			let fail = 0
+			for (const p of drafts) {
+				try {
+					const res = await fetch(`/api/pre-exam/question-papers/${p.id}`, {
+						method: 'PUT',
+						headers: { 'Content-Type': 'application/json' },
+						body: JSON.stringify({ regenerate: true }),
+					})
+					if (res.ok) ok++
+					else fail++
+				} catch {
+					fail++
+				}
+			}
+			toast({
+				title: `Rebuilt ${ok} paper(s)`,
+				description: fail ? `${fail} failed` : undefined,
+				variant: fail && ok === 0 ? 'destructive' : 'default',
+			})
+			fetchPapers()
+		} finally {
+			setRebuildingAll(false)
+		}
+	}
+
+	// ── Course Outcomes management (per course) ──
+	const [newCoCode, setNewCoCode] = useState('')
+	const [newCoDesc, setNewCoDesc] = useState('')
+	const [showCoManager, setShowCoManager] = useState(false)
+
+	const refreshCourseOutcomes = async () => {
+		if (!paper?.course_id) return
+		const res = await fetch(`/api/pre-exam/course-outcomes?course_id=${paper.course_id}`)
+		if (res.ok) {
+			const cos = await res.json()
+			setPaper(prev => (prev ? { ...prev, course_outcomes: cos } : prev))
+		}
+	}
+
+	const addCO = async (code?: string, desc?: string) => {
+		if (!paper?.course_id) return
+		const co_code = (code ?? newCoCode).trim()
+		if (!co_code) return
+		try {
+			const res = await fetch('/api/pre-exam/course-outcomes', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					institutions_id: paper.institutions_id,
+					course_id: paper.course_id,
+					course_code: paper.course_code,
+					co_code,
+					co_description: desc ?? newCoDesc,
+					display_order: (paper.course_outcomes?.length || 0) + 1,
+				}),
+			})
+			const data = await res.json()
+			if (!res.ok) throw new Error(data.error || 'Add failed')
+			setNewCoCode('')
+			setNewCoDesc('')
+			await refreshCourseOutcomes()
+		} catch (e: any) {
+			toast({ title: 'Could not add CO', description: e.message, variant: 'destructive' })
+		}
+	}
+
+	const seedDefaultCOs = async () => {
+		if (!paper?.course_id) return
+		try {
+			const outcomes = ['CO1', 'CO2', 'CO3', 'CO4', 'CO5'].map((c, i) => ({ co_code: c, display_order: i + 1 }))
+			const res = await fetch('/api/pre-exam/course-outcomes', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					institutions_id: paper.institutions_id,
+					course_id: paper.course_id,
+					course_code: paper.course_code,
+					outcomes,
+				}),
+			})
+			if (!res.ok) {
+				const d = await res.json()
+				throw new Error(d.error || 'Failed')
+			}
+			await refreshCourseOutcomes()
+			toast({ title: 'Added CO1–CO5' })
+		} catch (e: any) {
+			toast({ title: 'Could not add COs', description: e.message, variant: 'destructive' })
+		}
+	}
+
+	const deleteCO = async (coId: string) => {
+		try {
+			await fetch(`/api/pre-exam/course-outcomes?id=${coId}`, { method: 'DELETE' })
+			await refreshCourseOutcomes()
+		} catch (e) {
+			console.error(e)
+		}
+	}
+
+	const rebuildPaper = async () => {
+		if (!paper) return
+		if (!confirm('Rebuild question slots from the current template? This clears any text already entered in this paper.')) return
+		try {
+			setSavingPaper(true)
+			const res = await fetch(`/api/pre-exam/question-papers/${paper.id}`, {
+				method: 'PUT',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ regenerate: true }),
+			})
+			const data = await res.json()
+			if (!res.ok) throw new Error(data.error || 'Rebuild failed')
+			setPaper(data)
+			setQuestions(data.ia_paper_questions || [])
+			toast({ title: 'Rebuilt from template' })
+		} catch (e: any) {
+			toast({ title: 'Rebuild failed', description: e.message, variant: 'destructive' })
 		} finally {
 			setSavingPaper(false)
 		}
@@ -330,6 +732,12 @@ export default function QuestionPapersPage() {
 		return m
 	}, [paper])
 
+	// CO options: defined COs for the course, else CO1–CO6 defaults so selection is never blocked
+	const coOptions = useMemo(() => {
+		const defined = (paper?.course_outcomes || []).map(c => c.co_code)
+		return defined.length > 0 ? defined : ['CO1', 'CO2', 'CO3', 'CO4', 'CO5', 'CO6']
+	}, [paper])
+
 	return (
 		<SidebarProvider>
 			<AppSidebar />
@@ -367,79 +775,58 @@ export default function QuestionPapersPage() {
 							{mustSelectInstitution && (
 								<div>
 									<Label className="text-xs">Institution</Label>
-									<Select value={localInstitutionId} onValueChange={setLocalInstitutionId}>
-										<SelectTrigger>
-											<SelectValue placeholder="Select" />
-										</SelectTrigger>
-										<SelectContent>
-											{institutions.map(i => (
-												<SelectItem key={i.id} value={i.id}>
-													{i.institution_code}
-												</SelectItem>
-											))}
-										</SelectContent>
-									</Select>
+									<SearchableSelect
+										value={localInstitutionId}
+										onValueChange={setLocalInstitutionId}
+										placeholder="Select institution"
+										searchPlaceholder="Search institution..."
+										options={institutions.map(i => ({ value: i.id, label: `${i.name} (${i.institution_code})` }))}
+									/>
 								</div>
 							)}
 							<div>
 								<Label className="text-xs">Exam Session</Label>
-								<Select value={sessionId} onValueChange={setSessionId}>
-									<SelectTrigger>
-										<SelectValue placeholder="Select session" />
-									</SelectTrigger>
-									<SelectContent>
-										{sessions.map(s => (
-											<SelectItem key={s.id} value={s.id}>
-												{s.session_name}
-											</SelectItem>
-										))}
-									</SelectContent>
-								</Select>
+								<SearchableSelect
+									value={sessionId}
+									onValueChange={setSessionId}
+									placeholder="Select session"
+									searchPlaceholder="Search session..."
+									options={sessions.map(s => ({ value: s.id, label: s.session_name }))}
+								/>
 							</div>
 							<div>
-								<Label className="text-xs">Program</Label>
-								<Select value={programCode} onValueChange={setProgramCode} disabled={!sessionId}>
-									<SelectTrigger>
-										<SelectValue placeholder="Program" />
-									</SelectTrigger>
-									<SelectContent>
-										{programs.map(p => (
-											<SelectItem key={p} value={p}>
-												{p}
-											</SelectItem>
-										))}
-									</SelectContent>
-								</Select>
+								<Label className="text-xs">Program(s)</Label>
+								<MultiSearchableSelect
+									values={selectedPrograms}
+									onValuesChange={setSelectedPrograms}
+									placeholder="Select programs"
+									searchPlaceholder="Search program..."
+									disabled={!sessionId}
+									options={programs.map(p => ({
+										value: p.code,
+										label: p.name && p.name !== p.code ? `${p.code} - ${p.name}` : p.code,
+									}))}
+								/>
 							</div>
 							<div>
 								<Label className="text-xs">Semester</Label>
-								<Select value={semester} onValueChange={setSemester} disabled={!programCode}>
-									<SelectTrigger>
-										<SelectValue placeholder="Sem" />
-									</SelectTrigger>
-									<SelectContent>
-										{semesters.map(s => (
-											<SelectItem key={s} value={String(s)}>
-												{s}
-											</SelectItem>
-										))}
-									</SelectContent>
-								</Select>
+								<SearchableSelect
+									value={semester}
+									onValueChange={setSemester}
+									placeholder="Sem"
+									searchPlaceholder="Search semester..."
+									disabled={selectedPrograms.length === 0}
+									options={semesters.map(s => ({ value: String(s), label: `Semester ${s}` }))}
+								/>
 							</div>
 							<div>
 								<Label className="text-xs">CIA Round</Label>
-								<Select value={ciaRound} onValueChange={setCiaRound}>
-									<SelectTrigger>
-										<SelectValue />
-									</SelectTrigger>
-									<SelectContent>
-										{CIA_ROUNDS.map(r => (
-											<SelectItem key={r} value={String(r)}>
-												CIA {r}
-											</SelectItem>
-										))}
-									</SelectContent>
-								</Select>
+								<SearchableSelect
+									value={ciaRound}
+									onValueChange={setCiaRound}
+									placeholder="Round"
+									options={CIA_ROUNDS.map(r => ({ value: String(r), label: `CIA ${r}` }))}
+								/>
 							</div>
 							<div className="flex items-end">
 								<Button onClick={generate} disabled={generating} className="w-full">
@@ -456,17 +843,57 @@ export default function QuestionPapersPage() {
 
 					{/* Papers table */}
 					<Card>
-						<CardHeader className="py-3">
+						<CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 py-3">
 							<span className="text-sm font-medium">
 								{papers.length} paper{papers.length === 1 ? '' : 's'}
+								{selected.size > 0 && (
+									<span className="ml-2 text-primary">· {selected.size} selected</span>
+								)}
+								{papers.some(p => p.status === 'draft') && (
+									<span className="ml-2 text-muted-foreground">
+										· {papers.filter(p => p.status === 'draft').length} draft
+									</span>
+								)}
 							</span>
+							<div className="flex items-center gap-2">
+								<Button
+									variant="outline"
+									size="sm"
+									onClick={downloadSelectedZip}
+									disabled={downloadingZip || selected.size === 0}
+									title="Download selected papers as a ZIP"
+								>
+									{downloadingZip ? (
+										<Loader2 className="mr-2 h-4 w-4 animate-spin" />
+									) : (
+										<Download className="mr-2 h-4 w-4" />
+									)}
+									Download ({selected.size})
+								</Button>
+								<Button
+									variant="outline"
+									size="sm"
+									onClick={rebuildAll}
+									disabled={rebuildingAll || !papers.some(p => p.status === 'draft')}
+									title="Rebuild all draft papers from their templates"
+								>
+									{rebuildingAll ? (
+										<Loader2 className="mr-2 h-4 w-4 animate-spin" />
+									) : (
+										<RefreshCw className="mr-2 h-4 w-4" />
+									)}
+									Rebuild All
+								</Button>
+							</div>
 						</CardHeader>
 						<CardContent>
 							<Table>
 								<TableHeader>
 									<TableRow>
-										<TableHead>Course</TableHead>
-										<TableHead>Title</TableHead>
+										<TableHead className="w-10"><Checkbox checked={allSelected} onCheckedChange={toggleSelectAll} aria-label="Select all" /></TableHead>
+											<TableHead className="w-12">S.No</TableHead>
+											<TableHead>Course</TableHead>
+										<TableHead>Course Name</TableHead>
 										<TableHead>Program</TableHead>
 										<TableHead>Sem</TableHead>
 										<TableHead>Set</TableHead>
@@ -478,19 +905,27 @@ export default function QuestionPapersPage() {
 								<TableBody>
 									{loading ? (
 										<TableRow>
-											<TableCell colSpan={8} className="py-10 text-center">
+											<TableCell colSpan={10} className="py-10 text-center">
 												<Loader2 className="mx-auto h-5 w-5 animate-spin text-muted-foreground" />
 											</TableCell>
 										</TableRow>
 									) : papers.length === 0 ? (
 										<TableRow>
-											<TableCell colSpan={8} className="py-10 text-center text-muted-foreground">
+											<TableCell colSpan={10} className="py-10 text-center text-muted-foreground">
 												No papers. Pick a session/program/semester and click Generate.
 											</TableCell>
 										</TableRow>
 									) : (
-										papers.map(p => (
-											<TableRow key={p.id}>
+										papers.map((p, idx) => (
+											<TableRow key={p.id} data-state={selected.has(p.id) ? 'selected' : undefined}>
+												<TableCell>
+													<Checkbox
+														checked={selected.has(p.id)}
+														onCheckedChange={() => toggleSelect(p.id)}
+														aria-label={`Select ${p.course_code}`}
+													/>
+												</TableCell>
+												<TableCell className="text-muted-foreground">{idx + 1}</TableCell>
 												<TableCell className="font-medium">{p.course_code}</TableCell>
 												<TableCell className="max-w-[220px] truncate">{p.subject_title}</TableCell>
 												<TableCell>{p.program_code}</TableCell>
@@ -571,10 +1006,9 @@ export default function QuestionPapersPage() {
 
 							<div className="grid grid-cols-2 gap-3">
 								<div>
-									<Label className="text-xs">Subject Title</Label>
+									<Label className="text-xs">Course Name</Label>
 									<Input
 										value={paper.subject_title || ''}
-										disabled={!editable}
 										onChange={e => setPaper({ ...paper, subject_title: e.target.value })}
 									/>
 								</div>
@@ -583,10 +1017,79 @@ export default function QuestionPapersPage() {
 									<Input
 										type="date"
 										value={paper.exam_date ? paper.exam_date.slice(0, 10) : ''}
-										disabled={!editable}
+										disabled={paper.status === 'locked'}
 										onChange={e => setPaper({ ...paper, exam_date: e.target.value })}
 									/>
 								</div>
+							</div>
+
+							{/* Course Outcomes manager (collapsed by default) */}
+							<div className="rounded-md border p-3">
+								<button
+									type="button"
+									className="flex w-full items-center justify-between"
+									onClick={() => setShowCoManager(o => !o)}
+								>
+									<Label className="cursor-pointer text-xs font-semibold">
+										Course Outcomes ({paper.course_outcomes?.length || 0}) — {paper.course_code}
+									</Label>
+									<ChevronsUpDown className="h-4 w-4 text-muted-foreground" />
+								</button>
+								{showCoManager && (
+									<div className="mt-3">
+										{(paper.course_outcomes?.length || 0) === 0 ? (
+											<div className="mb-2 flex items-center justify-between gap-2">
+												<p className="text-xs text-muted-foreground">
+													No COs for this course yet — dropdowns fall back to CO1–CO6.
+												</p>
+												<Button variant="outline" size="sm" onClick={seedDefaultCOs}>
+													<Plus className="mr-1 h-3 w-3" /> Add CO1–CO5
+												</Button>
+											</div>
+										) : (
+											<div className="mb-2 flex flex-wrap gap-2">
+												{(paper.course_outcomes || []).map(co => (
+													<span
+														key={co.id}
+														className="inline-flex items-center gap-1 rounded border bg-muted/40 px-2 py-1 text-xs"
+														title={co.co_description || ''}
+													>
+														<span className="font-medium">{co.co_code}</span>
+														{co.co_description ? (
+															<span className="max-w-[160px] truncate text-muted-foreground">
+																{co.co_description}
+															</span>
+														) : null}
+														<button
+															type="button"
+															className="text-destructive hover:opacity-70"
+															onClick={() => deleteCO(co.id)}
+														>
+															<X className="h-3 w-3" />
+														</button>
+													</span>
+												))}
+											</div>
+										)}
+										<div className="flex items-center gap-2">
+											<Input
+												className="h-8 w-24"
+												placeholder="CO code"
+												value={newCoCode}
+												onChange={e => setNewCoCode(e.target.value)}
+											/>
+											<Input
+												className="h-8 flex-1"
+												placeholder="Description (optional)"
+												value={newCoDesc}
+												onChange={e => setNewCoDesc(e.target.value)}
+											/>
+											<Button size="sm" variant="outline" onClick={() => addCO()} disabled={!newCoCode.trim()}>
+												<Plus className="h-4 w-4" />
+											</Button>
+										</div>
+									</div>
+								)}
 							</div>
 
 							{[...groupedQuestions.entries()].map(([label, qs]) => {
@@ -594,14 +1097,33 @@ export default function QuestionPapersPage() {
 								return (
 									<div key={label} className="rounded-md border">
 										<div className="border-b bg-muted/40 px-3 py-2">
-											<div className="text-sm font-semibold">
-												PART {label}
-												{part
-													? ` — (${part.num_questions} x ${part.marks_per_question} = ${part.num_questions * part.marks_per_question})`
-													: ''}
+											<div className="flex items-center justify-between">
+												<div className="text-sm font-semibold">
+													PART {label}
+													{part
+														? ` — (${part.num_questions} x ${part.marks_per_question} = ${part.num_questions * part.marks_per_question})`
+														: ''}
+												</div>
+												{part && (
+													<Badge
+														variant="outline"
+														className={
+															part.has_choice
+																? 'bg-green-100 text-green-700 border-green-200'
+																: 'text-muted-foreground'
+														}
+													>
+														{part.has_choice ? 'Choice (OR): On' : 'Choice (OR): Off'}
+													</Badge>
+												)}
 											</div>
 											{part?.instruction && (
 												<div className="text-xs text-muted-foreground">{part.instruction}</div>
+											)}
+											{part && !part.has_choice && (
+												<div className="mt-1 text-[11px] text-amber-600">
+													No (OR) — enable “Choice (OR)” on this part in Question Paper Templates, then Rebuild.
+												</div>
 											)}
 										</div>
 										<div className="space-y-3 p-3">
@@ -673,17 +1195,11 @@ export default function QuestionPapersPage() {
 																		<SelectValue placeholder="CO" />
 																	</SelectTrigger>
 																	<SelectContent>
-																		{(paper.course_outcomes || []).length === 0 ? (
-																			<SelectItem value="__none" disabled>
-																				No COs defined
+																		{coOptions.map(code => (
+																			<SelectItem key={code} value={code}>
+																				{code}
 																			</SelectItem>
-																		) : (
-																			(paper.course_outcomes || []).map(co => (
-																				<SelectItem key={co.id} value={co.co_code}>
-																					{co.co_code}
-																				</SelectItem>
-																			))
-																		)}
+																		))}
 																	</SelectContent>
 																</Select>
 															</div>
@@ -728,7 +1244,12 @@ export default function QuestionPapersPage() {
 										<FileDown className="mr-2 h-4 w-4" /> PDF
 									</Button>
 								</a>
-								{editable && (
+								{paper.status === 'draft' && (
+									<Button variant="outline" onClick={rebuildPaper} disabled={savingPaper} title="Rebuild slots from the current template">
+										<RefreshCw className="mr-2 h-4 w-4" /> Rebuild
+									</Button>
+								)}
+								{paper.status !== 'locked' && (
 									<Button variant="outline" onClick={() => saveQuestions()} disabled={savingPaper}>
 										{savingPaper ? (
 											<Loader2 className="mr-2 h-4 w-4 animate-spin" />

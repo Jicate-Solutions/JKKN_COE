@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
-
-const LETTERS = 'abcdefghij'
+import { scaffoldQuestions } from '@/lib/ia/paper-scaffold'
 
 // Resolve the COE user id from the MyJKKN access_token cookie (best-effort; nullable).
 function resolveUserId(req: NextRequest): string | null {
@@ -21,58 +20,11 @@ function resolveUserId(req: NextRequest): string | null {
 	return null
 }
 
-function buildOptions(optionCount?: number | null) {
-	if (!optionCount || optionCount < 2) return null
-	return Array.from({ length: optionCount }, (_, i) => ({ key: LETTERS[i] || String(i + 1), text: '' }))
-}
-
 // How many paper sets for a course (courses.multiple_qp_set may be bool or a count)
 function setCount(multiple: any): number {
 	if (typeof multiple === 'number') return multiple > 1 ? multiple : 1
 	if (multiple === true) return 2
 	return 1
-}
-
-// Build the empty question slots for a paper from its template parts.
-function scaffoldQuestions(paperId: string, parts: any[]) {
-	const rows: any[] = []
-	let counter = 0
-	let order = 0
-	const sorted = parts.slice().sort((a, b) => a.display_order - b.display_order)
-	for (const part of sorted) {
-		const n = part.num_questions || 0
-		for (let qi = 0; qi < n; qi++) {
-			counter++
-			const options = buildOptions(part.option_count)
-			rows.push({
-				paper_id: paperId,
-				part_id: part.id,
-				part_label: part.part_label,
-				question_number: counter,
-				sub_label: part.has_choice ? 'a' : null,
-				is_choice_alternative: false,
-				question_type_code: part.question_type_code,
-				marks: part.marks_per_question,
-				options,
-				display_order: ++order,
-			})
-			if (part.has_choice) {
-				rows.push({
-					paper_id: paperId,
-					part_id: part.id,
-					part_label: part.part_label,
-					question_number: counter,
-					sub_label: 'b',
-					is_choice_alternative: true,
-					question_type_code: part.question_type_code,
-					marks: part.marks_per_question,
-					options: buildOptions(part.option_count),
-					display_order: ++order,
-				})
-			}
-		}
-	}
-	return rows
 }
 
 // GET - list papers with filters
@@ -136,7 +88,10 @@ export async function POST(req: NextRequest) {
 			)
 		}
 		const round = cia_round ? Number(cia_round) : 1
-		const userId = resolveUserId(req)
+
+		// Author = MyJKKN staff profile UUID. author_id/created_by are plain UUIDs
+		// (no FK after 20260717 migration), so store the acting user id directly.
+		const userId = body.author_id || resolveUserId(req)
 
 		// 1. Course offerings for this session + program + semester
 		const { data: offerings, error: coError } = await supabase
@@ -175,22 +130,30 @@ export async function POST(req: NextRequest) {
 				.limit(1)
 			templates = data || []
 		} else {
-			const { data } = await supabase
+			// Prefer active default CIA templates; fall back to any active CIA template.
+			const { data: activeTemplates } = await supabase
 				.from('ia_paper_templates')
 				.select('*, ia_template_parts(*)')
 				.eq('institutions_id', institutions_id)
 				.eq('is_active', true)
 				.eq('status', 'active')
-				.eq('is_default', true)
 				.in('exam_scope', ['cia', 'all'])
+				.order('is_default', { ascending: false })
 				.order('wef_date', { ascending: false })
-			templates = data || []
+			templates = activeTemplates || []
 		}
 		if (templates.length === 0) {
-			return NextResponse.json(
-				{ error: 'No active default CIA template found. Activate a template or pass template_id.' },
-				{ status: 400 }
-			)
+			// Distinguish "none activated" from "none exist" for a clearer message.
+			const { count } = await supabase
+				.from('ia_paper_templates')
+				.select('id', { count: 'exact', head: true })
+				.eq('institutions_id', institutions_id)
+				.in('exam_scope', ['cia', 'all'])
+			const hint =
+				count && count > 0
+					? 'A CIA template exists but is not Active — open it and set status to Active (and ideally mark it Default).'
+					: 'No CIA template exists yet — create one in Question Paper Templates, then Activate it.'
+			return NextResponse.json({ error: hint }, { status: 400 })
 		}
 
 		// Per-course template pick: match course_type applicability, else 'all'
@@ -258,6 +221,7 @@ export async function POST(req: NextRequest) {
 						max_marks: tmpl.total_marks,
 						status: 'draft',
 						created_by: userId,
+						author_id: userId,
 					})
 					.select()
 					.single()

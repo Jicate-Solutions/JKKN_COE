@@ -147,6 +147,8 @@ export async function POST(req: NextRequest) {
 				status: 'draft',
 				is_default: is_default || false,
 				is_active: is_active !== undefined ? is_active : true,
+				author_id: body.author_id || null,
+				created_by: body.author_id || null,
 			})
 			.select()
 			.single()

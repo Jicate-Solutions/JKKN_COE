@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
+import { scaffoldQuestions } from '@/lib/ia/paper-scaffold'
 
 const EDITABLE_STATUSES = ['draft', 'submitted']
 const VALID_STATUSES = ['draft', 'submitted', 'approved', 'locked']
@@ -65,10 +66,57 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
 
 		const { data: paper } = await supabase
 			.from('ia_question_papers')
-			.select('id, status')
+			.select('id, status, template_id')
 			.eq('id', id)
 			.single()
 		if (!paper) return NextResponse.json({ error: 'Paper not found' }, { status: 404 })
+
+		// ── Rebuild question slots from the current template (draft only; clears authored text) ──
+		if (body.regenerate) {
+			if (paper.status !== 'draft') {
+				return NextResponse.json(
+					{ error: 'Rebuild is only allowed while the paper is in draft' },
+					{ status: 400 }
+				)
+			}
+			if (!paper.template_id) {
+				return NextResponse.json({ error: 'Paper has no template to rebuild from' }, { status: 400 })
+			}
+			const { data: parts } = await supabase
+				.from('ia_template_parts')
+				.select('*')
+				.eq('template_id', paper.template_id)
+				.order('display_order', { ascending: true })
+
+			await supabase.from('ia_paper_questions').delete().eq('paper_id', id)
+			const rows = scaffoldQuestions(id, parts || [])
+			if (rows.length > 0) {
+				const { error: insErr } = await supabase.from('ia_paper_questions').insert(rows)
+				if (insErr) {
+					console.error('Error rebuilding questions:', insErr)
+					return NextResponse.json({ error: insErr.message }, { status: 500 })
+				}
+			}
+			// also refresh max_marks from the template total
+			const { data: tmpl } = await supabase
+				.from('ia_paper_templates')
+				.select('total_marks')
+				.eq('id', paper.template_id)
+				.single()
+			if (tmpl) await supabase.from('ia_question_papers').update({ max_marks: tmpl.total_marks }).eq('id', id)
+
+			const { data: rebuilt } = await supabase
+				.from('ia_question_papers')
+				.select('*, ia_paper_questions(*)')
+				.eq('id', id)
+				.single()
+			if (rebuilt) {
+				rebuilt.ia_paper_questions = (rebuilt.ia_paper_questions || []).sort(
+					(a: any, b: any) => a.display_order - b.display_order
+				)
+			}
+			return NextResponse.json(rebuilt)
+		}
 
 		// ── Status transition ──
 		if (status) {
@@ -106,6 +154,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
 					{ status: 400 }
 				)
 			}
+			const qErrors: string[] = []
 			for (const q of questions) {
 				if (!q.id) continue
 				const { error } = await supabase
@@ -120,7 +169,16 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
 					})
 					.eq('id', q.id)
 					.eq('paper_id', id)
-				if (error) console.error('Error saving question', q.id, error)
+				if (error) {
+					console.error('Error saving question', q.id, error)
+					qErrors.push(`Q${q.question_number ?? ''}: ${error.message}`)
+				}
+			}
+			if (qErrors.length > 0) {
+				return NextResponse.json(
+					{ error: `Some questions failed to save: ${qErrors.slice(0, 3).join('; ')}` },
+					{ status: 500 }
+				)
 			}
 		}
 
