@@ -35,7 +35,7 @@ export const GET = withExternalAuth(async (request: Request, context: ExternalAp
 
 		let query = supabase
 			.from('examination_sessions')
-			.select('id, session_code, session_name, institutions_id, exam_start_date, exam_end_date, session_status, month_year')
+			.select('id, session_code, session_name, institutions_id, academic_year_id, exam_start_date, exam_end_date, session_status, month_year')
 			.eq('institutions_id', institutionsId)
 			.order('created_at', { ascending: false })
 

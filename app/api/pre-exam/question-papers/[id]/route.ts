@@ -82,14 +82,54 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
 			if (!paper.template_id) {
 				return NextResponse.json({ error: 'Paper has no template to rebuild from' }, { status: 400 })
 			}
+			// Data-safety: never silently wipe a paper that already has authored questions.
+			if (!body.force) {
+				const { data: authored } = await supabase
+					.from('ia_paper_questions')
+					.select('id')
+					.eq('paper_id', id)
+					.not('question_text', 'is', null)
+					.neq('question_text', '')
+					.limit(1)
+				if (authored && authored.length > 0) {
+					return NextResponse.json(
+						{ error: 'AUTHORED', message: 'This paper already has questions entered. Pass force:true to overwrite.' },
+						{ status: 409 }
+					)
+				}
+			}
 			const { data: parts } = await supabase
 				.from('ia_template_parts')
 				.select('*')
 				.eq('template_id', paper.template_id)
 				.order('display_order', { ascending: true })
 
+			// Smart rebuild: refresh structure from the template but PRESERVE any answered
+			// content (matched by part + question number + sub-label). An accidental Rebuild
+			// therefore cannot erase entered questions.
+			const { data: existingQs } = await supabase.from('ia_paper_questions').select('*').eq('paper_id', id)
+			const keyOf = (q: any) => `${q.part_label}|${q.question_number}|${q.sub_label || ''}|${q.is_choice_alternative ? 1 : 0}`
+			const existMap = new Map((existingQs || []).map((q: any) => [keyOf(q), q]))
+			const rows = scaffoldQuestions(id, parts || []).map((s: any) => {
+				const e: any = existMap.get(keyOf(s))
+				if (!e) return s
+				let options = s.options
+				if (Array.isArray(s.options) && Array.isArray(e.options)) {
+					const textByKey = new Map(e.options.map((o: any) => [o.key, o.text]))
+					options = s.options.map((o: any) => ({ ...o, text: textByKey.get(o.key) ?? o.text }))
+				} else if (Array.isArray(e.options)) {
+					options = e.options
+				}
+				return {
+					...s,
+					question_text: e.question_text ?? s.question_text,
+					options,
+					correct_option: e.correct_option ?? null,
+					co_code: e.co_code ?? null,
+					k_level: e.k_level ?? null,
+				}
+			})
 			await supabase.from('ia_paper_questions').delete().eq('paper_id', id)
-			const rows = scaffoldQuestions(id, parts || [])
 			if (rows.length > 0) {
 				const { error: insErr } = await supabase.from('ia_paper_questions').insert(rows)
 				if (insErr) {
@@ -117,6 +157,8 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
 			}
 			return NextResponse.json(rebuilt)
 		}
+
+		let savedCount = 0
 
 		// ── Status transition ──
 		if (status) {
@@ -157,7 +199,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
 			const qErrors: string[] = []
 			for (const q of questions) {
 				if (!q.id) continue
-				const { error } = await supabase
+				const { data: upd, error } = await supabase
 					.from('ia_paper_questions')
 					.update({
 						question_text: q.question_text ?? null,
@@ -169,14 +211,21 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
 					})
 					.eq('id', q.id)
 					.eq('paper_id', id)
+					.select('id')
 				if (error) {
 					console.error('Error saving question', q.id, error)
 					qErrors.push(`Q${q.question_number ?? ''}: ${error.message}`)
+				} else if (!upd || upd.length === 0) {
+					// id no longer exists — paper was rebuilt under an open editor
+					qErrors.push('Paper was rebuilt in another view — reopen it before saving to avoid losing entries.')
+				} else {
+					savedCount++
 				}
 			}
 			if (qErrors.length > 0) {
+				const unique = [...new Set(qErrors)]
 				return NextResponse.json(
-					{ error: `Some questions failed to save: ${qErrors.slice(0, 3).join('; ')}` },
+					{ error: `Some questions failed to save: ${unique.slice(0, 3).join('; ')}` },
 					{ status: 500 }
 				)
 			}
@@ -191,6 +240,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
 			updated.ia_paper_questions = (updated.ia_paper_questions || []).sort(
 				(a: any, b: any) => a.display_order - b.display_order
 			)
+			updated.saved_count = savedCount
 		}
 		return NextResponse.json(updated)
 	} catch (error) {

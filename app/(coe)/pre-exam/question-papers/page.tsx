@@ -233,6 +233,8 @@ export default function QuestionPapersPage() {
 	const [questions, setQuestions] = useState<IaPaperQuestion[]>([])
 	const [loadingPaper, setLoadingPaper] = useState(false)
 	const [savingPaper, setSavingPaper] = useState(false)
+	const [dirty, setDirty] = useState(false) // unsaved edits in the open paper
+	const [savedInfo, setSavedInfo] = useState<string | null>(null)
 
 	// ===== Load base data =====
 	useEffect(() => {
@@ -427,6 +429,8 @@ export default function QuestionPapersPage() {
 		setLoadingPaper(true)
 		setPaper(null)
 		setQuestions([])
+		setDirty(false)
+		setSavedInfo(null)
 		try {
 			const res = await fetch(`/api/pre-exam/question-papers/${p.id}`)
 			if (res.ok) {
@@ -444,10 +448,12 @@ export default function QuestionPapersPage() {
 	const editable = paper ? ['draft', 'submitted'].includes(paper.status) : false
 
 	const updateQuestion = (qid: string, patch: Partial<IaPaperQuestion>) => {
+		setDirty(true)
 		setQuestions(prev => prev.map(q => (q.id === qid ? { ...q, ...patch } : q)))
 	}
 
 	const updateOption = (qid: string, key: string, text: string) => {
+		setDirty(true)
 		setQuestions(prev =>
 			prev.map(q =>
 				q.id === qid
@@ -473,8 +479,13 @@ export default function QuestionPapersPage() {
 			})
 			const data = await res.json()
 			if (!res.ok) throw new Error(data.error || 'Save failed')
-			toast({ title: nextStatus ? `Paper ${nextStatus}` : 'Saved' })
+			const savedN = typeof data.saved_count === 'number' ? data.saved_count : null
+			toast({
+				title: nextStatus ? `Paper ${nextStatus}` : 'Saved ✓',
+				description: !nextStatus && savedN !== null ? `${savedN} question(s) saved` : undefined,
+			})
 			if (nextStatus) {
+				setDirty(false)
 				setSheetOpen(false)
 				fetchPapers()
 			} else if (data) {
@@ -485,6 +496,8 @@ export default function QuestionPapersPage() {
 						: data
 				)
 				setQuestions(data.ia_paper_questions || questions)
+				setDirty(false)
+				setSavedInfo(`Saved ${savedN ?? ''} answer(s)`.replace('  ', ' '))
 			}
 		} catch (e: any) {
 			toast({ title: 'Save failed', description: e.message, variant: 'destructive' })
@@ -546,19 +559,21 @@ export default function QuestionPapersPage() {
 			toast({ title: 'No draft papers to rebuild', description: 'Only draft papers can be rebuilt.' })
 			return
 		}
-		if (!confirm(`Rebuild ${drafts.length} draft paper(s) from their templates? This clears any text already entered in them.`)) return
+		if (!confirm(`Rebuild ${drafts.length} draft paper(s)? Papers that already have questions entered are kept untouched.`)) return
 		try {
 			setRebuildingAll(true)
 			let ok = 0
+			let kept = 0
 			let fail = 0
 			for (const p of drafts) {
 				try {
 					const res = await fetch(`/api/pre-exam/question-papers/${p.id}`, {
 						method: 'PUT',
 						headers: { 'Content-Type': 'application/json' },
-						body: JSON.stringify({ regenerate: true }),
+						body: JSON.stringify({ regenerate: true }), // no force → authored papers preserved
 					})
 					if (res.ok) ok++
+					else if (res.status === 409) kept++
 					else fail++
 				} catch {
 					fail++
@@ -566,8 +581,9 @@ export default function QuestionPapersPage() {
 			}
 			toast({
 				title: `Rebuilt ${ok} paper(s)`,
-				description: fail ? `${fail} failed` : undefined,
-				variant: fail && ok === 0 ? 'destructive' : 'default',
+				description: [kept ? `${kept} kept (already authored)` : '', fail ? `${fail} failed` : '']
+					.filter(Boolean)
+					.join(' · ') || undefined,
 			})
 			fetchPapers()
 		} finally {
@@ -650,19 +666,25 @@ export default function QuestionPapersPage() {
 		}
 	}
 
-	const rebuildPaper = async () => {
+	const rebuildPaper = async (force = false) => {
 		if (!paper) return
-		if (!confirm('Rebuild question slots from the current template? This clears any text already entered in this paper.')) return
+		if (!force && !confirm('Rebuild question slots from the current template? Any answered questions are kept.')) return
 		try {
 			setSavingPaper(true)
 			const res = await fetch(`/api/pre-exam/question-papers/${paper.id}`, {
 				method: 'PUT',
 				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ regenerate: true }),
+				body: JSON.stringify({ regenerate: true, ...(force ? { force: true } : {}) }),
 			})
 			const data = await res.json()
+			if (res.status === 409 && data.error === 'AUTHORED') {
+				if (confirm('This paper already has questions. Rebuild will refresh the structure and KEEP your answers. Continue?')) {
+					await rebuildPaper(true)
+				}
+				return
+			}
 			if (!res.ok) throw new Error(data.error || 'Rebuild failed')
-			setPaper(data)
+			setPaper(prev => (prev ? { ...prev, ...data, template_parts: prev.template_parts, course_outcomes: prev.course_outcomes } : data))
 			setQuestions(data.ia_paper_questions || [])
 			toast({ title: 'Rebuilt from template' })
 		} catch (e: any) {
@@ -737,6 +759,15 @@ export default function QuestionPapersPage() {
 		const defined = (paper?.course_outcomes || []).map(c => c.co_code)
 		return defined.length > 0 ? defined : ['CO1', 'CO2', 'CO3', 'CO4', 'CO5', 'CO6']
 	}, [paper])
+
+	// True once any question text/option has been entered — Rebuild is hidden for such papers
+	const hasAuthored = useMemo(
+		() =>
+			questions.some(
+				q => (q.question_text || '').trim() !== '' || (q.options || []).some(o => (o.text || '').trim() !== '')
+			),
+		[questions]
+	)
 
 	return (
 		<SidebarProvider>
@@ -980,11 +1011,26 @@ export default function QuestionPapersPage() {
 			</SidebarInset>
 
 			{/* ===== AUTHORING SHEET ===== */}
-			<Sheet open={sheetOpen} onOpenChange={setSheetOpen}>
+			<Sheet
+				open={sheetOpen}
+				onOpenChange={open => {
+					if (!open && dirty && !confirm('You have unsaved changes. Close without saving?')) return
+					setSheetOpen(open)
+				}}
+			>
 				<SheetContent className="w-full overflow-y-auto sm:max-w-3xl">
 					<SheetHeader>
-						<SheetTitle>
+						<SheetTitle className="flex items-center gap-2">
 							{paper ? `${paper.course_code} — ${paper.subject_title || ''}` : 'Question Paper'}
+							{dirty ? (
+								<span className="rounded bg-amber-100 px-2 py-0.5 text-xs font-normal text-amber-700">
+									● Unsaved
+								</span>
+							) : savedInfo ? (
+								<span className="rounded bg-green-100 px-2 py-0.5 text-xs font-normal text-green-700">
+									✓ {savedInfo}
+								</span>
+							) : null}
 						</SheetTitle>
 					</SheetHeader>
 
@@ -1009,7 +1055,7 @@ export default function QuestionPapersPage() {
 									<Label className="text-xs">Course Name</Label>
 									<Input
 										value={paper.subject_title || ''}
-										onChange={e => setPaper({ ...paper, subject_title: e.target.value })}
+										onChange={e => { setDirty(true); setPaper({ ...paper, subject_title: e.target.value }) }}
 									/>
 								</div>
 								<div>
@@ -1018,7 +1064,7 @@ export default function QuestionPapersPage() {
 										type="date"
 										value={paper.exam_date ? paper.exam_date.slice(0, 10) : ''}
 										disabled={paper.status === 'locked'}
-										onChange={e => setPaper({ ...paper, exam_date: e.target.value })}
+										onChange={e => { setDirty(true); setPaper({ ...paper, exam_date: e.target.value }) }}
 									/>
 								</div>
 							</div>
@@ -1091,6 +1137,12 @@ export default function QuestionPapersPage() {
 									</div>
 								)}
 							</div>
+
+							<p className="rounded bg-muted/50 px-3 py-2 text-xs text-muted-foreground">
+								Click <span className="font-medium text-foreground">Save</span> to persist questions — the header shows
+								<span className="text-green-700"> ✓ Saved N answer(s)</span>. Once a paper has entered questions,
+								<span className="font-medium text-foreground"> Rebuild will not erase it</span> (Rebuild All skips it; per-paper Rebuild asks to confirm).
+							</p>
 
 							{[...groupedQuestions.entries()].map(([label, qs]) => {
 								const part = partByLabel.get(label)
@@ -1244,8 +1296,8 @@ export default function QuestionPapersPage() {
 										<FileDown className="mr-2 h-4 w-4" /> PDF
 									</Button>
 								</a>
-								{paper.status === 'draft' && (
-									<Button variant="outline" onClick={rebuildPaper} disabled={savingPaper} title="Rebuild slots from the current template">
+								{paper.status === 'draft' && !hasAuthored && (
+									<Button variant="outline" onClick={() => rebuildPaper()} disabled={savingPaper} title="Rebuild empty slots from the current template">
 										<RefreshCw className="mr-2 h-4 w-4" /> Rebuild
 									</Button>
 								)}
