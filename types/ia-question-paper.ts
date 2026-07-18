@@ -209,7 +209,12 @@ export interface IaQuestionPaper {
 	created_at: string
 	updated_at: string
 
-	// Joined
+	// Computed by the list API: true when the paper has ≥1 question with text
+	authored?: boolean
+
+	// Questions live in this JSONB array (source of truth)
+	questions?: IaPaperQuestion[]
+	// Legacy per-row join, kept for transition-period fallback
 	ia_paper_questions?: IaPaperQuestion[]
 }
 

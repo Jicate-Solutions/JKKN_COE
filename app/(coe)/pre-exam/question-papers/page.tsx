@@ -444,6 +444,8 @@ export default function QuestionPapersPage() {
 			const failures: string[] = []
 			// Courses no active template covers — surfaced so a missing template is obvious
 			const notApplicable: string[] = []
+			// Programs with no courses at all in this semester — expected, not a failure
+			const noCourses: string[] = []
 			let templatesCover = ''
 
 			// One generate call per selected program (semester + round shared)
@@ -468,6 +470,7 @@ export default function QuestionPapersPage() {
 				}
 				created += data.created || 0
 				skipped += data.skipped || 0
+				if (data.no_offerings) noCourses.push(pc)
 				if (Array.isArray(data.not_applicable_courses)) notApplicable.push(...data.not_applicable_courses)
 				if (data.templates_cover) templatesCover = data.templates_cover
 			}
@@ -480,11 +483,19 @@ export default function QuestionPapersPage() {
 				})
 			} else {
 				toast({
-					title: 'Papers generated',
+					title:
+						created > 0
+							? `✓ Successfully generated ${created} paper${created === 1 ? '' : 's'}`
+							: skipped > 0
+								? `No new papers — ${skipped} already existed`
+								: 'No papers generated',
 					description: [
-						`${created} created${skipped ? `, ${skipped} already existed` : ''}`,
+						created > 0 && skipped ? `${skipped} already existed` : '',
 						notApplicable.length
 							? `${notApplicable.length} skipped — no template for their course type${templatesCover ? ` (templates cover: ${templatesCover})` : ''}: ${notApplicable.slice(0, 5).join(', ')}${notApplicable.length > 5 ? '…' : ''}`
+							: '',
+						noCourses.length
+							? `${noCourses.length} program(s) have no courses in Semester ${semester}`
 							: '',
 					]
 						.filter(Boolean)
@@ -512,7 +523,7 @@ export default function QuestionPapersPage() {
 			if (res.ok) {
 				const data: PaperDetail = await res.json()
 				setPaper(data)
-				setQuestions(data.ia_paper_questions || [])
+				setQuestions(data.questions || [])
 			}
 		} catch (e) {
 			console.error(e)
@@ -550,10 +561,19 @@ export default function QuestionPapersPage() {
 					questions: editable ? questions : undefined,
 					subject_title: paper.subject_title,
 					exam_date: paper.exam_date,
+					base_updated_at: paper.updated_at, // optimistic-concurrency token
 					...(nextStatus ? { status: nextStatus } : {}),
 				}),
 			})
 			const data = await res.json()
+			if (res.status === 409) {
+				toast({
+					title: 'Not saved — paper changed elsewhere',
+					description: 'Reopen this paper to get the latest version, then re-enter.',
+					variant: 'destructive',
+				})
+				return
+			}
 			if (!res.ok) throw new Error(data.error || 'Save failed')
 			const savedN = typeof data.saved_count === 'number' ? data.saved_count : null
 			toast({
@@ -571,7 +591,7 @@ export default function QuestionPapersPage() {
 						? { ...prev, ...data, template_parts: prev.template_parts, course_outcomes: prev.course_outcomes }
 						: data
 				)
-				setQuestions(data.ia_paper_questions || questions)
+				setQuestions(data.questions || questions)
 				setDirty(false)
 				setSavedInfo(`Saved ${savedN ?? ''} answer(s)`.replace('  ', ' '))
 			}
@@ -582,7 +602,9 @@ export default function QuestionPapersPage() {
 		}
 	}
 
-	const allSelected = papers.length > 0 && papers.every(p => selected.has(p.id))
+	// Only papers with authored questions can be selected / downloaded
+	const selectablePapers = papers.filter(p => p.authored)
+	const allSelected = selectablePapers.length > 0 && selectablePapers.every(p => selected.has(p.id))
 	const toggleSelect = (id: string) =>
 		setSelected(prev => {
 			const next = new Set(prev)
@@ -590,7 +612,7 @@ export default function QuestionPapersPage() {
 			return next
 		})
 	const toggleSelectAll = () =>
-		setSelected(allSelected ? new Set() : new Set(papers.map(p => p.id)))
+		setSelected(allSelected ? new Set() : new Set(selectablePapers.map(p => p.id)))
 
 	const downloadSelectedZip = async () => {
 		const chosen = papers.filter(p => selected.has(p.id))
@@ -742,6 +764,24 @@ export default function QuestionPapersPage() {
 		}
 	}
 
+	const downloadPdf = async (p: { id: string; course_code?: string; cia_round?: number; set_label?: string }) => {
+		try {
+			const res = await fetch(`/api/pre-exam/question-papers/${p.id}/pdf`)
+			if (!res.ok) throw new Error('Could not generate PDF')
+			const blob = await res.blob()
+			const url = URL.createObjectURL(blob)
+			const a = document.createElement('a')
+			a.href = url
+			a.download = `QP_${p.course_code || 'paper'}_CIA${p.cia_round || 1}${p.set_label ? '_' + p.set_label : ''}.pdf`
+			document.body.appendChild(a)
+			a.click()
+			a.remove()
+			URL.revokeObjectURL(url)
+		} catch (e: any) {
+			toast({ title: 'PDF download failed', description: e.message, variant: 'destructive' })
+		}
+	}
+
 	const rebuildPaper = async (force = false) => {
 		if (!paper) return
 		if (!force && !confirm('Rebuild question slots from the current template? Any answered questions are kept.')) return
@@ -761,7 +801,7 @@ export default function QuestionPapersPage() {
 			}
 			if (!res.ok) throw new Error(data.error || 'Rebuild failed')
 			setPaper(prev => (prev ? { ...prev, ...data, template_parts: prev.template_parts, course_outcomes: prev.course_outcomes } : data))
-			setQuestions(data.ia_paper_questions || [])
+			setQuestions(data.questions || [])
 			toast({ title: 'Rebuilt from template' })
 		} catch (e: any) {
 			toast({ title: 'Rebuild failed', description: e.message, variant: 'destructive' })
@@ -1064,6 +1104,7 @@ export default function QuestionPapersPage() {
 													<Checkbox
 														checked={selected.has(p.id)}
 														onCheckedChange={() => toggleSelect(p.id)}
+														disabled={!p.authored}
 														aria-label={`Select ${p.course_code}`}
 													/>
 												</TableCell>
@@ -1086,10 +1127,8 @@ export default function QuestionPapersPage() {
 															<DropdownMenuItem onClick={() => openPaper(p)}>
 																<FileText className="mr-2 h-4 w-4" /> Author
 															</DropdownMenuItem>
-															<DropdownMenuItem asChild>
-																<a href={`/api/pre-exam/question-papers/${p.id}/pdf`} target="_blank" rel="noreferrer">
-																	<FileDown className="mr-2 h-4 w-4" /> Export PDF
-																</a>
+															<DropdownMenuItem onClick={() => downloadPdf(p)} disabled={!p.authored}>
+																<FileDown className="mr-2 h-4 w-4" /> Export PDF
 															</DropdownMenuItem>
 															<DropdownMenuSeparator />
 															{p.status === 'submitted' && (
@@ -1398,15 +1437,9 @@ export default function QuestionPapersPage() {
 
 							{/* Actions */}
 							<div className="sticky bottom-0 flex flex-wrap justify-end gap-2 border-t bg-background py-3">
-								<a
-									href={`/api/pre-exam/question-papers/${paper.id}/pdf`}
-									target="_blank"
-									rel="noreferrer"
-								>
-									<Button variant="outline">
-										<FileDown className="mr-2 h-4 w-4" /> PDF
-									</Button>
-								</a>
+								<Button variant="outline" onClick={() => downloadPdf(paper)}>
+									<FileDown className="mr-2 h-4 w-4" /> PDF
+								</Button>
 								{paper.status === 'draft' && !hasAuthored && (
 									<Button variant="outline" onClick={() => rebuildPaper()} disabled={savingPaper} title="Rebuild empty slots from the current template">
 										<RefreshCw className="mr-2 h-4 w-4" /> Rebuild

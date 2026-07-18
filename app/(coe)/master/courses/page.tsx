@@ -214,6 +214,7 @@ export default function CoursesPage() {
     course_type: '',
     course_level: '',
     course_part_master: '',
+    part_number: '',
     credits: '',
     split_credit: false,
     theory_credit: '',
@@ -518,6 +519,7 @@ export default function CoursesPage() {
       course_type: '',
       course_level: '',
       course_part_master: '',
+      part_number: '',
       credits: '',
       split_credit: false,
       theory_credit: '',
@@ -577,6 +579,7 @@ export default function CoursesPage() {
       course_type: s(row.course_type),
       course_level: s(row.course_level),
       course_part_master: s(row.course_part_master),
+      part_number: row.part_number != null ? String(row.part_number) : '',
       credits: String(row.credits ?? '0'),
       split_credit: Boolean(row.split_credit) || false,
       theory_credit: String(row.theory_credit ?? '0'),
@@ -838,6 +841,7 @@ export default function CoursesPage() {
       'Course Level': c.course_level || '',
       'Course Type Code': c.course_type_code || '',
       'Part': c.course_part_master || '',
+      'Part Number': c.part_number ?? '',
       'Credit': c.credits || 0,
       'Split Credit': c.split_credit ? 'TRUE' : 'FALSE',
       'Theory Credit': c.theory_credit || 0,
@@ -903,6 +907,7 @@ export default function CoursesPage() {
       course_level: c.course_level || '',
       course_type_code: c.course_type_code || '',
       course_part_master: c.course_part_master || '',
+      part_number: c.part_number ?? null,
       credits: c.credits || 0,
       split_credit: c.split_credit || false,
       theory_credit: c.theory_credit || 0,
@@ -1049,6 +1054,11 @@ export default function CoursesPage() {
             course_type: str(row['Course Type'] || row.course_type),
             course_level: str(row['Course Level'] || row.course_level),
             course_part_master: str(row['Course Part Master'] || row['Part'] || row.course_part_master),
+            part_number: (() => {
+              const pn = row['Part Number'] ?? row.part_number
+              const n = Number(pn)
+              return (pn !== undefined && pn !== null && String(pn).trim() !== '' && !Number.isNaN(n)) ? n : null
+            })(),
             credits: Number(row['Credit'] || row.credits) || 0,
             split_credit: typeof row.split_credit === 'boolean' ? row.split_credit : String(row['Split Credit'] || row['Split Credit (TRUE/FALSE)'] || '').toUpperCase() === 'TRUE',
             theory_credit: Number(row['Theory Credit'] || row.theory_credit) || 0,
@@ -1381,6 +1391,11 @@ export default function CoursesPage() {
           }
           if (row['Course Part Master'] || row['Part'] || row.course_part_master) {
             payload.course_part_master = row['Course Part Master'] || row['Part'] || row.course_part_master
+          }
+          if (row['Part Number'] !== undefined || row.part_number !== undefined) {
+            const pn = row['Part Number'] ?? row.part_number
+            const n = Number(pn)
+            payload.part_number = (pn !== undefined && pn !== null && String(pn).trim() !== '' && !Number.isNaN(n)) ? n : null
           }
           if (row['Credit'] !== undefined || row.credits !== undefined) {
             payload.credits = Number(row['Credit'] || row.credits) || 0
@@ -2351,7 +2366,7 @@ export default function CoursesPage() {
                   <Label className="text-sm font-semibold">Part</Label>
                   <SearchableSelect
                     value={formData.course_part_master}
-                    onValueChange={(v) => setFormData({ ...formData, course_part_master: v })}
+                    onValueChange={(v) => setFormData({ ...formData, course_part_master: v, part_number: v === 'Part B' ? formData.part_number : '' })}
                     options={toSearchableOptions([
                       "Part I", "Part II", "Part III", "Part IV", "Part V", "Part A", "Part B"
                     ])}
@@ -2359,6 +2374,18 @@ export default function CoursesPage() {
                     searchPlaceholder="Search parts..."
                     clearable
                     wrapText
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label className={`text-sm font-semibold ${formData.course_part_master !== 'Part B' ? 'text-gray-400' : ''}`}>Part Number</Label>
+                  <SearchableSelect
+                    value={formData.part_number}
+                    onValueChange={(v) => setFormData({ ...formData, part_number: v })}
+                    options={Array.from({ length: 10 }, (_, i) => ({ value: String(i + 1), label: String(i + 1) }))}
+                    placeholder={formData.course_part_master === 'Part B' ? 'Select number' : 'Only for Part B'}
+                    searchPlaceholder="Search..."
+                    clearable
+                    disabled={formData.course_part_master !== 'Part B'}
                   />
                 </div>
                 <div className="space-y-2">

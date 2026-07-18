@@ -4,7 +4,7 @@ import { buildPaperPdf } from '@/lib/ia/build-paper-pdf'
 
 export const dynamic = 'force-dynamic'
 
-// GET - render a printable A5 question paper PDF (hall-ticket-style header)
+// GET - render a printable A4 question paper PDF
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
 	try {
 		const supabase = getSupabaseServer()
@@ -18,7 +18,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
 			status: 200,
 			headers: {
 				'Content-Type': 'application/pdf',
-				'Content-Disposition': `inline; filename="${result.filename}"`,
+				'Content-Disposition': `attachment; filename="${result.filename}"`,
 				'Cache-Control': 'no-store, max-age=0',
 			},
 		})

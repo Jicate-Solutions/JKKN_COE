@@ -59,7 +59,16 @@ export async function GET(req: NextRequest) {
 			console.error('Error listing papers:', error)
 			return NextResponse.json({ error: error.message }, { status: 500 })
 		}
-		return NextResponse.json(data)
+
+		// Flag which papers have at least one authored question (question_text present),
+		// then drop the questions array from the list payload to keep it small.
+		const withFlag = (data || []).map(p => {
+			const qs = Array.isArray(p.questions) ? p.questions : []
+			const authored = qs.some((q: any) => (q?.question_text || '').trim() !== '')
+			const { questions, ...rest } = p
+			return { ...rest, authored }
+		})
+		return NextResponse.json(withFlag)
 	} catch (error) {
 		console.error('Error in GET papers:', error)
 		return NextResponse.json({ error: 'Failed to list question papers' }, { status: 500 })
@@ -108,8 +117,20 @@ export async function POST(req: NextRequest) {
 			console.error('Error fetching offerings:', coError)
 			return NextResponse.json({ error: 'Failed to fetch course offerings' }, { status: 500 })
 		}
+		// A program with no courses in the chosen semester is a normal condition,
+		// not a fault: the UI's Semester list is a union across the selected
+		// programs, so most programs legitimately have nothing in a given semester.
+		// Report a no-op so the caller can skip it instead of counting a failure.
 		if (!offerings || offerings.length === 0) {
-			return NextResponse.json({ error: 'No course offerings found for this selection' }, { status: 404 })
+			return NextResponse.json({
+				success: true,
+				created: 0,
+				skipped: 0,
+				no_offerings: true,
+				not_applicable: 0,
+				not_applicable_courses: [],
+				message: 'No courses offered for this program in the selected semester',
+			})
 		}
 
 		// 2. Enrich with course master
@@ -230,6 +251,7 @@ export async function POST(req: NextRequest) {
 						status: 'draft',
 						created_by: userId,
 						author_id: userId,
+						questions: scaffoldQuestions(parts),
 					})
 					.select()
 					.single()
@@ -237,12 +259,6 @@ export async function POST(req: NextRequest) {
 				if (paperError) {
 					console.error('Error creating paper:', paperError)
 					continue
-				}
-
-				const questionRows = scaffoldQuestions(paper.id, parts)
-				if (questionRows.length > 0) {
-					const { error: qError } = await supabase.from('ia_paper_questions').insert(questionRows)
-					if (qError) console.error('Error scaffolding questions:', qError)
 				}
 				created.push(paper)
 			}

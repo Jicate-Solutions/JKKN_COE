@@ -20,6 +20,8 @@
       "Bash(do echo \"=== $f ===\")",
       "Bash(wc -l d:/JKKN/Development/Application/COE/jkkncoe/app/\\\\\\(coe\\\\\\)/exam-management/exam-timetables/page.tsx)",
       "Bash(npx next lint --file \"app/\\(coe\\)/exam-management/exam-timetable/page.tsx\")",
+      "Bash(npx tsc --noEmit:*)",
+      "mcp__claude_ai_Supabase__list_projects",
       "mcp__chrome-devtools__take_screenshot",
       "mcp__plugin_playwright_playwright__browser_wait_for",
       "Skill(commit-commands:commit)",

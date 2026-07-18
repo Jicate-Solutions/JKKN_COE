@@ -1,4 +1,4 @@
-// Shared A5 question-paper PDF builder (hall-ticket-style letterhead, auto-fit to 1 page).
+// Shared A4 question-paper PDF builder (text letterhead, auto-fit to 1 page).
 // Used by the internal route and the /api/v1 route so output stays identical.
 
 import { jsPDF } from 'jspdf'
@@ -16,18 +16,35 @@ function formatDuration(mins?: number | null): string {
 	return `${h.toFixed(1)} Hours`
 }
 
-async function fetchImageAsDataUrl(url?: string | null): Promise<{ data: string; format: string } | null> {
-	if (!url) return null
-	try {
-		const res = await fetch(url)
-		if (!res.ok) return null
-		const ct = res.headers.get('content-type') || ''
-		const format = /png/i.test(ct) ? 'PNG' : /jpe?g/i.test(ct) ? 'JPEG' : url.toLowerCase().endsWith('.png') ? 'PNG' : 'JPEG'
-		const buf = Buffer.from(await res.arrayBuffer())
-		return { data: `data:${ct || 'image/png'};base64,${buf.toString('base64')}`, format }
-	} catch {
-		return null
+/**
+ * Printed letterhead per COE institution_code.
+ *
+ * The `institutions` row carries a short/informal name ("JKKN College of Arts and
+ * Science (Autonomous)") and no printable address, and pdf_institution_settings has
+ * no name/address columns — so the official letterhead text is configured here.
+ * Keyed by institution_code so other colleges keep their own details.
+ */
+const LETTERHEAD: Record<string, { name: string; address: string }> = {
+	CAS: {
+		name: 'J.K.K.NATARAJA COLLEGE OF ARTS & SCIENCE (AUTONOMOUS)',
+		address: 'Komarapalayam - 638 183, Namakkal District, Tamil Nadu',
+	},
+}
+
+/**
+ * UG/PG from the program code. Mirrors the DB function get_program_type_from_code()
+ * (20260117_fix_pg_program_pass_status.sql) — keep the rules in sync.
+ */
+function getProgramTypeFromCode(programCode?: string | null): 'UG' | 'PG' {
+	if (!programCode) return 'UG'
+	const upperCode = programCode.toUpperCase()
+	const pgPrefixes = ['MSC', 'M.SC', 'M SC', 'MBA', 'MCA', 'MA', 'M.A', 'MCOM', 'M.COM', 'M COM', 'MSW', 'MPHIL', 'PHD', 'PH.D', 'MASTER', 'POST', 'PG']
+	for (const prefix of pgPrefixes) {
+		if (upperCode.startsWith(prefix)) return 'PG'
 	}
+	if (/^[0-9]{2}P[A-Z]/.test(upperCode)) return 'PG' // e.g. 24PCHC02
+	if (/^P[A-Z]{2,3}$/.test(upperCode)) return 'PG' // e.g. PCH, PZO
+	return 'UG'
 }
 
 export interface BuildPaperPdfResult {
@@ -36,7 +53,7 @@ export interface BuildPaperPdfResult {
 }
 
 /**
- * Build the A5 PDF for a single question paper.
+ * Build the A4 PDF for a single question paper.
  * @param supabase service-role client
  * @param id       ia_question_papers.id
  * @param origin   request origin, used to resolve relative logo URLs
@@ -45,25 +62,22 @@ export interface BuildPaperPdfResult {
 export async function buildPaperPdf(
 	supabase: any,
 	id: string,
-	origin: string
+	_origin: string
 ): Promise<BuildPaperPdfResult | null> {
-	const absUrl = (u?: string | null) =>
-		!u ? u : /^https?:\/\//i.test(u) ? u : `${origin}${u.startsWith('/') ? '' : '/'}${u}`
-
 	const { data: paper, error } = await supabase
 		.from('ia_question_papers')
-		.select('*, ia_paper_questions(*)')
+		.select('*')
 		.eq('id', id)
 		.single()
 	if (error || !paper) return null
 
-	const [instRes, { data: session }, { data: parts }] = await Promise.all([
+	// Questions live in the JSONB column.
+	const questionArr: any[] = Array.isArray(paper.questions) ? paper.questions : []
+
+	// The exam session name is no longer printed, and pdf_institution_settings has
+	// no name/address/logo we use, so neither is fetched.
+	const [instRes, { data: parts }] = await Promise.all([
 		supabase.from('institutions').select('*').eq('id', paper.institutions_id).single(),
-		supabase
-			.from('examination_sessions')
-			.select('session_name, session_code')
-			.eq('id', paper.examination_session_id)
-			.single(),
 		paper.template_id
 			? supabase
 					.from('ia_template_parts')
@@ -78,33 +92,19 @@ export async function buildPaperPdf(
 		console.error('[QP PDF] institution lookup failed for', paper.institutions_id, instRes.error)
 	}
 
-	const { data: pdfSettings } = await supabase
-		.from('pdf_institution_settings')
-		.select('*')
-		.eq('institution_code', institution?.institution_code || '')
-		.eq('active', true)
-		.order('wef_date', { ascending: false })
-		.limit(1)
-		.maybeSingle()
-
-	const accreditation =
-		pdfSettings?.accreditation_text ||
-		institution?.accredited_by ||
-		'(Accredited by NAAC, Approved by AICTE, Recognized by UGC Under Section 2(f) & 12(B), Affiliated to Periyar University)'
+	// Letterhead: official name + address (no logos, no accreditation line).
+	const letterhead = LETTERHEAD[institution?.institution_code || '']
+	const institutionName = letterhead?.name || institution?.name || 'Institution'
 	const address =
-		pdfSettings?.address ||
+		letterhead?.address ||
 		[institution?.address_line1, institution?.address_line2, institution?.city, institution?.state]
 			.filter(Boolean)
 			.join(', ') ||
 		''
-	const [logo, secondLogo] = await Promise.all([
-		fetchImageAsDataUrl(absUrl(pdfSettings?.logo_url || institution?.logo_url)),
-		fetchImageAsDataUrl(absUrl(pdfSettings?.secondary_logo_url)),
-	])
+	// UG - / PG - DEGREE EXAMINATIONS, from the paper's program code.
+	const examHeading = `${getProgramTypeFromCode(paper.program_code)} - DEGREE EXAMINATIONS`
 
-	const questions = (paper.ia_paper_questions || []).sort(
-		(a: any, b: any) => a.display_order - b.display_order
-	)
+	const questions = questionArr.slice().sort((a: any, b: any) => a.display_order - b.display_order)
 	const partList = (parts || []).slice().sort((a: any, b: any) => a.display_order - b.display_order)
 
 	const partByLabel = new Map(partList.map((p: any) => [p.part_label, p]))
@@ -119,11 +119,23 @@ export async function buildPaperPdf(
 		return opts.map((o: any) => `${o.key}) ${o.text || '____'}`).join('    ')
 	}
 	const roman = ['', 'I', 'II', 'III', 'IV', 'V', 'VI'][paper.cia_round || 1] || String(paper.cia_round || 1)
-	const sess = session?.session_name ? ` - ${session.session_name.toUpperCase()}` : ''
 
-	const buildDoc = (qFont: number) => {
-		const doc = new jsPDF({ unit: 'mm', format: 'a5', orientation: 'portrait' })
-		const pageW = doc.internal.pageSize.getWidth()
+	// Spacing presets, roomiest first. To fit one page we tighten whitespace BEFORE
+	// shrinking the font, so text stays as large as possible.
+	//   pad/gap/startGap = cell padding + gaps between parts (mm)
+	//   lh               = jsPDF line-height factor (leading inside a cell)
+	const SPACING = [
+		{ pad: 2, gap: 2, startGap: 3, lh: 1.15 }, // roomy (default)
+		{ pad: 1.5, gap: 1.5, startGap: 2.5, lh: 1.05 }, // snug
+		{ pad: 1.0, gap: 1.0, startGap: 2, lh: 0.98 }, // tight
+		{ pad: 0.7, gap: 0.5, startGap: 1, lh: 0.9 }, // tightest
+	]
+
+	const buildDoc = (qFont: number, sp: { pad: number; gap: number; startGap: number; lh: number }) => {
+		const doc = new jsPDF({ unit: 'mm', format: 'a4', orientation: 'portrait' })
+		// Tighter leading = shorter multi-line cells, applied before any text is measured.
+		doc.setLineHeightFactor(sp.lh)
+		const pageW = doc.internal.pageSize.getWidth() // 210mm
 		const margin = 8
 		const centerFit = (t: string, yy: number, size: number, bold = true, maxW?: number) => {
 			doc.setFont('times', bold ? 'bold' : 'normal')
@@ -138,38 +150,32 @@ export async function buildPaperPdf(
 		}
 
 		let y = margin
-		const logoSize = 12
-		const textMaxW = pageW - 2 * (margin + logoSize + 3)
-		if (logo) {
-			try { doc.addImage(logo.data, logo.format, margin, y, logoSize, logoSize) } catch { /* ignore */ }
-		}
-		if (secondLogo) {
-			try { doc.addImage(secondLogo.data, secondLogo.format, pageW - margin - logoSize, y, logoSize, logoSize) } catch { /* ignore */ }
-		}
-		centerFit((institution?.name || 'Institution').toUpperCase(), y + 4, 12, true, textMaxW)
-		centerFit(String(accreditation).replace(/\n/g, ' '), y + 8, 7, false, textMaxW)
-		y += 11
+		// No logos — the letterhead is text-only, so it spans the full width.
+		const textMaxW = pageW - margin * 2
+		centerFit(institutionName.toUpperCase(), y + 4, 12, true, textMaxW)
+		y += 7
 		if (address) centerFit(address, y, 9, true, textMaxW)
 		y += 5
-		centerFit('DEGREE EXAMINATIONS', y, 12)
+		centerFit(examHeading, y, 12)
 		y += 5
-		centerFit(`Continuous Internal Assessment- ${roman}${sess}`, y, 11)
+		centerFit(`Continuous Internal Assessment- ${roman}`, y, 11)
 		y += 6
 
 		doc.setFont('times', 'normal')
-		doc.setFontSize(8)
+		doc.setFontSize(11)
 		doc.text(`Subject Code: ${paper.course_code || ''}`, margin, y)
-		doc.text(`Set: ${paper.set_label || 'A'}`, pageW - margin, y, { align: 'right' })
-		y += 4
+		y += 5.5
 		doc.setFont('times', 'bold')
 		doc.text(`Subject Title: ${paper.subject_title || ''}`, margin, y)
-		y += 4
+		y += 5.5
 		doc.setFont('times', 'normal')
 		doc.text(`Time: ${formatDuration(paper.duration_minutes)}`, margin, y)
 		doc.text(`Maximum: ${Number(paper.max_marks) || 0} Marks`, pageW - margin, y, { align: 'right' })
 		y += 2
 
-		const contentW = pageW - margin * 2 - 24
+		// Question no. (14, bold) + CO (12) + K-Level(s) (20) reserved from the content column.
+		const numW = 14
+		const contentW = pageW - margin * 2 - 32 - numW
 		for (const [label, qs] of grouped) {
 			const part: any = partByLabel.get(label)
 			const marksEach = part?.marks_per_question ?? qs[0]?.marks ?? 0
@@ -180,43 +186,59 @@ export async function buildPaperPdf(
 			const rows: any[] = []
 			for (const q of qs) {
 				if (q.is_choice_alternative) {
-					rows.push([{ content: '(OR)', colSpan: 3, styles: { halign: 'center', fontStyle: 'bold' } }])
+					rows.push([{ content: '(OR)', colSpan: 4, styles: { halign: 'center', fontStyle: 'bold' } }])
 				}
+				// Question number lives in its own bold column ("6 a)", "1.")
 				const prefix = q.sub_label ? `${q.question_number} ${q.sub_label})` : `${q.question_number}.`
-				let text = `${prefix} ${q.question_text || ''}`
+				let text = q.question_text || ''
 				const opts = optionLine(q.options)
-				if (opts) text += `\n     ${opts}`
-				rows.push([text, q.co_code || '', q.k_level || ''])
+				if (opts) text += `\n${opts}`
+				rows.push([{ content: prefix, styles: { fontStyle: 'bold' } }, text, q.co_code || '', q.k_level || ''])
 			}
 
 			autoTable(doc, {
-				startY: y + 3,
+				startY: y + sp.startGap,
 				head: [[
-					{ content: `${heading}${part?.instruction ? '\n' + part.instruction : ''}`, styles: { halign: 'center' } },
-					'CO',
-					'K',
+					{ content: `${heading}${part?.instruction ? '\n' + part.instruction : ''}`, colSpan: 2, styles: { halign: 'center' } },
+					// 10pt (at qFont 12) — small enough that "K-Level(s)" stays on one line in its 20mm column
+					{ content: 'CO', styles: { fontSize: Math.max(6, qFont - 2) } },
+					{ content: 'K-Level(s)', styles: { fontSize: Math.max(6, qFont - 2) } },
 				]],
 				body: rows,
 				theme: 'plain',
-				styles: { font: 'times', fontSize: qFont, cellPadding: qFont >= 8 ? 2 : 1.4, valign: 'top' },
-				headStyles: { fontStyle: 'bold', fontSize: qFont + 1, halign: 'center', textColor: 20 },
+				styles: { font: 'times', fontSize: qFont, cellPadding: sp.pad, valign: 'top' },
+				headStyles: { fontStyle: 'bold', fontSize: qFont, halign: 'center', textColor: 20 },
 				columnStyles: {
-					0: { cellWidth: contentW },
-					1: { cellWidth: 12, halign: 'center' },
-					2: { cellWidth: 12, halign: 'center' },
+					0: { cellWidth: numW, fontStyle: 'bold' },
+					1: { cellWidth: contentW },
+					// CO / K-Level: bold and a couple of points smaller than the question text
+					2: { cellWidth: 12, halign: 'center', fontStyle: 'bold', fontSize: Math.max(6, qFont - 2) },
+					3: { cellWidth: 20, halign: 'center', fontStyle: 'bold', fontSize: Math.max(6, qFont - 2) },
 				},
 				margin: { left: margin, right: margin },
 			})
-			y = (doc as any).lastAutoTable.finalY + 2
+			y = (doc as any).lastAutoTable.finalY + sp.gap
 		}
 		return doc
 	}
 
-	let qFont = 9
-	let doc = buildDoc(qFont)
-	while (doc.getNumberOfPages() > 1 && qFont > 5) {
-		qFont -= 0.5
-		doc = buildDoc(qFont)
+	// Always fit one page. At each font size try roomy → tight → tightest spacing;
+	// only when even the tightest spacing overflows do we drop the font a step.
+	const FONT_MAX = 12
+	const FONT_MIN = 6
+	let doc = buildDoc(FONT_MAX, SPACING[0])
+	if (doc.getNumberOfPages() > 1) {
+		let fitted = false
+		for (let f = FONT_MAX; f >= FONT_MIN && !fitted; f -= 0.5) {
+			for (const sp of SPACING) {
+				doc = buildDoc(f, sp)
+				if (doc.getNumberOfPages() === 1) {
+					fitted = true
+					break
+				}
+			}
+		}
+		// If nothing fits even at FONT_MIN/tightest, `doc` holds that densest attempt.
 	}
 
 	const buffer = Buffer.from(doc.output('arraybuffer'))

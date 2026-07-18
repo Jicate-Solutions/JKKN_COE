@@ -62,6 +62,7 @@ export interface Course {
 	course_level?: string | null
 	course_type_code?: string | null
 	course_part_master?: string
+	part_number?: number | null
 	credits: number
 	split_credit?: boolean
 	theory_credit?: number

@@ -1,8 +1,62 @@
 # Internal Assessment Question Paper Templates & Authoring
 
-**Date:** 2026-07-17
-**Status:** Design / awaiting approval
+**Date:** 2026-07-17 · **Updated:** 2026-07-18
+**Status:** ✅ Shipped
 **Module home:** `app/(coe)/pre-exam/question-paper-templates/` + `app/(coe)/pre-exam/question-papers/`
+
+> Sections 1–9 below are the original design. **Section 0 (As-built) records what actually shipped and
+> supersedes the design where they differ** (question storage, PDF layout, author model, v1 API).
+
+## 0. As-built (final implementation)
+
+**Migrations (apply in order):**
+1. `20260717_create_ia_question_paper_templates.sql` — templates, parts, question-type registry, COs, papers, setters (+ triggers, RLS, seed types).
+2. `20260717_seed_question_paper_templates_permission.sql` + `20260717_seed_question_papers_permission.sql` — page perms (super_admin + coe).
+3. `20260717_ia_author_uuid_and_drop_user_fks.sql` — adds `author_id UUID` (MyJKKN staff profile id); drops the `users` FKs on `created_by`/`approved_by`/`paper_setter_id`/`assigned_by`.
+4. `20260718_ia_questions_jsonb.sql` — **consolidates questions into a JSONB column** (see below).
+
+**Question storage — single JSONB, not a table.** The `ia_paper_questions` table was **replaced by
+`ia_question_papers.questions jsonb`** (ordered array of `{id, part_label, question_number, sub_label,
+is_choice_alternative, question_type_code, question_text, marks, options, correct_option, co_code,
+k_level, display_order}`) and **dropped** (263 papers / 2,893 questions migrated). Rationale: papers are
+only read/written whole; `part_id` FK was unused; one atomic UPDATE removes the stale-id/partial-save/
+rebuild-wipe bug class. OBE attainment is unaffected (runs on a future student-marks table that snapshots
+`co_code`+`max_marks`). Shared helper `lib/ia/paper-scaffold.ts` (`scaffoldQuestions`, `mergeAuthored`).
+
+**Save / rebuild semantics:**
+- Save = one atomic UPDATE of `questions` (+ meta/status) with an **optimistic `updated_at` guard**;
+  concurrent edit → `409 CONFLICT` ("reload"). Reports `saved_count`.
+- **Rebuild merge-preserves** answered content (match by part+question#+sub-label); hidden once a paper is
+  authored; **Rebuild All** skips authored papers. An accidental rebuild cannot erase entries.
+- Status machine `draft → submitted → approved → locked` (edits blocked after approved; delete blocked when locked).
+
+**Author model:** `author_id` = MyJKKN staff profile UUID (plain UUID, no FK). Stamped on generate + template create.
+
+**Public API:** `/api/v1/ia/*` (`question-types`, `paper-templates`, `course-outcomes`,
+`question-papers` list/generate, `[id]` get/save/rebuild/delete, `[id]/pdf`) via `withExternalAuth`
+(module `ia` in `API_MODULES`; grant key `ia:read/create/update/delete`). Scoped by COE
+`institution_code` (SF & aided → **CAS**). List accepts `course_code=<c1,c2>` + `author_id`.
+
+**Download:** list has checkbox select + **Download (N)** → client-side **ZIP** (jszip) of selected PDFs;
+per-row **Export PDF**. Both **disabled unless the paper is authored** (`authored` flag from the list API).
+PDFs are served `Content-Disposition: attachment` and fetched as a blob → **instant download, no new tab**.
+
+**PDF — as-built (`lib/ia/build-paper-pdf.ts`):**
+- **A4 portrait**, text-only letterhead (no logos), auto-fit to **one page**.
+- Letterhead keyed by `institution_code` (`LETTERHEAD` map): CAS = `J.K.K.NATARAJA COLLEGE OF ARTS &
+  SCIENCE (AUTONOMOUS)` (bold 12) + `Komarapalayam - 638 183, Namakkal District, Tamil Nadu` (bold 9).
+  No accreditation line. Other institutions fall back to `institutions.name` + composed address.
+- Heading: **`UG - / PG - DEGREE EXAMINATIONS`** (from `program_code` via `getProgramTypeFromCode`) then
+  `Continuous Internal Assessment- <Roman>` (no session name, no `Set:` line in the header).
+- Meta: `Subject Code` / `Subject Title` (bold) / `Time: <hours>` (60→"1 Hour", 90→"1½ Hours") / `Maximum: N Marks`, at 11pt.
+- Body per part: `theme:'plain'` (borderless). Columns: **Q-No (bold, own column)** · question text ·
+  **CO** · **K-Level(s)**. PART heading + instruction **centered**; **CO/K-Level headers 10pt bold**;
+  `(OR)` on its own centered full-width row.
+- **One-page fitter:** start question font **12pt**; if it overflows, tighten spacing in 4 steps
+  (cell padding → part gaps → line-height factor) *before* stepping the font down (to a 5pt floor).
+  Whitespace is sacrificed before readability.
+
+---
 
 ## 1. Goal
 

@@ -43,7 +43,14 @@ export const GET = withExternalAuth(async (request: Request, context: ExternalAp
 
 	const { data, error } = await query.range(0, 9999)
 	if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-	return NextResponse.json({ data })
+	// authored flag from the questions JSONB; drop the array from the list payload
+	const withFlag = (data || []).map((p: any) => {
+		const qs = Array.isArray(p.questions) ? p.questions : []
+		const authored = qs.some((q: any) => (q?.question_text || '').trim() !== '')
+		const { questions, ...rest } = p
+		return { ...rest, authored }
+	})
+	return NextResponse.json({ data: withFlag })
 })
 
 export const POST = withExternalAuth(async (request: Request, context: ExternalApiContext) => {
@@ -159,12 +166,11 @@ export const POST = withExternalAuth(async (request: Request, context: ExternalA
 					status: 'draft',
 					created_by: authorId,
 					author_id: authorId,
+					questions: scaffoldQuestions(parts),
 				})
 				.select()
 				.single()
 			if (pErr) { console.error('[v1 generate] paper insert', pErr); continue }
-			const rows = scaffoldQuestions(paper.id, parts)
-			if (rows.length > 0) await supabase.from('ia_paper_questions').insert(rows)
 			created.push(paper)
 		}
 	}

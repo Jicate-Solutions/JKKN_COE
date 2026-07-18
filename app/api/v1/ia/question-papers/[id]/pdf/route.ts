@@ -5,7 +5,7 @@ import type { ExternalApiContext } from '@/types/api-management'
 import { institutionAllowed } from '@/lib/ia/v1-helpers'
 import { buildPaperPdf } from '@/lib/ia/build-paper-pdf'
 
-/** /api/v1/ia/question-papers/{id}/pdf — A5 question-paper PDF. */
+/** /api/v1/ia/question-papers/{id}/pdf — A4 question-paper PDF. */
 
 export const GET = withExternalAuth(async (request: Request, context: ExternalApiContext) => {
 	const supabase = getSupabaseServer()
@@ -29,7 +29,7 @@ export const GET = withExternalAuth(async (request: Request, context: ExternalAp
 		status: 200,
 		headers: {
 			'Content-Type': 'application/pdf',
-			'Content-Disposition': `inline; filename="${result.filename}"`,
+			'Content-Disposition': `attachment; filename="${result.filename}"`,
 			'Cache-Control': 'no-store, max-age=0',
 		},
 	})
