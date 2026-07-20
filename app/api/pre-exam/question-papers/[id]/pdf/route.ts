@@ -1,8 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
-import { buildPaperPdf } from '@/lib/ia/build-paper-pdf'
+import { buildPaperPdfHtml } from '@/lib/ia/build-paper-pdf-html'
 
 export const dynamic = 'force-dynamic'
+// Headless Chromium needs the Node runtime and room for a cold-start render.
+export const runtime = 'nodejs'
+export const maxDuration = 60
 
 // GET - render a printable A4 question paper PDF
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -11,7 +14,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
 		const { id } = await params
 		const origin = new URL(_req.url).origin
 
-		const result = await buildPaperPdf(supabase, id, origin)
+		const result = await buildPaperPdfHtml(supabase, id, origin)
 		if (!result) return NextResponse.json({ error: 'Paper not found' }, { status: 404 })
 
 		return new NextResponse(result.buffer, {

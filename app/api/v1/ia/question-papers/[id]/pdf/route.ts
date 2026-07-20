@@ -3,9 +3,13 @@ import { getSupabaseServer } from '@/lib/supabase-server'
 import { withExternalAuth } from '@/lib/api-auth/middleware'
 import type { ExternalApiContext } from '@/types/api-management'
 import { institutionAllowed } from '@/lib/ia/v1-helpers'
-import { buildPaperPdf } from '@/lib/ia/build-paper-pdf'
+import { buildPaperPdfHtml } from '@/lib/ia/build-paper-pdf-html'
 
 /** /api/v1/ia/question-papers/{id}/pdf — A4 question-paper PDF. */
+
+// Headless Chromium needs the Node runtime and room for a cold-start render.
+export const runtime = 'nodejs'
+export const maxDuration = 60
 
 export const GET = withExternalAuth(async (request: Request, context: ExternalApiContext) => {
 	const supabase = getSupabaseServer()
@@ -22,7 +26,7 @@ export const GET = withExternalAuth(async (request: Request, context: ExternalAp
 		return NextResponse.json({ error: 'Not found or not permitted' }, { status: 404 })
 	}
 
-	const result = await buildPaperPdf(supabase, id, url.origin)
+	const result = await buildPaperPdfHtml(supabase, id, url.origin)
 	if (!result) return NextResponse.json({ error: 'Paper not found' }, { status: 404 })
 
 	return new NextResponse(result.buffer, {

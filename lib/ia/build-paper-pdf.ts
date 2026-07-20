@@ -17,6 +17,37 @@ function formatDuration(mins?: number | null): string {
 }
 
 /**
+ * Flatten rich question HTML to plain text for the (legacy) jsPDF renderer, which
+ * can only draw strings. Question text is now authored as HTML in MyJKKN, so a raw
+ * value like "<p>…</p>" must NOT be printed verbatim. Inline math (<span
+ * data-latex="…">) degrades to its LaTeX source — jsPDF cannot typeset it, but the
+ * faithful Chromium renderer (build-paper-pdf-html.ts) does. Block tags become
+ * line breaks; entities are decoded.
+ */
+function stripHtmlToText(html?: string | null): string {
+	if (!html) return ''
+	if (!/[<&]/.test(html)) return html // fast path: already plain
+	return html
+		// Inline math → its LaTeX (best-effort for the text-only renderer)
+		.replace(/<span[^>]*\bdata-latex="([^"]*)"[^>]*>(?:.*?)<\/span>/gi, ' $1 ')
+		.replace(/<br\s*\/?>/gi, '\n')
+		.replace(/<\/(p|div|li|tr|h[1-6])>/gi, '\n')
+		.replace(/<li[^>]*>/gi, '• ')
+		.replace(/<[^>]+>/g, '')
+		.replace(/&amp;/g, '&')
+		.replace(/&nbsp;/g, ' ')
+		.replace(/&lt;/g, '<')
+		.replace(/&gt;/g, '>')
+		.replace(/&quot;/g, '"')
+		.replace(/&#39;/g, "'")
+		.replace(/&#(\d+);/g, (_, c) => String.fromCharCode(Number(c)))
+		.replace(/[ \t]+\n/g, '\n')
+		.replace(/\n{3,}/g, '\n\n')
+		.replace(/[ \t]{2,}/g, ' ')
+		.trim()
+}
+
+/**
  * Printed letterhead per COE institution_code.
  *
  * The `institutions` row carries a short/informal name ("JKKN College of Arts and
@@ -116,7 +147,7 @@ export async function buildPaperPdf(
 	}
 	const optionLine = (opts: any) => {
 		if (!Array.isArray(opts) || opts.length === 0) return ''
-		return opts.map((o: any) => `${o.key}) ${o.text || '____'}`).join('    ')
+		return opts.map((o: any) => `${o.key}) ${stripHtmlToText(o.text) || '____'}`).join('    ')
 	}
 	const roman = ['', 'I', 'II', 'III', 'IV', 'V', 'VI'][paper.cia_round || 1] || String(paper.cia_round || 1)
 
@@ -190,7 +221,7 @@ export async function buildPaperPdf(
 				}
 				// Question number lives in its own bold column ("6 a)", "1.")
 				const prefix = q.sub_label ? `${q.question_number} ${q.sub_label})` : `${q.question_number}.`
-				let text = q.question_text || ''
+				let text = stripHtmlToText(q.question_text)
 				const opts = optionLine(q.options)
 				if (opts) text += `\n${opts}`
 				rows.push([{ content: prefix, styles: { fontStyle: 'bold' } }, text, q.co_code || '', q.k_level || ''])

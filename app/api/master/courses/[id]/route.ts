@@ -233,7 +233,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
     if (input.split_credit !== undefined) data.split_credit = Boolean(input.split_credit)
     if (input.theory_credit !== undefined) data.theory_credit = Number(input.theory_credit)
     if (input.practical_credit !== undefined) data.practical_credit = Number(input.practical_credit)
-    if (input.qp_code !== undefined) data.qp_code = String(input.qp_code)
+    if (input.qp_code !== undefined) data.qp_code = input.qp_code ? String(input.qp_code) : null
     if (input.e_code_name !== undefined && input.e_code_name) data.e_code_name = String(input.e_code_name)
     if (input.exam_duration !== undefined) data.exam_duration = Number(input.exam_duration)
     if (input.evaluation_type !== undefined) data.evaluation_type = String(input.evaluation_type)
@@ -248,8 +248,8 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
     if (input.no_of_qp_setter !== undefined) data.no_of_qp_setter = Number(input.no_of_qp_setter)
     if (input.no_of_scrutinizer !== undefined) data.no_of_scrutinizer = Number(input.no_of_scrutinizer)
     if (input.fee_exception !== undefined) data.fee_exception = Boolean(input.fee_exception)
-    if (input.syllabus_pdf_url !== undefined) data.syllabus_pdf_url = String(input.syllabus_pdf_url)
-    if (input.description !== undefined) data.description = String(input.description)
+    if (input.syllabus_pdf_url !== undefined) data.syllabus_pdf_url = input.syllabus_pdf_url ? String(input.syllabus_pdf_url) : null
+    if (input.description !== undefined) data.description = input.description ? String(input.description) : null
     if (input.is_active !== undefined) data.status = Boolean(input.is_active)
     // Required fields for marks and hours
     if (input.class_hours !== undefined) data.class_hours = Number(input.class_hours)
@@ -289,9 +289,37 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
     if (error) {
       console.error('Supabase update error:', error)
 
+      // Map the DB constraint name to a field-specific explanation. The raw
+      // Postgres message names the violated constraint, e.g.
+      // 'new row for relation "courses" violates check constraint "courses_part_number_check"'.
+      const constraint = (error.message.match(/constraint "([^"]+)"/)?.[1]) || ''
+      const CHECK_HINTS: Record<string, string> = {
+        courses_part_number_check: 'Part number must be blank or a whole number between 1 and 10. This course has an out-of-range part number — fix it before saving.',
+        courses_course_level_chk: 'Course level must be blank or a Roman numeral (I–XX).',
+        courses_courses_status_check: 'Course status must be one of: Pending, BOS Approved, Locked.',
+        courses_course_part_master_check: 'Invalid course part. Please pick a valid option from the dropdown.',
+        course_e_code_name_check: 'Invalid E-Code name value.',
+      }
+
       let errorMsg = error.message
-      if (error.code === '23503') errorMsg = 'Foreign key constraint failed. Ensure institution, regulation, and department exist.'
-      if (error.code === '23514') errorMsg = 'Invalid value. Please check your input values and ensure they match the allowed options.'
+      let clientStatus = 500
+      if (error.code === '23503') {
+        errorMsg = 'Foreign key constraint failed. Ensure institution, regulation, and department exist.'
+        clientStatus = 400
+      } else if (error.code === '23514') {
+        errorMsg = CHECK_HINTS[constraint]
+          || `Invalid value (constraint: ${constraint || 'unknown'}). Please check your input values.`
+        clientStatus = 400
+      } else if (error.code === '23505') {
+        errorMsg = 'A course with this code or display code already exists.'
+        clientStatus = 400
+      } else if (error.code === '23502') {
+        errorMsg = `A required field is missing (${(error.message.match(/column "([^"]+)"/)?.[1]) || 'unknown'}).`
+        clientStatus = 400
+      } else if (error.code === '22P02') {
+        errorMsg = 'A numeric field received an invalid value. Please check marks, credits, and hours.'
+        clientStatus = 400
+      }
 
       await logTransaction({
         action: 'update',
@@ -301,13 +329,10 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
         new_values: data,
         status: 'error',
         error_message: errorMsg,
-        metadata: { record_id: id },
+        metadata: { record_id: id, code: error.code, constraint },
       })
 
-      if (error.code === '23503') {
-        return NextResponse.json({ error: errorMsg }, { status: 400 })
-      }
-      if (error.code === '23514') {
+      if (clientStatus === 400) {
         return NextResponse.json({ error: errorMsg }, { status: 400 })
       }
 
@@ -388,7 +413,8 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
     return NextResponse.json(mapped)
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown error'
-    return NextResponse.json({ error: 'Failed to update course', details: message }, { status: 500 })
+    console.error('PUT /api/master/courses/[id] failed:', err)
+    return NextResponse.json({ error: `Failed to update course: ${message}`, details: message }, { status: 500 })
   }
 }
 

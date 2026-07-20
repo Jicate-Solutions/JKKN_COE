@@ -12,7 +12,6 @@ import { Card, CardContent, CardHeader } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Textarea } from '@/components/ui/textarea'
 import { Badge } from '@/components/ui/badge'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet'
@@ -32,6 +31,7 @@ import {
 } from 'lucide-react'
 import { K_LEVELS } from '@/types/ia-question-paper'
 import type { IaQuestionPaper, IaPaperQuestion } from '@/types/ia-question-paper'
+import { QuestionRichEditor } from '@/components/ia/question-rich-editor'
 import { formatApplicability } from '@/lib/ia/course-type-applicability'
 
 interface Institution {
@@ -1338,12 +1338,11 @@ export default function QuestionPapersPage() {
 														</span>
 														<span>· {Number(q.marks) || 0} marks</span>
 													</div>
-													<Textarea
-														rows={2}
-														placeholder="Question text"
+													<QuestionRichEditor
 														value={q.question_text || ''}
 														disabled={!editable}
-														onChange={e => updateQuestion(q.id, { question_text: e.target.value })}
+														placeholder="Enter the question…"
+														onChange={html => updateQuestion(q.id, { question_text: html })}
 													/>
 
 													{Array.isArray(q.options) && q.options.length > 0 && (
