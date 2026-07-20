@@ -172,13 +172,12 @@ function buildHtml(ctx: {
 	address: string
 	examHeading: string
 	roman: string
-	sessionLabel: string
 	semesterText: string
 	paper: any
 	grouped: Map<string, any[]>
 	partByLabel: Map<string, any>
 }): string {
-	const { variant, institutionName, address, examHeading, roman, sessionLabel, semesterText, paper, grouped, partByLabel } = ctx
+	const { variant, institutionName, address, examHeading, roman, semesterText, paper, grouped, partByLabel } = ctx
 	const isTwoUp = variant === '2up'
 
 	// One table for the WHOLE paper (part headings are full-width rows) so every
@@ -228,7 +227,8 @@ function buildHtml(ctx: {
 		<div class="head-name">${escapeHtml(institutionName.toUpperCase())}</div>
 		${address ? `<div class="head-addr">${escapeHtml(address)}</div>` : ''}
 		<div class="head-exam">${escapeHtml(examHeading)}</div>
-		<div class="head-cia">CONTINUOUS INTERNAL ASSESSMENT-${escapeHtml(roman)}${sessionLabel ? ' – ' + escapeHtml(sessionLabel.toUpperCase()) : ''}</div>
+		<div class="head-cia">CONTINUOUS INTERNAL ASSESSMENT-${escapeHtml(roman)} - JULY-AUG-2026
+		</div>
 		${semesterText ? `<div class="head-sem">${escapeHtml(semesterText)}</div>` : ''}
 		<div class="meta">
 			<div>Subject Code: ${escapeHtml(paper.course_code || '')}</div>
@@ -330,13 +330,8 @@ export async function buildPaperPdfHtml(
 
 	const questionArr: any[] = Array.isArray(paper.questions) ? paper.questions : []
 
-	const [instRes, { data: session }, { data: parts }] = await Promise.all([
+	const [instRes, { data: parts }] = await Promise.all([
 		supabase.from('institutions').select('*').eq('id', paper.institutions_id).single(),
-		supabase
-			.from('examination_sessions')
-			.select('session_name, month_year')
-			.eq('id', paper.examination_session_id)
-			.maybeSingle(),
 		paper.template_id
 			? supabase
 					.from('ia_template_parts')
@@ -356,7 +351,6 @@ export async function buildPaperPdfHtml(
 			.join(', ') ||
 		''
 	const examHeading = `${getProgramTypeFromCode(paper.program_code)} - DEGREE EXAMINATIONS`
-	const sessionLabel = (session?.session_name || session?.month_year || '').toString()
 	const semesterText = semesterLine(paper.semester)
 
 	const questions = questionArr.slice().sort((a: any, b: any) => a.display_order - b.display_order)
@@ -370,7 +364,7 @@ export async function buildPaperPdfHtml(
 	}
 	const roman = ['', 'I', 'II', 'III', 'IV', 'V', 'VI'][paper.cia_round || 1] || String(paper.cia_round || 1)
 
-	const html = buildHtml({ variant, institutionName, address, examHeading, roman, sessionLabel, semesterText, paper, grouped, partByLabel })
+	const html = buildHtml({ variant, institutionName, address, examHeading, roman, semesterText, paper, grouped, partByLabel })
 	const isTwoUp = variant === '2up'
 
 	const isVercel = !!process.env.VERCEL || !!process.env.AWS_LAMBDA_FUNCTION_NAME
