@@ -11,6 +11,7 @@ import { Underline } from '@tiptap/extension-underline'
 import { Subscript } from '@tiptap/extension-subscript'
 import { Superscript } from '@tiptap/extension-superscript'
 import { TableKit } from '@tiptap/extension-table'
+import { Placeholder } from '@tiptap/extension-placeholder'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import {
@@ -46,12 +47,12 @@ export function QuestionRichEditor({ value, onChange, onBlur, disabled, placehol
 			Superscript,
 			TableKit.configure({ table: { resizable: false } }),
 			MathInline,
+			Placeholder.configure({ placeholder: placeholder || 'Enter the question…' }),
 		],
 		content: value || '',
 		editorProps: {
 			attributes: {
 				class: 'prose prose-sm max-w-none min-h-[70px] px-3 py-2 focus:outline-none',
-				...(placeholder ? { 'data-placeholder': placeholder } : {}),
 			},
 		},
 		onUpdate: ({ editor }) => {

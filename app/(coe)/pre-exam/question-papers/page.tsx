@@ -255,6 +255,7 @@ export default function QuestionPapersPage() {
 	const [generating, setGenerating] = useState(false)
 	const [selected, setSelected] = useState<Set<string>>(new Set())
 	const [downloadingZip, setDownloadingZip] = useState(false)
+	const [downloadingZip2up, setDownloadingZip2up] = useState(false)
 
 	// Authoring
 	const [sheetOpen, setSheetOpen] = useState(false)
@@ -614,39 +615,42 @@ export default function QuestionPapersPage() {
 	const toggleSelectAll = () =>
 		setSelected(allSelected ? new Set() : new Set(selectablePapers.map(p => p.id)))
 
-	const downloadSelectedZip = async () => {
+	const downloadSelectedZip = async (layout: 'single' | '2up' = 'single') => {
 		const chosen = papers.filter(p => selected.has(p.id))
 		if (chosen.length === 0) {
 			toast({ title: 'Select at least one paper', variant: 'destructive' })
 			return
 		}
+		const setLoading = layout === '2up' ? setDownloadingZip2up : setDownloadingZip
 		try {
-			setDownloadingZip(true)
+			setLoading(true)
 			const JSZip = (await import('jszip')).default
 			const zip = new JSZip()
 			let ok = 0
 			for (const [i, p] of chosen.entries()) {
-				const res = await fetch(`/api/pre-exam/question-papers/${p.id}/pdf`)
+				const apiUrl = `/api/pre-exam/question-papers/${p.id}/pdf${layout === '2up' ? '?layout=2up' : ''}`
+				const res = await fetch(apiUrl)
 				if (!res.ok) continue
 				const blob = await res.blob()
-				const name = `${String(i + 1).padStart(3, '0')}_${p.course_code || 'paper'}_${p.set_label || 'A'}.pdf`
+				const suffix = layout === '2up' ? '_2up' : ''
+				const name = `${String(i + 1).padStart(3, '0')}_${p.course_code || 'paper'}_${p.set_label || 'A'}${suffix}.pdf`
 				zip.file(name, blob)
 				ok++
 			}
 			const content = await zip.generateAsync({ type: 'blob' })
-			const url = URL.createObjectURL(content)
+			const objectUrl = URL.createObjectURL(content)
 			const a = document.createElement('a')
-			a.href = url
-			a.download = `question-papers-CIA${ciaRound}.zip`
+			a.href = objectUrl
+			a.download = `question-papers-CIA${ciaRound}${layout === '2up' ? '-2up' : ''}.zip`
 			document.body.appendChild(a)
 			a.click()
 			a.remove()
-			URL.revokeObjectURL(url)
-			toast({ title: `Downloaded ${ok} paper(s)` })
+			URL.revokeObjectURL(objectUrl)
+			toast({ title: `Downloaded ${ok} paper(s)${layout === '2up' ? ' (2-up print layout)' : ''}` })
 		} catch (e: any) {
 			toast({ title: 'Download failed', description: e.message, variant: 'destructive' })
 		} finally {
-			setDownloadingZip(false)
+			setLoading(false)
 		}
 	}
 
@@ -764,19 +768,28 @@ export default function QuestionPapersPage() {
 		}
 	}
 
-	const downloadPdf = async (p: { id: string; course_code?: string; cia_round?: number; set_label?: string }) => {
+	const downloadPdf = async (
+		p: { id: string; course_code?: string; cia_round?: number; set_label?: string },
+		layout: 'single' | '2up' = 'single'
+	) => {
 		try {
-			const res = await fetch(`/api/pre-exam/question-papers/${p.id}/pdf`)
-			if (!res.ok) throw new Error('Could not generate PDF')
+			const url = `/api/pre-exam/question-papers/${p.id}/pdf${layout === '2up' ? '?layout=2up' : ''}`
+			const res = await fetch(url)
+			if (!res.ok) {
+				let msg = `PDF failed (${res.status})`
+				try { const d = await res.json(); if (d?.error) msg = d.error } catch { /* not json */ }
+				throw new Error(msg)
+			}
 			const blob = await res.blob()
-			const url = URL.createObjectURL(blob)
+			const objectUrl = URL.createObjectURL(blob)
 			const a = document.createElement('a')
-			a.href = url
-			a.download = `QP_${p.course_code || 'paper'}_CIA${p.cia_round || 1}${p.set_label ? '_' + p.set_label : ''}.pdf`
+			a.href = objectUrl
+			const suffix = layout === '2up' ? '_2up' : ''
+			a.download = `QP_${p.course_code || 'paper'}_CIA${p.cia_round || 1}${p.set_label ? '_' + p.set_label : ''}${suffix}.pdf`
 			document.body.appendChild(a)
 			a.click()
 			a.remove()
-			URL.revokeObjectURL(url)
+			URL.revokeObjectURL(objectUrl)
 		} catch (e: any) {
 			toast({ title: 'PDF download failed', description: e.message, variant: 'destructive' })
 		}
@@ -1038,20 +1051,34 @@ export default function QuestionPapersPage() {
 								)}
 							</span>
 							<div className="flex items-center gap-2">
-								<Button
-									variant="outline"
-									size="sm"
-									onClick={downloadSelectedZip}
-									disabled={downloadingZip || selected.size === 0}
-									title="Download selected papers as a ZIP"
-								>
-									{downloadingZip ? (
-										<Loader2 className="mr-2 h-4 w-4 animate-spin" />
-									) : (
-										<Download className="mr-2 h-4 w-4" />
-									)}
-									Download ({selected.size})
-								</Button>
+							<Button
+								variant="outline"
+								size="sm"
+								onClick={() => downloadSelectedZip('single')}
+								disabled={downloadingZip || selected.size === 0}
+								title="Download selected papers as a ZIP (A4 portrait)"
+							>
+								{downloadingZip ? (
+									<Loader2 className="mr-2 h-4 w-4 animate-spin" />
+								) : (
+									<Download className="mr-2 h-4 w-4" />
+								)}
+								Download ({selected.size})
+							</Button>
+							<Button
+								variant="outline"
+								size="sm"
+								onClick={() => downloadSelectedZip('2up')}
+								disabled={downloadingZip2up || selected.size === 0}
+								title="Download selected papers as 2-up print layout (A4 landscape, 2 copies side-by-side) — ZIP"
+							>
+								{downloadingZip2up ? (
+									<Loader2 className="mr-2 h-4 w-4 animate-spin" />
+								) : (
+									<Download className="mr-2 h-4 w-4" />
+								)}
+								2-up ZIP ({selected.size})
+							</Button>
 								<Button
 									variant="outline"
 									size="sm"
@@ -1129,6 +1156,9 @@ export default function QuestionPapersPage() {
 															</DropdownMenuItem>
 															<DropdownMenuItem onClick={() => downloadPdf(p)} disabled={!p.authored}>
 																<FileDown className="mr-2 h-4 w-4" /> Export PDF
+															</DropdownMenuItem>
+															<DropdownMenuItem onClick={() => downloadPdf(p, '2up')} disabled={!p.authored}>
+																<FileDown className="mr-2 h-4 w-4" /> Export PDF (2-up)
 															</DropdownMenuItem>
 															<DropdownMenuSeparator />
 															{p.status === 'submitted' && (
@@ -1436,9 +1466,12 @@ export default function QuestionPapersPage() {
 
 							{/* Actions */}
 							<div className="sticky bottom-0 flex flex-wrap justify-end gap-2 border-t bg-background py-3">
-								<Button variant="outline" onClick={() => downloadPdf(paper)}>
-									<FileDown className="mr-2 h-4 w-4" /> PDF
-								</Button>
+							<Button variant="outline" onClick={() => downloadPdf(paper)}>
+								<FileDown className="mr-2 h-4 w-4" /> PDF
+							</Button>
+							<Button variant="outline" onClick={() => downloadPdf(paper, '2up')} title="A4 landscape — two identical copies side by side (cut down the middle for printing)">
+								<FileDown className="mr-2 h-4 w-4" /> PDF (2-up)
+							</Button>
 								{paper.status === 'draft' && !hasAuthored && (
 									<Button variant="outline" onClick={() => rebuildPaper()} disabled={savingPaper} title="Rebuild empty slots from the current template">
 										<RefreshCw className="mr-2 h-4 w-4" /> Rebuild

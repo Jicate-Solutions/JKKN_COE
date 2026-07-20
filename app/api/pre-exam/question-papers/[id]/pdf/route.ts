@@ -9,13 +9,31 @@ export const maxDuration = 60
 
 // GET - render a printable A4 question paper PDF
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+	const { id } = await params
 	try {
 		const supabase = getSupabaseServer()
-		const { id } = await params
-		const origin = new URL(_req.url).origin
+		const url = new URL(_req.url)
+		const origin = url.origin
+		const variant = url.searchParams.get('layout') === '2up' ? '2up' : 'single'
 
-		const result = await buildPaperPdfHtml(supabase, id, origin)
-		if (!result) return NextResponse.json({ error: 'Paper not found' }, { status: 404 })
+		// Distinguish "paper missing" from "renderer failed" so the client shows a real reason.
+		const { data: exists, error: existErr } = await supabase
+			.from('ia_question_papers')
+			.select('id')
+			.eq('id', id)
+			.maybeSingle()
+		if (existErr) {
+			console.error('[QP PDF] existence check error for', id, existErr.message)
+			return NextResponse.json({ error: `Lookup failed: ${existErr.message}` }, { status: 500 })
+		}
+		if (!exists) {
+			return NextResponse.json({ error: `Paper not found (id ${id}). The list may be stale — refresh.` }, { status: 404 })
+		}
+
+		const result = await buildPaperPdfHtml(supabase, id, origin, variant)
+		if (!result) {
+			return NextResponse.json({ error: 'PDF renderer returned no output' }, { status: 500 })
+		}
 
 		return new NextResponse(result.buffer, {
 			status: 200,
@@ -25,8 +43,8 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
 				'Cache-Control': 'no-store, max-age=0',
 			},
 		})
-	} catch (error) {
-		console.error('Error in GET paper PDF:', error)
-		return NextResponse.json({ error: 'Failed to generate PDF' }, { status: 500 })
+	} catch (error: any) {
+		console.error('[QP PDF] render error for', id, error)
+		return NextResponse.json({ error: `PDF generation failed: ${error?.message || error}` }, { status: 500 })
 	}
 }

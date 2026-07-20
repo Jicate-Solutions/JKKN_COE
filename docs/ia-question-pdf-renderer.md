@@ -46,6 +46,19 @@ KaTeX's default HTML output positions glyphs with ~20 bundled `.woff2` **font fi
 ### 3.2 Reuse the proven Chromium launch
 The `isVercel` branch, `chromium.executablePath()`, and args are copied verbatim from `central-valuation-appointment-letter.ts` — that file already paid the cost of making Chromium boot on Vercel. Don't re-derive it from the puppeteer docs.
 
+### 3.2a ⚠️ REQUIRED: register the route in `outputFileTracingIncludes`
+`@sparticuz/chromium` is in `serverExternalPackages`, and its binary is loaded at **runtime** via `chromium.executablePath()` — so Vercel's file tracer can't see it as a dependency and won't ship it. **Every route that renders a PDF via Chromium must be listed in `next.config.ts` → `outputFileTracingIncludes`**, or it deploys **without the Chromium binary** and fails at runtime ("unable to download"). This worked in local dev (full `puppeteer` with a bundled Chromium) but broke on Vercel until the routes were added:
+
+```ts
+outputFileTracingIncludes: {
+  '/api/v1/ia/question-papers/**':      ['./node_modules/@sparticuz/chromium/**/*'],
+  '/api/pre-exam/question-papers/**':   ['./node_modules/@sparticuz/chromium/**/*'],
+}
+```
+
+### 3.2b No jsdom in the hot path
+Sanitization uses a small dependency-free allowlist (`sanitizeHtml`), NOT `isomorphic-dompurify` — DOMPurify pulls in `jsdom`, which is fragile under Vercel output-file-tracing. The one-page-fit `page.evaluate` is wrapped in try/catch so a layout hiccup can never abort the render.
+
 ### 3.3 One-page fit via CSS scale
 The jsPDF version auto-shrank the font to fit one page. Here, after `setContent`, `page.evaluate` measures `#sheet.scrollHeight` vs the A4 printable height (297 − 16 mm) and applies `transform: scale(…)` (min 0.5) if it overflows — the CSS analogue of the font auto-shrink.
 

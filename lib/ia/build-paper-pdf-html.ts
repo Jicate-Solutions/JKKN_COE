@@ -13,9 +13,48 @@
 // Tamil far more reliably than jsPDF ever did.
 
 import katex from 'katex'
-import DOMPurify from 'isomorphic-dompurify'
-import puppeteerCore from 'puppeteer-core'
-import chromium from '@sparticuz/chromium'
+// puppeteer-core + @sparticuz/chromium are imported LAZILY inside the Vercel branch
+// only — importing them at module top can fail on a local dev machine and take the
+// whole route module (→ Next 404) with it. Local dev uses full `puppeteer`.
+
+// Dependency-free HTML sanitizer (allowlist). Deliberately avoids DOMPurify/jsdom,
+// which is fragile under Vercel output-file-tracing. Combined with JavaScript being
+// disabled on the print page (page.setJavaScriptEnabled(false)), this is safe for
+// server-side PDF rendering of our own Tiptap-authored content.
+const ALLOWED_TAGS = new Set([
+	'p', 'br', 'strong', 'b', 'em', 'i', 'u', 's', 'sub', 'sup',
+	'ul', 'ol', 'li', 'span',
+	'table', 'thead', 'tbody', 'tr', 'td', 'th',
+])
+const ALLOWED_ATTR = new Set(['data-latex', 'class', 'colspan', 'rowspan'])
+
+function sanitizeHtml(raw: string): string {
+	if (!raw) return ''
+	let html = raw
+		// Strip dangerous elements entirely (open+close, and self-closing/void).
+		.replace(/<(script|style|iframe|object|embed|link|meta|title|base)\b[\s\S]*?<\/\1\s*>/gi, '')
+		.replace(/<(script|style|iframe|object|embed|link|meta|title|base)\b[^>]*\/?>/gi, '')
+		.replace(/<!--[\s\S]*?-->/g, '')
+	// Keep only allowlisted tags; keep only allowlisted attributes on those tags.
+	return html.replace(
+		/<(\/?)([a-zA-Z][a-zA-Z0-9]*)((?:"[^"]*"|'[^']*'|[^>])*)>/g,
+		(_m, slash: string, tag: string, attrs: string) => {
+			const t = tag.toLowerCase()
+			if (!ALLOWED_TAGS.has(t)) return '' // drop the tag, keep its inner text
+			if (slash) return `</${t}>`
+			const kept: string[] = []
+			const attrRe = /([a-zA-Z_:][-a-zA-Z0-9_:.]*)\s*=\s*("([^"]*)"|'([^']*)')/g
+			let a: RegExpExecArray | null
+			while ((a = attrRe.exec(attrs))) {
+				const name = a[1].toLowerCase()
+				if (!ALLOWED_ATTR.has(name)) continue
+				const val = (a[3] ?? a[4] ?? '').replace(/"/g, '&quot;')
+				kept.push(`${name}="${val}"`)
+			}
+			return `<${t}${kept.length ? ' ' + kept.join(' ') : ''}>`
+		}
+	)
+}
 
 export interface BuildPaperPdfResult {
 	buffer: Buffer
@@ -40,6 +79,14 @@ function formatDuration(mins?: number | null): string {
 		return `${label} Hour${whole >= 1 ? 's' : ''}`
 	}
 	return `${h.toFixed(1)} Hours`
+}
+
+/** Semester number → printed ordinal line, e.g. 5 → "FIFTH SEMESTER". */
+function semesterLine(sem?: number | null): string {
+	const words = ['', 'FIRST', 'SECOND', 'THIRD', 'FOURTH', 'FIFTH', 'SIXTH', 'SEVENTH', 'EIGHTH', 'NINTH', 'TENTH', 'ELEVENTH', 'TWELFTH']
+	const n = Number(sem)
+	if (!n || n < 1) return ''
+	return `${words[n] || n + 'TH'} SEMESTER`
 }
 
 /** UG/PG from the program code (mirrors get_program_type_from_code()). */
@@ -89,14 +136,7 @@ function escapeHtml(s: string): string {
  */
 function renderQuestionHtml(raw: string): string {
 	if (!raw) return ''
-	const clean = DOMPurify.sanitize(raw, {
-		ALLOWED_TAGS: [
-			'p', 'br', 'strong', 'b', 'em', 'i', 'u', 's', 'sub', 'sup',
-			'ul', 'ol', 'li', 'span',
-			'table', 'thead', 'tbody', 'tr', 'td', 'th',
-		],
-		ALLOWED_ATTR: ['data-latex', 'class', 'colspan', 'rowspan'],
-	})
+	const clean = sanitizeHtml(raw)
 	// Replace the (atom) math spans with MathML.
 	return clean.replace(
 		/<span[^>]*\bdata-latex="([^"]*)"[^>]*>(?:.*?)<\/span>/g,
@@ -124,19 +164,28 @@ const TAMIL_FONT_CSS = `
 /* @font-face { font-family: 'Bamini'; src: url(data:font/truetype;base64,PASTE_BAMINI_TTF_BASE64) format('truetype'); } */
 `
 
+export type PdfVariant = 'single' | '2up'
+
 function buildHtml(ctx: {
+	variant: PdfVariant
 	institutionName: string
 	address: string
 	examHeading: string
 	roman: string
+	sessionLabel: string
+	semesterText: string
 	paper: any
 	grouped: Map<string, any[]>
 	partByLabel: Map<string, any>
 }): string {
-	const { institutionName, address, examHeading, roman, paper, grouped, partByLabel } = ctx
+	const { variant, institutionName, address, examHeading, roman, sessionLabel, semesterText, paper, grouped, partByLabel } = ctx
+	const isTwoUp = variant === '2up'
 
-	const partsHtml = [...grouped.entries()]
-		.map(([label, qs]) => {
+	// One table for the WHOLE paper (part headings are full-width rows) so every
+	// question row — across Part A, B, C — shares identical column geometry and the
+	// CO / K-Level columns line up perfectly.
+	const partsRows = [...grouped.entries()]
+		.map(([label, qs], partIdx) => {
 			const part: any = partByLabel.get(label)
 			const marksEach = part?.marks_per_question ?? qs[0]?.marks ?? 0
 			const count = part?.num_questions ?? qs.filter((q: any) => !q.is_choice_alternative).length
@@ -144,14 +193,20 @@ function buildHtml(ctx: {
 			const heading = `PART ${label} – (${count} x ${marksEach} = ${total})`
 			const instr = part?.instruction ? `<div class="part-instr">${escapeHtml(part.instruction)}</div>` : ''
 
-			const rows = qs
+			const headerRow = `<tr class="part-hdr${partIdx === 0 ? ' first' : ''}">
+				<td colspan="2" class="part-head">${escapeHtml(heading)}${instr}</td>
+				<td class="co-head">CO</td>
+				<td class="kl-head">K-Level(s)</td>
+			</tr>`
+
+			const qRows = qs
 				.map((q: any) => {
-					if (q.is_choice_alternative) {
-						return `<tr><td colspan="4" class="or">(OR)</td></tr>`
-					}
+					const orRow = q.is_choice_alternative
+						? `<tr><td colspan="4" class="or">(OR)</td></tr>`
+						: ''
 					const prefix = q.sub_label ? `${q.question_number} ${q.sub_label})` : `${q.question_number}.`
 					const body = renderQuestionHtml(q.question_text || '') + optionLineHtml(q.options)
-					return `<tr>
+					return `${orRow}<tr>
 						<td class="qno">${escapeHtml(prefix)}</td>
 						<td class="qbody">${body}</td>
 						<td class="co">${escapeHtml(q.co_code || '')}</td>
@@ -160,60 +215,21 @@ function buildHtml(ctx: {
 				})
 				.join('')
 
-			return `<table class="part">
-				<thead>
-					<tr>
-						<th colspan="2" class="part-head">${escapeHtml(heading)}${instr}</th>
-						<th class="co-head">CO</th>
-						<th class="kl-head">K-Level(s)</th>
-					</tr>
-				</thead>
-				<tbody>${rows}</tbody>
-			</table>`
+			return headerRow + qRows
 		})
 		.join('')
 
-	return `<!doctype html>
-<html><head><meta charset="utf-8"/>
-<style>
-	${TAMIL_FONT_CSS}
-	@page { size: A4 portrait; margin: 8mm; }
-	* { box-sizing: border-box; }
-	body { font-family: 'Times New Roman', Times, serif; color: #000; margin: 0; font-size: 11pt; }
-	#sheet { transform-origin: top left; }
-	.head-name { text-align: center; font-weight: bold; font-size: 13pt; }
-	.head-addr { text-align: center; font-size: 9pt; margin-top: 2px; }
-	.head-exam { text-align: center; font-weight: bold; font-size: 12pt; margin-top: 4px; }
-	.head-cia { text-align: center; font-size: 11pt; margin-top: 2px; }
-	.meta { margin-top: 6px; }
-	.meta-row { display: flex; justify-content: space-between; }
-	.meta .title { font-weight: bold; }
-	table.part { width: 100%; border-collapse: collapse; margin-top: 8px; }
-	table.part th, table.part td { border: none; vertical-align: top; padding: 2px 3px; }
-	.part-head { text-align: center; font-weight: bold; }
-	.part-instr { font-weight: normal; font-size: 9pt; margin-top: 2px; }
-	.co-head, .kl-head { text-align: center; font-weight: bold; font-size: 9pt; white-space: nowrap; }
-	.qno { width: 14mm; font-weight: bold; }
-	.qbody { }
-	.co { width: 12mm; text-align: center; font-weight: bold; font-size: 9pt; }
-	.kl { width: 20mm; text-align: center; font-weight: bold; font-size: 9pt; }
-	.or { text-align: center; font-weight: bold; }
-	.qbody p { margin: 0 0 2px; }
-	.options { margin-top: 2px; }
-	.options .opt { display: inline-block; margin-right: 12px; }
-	/* Author-drawn tables inside a question */
-	.qbody table { border-collapse: collapse; margin: 3px 0; }
-	.qbody td, .qbody th { border: 1px solid #000; padding: 2px 5px; }
-	.qbody th { font-weight: bold; }
-	math { font-size: 1em; }
-	.qp-math { white-space: nowrap; }
-</style></head>
-<body>
-	<div id="sheet">
+	const partsHtml = `<table class="paper">
+		<colgroup><col class="c-qno"/><col class="c-body"/><col class="c-co"/><col class="c-kl"/></colgroup>
+		<tbody>${partsRows}</tbody>
+	</table>`
+
+	const sheetInner = `
 		<div class="head-name">${escapeHtml(institutionName.toUpperCase())}</div>
 		${address ? `<div class="head-addr">${escapeHtml(address)}</div>` : ''}
 		<div class="head-exam">${escapeHtml(examHeading)}</div>
-		<div class="head-cia">Continuous Internal Assessment- ${escapeHtml(roman)}</div>
+		<div class="head-cia">CONTINUOUS INTERNAL ASSESSMENT-${escapeHtml(roman)}${sessionLabel ? ' – ' + escapeHtml(sessionLabel.toUpperCase()) : ''}</div>
+		${semesterText ? `<div class="head-sem">${escapeHtml(semesterText)}</div>` : ''}
 		<div class="meta">
 			<div>Subject Code: ${escapeHtml(paper.course_code || '')}</div>
 			<div class="title">Subject Title: ${escapeHtml(paper.subject_title || '')}</div>
@@ -222,8 +238,73 @@ function buildHtml(ctx: {
 				<span>Maximum: ${Number(paper.max_marks) || 0} Marks</span>
 			</div>
 		</div>
-		${partsHtml}
-	</div>
+		${partsHtml}`
+
+	const sheetHtml = isTwoUp
+		? `<div id="sheet" class="twoup"><section class="copy">${sheetInner}</section><section class="copy">${sheetInner}</section></div>`
+		: `<div id="sheet">${sheetInner}</div>`
+
+	return `<!doctype html>
+<html><head><meta charset="utf-8"/>
+<style>
+	${TAMIL_FONT_CSS}
+	@page { size: ${isTwoUp ? 'A4 landscape' : 'A4 portrait'}; margin: ${isTwoUp ? '5mm' : '8mm'}; }
+	* { box-sizing: border-box; }
+	html, body { margin: 0; padding: 0; }
+	body { font-family: 'Times New Roman', Times, serif; color: #000; font-size: ${isTwoUp ? '9pt' : '11pt'}; }
+	#sheet { transform-origin: top left; }
+	/* 2-up print: two identical copies side by side, dashed cut-line between them. */
+	#sheet.twoup { display: flex; align-items: stretch; width: 100%; }
+	#sheet.twoup .copy { flex: 1; min-width: 0; }
+	#sheet.twoup .copy:first-child { border-right: 1px dashed #999; padding-right: 6mm; margin-right: 6mm; }
+	${isTwoUp ? '.head-name{font-size:11pt}.head-exam{font-size:10pt}.head-cia,.head-sem{font-size:9pt}' : ''}
+	.head-name { text-align: center; font-weight: bold; font-size: 13pt; }
+	.head-addr { text-align: center; font-size: 9pt; margin-top: 2px; }
+	.head-exam { text-align: center; font-weight: bold; font-size: 12pt; margin-top: 4px; }
+	.head-cia { text-align: center; font-weight: bold; font-size: 11pt; margin-top: 2px; }
+	.head-sem { text-align: center; font-weight: bold; font-size: 11pt; margin-top: 2px; }
+	.meta { margin-top: 6px; }
+	.meta-row { display: flex; justify-content: space-between; }
+	.meta .title { font-weight: bold; }
+	/* ONE table for the whole paper: table-layout:fixed + colgroup give every row the
+	   same column geometry, so CO / K-Level align across Part A, B, C — always. */
+	table.paper { width: 100%; border-collapse: collapse; margin-top: 6px; table-layout: fixed; }
+	table.paper .c-qno { width: 14mm; }
+	table.paper .c-co  { width: 12mm; }
+	table.paper .c-kl  { width: 20mm; }
+	table.paper td { border: none; vertical-align: top; padding: 2px 3px; word-wrap: break-word; overflow-wrap: break-word; }
+	/* Keep each question row intact; Chromium can otherwise split a row at the
+	   page boundary and visually repeat fragments (e.g., "8 a)" on page 2). */
+	table.paper tr { break-inside: avoid; page-break-inside: avoid; }
+	table.paper td { break-inside: avoid; page-break-inside: avoid; }
+	/* Part heading rows */
+	.part-hdr td { padding-top: 9px; }
+	.part-hdr.first td { padding-top: 2px; }
+	.part-head { text-align: center; font-weight: bold; }
+	.part-instr { font-weight: normal; font-size: 9pt; margin-top: 2px; }
+	.co-head, .kl-head { text-align: center; font-weight: bold; font-size: 9pt; white-space: nowrap; vertical-align: bottom; }
+	.qno { font-weight: bold; }
+	.co { text-align: center; font-weight: bold; font-size: 9pt; }
+	.kl { text-align: center; font-weight: bold; font-size: 9pt; }
+	.or { text-align: center; font-weight: bold; }
+	.qbody p { margin: 0 0 2px; }
+	.options { margin-top: 2px; }
+	.options .opt { display: inline-block; margin-right: 12px; }
+	/* Option text is HTML — keep it inline so a stray <p>/<br> can't push options
+	   onto new lines and drag the row's CO/K out of alignment. */
+	.options .opt p { display: inline; margin: 0; }
+	.options .opt br { display: none; }
+	/* CO / K values sit at the top of the row, aligned with the question's first line. */
+	.co, .kl { vertical-align: top; }
+	/* Author-drawn tables inside a question */
+	.qbody table { border-collapse: collapse; margin: 3px 0; }
+	.qbody td, .qbody th { border: 1px solid #000; padding: 2px 5px; }
+	.qbody th { font-weight: bold; }
+	math { font-size: 1em; }
+	.qp-math { white-space: nowrap; }
+</style></head>
+<body>
+	${sheetHtml}
 </body></html>`
 }
 
@@ -234,19 +315,28 @@ function buildHtml(ctx: {
 export async function buildPaperPdfHtml(
 	supabase: any,
 	id: string,
-	_origin: string
+	_origin: string,
+	variant: PdfVariant = 'single'
 ): Promise<BuildPaperPdfResult | null> {
 	const { data: paper, error } = await supabase
 		.from('ia_question_papers')
 		.select('*')
 		.eq('id', id)
 		.single()
-	if (error || !paper) return null
+	if (error || !paper) {
+		console.error('[QP PDF] paper fetch failed for id', id, '— error:', error?.message || '(no row)')
+		return null
+	}
 
 	const questionArr: any[] = Array.isArray(paper.questions) ? paper.questions : []
 
-	const [instRes, { data: parts }] = await Promise.all([
+	const [instRes, { data: session }, { data: parts }] = await Promise.all([
 		supabase.from('institutions').select('*').eq('id', paper.institutions_id).single(),
+		supabase
+			.from('examination_sessions')
+			.select('session_name, month_year')
+			.eq('id', paper.examination_session_id)
+			.maybeSingle(),
 		paper.template_id
 			? supabase
 					.from('ia_template_parts')
@@ -266,6 +356,8 @@ export async function buildPaperPdfHtml(
 			.join(', ') ||
 		''
 	const examHeading = `${getProgramTypeFromCode(paper.program_code)} - DEGREE EXAMINATIONS`
+	const sessionLabel = (session?.session_name || session?.month_year || '').toString()
+	const semesterText = semesterLine(paper.semester)
 
 	const questions = questionArr.slice().sort((a: any, b: any) => a.display_order - b.display_order)
 	const partList = (parts || []).slice().sort((a: any, b: any) => a.display_order - b.display_order)
@@ -278,11 +370,14 @@ export async function buildPaperPdfHtml(
 	}
 	const roman = ['', 'I', 'II', 'III', 'IV', 'V', 'VI'][paper.cia_round || 1] || String(paper.cia_round || 1)
 
-	const html = buildHtml({ institutionName, address, examHeading, roman, paper, grouped, partByLabel })
+	const html = buildHtml({ variant, institutionName, address, examHeading, roman, sessionLabel, semesterText, paper, grouped, partByLabel })
+	const isTwoUp = variant === '2up'
 
 	const isVercel = !!process.env.VERCEL || !!process.env.AWS_LAMBDA_FUNCTION_NAME
 	let browser
 	if (isVercel) {
+		const chromium = (await import('@sparticuz/chromium')).default
+		const puppeteerCore = (await import('puppeteer-core')).default
 		const executablePath = await chromium.executablePath()
 		browser = await puppeteerCore.launch({
 			args: chromium.args,
@@ -301,25 +396,25 @@ export async function buildPaperPdfHtml(
 	try {
 		const page = await browser.newPage()
 		await page.setContent(html, { waitUntil: 'domcontentloaded' })
-		// One-page fit: shrink the sheet uniformly (like the jsPDF font auto-fit) if
-		// content overflows the A4 printable height (297mm − 16mm margins ≈ 281mm).
-		await page.evaluate(() => {
-			const A4_PRINTABLE_PX = ((297 - 16) * 96) / 25.4
-			const sheet = document.getElementById('sheet')
-			if (!sheet) return
-			const h = sheet.scrollHeight
-			if (h > A4_PRINTABLE_PX) {
-				const scale = Math.max(0.5, A4_PRINTABLE_PX / h)
-				sheet.style.transform = `scale(${scale})`
-				sheet.style.width = `${100 / scale}%`
+		// Keep natural print scale so larger papers can flow to next page when needed.
+		// We only wait for fonts to load before rendering.
+		const printScale = 1
+		await page.evaluate(async () => {
+			try {
+				await (document as any).fonts?.ready
+			} catch {
+				// ignore font-ready failures
 			}
 		})
+		const marginMm = isTwoUp ? '5mm' : '8mm'
 		const pdf = await page.pdf({
 			format: 'A4',
+			landscape: isTwoUp,
 			printBackground: true,
-			margin: { top: '8mm', bottom: '8mm', left: '8mm', right: '8mm' },
+			scale: printScale,
+			margin: { top: marginMm, bottom: marginMm, left: marginMm, right: marginMm },
 		})
-		const filename = `QP_${paper.course_code || 'paper'}_CIA${paper.cia_round || 1}${paper.set_label ? '_' + paper.set_label : ''}.pdf`
+		const filename = `QP_${paper.course_code || 'paper'}_CIA${paper.cia_round || 1}${paper.set_label ? '_' + paper.set_label : ''}${isTwoUp ? '_2up' : ''}.pdf`
 		return { buffer: Buffer.from(pdf), filename }
 	} finally {
 		await browser.close()

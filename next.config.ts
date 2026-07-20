@@ -11,6 +11,11 @@ const nextConfig: NextConfig = {
   serverExternalPackages: ['@sparticuz/chromium'],
   outputFileTracingIncludes: {
     '/api/pre-exam/practical-email/*': ['./node_modules/@sparticuz/chromium/**/*'],
+    // Chromium is loaded at runtime via chromium.executablePath(), so the tracer
+    // can't see it — every route that renders a PDF through headless Chromium must
+    // be listed here or it deploys without the binary. IA question-paper PDFs:
+    '/api/v1/ia/question-papers/**': ['./node_modules/@sparticuz/chromium/**/*'],
+    '/api/pre-exam/question-papers/**': ['./node_modules/@sparticuz/chromium/**/*'],
   },
 };
 
