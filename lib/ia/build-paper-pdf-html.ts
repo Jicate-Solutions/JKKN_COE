@@ -249,9 +249,8 @@ function buildHtml(ctx: {
 <style>
 	${TAMIL_FONT_CSS}
 	@page { size: ${isTwoUp ? 'A4 landscape' : 'A4 portrait'}; margin: ${isTwoUp ? '5mm' : '8mm'}; }
-	* { box-sizing: border-box; }
-	html, body { margin: 0; padding: 0; }
-	body { font-family: 'Times New Roman', Times, serif; color: #000; font-size: ${isTwoUp ? '9pt' : '11pt'}; }
+	* { box-sizing: border-box; font-family: inherit; }
+	html, body { margin: 0; padding: 0; font-family: 'Times New Roman', Times, serif; color: #000; font-size: ${isTwoUp ? '9pt' : '11pt'}; }
 	#sheet { transform-origin: top left; }
 	/* 2-up print: two identical copies side by side, dashed cut-line between them. */
 	#sheet.twoup { display: flex; align-items: stretch; width: 100%; }
@@ -300,7 +299,7 @@ function buildHtml(ctx: {
 	.qbody table { border-collapse: collapse; margin: 3px 0; }
 	.qbody td, .qbody th { border: 1px solid #000; padding: 2px 5px; }
 	.qbody th { font-weight: bold; }
-	math { font-size: 1em; }
+	math { font-family: 'Times New Roman', Times, serif; font-size: 1em; }
 	.qp-math { white-space: nowrap; }
 </style></head>
 <body>
