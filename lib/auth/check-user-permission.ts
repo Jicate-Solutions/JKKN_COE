@@ -38,6 +38,52 @@ export type PermissionCheckFailure = {
 
 export type PermissionCheckOutcome = PermissionCheckSuccess | PermissionCheckFailure
 
+/**
+ * Role check for API route handlers: does the caller hold any of `roleNames`
+ * (from the normalized user_roles → roles tables)? super_admin users always
+ * pass. Returns false — never throws — when unauthenticated or on error, so
+ * callers can use it purely to *widen* what a request is allowed to do.
+ */
+export async function hasAnyCoeRole(roleNames: string[]): Promise<boolean> {
+	try {
+		const routeClient = await createRouteHandlerSupabaseClient()
+		const { data: authData } = await routeClient.auth.getUser()
+		const email = authData?.user?.email
+		if (!email) return false
+
+		const svc = getSupabaseServer()
+		const { data: userRow } = await svc
+			.from('users')
+			.select('id, is_super_admin')
+			.eq('email', email)
+			.maybeSingle()
+
+		if (!userRow) return false
+		if (userRow.is_super_admin) return true
+
+		const { data: userRoles } = await svc
+			.from('user_roles')
+			.select('roles ( name, is_active )')
+			.eq('user_id', userRow.id)
+			.eq('is_active', true)
+			.or('expires_at.is.null,expires_at.gt.now()')
+
+		return (userRoles ?? []).some(ur => {
+			// Supabase returns the joined row as an object or an array depending
+			// on the relationship shape — normalize to a list.
+			const joined = (ur as { roles?: unknown }).roles
+			const list = Array.isArray(joined) ? joined : joined ? [joined] : []
+			return list.some(r => {
+				const role = r as { name?: string; is_active?: boolean | null }
+				return role?.is_active !== false && !!role?.name && roleNames.includes(role.name)
+			})
+		})
+	} catch (err) {
+		console.error('[hasAnyCoeRole] Unexpected error:', err)
+		return false
+	}
+}
+
 export async function requireUserPermission(
 	permissionName: string,
 ): Promise<PermissionCheckOutcome> {

@@ -24,6 +24,7 @@ import { Command, CommandEmpty, CommandInput, CommandItem, CommandList } from '@
 import { Checkbox } from '@/components/ui/checkbox'
 import { useToast } from '@/hooks/common/use-toast'
 import { useInstitutionFilter } from '@/hooks/use-institution-filter'
+import { useAuth } from '@/lib/auth/auth-context-parent'
 import { cn } from '@/lib/utils'
 import {
 	Loader2, MoreHorizontal, FileText, FileDown, Wand2, Save, Trash2, Send, CheckCircle2, Lock,
@@ -213,6 +214,11 @@ export default function QuestionPapersPage() {
 	const { toast } = useToast()
 	const { isReady, appendToUrl, mustSelectInstitution, institutionId, institutionCode } =
 		useInstitutionFilter()
+	const { user, hasAnyRole } = useAuth()
+
+	// CoE and super_admin can edit a paper at any status — approved and locked
+	// included. Everyone else is limited to draft/submitted.
+	const canEditAnyStatus = user?.is_super_admin === true || hasAnyRole(['super_admin', 'coe'])
 
 	const [institutions, setInstitutions] = useState<Institution[]>([])
 	const [localInstitutionId, setLocalInstitutionId] = useState('')
@@ -533,7 +539,7 @@ export default function QuestionPapersPage() {
 		}
 	}
 
-	const editable = paper ? ['draft', 'submitted'].includes(paper.status) : false
+	const editable = paper ? canEditAnyStatus || ['draft', 'submitted'].includes(paper.status) : false
 
 	const updateQuestion = (qid: string, patch: Partial<IaPaperQuestion>) => {
 		setDirty(true)
@@ -1171,7 +1177,7 @@ export default function QuestionPapersPage() {
 																	<Lock className="mr-2 h-4 w-4" /> Lock
 																</DropdownMenuItem>
 															)}
-															{p.status !== 'locked' && (
+															{(p.status !== 'locked' || canEditAnyStatus) && (
 																<DropdownMenuItem className="text-destructive" onClick={() => removePaper(p)}>
 																	<Trash2 className="mr-2 h-4 w-4" /> Delete
 																</DropdownMenuItem>
@@ -1225,9 +1231,13 @@ export default function QuestionPapersPage() {
 								<span className="text-muted-foreground">
 									Set {paper.set_label || 'A'} · Max {Number(paper.max_marks) || 0}
 								</span>
-								{!editable && (
+								{!editable ? (
 									<span className="text-xs text-muted-foreground">(read-only — {paper.status})</span>
-								)}
+								) : canEditAnyStatus && !['draft', 'submitted'].includes(paper.status) ? (
+									<span className="text-xs text-amber-700">
+										(editing a {paper.status} paper — CoE override)
+									</span>
+								) : null}
 							</div>
 
 							<div className="grid grid-cols-2 gap-3">
@@ -1243,7 +1253,7 @@ export default function QuestionPapersPage() {
 									<Input
 										type="date"
 										value={paper.exam_date ? paper.exam_date.slice(0, 10) : ''}
-										disabled={paper.status === 'locked'}
+										disabled={!editable}
 										onChange={e => { setDirty(true); setPaper({ ...paper, exam_date: e.target.value }) }}
 									/>
 								</div>
@@ -1472,12 +1482,12 @@ export default function QuestionPapersPage() {
 							<Button variant="outline" onClick={() => downloadPdf(paper, '2up')} title="A4 landscape — two identical copies side by side (cut down the middle for printing)">
 								<FileDown className="mr-2 h-4 w-4" /> PDF (2-up)
 							</Button>
-								{paper.status === 'draft' && !hasAuthored && (
+								{(paper.status === 'draft' || canEditAnyStatus) && !hasAuthored && (
 									<Button variant="outline" onClick={() => rebuildPaper()} disabled={savingPaper} title="Rebuild empty slots from the current template">
 										<RefreshCw className="mr-2 h-4 w-4" /> Rebuild
 									</Button>
 								)}
-								{paper.status !== 'locked' && (
+								{(paper.status !== 'locked' || canEditAnyStatus) && (
 									<Button variant="outline" onClick={() => saveQuestions()} disabled={savingPaper}>
 										{savingPaper ? (
 											<Loader2 className="mr-2 h-4 w-4 animate-spin" />

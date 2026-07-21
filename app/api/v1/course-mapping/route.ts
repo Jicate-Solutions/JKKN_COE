@@ -103,6 +103,7 @@ export const GET = withExternalAuth(async (request: Request, context: ExternalAp
 		const batchCode = searchParams.get('batch_code')
 		const regulationCode = searchParams.get('regulation_code')
 		const courseCategory = searchParams.get('course_category')
+		const courseGroup = searchParams.get('course_group')
 		const isActiveParam = searchParams.get('is_active')
 		const includeDetails = searchParams.get('details') === 'true'
 		const limit = Math.min(Number(searchParams.get('limit')) || 5000, 10000)
@@ -152,6 +153,7 @@ export const GET = withExternalAuth(async (request: Request, context: ExternalAp
 		if (batchCode) query = query.eq('batch_code', batchCode)
 		if (regulationCode) query = query.eq('regulation_code', regulationCode)
 		if (courseCategory) query = query.eq('course_category', courseCategory)
+		if (courseGroup) query = query.eq('course_group', courseGroup)
 
 		// Default to active rows unless caller asks for all/false
 		if (isActiveParam === 'false') query = query.eq('is_active', false)

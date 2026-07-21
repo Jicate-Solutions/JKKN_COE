@@ -1,9 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
 import { scaffoldQuestions, mergeAuthored } from '@/lib/ia/paper-scaffold'
+import { hasAnyCoeRole } from '@/lib/auth/check-user-permission'
 
 const EDITABLE_STATUSES = ['draft', 'submitted']
 const VALID_STATUSES = ['draft', 'submitted', 'approved', 'locked']
+// CoE and super_admin may edit/rebuild/delete a paper at any status — including
+// approved and locked. Every other role stays bound to EDITABLE_STATUSES.
+const UNRESTRICTED_ROLES = ['super_admin', 'coe']
 
 // Read a paper's questions (ordered) from the JSONB column.
 function readQuestions(paper: any): any[] {
@@ -70,9 +74,11 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
 			.single()
 		if (!paper) return NextResponse.json({ error: 'Paper not found' }, { status: 404 })
 
+		const unrestricted = await hasAnyCoeRole(UNRESTRICTED_ROLES)
+
 		// ── Rebuild from template (draft only; merge-preserves answered content) ──
 		if (body.regenerate) {
-			if (paper.status !== 'draft') {
+			if (paper.status !== 'draft' && !unrestricted) {
 				return NextResponse.json({ error: 'Rebuild is only allowed while the paper is in draft' }, { status: 400 })
 			}
 			if (!paper.template_id) {
@@ -108,7 +114,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
 		let savedCount = 0
 
 		if (Array.isArray(questions)) {
-			if (!EDITABLE_STATUSES.includes(status || paper.status)) {
+			if (!unrestricted && !EDITABLE_STATUSES.includes(status || paper.status)) {
 				return NextResponse.json(
 					{ error: `Cannot edit questions while paper is ${paper.status}` },
 					{ status: 400 }
@@ -181,7 +187,7 @@ export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ 
 		const { id } = await params
 
 		const { data: paper } = await supabase.from('ia_question_papers').select('status').eq('id', id).single()
-		if (paper && paper.status === 'locked') {
+		if (paper && paper.status === 'locked' && !(await hasAnyCoeRole(UNRESTRICTED_ROLES))) {
 			return NextResponse.json({ error: 'Cannot delete a locked paper' }, { status: 400 })
 		}
 
