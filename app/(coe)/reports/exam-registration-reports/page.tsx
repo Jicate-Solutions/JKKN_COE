@@ -63,6 +63,7 @@ const REPORT_CATEGORIES: { value: ReportCategory; label: string }[] = [
 
 const REPORT_OPTIONS: { value: ReportType; label: string; description: string; group: ReportCategory; section?: string }[] = [
 	{ value: 'student-exam-registration', label: 'Student Exam Registration', description: 'Learner-wise regular exam registration (regular papers only)', group: 'exam-reg-app', section: 'Program wise Report' },
+	{ value: 'student-exam-registration-summary', label: 'Student Exam Registration - Subject Summary', description: 'Subject-wise registered count per program & year (A4 portrait, no incharge columns)', group: 'exam-reg-app', section: 'Program wise Report' },
 	{ value: 'student-fee-details', label: 'Student Exam Application', description: 'Learner-wise exam application with courses and fee columns', group: 'exam-reg-app', section: 'Program wise Report' },
 	{ value: 'student-wise-registration', label: 'Student Exam Registration', description: 'Student-wise regular exam registration (regular papers only)', group: 'exam-reg-app', section: 'Student wise Report' },
 	{ value: 'student-wise-application', label: 'Student Exam Application', description: 'Student-wise exam application with courses and fee columns', group: 'exam-reg-app', section: 'Student wise Report' },
@@ -260,7 +261,7 @@ export default function ExamRegistrationReportsPage() {
 	}, [reportData, selectedCourseCategories])
 
 	// Student-type reports: count unique learners (by register no), not raw registration rows
-	const STUDENT_REPORT_TYPES = ['student-fee-details', 'student-exam-registration', 'student-wise-application', 'student-wise-registration']
+	const STUDENT_REPORT_TYPES = ['student-fee-details', 'student-exam-registration', 'student-exam-registration-summary', 'student-wise-application', 'student-wise-registration']
 	const isStudentReport = STUDENT_REPORT_TYPES.includes(selectedReportType as string)
 	const uniqueStudentCount = useMemo(
 		() => isStudentReport ? new Set(filteredReportData.map((r: any) => r.stu_register_no).filter(Boolean)).size : 0,
@@ -424,6 +425,7 @@ export default function ExamRegistrationReportsPage() {
 		switch (selectedReportType) {
 			case 'student-fee-details':
 			case 'student-exam-registration':
+			case 'student-exam-registration-summary':
 			case 'student-wise-application':
 			case 'student-wise-registration': {
 				// Flatten to per-student rows with course list
@@ -1017,7 +1019,7 @@ export default function ExamRegistrationReportsPage() {
 							</CardHeader>
 							<CardContent>
 								<div className="rounded-md border overflow-x-auto">
-									{(selectedReportType === 'student-fee-details' || selectedReportType === 'student-exam-registration' || selectedReportType === 'student-wise-application' || selectedReportType === 'student-wise-registration') && (
+									{(selectedReportType === 'student-fee-details' || selectedReportType === 'student-exam-registration' || selectedReportType === 'student-exam-registration-summary' || selectedReportType === 'student-wise-application' || selectedReportType === 'student-wise-registration') && (
 										<Table>
 											<TableHeader>
 												<TableRow>

@@ -640,8 +640,8 @@ function prependProgramInfoRows(
 export async function exportExamRegistrationReportExcel(opts: ExcelExportOptions) {
 	const wb = XLSX.utils.book_new()
 
-	const isRegistrationType = opts.report_type === 'student-exam-registration' || opts.report_type === 'student-wise-registration'
-	if (opts.report_type === 'student-fee-details' || opts.report_type === 'student-exam-registration' || opts.report_type === 'student-wise-application' || opts.report_type === 'student-wise-registration') {
+	const isRegistrationType = opts.report_type === 'student-exam-registration' || opts.report_type === 'student-exam-registration-summary' || opts.report_type === 'student-wise-registration'
+	if (opts.report_type === 'student-fee-details' || opts.report_type === 'student-exam-registration' || opts.report_type === 'student-exam-registration-summary' || opts.report_type === 'student-wise-application' || opts.report_type === 'student-wise-registration') {
 		// Student-wise reports — format to be customised; reuse program-wise layout for now
 		const buildSheet = isRegistrationType
 			? exportStudentExamRegistrationExcel
@@ -966,6 +966,7 @@ export async function exportExamRegistrationReportExcel(opts: ExcelExportOptions
 	const reportNames: Record<string, string> = {
 		'student-fee-details': 'fee-details',
 		'student-exam-registration': 'student-registration',
+		'student-exam-registration-summary': 'subject-summary',
 		'student-wise-application': 'student-wise-application',
 		'student-wise-registration': 'student-wise-registration',
 		'course-count-regular-arrear': 'course-count-regular-arrear',

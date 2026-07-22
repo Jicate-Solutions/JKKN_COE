@@ -572,7 +572,7 @@ export async function GET(request: Request) {
 		}
 
 		// Student Exam Registration (program-wise & student-wise): only regular papers (is_regular = true)
-		const responseData = (report_type === 'student-exam-registration' || report_type === 'student-wise-registration')
+		const responseData = (report_type === 'student-exam-registration' || report_type === 'student-exam-registration-summary' || report_type === 'student-wise-registration')
 			? enriched.filter((r: any) => r.is_regular === true)
 			: enriched
 

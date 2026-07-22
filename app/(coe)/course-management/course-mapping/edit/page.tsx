@@ -28,6 +28,8 @@ import { Check, ChevronsUpDown, ChevronDown, ChevronRight, Lock } from "lucide-r
 import { cn } from "@/lib/utils"
 import { generateCourseMappingPDF } from "@/lib/utils/generate-course-mapping-pdf"
 import { fetchCourses as fetchCoursesService } from "@/services/course-management/course-mapping-service"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { COURSE_GROUPS } from "@/types/course-mapping"
 
 // Types for course data
 type Course = {
@@ -183,6 +185,23 @@ const CourseTableRow = memo(function CourseTableRow({
 			</TableCell>
 			<TableCell className="text-xs py-2 px-2 whitespace-normal break-words">
 				{mapping.course_category || '-'}
+			</TableCell>
+			<TableCell className="py-2 px-2">
+				<Select
+					value={mapping.course_group || 'General'}
+					onValueChange={(v) => onUpdateRow('course_group', v)}
+				>
+					<SelectTrigger className="h-7 text-xs">
+						<SelectValue />
+					</SelectTrigger>
+					<SelectContent>
+						{COURSE_GROUPS.map(group => (
+							<SelectItem key={group.value} value={group.value}>
+								{group.label}
+							</SelectItem>
+						))}
+					</SelectContent>
+				</Select>
 			</TableCell>
 			<TableCell className="py-2 px-2">
 				<Input
@@ -971,6 +990,7 @@ export default function CourseMappingEditPage() {
 				regulation_code: selectedRegulation,
 				batch_code: existingBatchCode,
 				semester_code: prev[semesterIndex].semester.semester_code,
+				course_group: 'General',
 				course_category: "",
 				course_order: prev[semesterIndex].mappings.length + 1,
 				group_order: prev[semesterIndex].mappings.length + 1,
@@ -1224,6 +1244,7 @@ export default function CourseMappingEditPage() {
 						batch_code: mapping.batch_code || existingBatchCode,
 						semester_code: mapping.semester_code,
 						semester_id: table.semester.id, // MyJKKN semester.id
+						course_group: mapping.course_group || 'General',
 						course_category: mapping.course_category,
 						course_order: mapping.course_order,
 						group_order: mapping.group_order ?? mapping.course_order ?? null,
@@ -1427,6 +1448,7 @@ export default function CourseMappingEditPage() {
 						'Course Part': course?.course_part_master || '',
 						'Credits': course?.credits || 0,
 						'Course Category': mapping.course_category || '',
+						'Course Group': mapping.course_group || 'General',
 						'Course Order': mapping.course_order || 1,
 						'Group Order': mapping.group_order ?? mapping.course_order ?? '',
 						'Annual Semester (TRUE/FALSE)': mapping.annual_semester ? 'TRUE' : 'FALSE',
@@ -1453,7 +1475,9 @@ export default function CourseMappingEditPage() {
 				'Course Part': '',
 				'Credits': 0,
 				'Course Category': '',
+				'Course Group': 'General',
 				'Course Order': 1,
+				'Group Order': '',
 				'Annual Semester (TRUE/FALSE)': 'FALSE',
 				'Registration Based (TRUE/FALSE)': 'FALSE',
 				'Active (TRUE/FALSE)': 'TRUE'
@@ -1653,6 +1677,7 @@ export default function CourseMappingEditPage() {
 						semester_code: semesterCode,
 						semester_id: semesterTable?.semester.id || "", // MyJKKN semester.id
 						course_category: row['Course Category'] || row.course_category || course.course_category || '',
+						course_group: String(row['Course Group'] || row.course_group || 'General'),
 						course_order: Number(row['Course Order'] || row.course_order) || 1,
 						group_order: (row['Group Order'] ?? row.group_order) === '' || (row['Group Order'] ?? row.group_order) == null ? (Number(row['Course Order'] || row.course_order) || null) : Number(row['Group Order'] ?? row.group_order),
 						annual_semester: typeof row.annual_semester === 'boolean'
@@ -2000,8 +2025,9 @@ export default function CourseMappingEditPage() {
 																	<TableHead className="w-[120px] text-xs h-8 font-semibold px-2 whitespace-normal">Course Code</TableHead>
 																	<TableHead className="min-w-[250px] text-xs h-8 font-semibold px-2 whitespace-normal">Course Name</TableHead>
 																	<TableHead className="w-[100px] text-xs h-8 font-semibold px-2 whitespace-normal">Category</TableHead>
+																	<TableHead className="w-[120px] text-xs h-8 font-semibold px-2 whitespace-normal">Course Group</TableHead>
 																	<TableHead className="w-16 text-xs h-8 font-semibold px-2">Order</TableHead>
-																	<TableHead className="w-16 text-xs h-8 font-semibold px-2">Group</TableHead>
+																	<TableHead className="w-16 text-xs h-8 font-semibold px-2">Grp Order</TableHead>
 																	<TableHead className="w-16 text-center text-xs h-8 font-semibold px-1">
 																		<div className="flex flex-col items-center gap-0.5">
 																			<span className="text-xs font-semibold">Annual</span>
@@ -2036,7 +2062,7 @@ export default function CourseMappingEditPage() {
 															<TableBody>
 																{table.mappings.length === 0 ? (
 																	<TableRow>
-																		<TableCell colSpan={10} className="text-center text-muted-foreground py-3 text-xs">
+																		<TableCell colSpan={11} className="text-center text-muted-foreground py-3 text-xs">
 																			No courses mapped. Click "Add" to start.
 																		</TableCell>
 																	</TableRow>
