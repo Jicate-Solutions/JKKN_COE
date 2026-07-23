@@ -156,6 +156,7 @@ export interface StudentMarksheetData {
 		totalCreditPoints: number // totalSubCrditandGrdPoint
 		semesterGPA: number       // SGPA / SemGPA
 		cgpa?: number             // CGPA
+		consolidatedCgpa?: number | null // programme CGPA from consolidated_results (final semester only)
 		passedCount: number
 		failedCount: number
 		overallResult: string     // result / FinalRslt
@@ -1168,9 +1169,9 @@ export function addStudentMarksheetToDoc(
 		const partsWithData = data.partBreakdown.filter(part => part.courses.length > 0)
 
 		// PG semester marksheets suppress the Part A / Part B breakdown and show a
-		// single combined total row instead — EXCEPT the final semester (4), which
-		// keeps the part-wise split. UG and the consolidated marksheet are unaffected.
-		const suppressPartRowsForPG = isPG && !consolidated && data.semester !== 4
+		// single combined total row instead (PART column shows "-"), including the
+		// final semester. UG and the consolidated marksheet are unaffected.
+		const suppressPartRowsForPG = isPG && !consolidated
 
 		if (partsWithData.length > 0 && !suppressPartRowsForPG) {
 			// Has part-wise breakdown - show each part
@@ -1223,17 +1224,23 @@ export function addStudentMarksheetToDoc(
 				doc.setFontSize(9)
 				doc.text(`CGPA: ${cgpaValue.toFixed(3)}`, MARGIN + 85, gpaRowY)
 
-				// Cumulative GRADE + CLASSIFICATION (from cgpa_grade_system) below the CGPA
-				const cumGrade = (data.summary.cumulativeGrade || '').trim()
+				// CLASSIFICATION only (e.g. "FIRST CLASS") below the CGPA —
+				// the "CUMULATIVE GRADE: <letter>" prefix is intentionally omitted
+				// (COE requirement, 2026-07-23).
 				const cumClass = (data.summary.classGrade || '').trim()
-				if (cumGrade || cumClass) {
+				if (cumClass) {
 					doc.setFontSize(8)
-					const gradeLine = cumGrade
-						? `CUMULATIVE GRADE: ${cumGrade}${cumClass ? '  —  ' + cumClass.toUpperCase() : ''}`
-						: cumClass.toUpperCase()
-					doc.text(gradeLine, MARGIN + 85, gpaRowY + 5)
+					doc.text(cumClass.toUpperCase(), MARGIN + 85, gpaRowY + 5)
 				}
 
+				doc.setFont('helvetica', 'normal')
+			} else if (data.summary.consolidatedCgpa !== null && data.summary.consolidatedCgpa !== undefined) {
+				// Final-semester (UG 6 / PG 4) semester marksheet with a consolidated
+				// record: show the programme CGPA only (no cumulative grade line).
+				doc.setFont('helvetica', 'bold')
+				doc.setFontSize(9)
+				doc.text(`CGPA: ${data.summary.consolidatedCgpa.toFixed(3)}`, MARGIN + 85, gpaRowY)
+				doc.setFontSize(8)
 				doc.setFont('helvetica', 'normal')
 			}
 		} else {
@@ -1255,6 +1262,16 @@ export function addStudentMarksheetToDoc(
 				const gpaText = (data.summary.semesterGPA || 0).toFixed(2)
 				const gpaTextWidth = doc.getTextWidth(gpaText)
 				doc.text(gpaText, MARGIN + 68 - gpaTextWidth / 2, rowY)
+			}
+
+			// Final-semester (UG 6 / PG 4) semester marksheet with a consolidated
+			// record: show the programme CGPA only (no cumulative grade line).
+			if (!consolidated && data.summary.consolidatedCgpa !== null && data.summary.consolidatedCgpa !== undefined) {
+				doc.setFont('helvetica', 'bold')
+				doc.setFontSize(9)
+				doc.text(`CGPA: ${data.summary.consolidatedCgpa.toFixed(3)}`, MARGIN + 85, rowY)
+				doc.setFontSize(8)
+				doc.setFont('helvetica', 'normal')
 			}
 		}
 

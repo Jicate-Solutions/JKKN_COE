@@ -8,6 +8,11 @@ function normalizePart(part: any, index: number) {
 		instruction: part.instruction || null,
 		question_type_code: part.question_type_code,
 		num_questions: parseInt(part.num_questions) || 0,
+		// "Answer any N" — empty/0 means answer ALL questions (stored as NULL)
+		num_to_answer:
+			part.num_to_answer === '' || part.num_to_answer === null || part.num_to_answer === undefined
+				? null
+				: parseInt(part.num_to_answer) || null,
 		marks_per_question: parseFloat(part.marks_per_question) || 0,
 		has_choice: part.has_choice || false,
 		choice_group_size: parseInt(part.choice_group_size) || 1,

@@ -69,6 +69,10 @@ export interface ConsolidatedPartBreakdown {
 	totalCreditPoints: number
 	partCGPA: number
 	creditsEarned: number
+	// All-inclusive credit sum (every course in the part, ignoring
+	// credit_included/pass; fm.credit fallback). Supplied by the API;
+	// shown on the consolidated card for Part B (part_b_total_credit).
+	creditsEarnedAll?: number
 	classification: string
 }
 
@@ -198,7 +202,12 @@ function toSemesterData(c: ConsolidatedStudentMarksheetData): StudentMarksheetDa
 			totalCreditPoints: p.totalCreditPoints,
 			partGPA: p.partCGPA,         // semester layout reads partGPA
 			partCGPA: p.partCGPA,        // kept for reference
-			creditsEarned: p.creditsEarned
+			// Part B shows the ALL-INCLUSIVE credit total on the consolidated
+			// card (part_b_total_credit rule) — other parts keep the
+			// credit_included-respecting figure.
+			creditsEarned: p.partName?.trim().toLowerCase() === 'part b'
+				? (p.creditsEarnedAll ?? p.creditsEarned)
+				: p.creditsEarned
 		} as any
 		return adapted
 	})

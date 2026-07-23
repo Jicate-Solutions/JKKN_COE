@@ -176,6 +176,10 @@ interface PartBreakdown {
 	totalCreditPoints: number
 	partCGPA: number
 	creditsEarned: number
+	// Sum of credits of ALL passing courses in the part, INCLUDING
+	// credit_included=false ones. Used only for the
+	// consolidated_results.part_b_credits_earned column.
+	creditsEarnedAll: number
 	classification: string
 }
 
@@ -446,10 +450,21 @@ function buildPartBreakdown(courses: CourseResult[]): PartBreakdown[] {
 				totalCreditPoints: 0,
 				partCGPA: 0,
 				creditsEarned: 0,
+				creditsEarnedAll: 0,
 				classification: ''
 			}
 		}
 		partGroups[course.part].courses.push(course)
+		// All-inclusive earned credits: plain sum of EVERY course credit in
+		// the part — ignores credit_included AND pass status (eligibility
+		// already requires all courses cleared). Falls back to the
+		// final_marks.credit value when the course-master credit is 0
+		// (result_type='credit' internship/project rows).
+		// Consumed only by part_b_credits_earned in the generate action.
+		const effectiveCredits = course.credits > 0
+			? course.credits
+			: (course.creditValue ?? 0)
+		partGroups[course.part].creditsEarnedAll += effectiveCredits
 		if (course.creditIncluded !== false) {
 			partGroups[course.part].totalCredits += course.credits
 			partGroups[course.part].totalCreditPoints += course.creditPoints
@@ -501,11 +516,23 @@ function computeSummary(courses: CourseResult[], formattedFolio: string | null) 
 }
 
 // =====================================================
-// MYJKKN PROFILE FETCH HELPERS
+// LEARNER PROFILE FETCH HELPERS
 // =====================================================
 
-/** Fetch photo/DOB/name maps for a set of register numbers using MyJKKN pagination */
-async function fetchMyJKKNProfileMaps(
+/**
+ * Fetch photo/DOB/name/extended-info maps for a set of register numbers.
+ * Same coverage strategy as the semester-marksheet report:
+ *   1. Local learners_profiles mirror — no lifecycle_status (or any other)
+ *      condition filter, matched purely by register_number.
+ *   2. MyJKKN API for anyone still missing photo/DOB:
+ *      a. institution-paginated pass (active learners),
+ *      b. lifecycle_status=all sweep — covers graduated / inactive /
+ *         discontinued learners the active-only endpoint omits,
+ *      c. targeted register_number lookup for learners filed under a
+ *         different MyJKKN institution_id.
+ */
+async function fetchProfileMaps(
+	supabase: ReturnType<typeof getSupabaseServer>,
 	myjkknIds: string[],
 	registerNumbers: string[]
 ): Promise<{
@@ -519,18 +546,72 @@ async function fetchMyJKKNProfileMaps(
 	const nameMap: Record<string, string> = {}
 	const extInfoMap: Record<string, any> = {}
 
-	if (registerNumbers.length === 0 || myjkknIds.length === 0) {
+	if (registerNumbers.length === 0) {
+		return { photoMap, dobMap, nameMap, extInfoMap }
+	}
+
+	const formatDob = (raw: any): string | null => {
+		const dob = new Date(raw)
+		const y = dob.getFullYear()
+		if (isNaN(dob.getTime()) || y < 1900 || y > 2050) return null
+		return `${String(dob.getDate()).padStart(2, '0')}-${String(dob.getMonth() + 1).padStart(2, '0')}-${y}`
+	}
+
+	// --- 1. Local learners_profiles mirror (no lifecycle/condition filter) ---
+	const LP_CHUNK = 100
+	for (let i = 0; i < registerNumbers.length; i += LP_CHUNK) {
+		const chunk = registerNumbers.slice(i, i + LP_CHUNK)
+		const { data: lpRows, error: lpErr } = await supabase
+			.from('learners_profiles')
+			.select('register_number, first_name, last_name, date_of_birth, gender, father_name, mother_name, student_photo_url, admission_year')
+			.in('register_number', chunk)
+		if (lpErr) {
+			// learners_profiles table doesn't exist in this deployment — rely on MyJKKN below
+			if (lpErr.code === 'PGRST205') break
+			console.warn('[Consolidated Marksheet] learners_profiles fetch error (non-critical):', lpErr)
+			break
+		}
+		;(lpRows || []).forEach((lp: any) => {
+			const regNo = lp.register_number
+			if (!regNo) return
+			if (!photoMap[regNo] && lp.student_photo_url) photoMap[regNo] = lp.student_photo_url
+			if (!dobMap[regNo] && lp.date_of_birth) {
+				const d = formatDob(lp.date_of_birth)
+				if (d) dobMap[regNo] = d
+			}
+			if (!nameMap[regNo]) {
+				const nm = [lp.first_name, lp.last_name].filter(Boolean).join(' ')
+				if (nm) nameMap[regNo] = nm
+			}
+			if (!extInfoMap[regNo]) {
+				extInfoMap[regNo] = {
+					firstName: lp.first_name || undefined,
+					lastName: lp.last_name || undefined,
+					fatherName: lp.father_name || undefined,
+					motherName: lp.mother_name || undefined,
+					gender: lp.gender || undefined,
+					admissionYear: lp.admission_year?.toString() || undefined
+				}
+			}
+		})
+	}
+
+	// --- 2. MyJKKN API for anyone still missing photo or DOB ---
+	const stillMissing = () => registerNumbers.filter(rn => !photoMap[rn] || !dobMap[rn])
+	if (stillMissing().length === 0) {
 		return { photoMap, dobMap, nameMap, extInfoMap }
 	}
 
 	const myjkknApiUrl = process.env.MYJKKN_API_URL || 'https://www.jkkn.ai/api'
 	const myjkknApiKey = process.env.MYJKKN_API_KEY || ''
-
 	if (!myjkknApiKey) {
-		console.log('[Consolidated Marksheet] No MyJKKN API key configured')
+		console.log('[Consolidated Marksheet] No MyJKKN API key configured — profiles limited to local mirror')
 		return { photoMap, dobMap, nameMap, extInfoMap }
 	}
 
+	// Match register numbers tolerantly (case/whitespace, several id fields) —
+	// same as the semester-marksheet batch path. applyProfile only fills
+	// learners in this cohort, so unrelated rows are harmless.
 	const norm = (s: any) => (s ?? '').toString().trim().toUpperCase()
 	const regNoByNorm = new Map<string, string>()
 	registerNumbers.forEach(rn => regNoByNorm.set(norm(rn), rn))
@@ -552,10 +633,8 @@ async function fetchMyJKKNProfileMaps(
 		if (profilePhotoUrl && !photoMap[regNo]) photoMap[regNo] = profilePhotoUrl
 
 		if (lp.date_of_birth && !dobMap[regNo]) {
-			const dob = new Date(lp.date_of_birth)
-			if (!isNaN(dob.getTime())) {
-				dobMap[regNo] = `${String(dob.getDate()).padStart(2, '0')}-${String(dob.getMonth() + 1).padStart(2, '0')}-${dob.getFullYear()}`
-			}
+			const d = formatDob(lp.date_of_birth)
+			if (d) dobMap[regNo] = d
 		}
 
 		if (!nameMap[regNo]) {
@@ -575,15 +654,8 @@ async function fetchMyJKKNProfileMaps(
 		}
 	}
 
-	const pageSize = 1000
-	const MAX_PAGES = 1000
-	const PAGE_CONCURRENCY = 5
-
-	const fetchPage = async (myjkknInstId: string, page: number): Promise<any[] | null> => {
-		const p = new URLSearchParams()
-		p.set('institution_id', myjkknInstId)
-		p.set('limit', String(pageSize))
-		p.set('page', String(page))
+	const fetchProfilePage = async (params: Record<string, string>): Promise<any[] | null> => {
+		const p = new URLSearchParams(params)
 		try {
 			const resp = await fetch(`${myjkknApiUrl}/api-management/learners/profiles?${p.toString()}`, {
 				method: 'GET',
@@ -602,104 +674,69 @@ async function fetchMyJKKNProfileMaps(
 		}
 	}
 
-	for (const myjkknInstId of myjkknIds) {
-		let startPage = 1
-		let done = false
-		while (!done && startPage <= MAX_PAGES) {
-			const pageNums = Array.from({ length: PAGE_CONCURRENCY }, (_, i) => startPage + i)
-			const results = await Promise.all(pageNums.map(pg => fetchPage(myjkknInstId, pg)))
-			for (const profiles of results) {
-				if (!profiles || profiles.length === 0) { done = true; continue }
-				profiles.forEach(applyProfile)
-			}
-			if (registerNumbers.every(rn => photoMap[rn] && dobMap[rn])) done = true
-			startPage += PAGE_CONCURRENCY
-		}
-	}
+	// NOTE: the MyJKKN profiles endpoint HARD-CAPS every page at 200 rows
+	// regardless of the requested limit — paginate until a page returns 0 rows.
+	const pageSize = 200
+	const MAX_PAGES = 1000
+	const PAGE_CONCURRENCY = 5
 
-	// Targeted fallback: for any register number still missing photo OR dob,
-	// hit the MyJKKN endpoint with ?register_number=... filter. Pagination may
-	// have skipped them if MyJKKN's institution_id filter didn't include the
-	// learner's current institution registration.
-	const stillMissing = registerNumbers.filter(
-		rn => !(photoMap[rn] && dobMap[rn] && nameMap[rn])
-	)
-	if (stillMissing.length > 0) {
-		console.log(`[Consolidated Marksheet] ${stillMissing.length} learner(s) missing after pagination — running targeted register_number lookup`)
-		for (const regNo of stillMissing) {
-			const p = new URLSearchParams()
-			p.set('register_number', regNo)
-			p.set('limit', '200')
-			try {
-				const resp = await fetch(
-					`${myjkknApiUrl}/api-management/learners/profiles?${p.toString()}`,
-					{
-						method: 'GET',
-						headers: {
-							'Authorization': `Bearer ${myjkknApiKey}`,
-							'Accept': 'application/json',
-							'Content-Type': 'application/json',
-						},
-						cache: 'no-store',
-					}
-				)
-				if (resp.ok) {
-					const json = await resp.json()
-					const profiles: any[] = json.data || []
+	try {
+		// 2a. Institution-paginated pass (returns active learners only)
+		for (const myjkknInstId of myjkknIds) {
+			let startPage = 1
+			let done = false
+			while (!done && startPage <= MAX_PAGES) {
+				const pageNums = Array.from({ length: PAGE_CONCURRENCY }, (_, i) => startPage + i)
+				const results = await Promise.all(pageNums.map(pg => fetchProfilePage({
+					institution_id: myjkknInstId,
+					limit: String(pageSize),
+					page: String(pg)
+				})))
+				for (const profiles of results) {
+					if (!profiles || profiles.length === 0) { done = true; continue }
 					profiles.forEach(applyProfile)
-					if (profiles.length > 0) {
-						console.log(`[Consolidated Marksheet] Targeted lookup found ${profiles.length} profile(s) for ${regNo}`)
-					}
 				}
-			} catch (e) {
-				console.warn(`[Consolidated Marksheet] Targeted lookup error for ${regNo}:`, e)
+				if (stillMissing().length === 0) done = true
+				startPage += PAGE_CONCURRENCY
 			}
 		}
+
+		// 2b. Non-active learner sweep. The institution-paginated endpoint only
+		// returns lifecycle_status='active' profiles, so graduated / inactive /
+		// discontinued learners never appear above. lifecycle_status=all returns
+		// every state in a single pass (the API ignores institution_id here).
+		if (stillMissing().length > 0) {
+			let inPage = 1
+			while (inPage <= MAX_PAGES) {
+				const profiles = await fetchProfilePage({
+					lifecycle_status: 'all',
+					limit: String(pageSize),
+					page: String(inPage)
+				})
+				if (!profiles || profiles.length === 0) break
+				profiles.forEach(applyProfile)
+				if (stillMissing().length === 0) break
+				inPage++
+			}
+		}
+
+		// 2c. Targeted register_number lookup for any straggler (commonly filed
+		// under a different MyJKKN institution_id).
+		const misses = registerNumbers.filter(rn => !(photoMap[rn] && dobMap[rn] && nameMap[rn]))
+		if (misses.length > 0) {
+			console.log(`[Consolidated Marksheet] ${misses.length} learner(s) missing after pagination — running targeted register_number lookup`)
+			for (const regNo of misses) {
+				const profiles = await fetchProfilePage({ register_number: regNo, limit: '200' })
+				if (profiles && profiles.length > 0) {
+					profiles.forEach(applyProfile)
+				}
+			}
+		}
+	} catch (err) {
+		console.error('[Consolidated Marksheet] MyJKKN fetch error (non-critical):', err)
 	}
 
 	return { photoMap, dobMap, nameMap, extInfoMap }
-}
-
-/** Fallback: fill missing photo/DOB from local learners_profiles mirror (table is optional) */
-async function fillFromLocalProfiles(
-	supabase: ReturnType<typeof getSupabaseServer>,
-	registerNumbers: string[],
-	photoMap: Record<string, string>,
-	dobMap: Record<string, string>,
-	nameMap: Record<string, string>
-): Promise<void> {
-	const stillMissing = registerNumbers.filter(rn => !photoMap[rn] || !dobMap[rn])
-	if (stillMissing.length === 0) return
-
-	const LP_CHUNK = 50
-	for (let i = 0; i < stillMissing.length; i += LP_CHUNK) {
-		const chunk = stillMissing.slice(i, i + LP_CHUNK)
-		const { data: lpRows, error: lpErr } = await supabase
-			.from('learners_profiles')
-			.select('register_number, first_name, last_name, date_of_birth, student_photo_url')
-			.in('register_number', chunk)
-		if (lpErr) {
-			// learners_profiles table doesn't exist in this deployment — silently skip
-			if (lpErr.code === 'PGRST205') return
-			console.warn('[Consolidated Marksheet] learners_profiles fallback error (non-critical):', lpErr)
-			break
-		}
-		;(lpRows || []).forEach((lp: any) => {
-			const regNo = lp.register_number
-			if (!regNo) return
-			if (!photoMap[regNo] && lp.student_photo_url) photoMap[regNo] = lp.student_photo_url
-			if (!dobMap[regNo] && lp.date_of_birth) {
-				const dob = new Date(lp.date_of_birth)
-				if (!isNaN(dob.getTime())) {
-					dobMap[regNo] = `${String(dob.getDate()).padStart(2, '0')}-${String(dob.getMonth() + 1).padStart(2, '0')}-${dob.getFullYear()}`
-				}
-			}
-			if (!nameMap[regNo]) {
-				const nm = [lp.first_name, lp.last_name].filter(Boolean).join(' ')
-				if (nm) nameMap[regNo] = nm
-			}
-		})
-	}
 }
 
 /** Resolve program UUID from program_code using the local programs table */
@@ -1325,7 +1362,10 @@ export async function GET(req: NextRequest) {
 				}
 			}
 
-			// --- Fetch learner profile from MyJKKN ---
+			// --- Fetch learner profile (photo, DOB, extended info) ---
+			// Local learners_profiles mirror first (no lifecycle/condition filter),
+			// then MyJKKN API incl. lifecycle_status=all sweep — same coverage as
+			// the semester-marksheet report.
 			let dateOfBirth: string | null = null
 			let photoUrl: string | null = null
 			let learnerExtendedInfo: {
@@ -1341,162 +1381,17 @@ export async function GET(req: NextRequest) {
 				console.log(`[Consolidated Marksheet] ===== LEARNER PROFILE LOOKUP =====`)
 				console.log(`[Consolidated Marksheet] registerNo: "${registerNo}"`)
 
-				try {
-					const myjkknApiUrl = process.env.MYJKKN_API_URL || 'https://www.jkkn.ai/api'
-					const myjkknApiKey = process.env.MYJKKN_API_KEY || ''
+				const { photoMap, dobMap, nameMap, extInfoMap } = await fetchProfileMaps(supabase, myjkknIds, [registerNo])
 
-					let matchingProfile: any = null
+				photoUrl = photoMap[registerNo] || null
+				dateOfBirth = dobMap[registerNo] || null
+				learnerExtendedInfo = extInfoMap[registerNo] || {}
+				if (nameMap[registerNo]) learnerName = nameMap[registerNo]
 
-					if (myjkknApiKey && myjkknIds.length > 0) {
-						for (const myjkknInstId of myjkknIds) {
-							if (matchingProfile) break
-
-							let page = 1
-							const pageSize = 1000
-							let hasMorePages = true
-
-							while (hasMorePages && !matchingProfile) {
-								const profileParams = new URLSearchParams()
-								profileParams.set('institution_id', myjkknInstId)
-								profileParams.set('limit', String(pageSize))
-								profileParams.set('page', String(page))
-
-								const profileResponse = await fetch(
-									`${myjkknApiUrl}/api-management/learners/profiles?${profileParams.toString()}`,
-									{
-										method: 'GET',
-										headers: {
-											'Authorization': `Bearer ${myjkknApiKey}`,
-											'Accept': 'application/json',
-											'Content-Type': 'application/json',
-										},
-										cache: 'no-store',
-									}
-								)
-
-								if (profileResponse.ok) {
-									const profileData = await profileResponse.json()
-									const profiles = profileData.data || []
-
-									matchingProfile = profiles.find((p: any) =>
-										p.register_number === registerNo
-									)
-
-									hasMorePages = profiles.length === pageSize
-									page++
-								} else {
-									hasMorePages = false
-								}
-							}
-						}
-					} else if (!myjkknApiKey) {
-						console.log('[Consolidated Marksheet] No MyJKKN API key configured')
-					}
-
-					// Targeted fallback: if pagination didn't find the learner
-					// (e.g. they're filed under a different MyJKKN institution_id),
-					// hit the endpoint with ?register_number= directly.
-					if (!matchingProfile && myjkknApiKey && registerNo) {
-						console.log(`[Consolidated Marksheet] Pagination missed ${registerNo} — running targeted register_number lookup`)
-						try {
-							const targetParams = new URLSearchParams()
-							targetParams.set('register_number', registerNo)
-							targetParams.set('limit', '200')
-							const targetResp = await fetch(
-								`${myjkknApiUrl}/api-management/learners/profiles?${targetParams.toString()}`,
-								{
-									method: 'GET',
-									headers: {
-										'Authorization': `Bearer ${myjkknApiKey}`,
-										'Accept': 'application/json',
-										'Content-Type': 'application/json',
-									},
-									cache: 'no-store',
-								}
-							)
-							if (targetResp.ok) {
-								const targetData = await targetResp.json()
-								const targetProfiles = targetData.data || []
-								// IMPORTANT: only accept an exact register_number match.
-								// Do NOT fall back to targetProfiles[0] — MyJKKN's
-								// register_number query sometimes returns unrelated
-								// profiles when no exact match exists, and picking
-								// the first one would attach a stranger's data
-								// (name, DOB, photo) to the wrong learner.
-								matchingProfile = targetProfiles.find((p: any) =>
-									p.register_number === registerNo
-								) || null
-								if (matchingProfile) {
-									console.log(`[Consolidated Marksheet] Targeted lookup found profile for ${registerNo}`)
-								}
-							}
-						} catch (e) {
-							console.warn(`[Consolidated Marksheet] Targeted lookup error for ${registerNo}:`, e)
-						}
-					}
-
-					if (matchingProfile) {
-						const profilePhotoUrl = matchingProfile.student_photo_url ||
-							matchingProfile.photo_url ||
-							matchingProfile.profile_photo ||
-							matchingProfile.image_url
-						if (profilePhotoUrl) photoUrl = profilePhotoUrl
-
-						if (matchingProfile.date_of_birth) {
-							const dob = new Date(matchingProfile.date_of_birth)
-							const dobYear = dob.getFullYear()
-							if (!isNaN(dob.getTime()) && dobYear >= 1900 && dobYear <= 2050) {
-								dateOfBirth = `${String(dob.getDate()).padStart(2, '0')}-${String(dob.getMonth() + 1).padStart(2, '0')}-${dobYear}`
-							}
-						}
-
-						learnerExtendedInfo = {
-							firstName: matchingProfile.first_name || undefined,
-							lastName: matchingProfile.last_name || undefined,
-							fatherName: matchingProfile.father_name || undefined,
-							motherName: matchingProfile.mother_name || undefined,
-							gender: matchingProfile.gender || undefined,
-							admissionYear: matchingProfile.admission_year?.toString() || undefined
-						}
-
-						const myjkknFullName = matchingProfile.student_name || matchingProfile.full_name || ''
-						const constructedName = myjkknFullName ||
-							[matchingProfile.first_name, matchingProfile.last_name].filter(Boolean).join(' ')
-						if (constructedName) learnerName = constructedName
-					} else {
-						console.log(`[Consolidated Marksheet] No matching profile found in MyJKKN for: ${registerNo}`)
-					}
-				} catch (myjkknError) {
-					console.error('[Consolidated Marksheet] MyJKKN API error (non-critical):', myjkknError)
-				}
-
-				// Fallback: local learners_profiles mirror
-				if (!photoUrl || !dateOfBirth) {
-					try {
-						const { data: lpRows } = await supabase
-							.from('learners_profiles')
-							.select('first_name, last_name, date_of_birth, student_photo_url')
-							.eq('register_number', registerNo)
-							.limit(1)
-						const lp: any = lpRows?.[0]
-						if (lp) {
-							if (!photoUrl && lp.student_photo_url) photoUrl = lp.student_photo_url
-							if (!dateOfBirth && lp.date_of_birth) {
-								const dob = new Date(lp.date_of_birth)
-								if (!isNaN(dob.getTime())) {
-									dateOfBirth = `${String(dob.getDate()).padStart(2, '0')}-${String(dob.getMonth() + 1).padStart(2, '0')}-${dob.getFullYear()}`
-								}
-							}
-							if (!learnerName) {
-								const nm = [lp.first_name, lp.last_name].filter(Boolean).join(' ')
-								if (nm) learnerName = nm
-							}
-							console.log(`[Consolidated Marksheet] Filled photo/DOB from local learners_profiles mirror for ${registerNo}`)
-						}
-					} catch (lpErr) {
-						console.warn('[Consolidated Marksheet] learners_profiles fallback error (non-critical):', lpErr)
-					}
-				}
+				console.log(`[Consolidated Marksheet] Final values for ${registerNo}:`, {
+					photoUrl: photoUrl?.substring(0, 100) || 'NULL',
+					dateOfBirth: dateOfBirth || 'NULL'
+				})
 			}
 
 			// --- Process and sort courses ---
@@ -1728,12 +1623,12 @@ export async function GET(req: NextRequest) {
 				studentRawMap[sid].rows.push(fm)
 			}
 
-			// --- Fetch photo/DOB/name maps from MyJKKN ---
+			// --- Fetch photo/DOB/name maps ---
+			// Local learners_profiles mirror first (no lifecycle/condition filter),
+			// then MyJKKN API incl. lifecycle_status=all sweep — same coverage as
+			// the semester-marksheet report.
 			const registerNumbers = Object.values(studentRawMap).map(s => s.registerNo).filter(Boolean)
-			const { photoMap, dobMap, nameMap, extInfoMap } = await fetchMyJKKNProfileMaps(myjkknIds, registerNumbers)
-
-			// Fallback from local mirror
-			await fillFromLocalProfiles(supabase, registerNumbers, photoMap, dobMap, nameMap)
+			const { photoMap, dobMap, nameMap, extInfoMap } = await fetchProfileMaps(supabase, myjkknIds, registerNumbers)
 
 			console.log(`[Consolidated Marksheet Batch] Photo/DOB/Name enrichment: ${Object.keys(photoMap).length} photos, ${Object.keys(dobMap).length} DOBs, ${Object.keys(nameMap).length} names`)
 
@@ -2304,10 +2199,11 @@ export async function POST(req: NextRequest) {
 			}
 
 			// Build part columns (UG: I-V, PG: A-B)
-			const partColMap: Record<string, { credits: number; cgpa: number | null; classification: string | null }> = {}
+			const partColMap: Record<string, { credits: number; creditsAll: number; cgpa: number | null; classification: string | null }> = {}
 			for (const p of partBreakdown) {
 				partColMap[p.partName] = {
 					credits: p.creditsEarned,
+					creditsAll: p.creditsEarnedAll,
 					cgpa: p.partCGPA || null,
 					classification: p.classification || null
 				}
@@ -2332,6 +2228,10 @@ export async function POST(req: NextRequest) {
 				part_a_cgpa: partColMap['Part A']?.cgpa,
 				part_a_classification: partColMap['Part A']?.classification,
 				part_b_credits_earned: partColMap['Part B']?.credits || 0,
+				// All-inclusive Part B credit total: EVERY Part B course credit,
+				// ignoring credit_included and pass status, with fm.credit
+				// fallback for zero-credit masters (per COE requirement).
+				part_b_total_credit: partColMap['Part B']?.creditsAll || 0,
 				part_b_cgpa: partColMap['Part B']?.cgpa,
 				part_b_classification: partColMap['Part B']?.classification
 			}

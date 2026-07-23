@@ -188,8 +188,10 @@ function buildHtml(ctx: {
 			const part: any = partByLabel.get(label)
 			const marksEach = part?.marks_per_question ?? qs[0]?.marks ?? 0
 			const count = part?.num_questions ?? qs.filter((q: any) => !q.is_choice_alternative).length
-			const total = Number(marksEach) * Number(count)
-			const heading = `PART ${label} – (${count} x ${marksEach} = ${total})`
+			// "Answer any N": only num_to_answer questions count toward marks
+			const answerCount = Number(part?.num_to_answer) > 0 ? Number(part.num_to_answer) : Number(count)
+			const total = Number(marksEach) * answerCount
+			const heading = `PART ${label} – (${answerCount} x ${marksEach} = ${total})`
 			const instr = part?.instruction ? `<div class="part-instr">${escapeHtml(part.instruction)}</div>` : ''
 
 			const headerRow = `<tr class="part-hdr${partIdx === 0 ? ' first' : ''}">

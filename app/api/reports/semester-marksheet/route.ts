@@ -836,6 +836,23 @@ export async function GET(req: NextRequest) {
 			const totalSecured = processedCourses.reduce((sum, c) => sum + c.totalMarks, 0)
 			const percentage = totalMaxMarks > 0 ? Math.round((totalSecured / totalMaxMarks) * 10000) / 100 : 0
 
+			// Final-semester marksheets (UG sem 6, PG sem 4) show the programme CGPA
+			// when a consolidated_results record exists for the learner.
+			let consolidatedCgpa: number | null = null
+			const finalSemester = isPG ? 4 : 6
+			if (parseInt(semester || '0') === finalSemester) {
+				let crQuery = supabase
+					.from('consolidated_results')
+					.select('cgpa')
+					.eq('student_id', studentId)
+					.eq('is_active', true)
+				if (semesterResult?.institutions_id) crQuery = crQuery.eq('institutions_id', semesterResult.institutions_id)
+				if (programCode) crQuery = crQuery.eq('program_code', programCode)
+				const { data: crRows } = await crQuery.limit(1)
+				const crCgpa = crRows?.[0]?.cgpa
+				if (crCgpa !== null && crCgpa !== undefined) consolidatedCgpa = Number(crCgpa)
+			}
+
 			return NextResponse.json({
 				student: {
 					id: studentId,
@@ -873,6 +890,7 @@ export async function GET(req: NextRequest) {
 					totalCreditPoints: Math.round(totalCreditPoints * 100) / 100,
 					semesterGPA,
 					cgpa: semesterResult?.cgpa || semesterGPA,
+					consolidatedCgpa,
 					passedCount: processedCourses.filter(c => c.isPassing).length,
 					failedCount: processedCourses.filter(c => !c.isPassing).length,
 					overallResult,
@@ -1203,6 +1221,21 @@ export async function GET(req: NextRequest) {
 				folioPromise = srQuery.range(0, 1000000)
 			}
 
+			// Final-semester batches (UG sem 6, PG sem 4) also pull the programme
+			// CGPA from consolidated_results for learners who have a record there.
+			const consolidatedCgpaMap: Record<string, number> = {}
+			let consolidatedPromise: any = null
+			const batchFinalSemester = batchIsPG ? 4 : 6
+			if (studentIds.length > 0 && semester && parseInt(semester) === batchFinalSemester) {
+				consolidatedPromise = supabase
+					.from('consolidated_results')
+					.select('student_id, cgpa')
+					.in('student_id', studentIds)
+					.eq('institutions_id', institutionId)
+					.eq('is_active', true)
+					.range(0, 999999)
+			}
+
 			if (registerNumbers.length > 0) {
 				// ====================================================================
 				// Fetch photo URL and DOB from MyJKKN API using myjkkn_institution_ids
@@ -1429,6 +1462,18 @@ export async function GET(req: NextRequest) {
 				}
 			}
 
+			// Await the final-semester consolidated_results query (if started).
+			if (consolidatedPromise) {
+				const { data: crRows, error: crError } = await consolidatedPromise
+				if (crError) {
+					console.error('[Semester Marksheet Batch] consolidated_results query error:', crError)
+				} else if (crRows) {
+					crRows.forEach((cr: any) => {
+						if (cr.cgpa !== null && cr.cgpa !== undefined) consolidatedCgpaMap[cr.student_id] = Number(cr.cgpa)
+					})
+				}
+			}
+
 			// Filter students to only include those whose PRIMARY/CURRENT semester matches the selected semester
 			// A student's primary semester = their highest semester (current enrollment level)
 			// Then include ALL their courses (current semester courses + arrear papers from previous semesters)
@@ -1543,6 +1588,7 @@ export async function GET(req: NextRequest) {
 						totalCreditPoints: Math.round(totalCreditPoints * 100) / 100,
 						semesterGPA,
 						cgpa: cgpaMap[student.studentId] || semesterGPA,
+						consolidatedCgpa: consolidatedCgpaMap[student.studentId] ?? null,
 						passedCount: student.courses.filter((c: any) => c.isPassing).length,
 						failedCount: student.courses.filter((c: any) => !c.isPassing).length,
 						overallResult: hasFailures ? 'RA' : 'PASS',

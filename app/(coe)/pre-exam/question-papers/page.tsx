@@ -1336,6 +1336,9 @@ export default function QuestionPapersPage() {
 
 							{[...groupedQuestions.entries()].map(([label, qs]) => {
 								const part = partByLabel.get(label)
+								// "Answer any N": only num_to_answer questions count toward marks
+								const answerCount =
+									part && Number(part.num_to_answer) > 0 ? Number(part.num_to_answer) : part?.num_questions
 								return (
 									<div key={label} className="rounded-md border">
 										<div className="border-b bg-muted/40 px-3 py-2">
@@ -1343,7 +1346,9 @@ export default function QuestionPapersPage() {
 												<div className="text-sm font-semibold">
 													PART {label}
 													{part
-														? ` — (${part.num_questions} x ${part.marks_per_question} = ${part.num_questions * part.marks_per_question})`
+														? ` — (${answerCount} x ${part.marks_per_question} = ${answerCount * part.marks_per_question})${
+															answerCount < part.num_questions ? ` · answer ${answerCount} of ${part.num_questions}` : ''
+														}`
 														: ''}
 												</div>
 												{part && (

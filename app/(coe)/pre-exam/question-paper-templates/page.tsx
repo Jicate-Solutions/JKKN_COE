@@ -50,6 +50,7 @@ const emptyPart = (order: number): IaTemplatePartFormData => ({
 	instruction: '',
 	question_type_code: '',
 	num_questions: '1',
+	num_to_answer: '',
 	marks_per_question: '1',
 	has_choice: false,
 	choice_group_size: '1',
@@ -168,8 +169,15 @@ const emptyTypeForm = (): TypeForm => ({
 	is_active: true,
 })
 
+// Questions that count toward marks: "Answer any N" when set, otherwise all
+function partAnswerCount(p: IaTemplatePartFormData): number {
+	const total = parseInt(p.num_questions) || 0
+	const toAnswer = parseInt(p.num_to_answer) || 0
+	return toAnswer > 0 ? toAnswer : total
+}
+
 function partMax(p: IaTemplatePartFormData): number {
-	return (parseInt(p.num_questions) || 0) * (parseFloat(p.marks_per_question) || 0)
+	return partAnswerCount(p) * (parseFloat(p.marks_per_question) || 0)
 }
 
 export default function QuestionPaperTemplatesPage() {
@@ -316,6 +324,7 @@ export default function QuestionPaperTemplatesPage() {
 						instruction: p.instruction || '',
 						question_type_code: p.question_type_code,
 						num_questions: String(p.num_questions),
+						num_to_answer: p.num_to_answer != null ? String(p.num_to_answer) : '',
 						marks_per_question: String(p.marks_per_question),
 						has_choice: p.has_choice,
 						choice_group_size: String(p.choice_group_size),
@@ -366,6 +375,9 @@ export default function QuestionPaperTemplatesPage() {
 			if (!p.part_label.trim()) return `Part ${i + 1}: label is required`
 			if (!p.question_type_code) return `Part ${p.part_label}: choose a question type`
 			if ((parseInt(p.num_questions) || 0) <= 0) return `Part ${p.part_label}: questions must be > 0`
+			const toAnswer = parseInt(p.num_to_answer) || 0
+			if (toAnswer > (parseInt(p.num_questions) || 0))
+				return `Part ${p.part_label}: "Answer any" cannot exceed the number of questions`
 		}
 		return null
 	}
@@ -914,7 +926,12 @@ export default function QuestionPaperTemplatesPage() {
 											<div className="mb-2 flex items-center justify-between">
 												<span className="text-sm font-medium">
 													Part {p.part_label || i + 1}{' '}
-													<span className="text-muted-foreground">= {partMax(p)} marks</span>
+													<span className="text-muted-foreground">
+														= {partMax(p)} marks
+														{(parseInt(p.num_to_answer) || 0) > 0 &&
+															(parseInt(p.num_to_answer) || 0) < (parseInt(p.num_questions) || 0) &&
+															` (answer ${p.num_to_answer} of ${p.num_questions})`}
+													</span>
 												</span>
 												<Button
 													variant="ghost"
@@ -978,6 +995,15 @@ export default function QuestionPaperTemplatesPage() {
 														type="number"
 														value={p.num_questions}
 														onChange={e => updatePart(i, { num_questions: e.target.value })}
+													/>
+												</div>
+												<div>
+													<Label className="text-xs">Answer any</Label>
+													<Input
+														type="number"
+														value={p.num_to_answer}
+														placeholder="All"
+														onChange={e => updatePart(i, { num_to_answer: e.target.value })}
 													/>
 												</div>
 												<div>

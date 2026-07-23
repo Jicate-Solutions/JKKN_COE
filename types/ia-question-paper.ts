@@ -56,6 +56,8 @@ export interface IaTemplatePart {
 	instruction?: string
 	question_type_code: string
 	num_questions: number
+	// "Answer any N": how many of num_questions count toward marks. NULL = all.
+	num_to_answer?: number | null
 	marks_per_question: number
 	has_choice: boolean
 	choice_group_size: number
@@ -113,6 +115,7 @@ export interface IaTemplatePartFormData {
 	instruction: string
 	question_type_code: string
 	num_questions: string
+	num_to_answer: string
 	marks_per_question: string
 	has_choice: boolean
 	choice_group_size: string
