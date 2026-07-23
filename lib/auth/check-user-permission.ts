@@ -16,6 +16,7 @@
  * { ok: false, status, error } with a suggested HTTP status code.
  */
 
+import { cookies } from 'next/headers'
 import { createRouteHandlerSupabaseClient } from '@/lib/supabase-route-handler'
 import { getSupabaseServer } from '@/lib/supabase-server'
 
@@ -39,6 +40,66 @@ export type PermissionCheckFailure = {
 export type PermissionCheckOutcome = PermissionCheckSuccess | PermissionCheckFailure
 
 /**
+ * Resolve the caller's email from whichever session mechanism is present.
+ *
+ * The COE app authenticates via the MyJKKN parent-app OAuth flow, which sets
+ * an `access_token` cookie (a JWT issued by MyJKKN) — there is usually NO
+ * Supabase Auth session, so `auth.getUser()` alone would treat every caller
+ * as anonymous. Mirror the pattern used by pre-exam/internal-mark-entry:
+ *   1. Supabase SSR session (kept for deployments that do use Supabase Auth)
+ *   2. Decode the `access_token` JWT payload locally (no network call)
+ *   3. Fall back to MyJKKN's /api/auth/validate endpoint
+ */
+async function resolveCallerEmail(): Promise<string | null> {
+	// 1) Supabase Auth session, if one exists
+	try {
+		const routeClient = await createRouteHandlerSupabaseClient()
+		const { data: authData } = await routeClient.auth.getUser()
+		if (authData?.user?.email) return authData.user.email
+	} catch {
+		// No Supabase session — fall through to the parent-app token
+	}
+
+	try {
+		const cookieStore = await cookies()
+		const accessToken = cookieStore.get('access_token')?.value
+		if (!accessToken) return null
+
+		// 2) Decode the JWT payload to read the email directly
+		const parts = accessToken.split('.')
+		if (parts.length === 3) {
+			try {
+				const payloadB64 = parts[1].replace(/-/g, '+').replace(/_/g, '/')
+				const padded = payloadB64 + '='.repeat((4 - payloadB64.length % 4) % 4)
+				const payload = JSON.parse(Buffer.from(padded, 'base64').toString('utf-8'))
+				const email = payload.email || payload.user_email || payload.preferred_username
+				if (typeof email === 'string' && email.includes('@')) return email
+			} catch {
+				// JWT decode failed — fall through to validate endpoint
+			}
+		}
+
+		// 3) Validate with the parent app if the JWT didn't yield an email
+		const validateRes = await fetch(`${process.env.NEXT_PUBLIC_PARENT_APP_URL}/api/auth/validate`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				access_token: accessToken,
+				child_app_id: process.env.NEXT_PUBLIC_APP_ID,
+			}),
+		})
+		if (validateRes.ok) {
+			const data = await validateRes.json()
+			if (data?.user?.email) return data.user.email
+		}
+	} catch (err) {
+		console.warn('[resolveCallerEmail] Parent-app token resolution failed:', err)
+	}
+
+	return null
+}
+
+/**
  * Role check for API route handlers: does the caller hold any of `roleNames`
  * (from the normalized user_roles → roles tables)? super_admin users always
  * pass. Returns false — never throws — when unauthenticated or on error, so
@@ -46,9 +107,7 @@ export type PermissionCheckOutcome = PermissionCheckSuccess | PermissionCheckFai
  */
 export async function hasAnyCoeRole(roleNames: string[]): Promise<boolean> {
 	try {
-		const routeClient = await createRouteHandlerSupabaseClient()
-		const { data: authData } = await routeClient.auth.getUser()
-		const email = authData?.user?.email
+		const email = await resolveCallerEmail()
 		if (!email) return false
 
 		const svc = getSupabaseServer()
@@ -88,14 +147,13 @@ export async function requireUserPermission(
 	permissionName: string,
 ): Promise<PermissionCheckOutcome> {
 	try {
-		const routeClient = await createRouteHandlerSupabaseClient()
-		const { data: authData, error: authErr } = await routeClient.auth.getUser()
+		const email = await resolveCallerEmail()
 
-		if (authErr || !authData?.user?.email) {
+		if (!email) {
 			return { ok: false, status: 401, error: 'Not authenticated' }
 		}
 
-		const email = authData.user.email
+		const routeClient = await createRouteHandlerSupabaseClient()
 
 		// Try cookie client first; fall back to service client if RLS blocks
 		let userRow: {
