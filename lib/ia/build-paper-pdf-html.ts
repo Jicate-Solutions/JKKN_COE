@@ -47,8 +47,18 @@ function sanitizeHtml(raw: string): string {
 			let a: RegExpExecArray | null
 			while ((a = attrRe.exec(attrs))) {
 				const name = a[1].toLowerCase()
+				const rawVal = a[3] ?? a[4] ?? ''
+				// `style` is not in the allowlist, but we preserve ONLY a text-align
+				// declaration (fixed value enum) so Tiptap's left/center/right survives
+				// into the PDF. Everything else in style — url(), expressions, other
+				// properties — is dropped, so this stays injection-safe.
+				if (name === 'style') {
+					const m = /text-align\s*:\s*(left|right|center|justify)/i.exec(rawVal)
+					if (m) kept.push(`style="text-align:${m[1].toLowerCase()}"`)
+					continue
+				}
 				if (!ALLOWED_ATTR.has(name)) continue
-				const val = (a[3] ?? a[4] ?? '').replace(/"/g, '&quot;')
+				const val = rawVal.replace(/"/g, '&quot;')
 				kept.push(`${name}="${val}"`)
 			}
 			return `<${t}${kept.length ? ' ' + kept.join(' ') : ''}>`

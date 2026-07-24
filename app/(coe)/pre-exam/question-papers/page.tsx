@@ -22,13 +22,14 @@ import {
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Command, CommandEmpty, CommandInput, CommandItem, CommandList } from '@/components/ui/command'
 import { Checkbox } from '@/components/ui/checkbox'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useToast } from '@/hooks/common/use-toast'
 import { useInstitutionFilter } from '@/hooks/use-institution-filter'
 import { useAuth } from '@/lib/auth/auth-context-parent'
 import { cn } from '@/lib/utils'
 import {
 	Loader2, MoreHorizontal, FileText, FileDown, Wand2, Save, Trash2, Send, CheckCircle2, Lock,
-	Check, ChevronsUpDown, RefreshCw, Plus, X, Download,
+	Check, ChevronsUpDown, RefreshCw, Plus, X, Download, GraduationCap, Layers,
 } from 'lucide-react'
 import { K_LEVELS } from '@/types/ia-question-paper'
 import type { IaQuestionPaper, IaPaperQuestion } from '@/types/ia-question-paper'
@@ -52,8 +53,15 @@ interface TemplateOpt {
 	course_type_applicability: string
 	total_marks: number
 }
+interface BoardOpt {
+	board_code: string
+	board_name: string
+	board_type?: string
+	board_order?: number
+}
 
 const CIA_ROUNDS = [1, 2, 3]
+type FilterMode = 'program' | 'board'
 
 // Searchable single-select combobox (matches exam-registrations/bulk-create)
 function SearchableSelect({
@@ -228,18 +236,21 @@ export default function QuestionPapersPage() {
 
 	const [sessions, setSessions] = useState<SessionOpt[]>([])
 	const [programs, setPrograms] = useState<{ code: string; name: string }[]>([])
+	const [boards, setBoards] = useState<BoardOpt[]>([])
 	const [semesters, setSemesters] = useState<number[]>([])
 
 	const [templates, setTemplates] = useState<TemplateOpt[]>([])
 
+	const [filterMode, setFilterMode] = useState<FilterMode>('program')
 	const [sessionId, setSessionId] = useState('')
 	const [selectedPrograms, setSelectedPrograms] = useState<string[]>([])
+	const [selectedBoard, setSelectedBoard] = useState('')
 	const [semester, setSemester] = useState('')
 	const [ciaRound, setCiaRound] = useState('1')
 	const [templateId, setTemplateId] = useState('')
 
 	// Every filter is mandatory before generating — Generate stays disabled until
-	// all are set, and the button tooltip names what's still missing.
+	// all are set, and the button tooltip names what's still missing. (Program-wise only)
 	const missingFilters = useMemo(() => {
 		const missing: string[] = []
 		if (mustSelectInstitution && !effectiveInstitutionId) missing.push('institution')
@@ -250,6 +261,11 @@ export default function QuestionPapersPage() {
 		if (!templateId) missing.push('template')
 		return missing
 	}, [mustSelectInstitution, effectiveInstitutionId, sessionId, selectedPrograms, semester, ciaRound, templateId])
+
+	const boardFiltersReady = useMemo(() => {
+		if (mustSelectInstitution && !effectiveInstitutionId) return false
+		return Boolean(sessionId && selectedBoard && semester && ciaRound)
+	}, [mustSelectInstitution, effectiveInstitutionId, sessionId, selectedBoard, semester, ciaRound])
 
 	const selectedTemplate = useMemo(
 		() => templates.find(t => t.id === templateId) || null,
@@ -297,15 +313,50 @@ export default function QuestionPapersPage() {
 	}, [effectiveInstitutionId, sessionId])
 
 	useEffect(() => {
-		if (effectiveInstitutionId && sessionId && selectedPrograms.length > 0) fetchSemesters()
-		else setSemesters([])
+		setSelectedBoard('')
+		setBoards([])
+		if (effectiveInstitutionId) fetchBoards()
 		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [selectedPrograms])
+	}, [effectiveInstitutionId])
 
 	useEffect(() => {
-		if (effectiveInstitutionId && sessionId) fetchPapers()
+		setSemester('')
+		setSemesters([])
+		setSelected([])
+		if (filterMode === 'program') {
+			if (effectiveInstitutionId && sessionId && selectedPrograms.length > 0) fetchProgramSemesters()
+		} else if (filterMode === 'board') {
+			if (effectiveInstitutionId && sessionId && selectedBoard) fetchBoardSemesters()
+		}
 		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [effectiveInstitutionId, sessionId, selectedPrograms, semester, ciaRound])
+	}, [filterMode, selectedPrograms, selectedBoard, sessionId, effectiveInstitutionId])
+
+	useEffect(() => {
+		setSelected(new Set())
+		if (!effectiveInstitutionId || !sessionId) {
+			setPapers([])
+			return
+		}
+		if (filterMode === 'program') {
+			fetchPapers()
+		} else if (filterMode === 'board' && selectedBoard && semester) {
+			fetchPapers()
+		} else {
+			setPapers([])
+		}
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [filterMode, effectiveInstitutionId, sessionId, selectedPrograms, selectedBoard, semester, ciaRound])
+
+	const handleFilterModeChange = (mode: string) => {
+		const next = mode === 'board' ? 'board' : 'program'
+		setFilterMode(next)
+		setSemester('')
+		setSemesters([])
+		setSelected(new Set())
+		setPapers([])
+		if (next === 'program') setSelectedBoard('')
+		else setSelectedPrograms([])
+	}
 
 	const fetchInstitutions = async () => {
 		try {
@@ -400,7 +451,37 @@ export default function QuestionPapersPage() {
 		}
 	}
 
-	const fetchSemesters = async () => {
+	const fetchBoards = async () => {
+		try {
+			const res = await fetch(
+				`/api/master/boards?institutions_id=${encodeURIComponent(effectiveInstitutionId)}`
+			)
+			if (!res.ok) {
+				setBoards([])
+				return
+			}
+			const data = await res.json()
+			const list: BoardOpt[] = (Array.isArray(data) ? data : [])
+				.filter((b: any) => b.board_code && (b.is_active !== false && b.status !== false))
+				.map((b: any) => ({
+					board_code: b.board_code,
+					board_name: b.board_name || b.board_code,
+					board_type: b.board_type || '',
+					board_order: b.board_order ?? 999,
+				}))
+				.sort(
+					(a: BoardOpt, b: BoardOpt) =>
+						(a.board_order ?? 999) - (b.board_order ?? 999) ||
+						a.board_code.localeCompare(b.board_code)
+				)
+			setBoards(list)
+		} catch (e) {
+			console.error(e)
+			setBoards([])
+		}
+	}
+
+	const fetchProgramSemesters = async () => {
 		try {
 			// Union of semesters across all selected programs
 			const lists = await Promise.all(
@@ -418,22 +499,44 @@ export default function QuestionPapersPage() {
 		}
 	}
 
+	const fetchBoardSemesters = async () => {
+		try {
+			const res = await fetch(
+				`/api/pre-exam/question-papers?action=board-semesters&institutions_id=${effectiveInstitutionId}&examination_session_id=${sessionId}&board_code=${encodeURIComponent(selectedBoard)}`
+			)
+			if (!res.ok) {
+				setSemesters([])
+				return
+			}
+			const data = await res.json()
+			setSemesters(Array.isArray(data) ? data.map(Number).filter(n => !Number.isNaN(n)).sort((a, b) => a - b) : [])
+		} catch (e) {
+			console.error(e)
+			setSemesters([])
+		}
+	}
+
 	const fetchPapers = async () => {
 		try {
 			setLoading(true)
-			// Fetch by session (+ optional semester/round); filter to selected programs client-side
 			let url = `/api/pre-exam/question-papers?institutions_id=${effectiveInstitutionId}&examination_session_id=${sessionId}&cia_round=${ciaRound}`
 			if (semester) url += `&semester=${semester}`
+			if (filterMode === 'board' && selectedBoard) {
+				url += `&board_code=${encodeURIComponent(selectedBoard)}`
+			}
 			const res = await fetch(url)
 			if (res.ok) {
 				let data: IaQuestionPaper[] = await res.json()
-				if (selectedPrograms.length > 0) {
+				if (filterMode === 'program' && selectedPrograms.length > 0) {
 					data = data.filter(p => selectedPrograms.includes(p.program_code || ''))
 				}
 				setPapers(data)
+			} else {
+				setPapers([])
 			}
 		} catch (e) {
 			console.error(e)
+			setPapers([])
 		} finally {
 			setLoading(false)
 		}
@@ -622,8 +725,27 @@ export default function QuestionPapersPage() {
 		setSelected(allSelected ? new Set() : new Set(selectablePapers.map(p => p.id)))
 
 	const downloadSelectedZip = async (layout: 'single' | '2up' = 'single') => {
-		const chosen = papers.filter(p => selected.has(p.id))
-		if (chosen.length === 0) {
+		// Board-wise: if nothing selected but filters are ready, download all authored papers listed
+		let chosen = papers.filter(p => selected.has(p.id))
+		if (chosen.length === 0 && filterMode === 'board') {
+			if (!boardFiltersReady) {
+				toast({
+					title: 'Select board filters first',
+					description: 'Institution, Exam Session, Board, Semester and CIA Round are required.',
+					variant: 'destructive',
+				})
+				return
+			}
+			chosen = selectablePapers
+			if (chosen.length === 0) {
+				toast({
+					title: 'No authored papers to download',
+					description: 'Only papers with questions entered can be downloaded.',
+					variant: 'destructive',
+				})
+				return
+			}
+		} else if (chosen.length === 0) {
 			toast({ title: 'Select at least one paper', variant: 'destructive' })
 			return
 		}
@@ -647,7 +769,9 @@ export default function QuestionPapersPage() {
 			const objectUrl = URL.createObjectURL(content)
 			const a = document.createElement('a')
 			a.href = objectUrl
-			a.download = `question-papers-CIA${ciaRound}${layout === '2up' ? '-2up' : ''}.zip`
+			const boardSuffix =
+				filterMode === 'board' && selectedBoard ? `_${selectedBoard}` : ''
+			a.download = `question-papers-CIA${ciaRound}${boardSuffix}${layout === '2up' ? '-2up' : ''}.zip`
 			document.body.appendChild(a)
 			a.click()
 			a.remove()
@@ -932,121 +1056,227 @@ export default function QuestionPapersPage() {
 						</h1>
 						<p className="text-sm text-muted-foreground">
 							Generate papers from templates for registered courses, then author the questions.
+							Use Board-wise to download papers by board.
 						</p>
 					</div>
 
-					{/* Filters */}
-					<Card>
-						<CardContent className="grid grid-cols-1 gap-3 py-4 sm:grid-cols-2 lg:grid-cols-6">
-							{mustSelectInstitution && (
-								<div>
-									<Label className="text-xs">Institution</Label>
-									<SearchableSelect
-										value={localInstitutionId}
-										onValueChange={setLocalInstitutionId}
-										placeholder="Select institution"
-										searchPlaceholder="Search institution..."
-										options={institutions.map(i => ({ value: i.id, label: `${i.name} (${i.institution_code})` }))}
-									/>
-								</div>
-							)}
-							<div>
-								<Label className="text-xs">Exam Session</Label>
-								<SearchableSelect
-									value={sessionId}
-									onValueChange={setSessionId}
-									placeholder="Select session"
-									searchPlaceholder="Search session..."
-									options={sessions.map(s => ({ value: s.id, label: s.session_name }))}
-								/>
-							</div>
-							<div>
-								<Label className="text-xs">Program(s)</Label>
-								<MultiSearchableSelect
-									values={selectedPrograms}
-									onValuesChange={setSelectedPrograms}
-									placeholder="Select programs"
-									searchPlaceholder="Search program..."
-									disabled={!sessionId}
-									options={programs.map(p => ({
-										value: p.code,
-										label: p.name && p.name !== p.code ? `${p.code} - ${p.name}` : p.code,
-									}))}
-								/>
-							</div>
-							<div>
-								<Label className="text-xs">Semester</Label>
-								<SearchableSelect
-									value={semester}
-									onValueChange={setSemester}
-									placeholder="Sem"
-									searchPlaceholder="Search semester..."
-									disabled={selectedPrograms.length === 0}
-									options={semesters.map(s => ({ value: String(s), label: `Semester ${s}` }))}
-								/>
-							</div>
-							<div>
-								<Label className="text-xs">CIA Round</Label>
-								<SearchableSelect
-									value={ciaRound}
-									onValueChange={setCiaRound}
-									placeholder="Round"
-									options={CIA_ROUNDS.map(r => ({ value: String(r), label: `CIA ${r}` }))}
-								/>
-							</div>
-							<div>
-								<Label className="text-xs">Template</Label>
-								<SearchableSelect
-									value={templateId}
-									onValueChange={setTemplateId}
-									placeholder={templates.length === 0 ? 'No active template' : 'Select template'}
-									searchPlaceholder="Search template..."
-									disabled={!ciaRound || templates.length === 0}
-									options={templates.map(t => ({
-										value: t.id,
-										label: `${t.template_name} · ${formatApplicability(t.course_type_applicability)}`,
-									}))}
-								/>
-							</div>
-							<div className="flex items-end">
-								<Button
-									onClick={generate}
-									disabled={generating || missingFilters.length > 0}
-									className="w-full"
-									title={missingFilters.length > 0 ? `Select ${missingFilters.join(', ')} first` : undefined}
-								>
-									{generating ? (
-										<Loader2 className="mr-2 h-4 w-4 animate-spin" />
-									) : (
-										<Wand2 className="mr-2 h-4 w-4" />
-									)}
-									Generate
-								</Button>
-							</div>
+					<Tabs value={filterMode} onValueChange={handleFilterModeChange} className="space-y-4">
+						<TabsList className="grid w-full max-w-md grid-cols-2 bg-slate-100 dark:bg-slate-800/60 p-1 h-10 rounded-lg">
+							<TabsTrigger
+								value="program"
+								className="text-xs gap-1.5 rounded-md data-[state=active]:bg-white data-[state=active]:text-slate-900 data-[state=active]:shadow-sm data-[state=active]:font-semibold dark:data-[state=active]:bg-slate-700 dark:data-[state=active]:text-white"
+							>
+								<GraduationCap className="h-3.5 w-3.5" />
+								Program-wise
+							</TabsTrigger>
+							<TabsTrigger
+								value="board"
+								className="text-xs gap-1.5 rounded-md data-[state=active]:bg-white data-[state=active]:text-slate-900 data-[state=active]:shadow-sm data-[state=active]:font-semibold dark:data-[state=active]:bg-slate-700 dark:data-[state=active]:text-white"
+							>
+								<Layers className="h-3.5 w-3.5" />
+								Board-wise
+							</TabsTrigger>
+						</TabsList>
 
-							{templates.length === 0 ? (
-								<p className="col-span-full text-xs text-amber-600">
-									No active CIA template for this institution — create one in Question Paper Templates and
-									set its status to Active.
-								</p>
-							) : selectedTemplate ? (
-								<p className="col-span-full text-xs text-muted-foreground">
-									<span className="font-medium text-foreground">{selectedTemplate.template_name}</span>{' '}
-									applies to{' '}
-									<span className="font-medium text-foreground">
-										{formatApplicability(selectedTemplate.course_type_applicability)}
-									</span>{' '}
-									courses · {selectedTemplate.total_marks} marks. Courses of any other type are skipped.
-								</p>
-							) : null}
-						</CardContent>
-					</Card>
+						{/* Program-wise: generate + filter */}
+						<TabsContent value="program" className="mt-0 space-y-4">
+							<Card>
+								<CardContent className="grid grid-cols-1 gap-3 py-4 sm:grid-cols-2 lg:grid-cols-6">
+									{mustSelectInstitution && (
+										<div>
+											<Label className="text-xs">Institution</Label>
+											<SearchableSelect
+												value={localInstitutionId}
+												onValueChange={setLocalInstitutionId}
+												placeholder="Select institution"
+												searchPlaceholder="Search institution..."
+												options={institutions.map(i => ({ value: i.id, label: `${i.name} (${i.institution_code})` }))}
+											/>
+										</div>
+									)}
+									<div>
+										<Label className="text-xs">Exam Session</Label>
+										<SearchableSelect
+											value={sessionId}
+											onValueChange={v => {
+												setSessionId(v)
+												setSelectedPrograms([])
+												setSemester('')
+											}}
+											placeholder="Select session"
+											searchPlaceholder="Search session..."
+											options={sessions.map(s => ({ value: s.id, label: s.session_name }))}
+										/>
+									</div>
+									<div>
+										<Label className="text-xs">Program(s)</Label>
+										<MultiSearchableSelect
+											values={selectedPrograms}
+											onValuesChange={setSelectedPrograms}
+											placeholder="Select programs"
+											searchPlaceholder="Search program..."
+											disabled={!sessionId}
+											options={programs.map(p => ({
+												value: p.code,
+												label: p.name && p.name !== p.code ? `${p.code} - ${p.name}` : p.code,
+											}))}
+										/>
+									</div>
+									<div>
+										<Label className="text-xs">Semester</Label>
+										<SearchableSelect
+											value={semester}
+											onValueChange={setSemester}
+											placeholder="Sem"
+											searchPlaceholder="Search semester..."
+											disabled={selectedPrograms.length === 0}
+											options={semesters.map(s => ({ value: String(s), label: `Semester ${s}` }))}
+										/>
+									</div>
+									<div>
+										<Label className="text-xs">CIA Round</Label>
+										<SearchableSelect
+											value={ciaRound}
+											onValueChange={setCiaRound}
+											placeholder="Round"
+											options={CIA_ROUNDS.map(r => ({ value: String(r), label: `CIA ${r}` }))}
+										/>
+									</div>
+									<div>
+										<Label className="text-xs">Template</Label>
+										<SearchableSelect
+											value={templateId}
+											onValueChange={setTemplateId}
+											placeholder={templates.length === 0 ? 'No active template' : 'Select template'}
+											searchPlaceholder="Search template..."
+											disabled={!ciaRound || templates.length === 0}
+											options={templates.map(t => ({
+												value: t.id,
+												label: `${t.template_name} · ${formatApplicability(t.course_type_applicability)}`,
+											}))}
+										/>
+									</div>
+									<div className="flex items-end">
+										<Button
+											onClick={generate}
+											disabled={generating || missingFilters.length > 0}
+											className="w-full"
+											title={missingFilters.length > 0 ? `Select ${missingFilters.join(', ')} first` : undefined}
+										>
+											{generating ? (
+												<Loader2 className="mr-2 h-4 w-4 animate-spin" />
+											) : (
+												<Wand2 className="mr-2 h-4 w-4" />
+											)}
+											Generate
+										</Button>
+									</div>
+
+									{templates.length === 0 ? (
+										<p className="col-span-full text-xs text-amber-600">
+											No active CIA template for this institution — create one in Question Paper Templates and
+											set its status to Active.
+										</p>
+									) : selectedTemplate ? (
+										<p className="col-span-full text-xs text-muted-foreground">
+											<span className="font-medium text-foreground">{selectedTemplate.template_name}</span>{' '}
+											applies to{' '}
+											<span className="font-medium text-foreground">
+												{formatApplicability(selectedTemplate.course_type_applicability)}
+											</span>{' '}
+											courses · {selectedTemplate.total_marks} marks. Courses of any other type are skipped.
+										</p>
+									) : null}
+								</CardContent>
+							</Card>
+						</TabsContent>
+
+						{/* Board-wise: filter + download only */}
+						<TabsContent value="board" className="mt-0 space-y-4">
+							<Card>
+								<CardContent className="grid grid-cols-1 gap-3 py-4 sm:grid-cols-2 lg:grid-cols-5">
+									{mustSelectInstitution && (
+										<div>
+											<Label className="text-xs">Institution</Label>
+											<SearchableSelect
+												value={localInstitutionId}
+												onValueChange={setLocalInstitutionId}
+												placeholder="Select institution"
+												searchPlaceholder="Search institution..."
+												options={institutions.map(i => ({ value: i.id, label: `${i.name} (${i.institution_code})` }))}
+											/>
+										</div>
+									)}
+									<div>
+										<Label className="text-xs">Exam Session</Label>
+										<SearchableSelect
+											value={sessionId}
+											onValueChange={v => {
+												setSessionId(v)
+												setSelectedBoard('')
+												setSemester('')
+											}}
+											placeholder="Select session"
+											searchPlaceholder="Search session..."
+											options={sessions.map(s => ({ value: s.id, label: s.session_name }))}
+										/>
+									</div>
+									<div>
+										<Label className="text-xs">Board</Label>
+										<SearchableSelect
+											value={selectedBoard}
+											onValueChange={v => {
+												setSelectedBoard(v)
+												setSemester('')
+											}}
+											placeholder="Select board"
+											searchPlaceholder="Search board..."
+											disabled={!sessionId || boards.length === 0}
+											options={boards.map(b => ({
+												value: b.board_code,
+												label: b.board_type
+													? `${b.board_code} - ${b.board_name} (${b.board_type})`
+													: `${b.board_code} - ${b.board_name}`,
+											}))}
+										/>
+									</div>
+									<div>
+										<Label className="text-xs">Semester</Label>
+										<SearchableSelect
+											value={semester}
+											onValueChange={setSemester}
+											placeholder="Sem"
+											searchPlaceholder="Search semester..."
+											disabled={!selectedBoard}
+											options={semesters.map(s => ({ value: String(s), label: `Semester ${s}` }))}
+										/>
+									</div>
+									<div>
+										<Label className="text-xs">CIA Round</Label>
+										<SearchableSelect
+											value={ciaRound}
+											onValueChange={setCiaRound}
+											placeholder="Round"
+											options={CIA_ROUNDS.map(r => ({ value: String(r), label: `CIA ${r}` }))}
+										/>
+									</div>
+									<p className="col-span-full text-xs text-muted-foreground">
+										Select filters, then use Download / 2-up ZIP below. If nothing is checked, all authored
+										papers for this board are downloaded.
+									</p>
+								</CardContent>
+							</Card>
+						</TabsContent>
+					</Tabs>
 
 					{/* Papers table */}
 					<Card>
 						<CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 py-3">
 							<span className="text-sm font-medium">
 								{papers.length} paper{papers.length === 1 ? '' : 's'}
+								{filterMode === 'board' && selectedBoard && (
+									<span className="ml-2 text-muted-foreground">· {selectedBoard}</span>
+								)}
 								{selected.size > 0 && (
 									<span className="ml-2 text-primary">· {selected.size} selected</span>
 								)}
@@ -1061,30 +1291,61 @@ export default function QuestionPapersPage() {
 								variant="outline"
 								size="sm"
 								onClick={() => downloadSelectedZip('single')}
-								disabled={downloadingZip || selected.size === 0}
-								title="Download selected papers as a ZIP (A4 portrait)"
+								disabled={
+									downloadingZip ||
+									(filterMode === 'board'
+										? !boardFiltersReady || selectablePapers.length === 0
+										: selected.size === 0)
+								}
+								title={
+									filterMode === 'board'
+										? selected.size === 0
+											? 'Download all authored papers for this board as a ZIP (A4 portrait)'
+											: 'Download selected papers as a ZIP (A4 portrait)'
+										: 'Download selected papers as a ZIP (A4 portrait)'
+								}
 							>
 								{downloadingZip ? (
 									<Loader2 className="mr-2 h-4 w-4 animate-spin" />
 								) : (
 									<Download className="mr-2 h-4 w-4" />
 								)}
-								Download ({selected.size})
+								Download (
+								{filterMode === 'board' && selected.size === 0
+									? selectablePapers.length
+									: selected.size}
+								)
 							</Button>
 							<Button
 								variant="outline"
 								size="sm"
 								onClick={() => downloadSelectedZip('2up')}
-								disabled={downloadingZip2up || selected.size === 0}
-								title="Download selected papers as 2-up print layout (A4 landscape, 2 copies side-by-side) — ZIP"
+								disabled={
+									downloadingZip2up ||
+									(filterMode === 'board'
+										? !boardFiltersReady || selectablePapers.length === 0
+										: selected.size === 0)
+								}
+								title={
+									filterMode === 'board'
+										? selected.size === 0
+											? 'Download all authored papers for this board as 2-up ZIP'
+											: 'Download selected papers as 2-up print layout ZIP'
+										: 'Download selected papers as 2-up print layout (A4 landscape, 2 copies side-by-side) — ZIP'
+								}
 							>
 								{downloadingZip2up ? (
 									<Loader2 className="mr-2 h-4 w-4 animate-spin" />
 								) : (
 									<Download className="mr-2 h-4 w-4" />
 								)}
-								2-up ZIP ({selected.size})
+								2-up ZIP (
+								{filterMode === 'board' && selected.size === 0
+									? selectablePapers.length
+									: selected.size}
+								)
 							</Button>
+								{filterMode === 'program' && (
 								<Button
 									variant="outline"
 									size="sm"
@@ -1099,6 +1360,7 @@ export default function QuestionPapersPage() {
 									)}
 									Rebuild All
 								</Button>
+								)}
 							</div>
 						</CardHeader>
 						<CardContent>
@@ -1127,7 +1389,13 @@ export default function QuestionPapersPage() {
 									) : papers.length === 0 ? (
 										<TableRow>
 											<TableCell colSpan={10} className="py-10 text-center text-muted-foreground">
-												No papers. Pick a session/program/semester and click Generate.
+												{filterMode === 'board'
+													? boardFiltersReady
+														? 'No papers for this board / semester / CIA round.'
+														: selectedBoard && semesters.length === 0
+															? 'No course offerings found for this board in the selected session. Check that courses have board_code or board_id set.'
+															: 'Select Exam Session, Board, Semester and CIA Round to list papers.'
+													: 'No papers. Pick a session/program/semester and click Generate.'}
 											</TableCell>
 										</TableRow>
 									) : (

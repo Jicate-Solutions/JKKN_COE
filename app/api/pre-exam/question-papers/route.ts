@@ -28,6 +28,57 @@ function setCount(multiple: any): number {
 	return 1
 }
 
+// Resolve courses for a board. Prefer board_code match; also include
+// courses that only have board_id set (board_code often null on older rows).
+async function resolveBoardCourses(
+	supabase: ReturnType<typeof getSupabaseServer>,
+	institutionsId: string,
+	boardCode: string
+): Promise<{ codes: string[]; ids: string[]; error?: string }> {
+	const { data: boardRow, error: boardLookupErr } = await supabase
+		.from('board')
+		.select('id, board_code')
+		.eq('institutions_id', institutionsId)
+		.eq('board_code', boardCode)
+		.maybeSingle()
+
+	if (boardLookupErr) {
+		return { codes: [], ids: [], error: boardLookupErr.message }
+	}
+
+	// Fallback: board row may not be scoped to institutions_id on some installs
+	let boardId = boardRow?.id as string | undefined
+	if (!boardId) {
+		const { data: anyBoard } = await supabase
+			.from('board')
+			.select('id, board_code')
+			.eq('board_code', boardCode)
+			.limit(1)
+			.maybeSingle()
+		boardId = anyBoard?.id
+	}
+
+	// Match by board_code and/or board_id so rows missing board_code still resolve
+	let query = supabase
+		.from('courses')
+		.select('id, course_code')
+		.eq('institutions_id', institutionsId)
+
+	if (boardId) {
+		query = query.or(`board_code.eq.${boardCode},board_id.eq.${boardId}`)
+	} else {
+		query = query.eq('board_code', boardCode)
+	}
+
+	const { data: boardCourses, error: boardErr } = await query
+	if (boardErr) {
+		return { codes: [], ids: [], error: boardErr.message }
+	}
+	const codes = [...new Set((boardCourses || []).map(c => c.course_code).filter(Boolean))]
+	const ids = [...new Set((boardCourses || []).map(c => c.id).filter(Boolean))]
+	return { codes, ids }
+}
+
 // GET - list papers with filters
 export async function GET(req: NextRequest) {
 	try {
@@ -37,8 +88,80 @@ export async function GET(req: NextRequest) {
 		const sessionId = searchParams.get('examination_session_id')
 		const ciaRound = searchParams.get('cia_round')
 		const programCode = searchParams.get('program_code')
+		const boardCode = searchParams.get('board_code')
 		const semester = searchParams.get('semester')
 		const status = searchParams.get('status')
+		const action = searchParams.get('action')
+
+		// Distinct semesters for a board in a session (offerings ∩ courses.board)
+		if (action === 'board-semesters') {
+			if (!institutionsId || !sessionId || !boardCode) {
+				return NextResponse.json(
+					{ error: 'institutions_id, examination_session_id and board_code are required' },
+					{ status: 400 }
+				)
+			}
+			const { codes, ids, error: resolveErr } = await resolveBoardCourses(
+				supabase,
+				institutionsId,
+				boardCode
+			)
+			if (resolveErr) {
+				console.error('Error resolving board courses for semesters:', resolveErr)
+				return NextResponse.json({ error: resolveErr }, { status: 500 })
+			}
+			if (codes.length === 0 && ids.length === 0) return NextResponse.json([])
+
+			let offQuery = supabase
+				.from('course_offerings')
+				.select('semester')
+				.eq('institutions_id', institutionsId)
+				.eq('examination_session_id', sessionId)
+				.eq('is_active', true)
+
+			if (ids.length > 0 && codes.length > 0) {
+				offQuery = offQuery.or(
+					`course_id.in.(${ids.join(',')}),course_code.in.(${codes.join(',')})`
+				)
+			} else if (ids.length > 0) {
+				offQuery = offQuery.in('course_id', ids)
+			} else {
+				offQuery = offQuery.in('course_code', codes)
+			}
+
+			const { data: offerings, error: offErr } = await offQuery
+			if (offErr) {
+				console.error('Error fetching board semesters:', offErr)
+				return NextResponse.json({ error: offErr.message }, { status: 500 })
+			}
+			const semesters = [...new Set((offerings || []).map(o => o.semester).filter((s): s is number => s != null))]
+				.sort((a, b) => a - b)
+			return NextResponse.json(semesters)
+		}
+
+		// Board filter: resolve course codes via courses.board_code / board_id
+		let boardCourseCodes: string[] | null = null
+		if (boardCode) {
+			if (!institutionsId) {
+				return NextResponse.json(
+					{ error: 'institutions_id is required when filtering by board_code' },
+					{ status: 400 }
+				)
+			}
+			const { codes, error: resolveErr } = await resolveBoardCourses(
+				supabase,
+				institutionsId,
+				boardCode
+			)
+			if (resolveErr) {
+				console.error('Error resolving board courses:', resolveErr)
+				return NextResponse.json({ error: resolveErr }, { status: 500 })
+			}
+			boardCourseCodes = codes
+			if (boardCourseCodes.length === 0) {
+				return NextResponse.json([])
+			}
+		}
 
 		let query = supabase
 			.from('ia_question_papers')
@@ -51,6 +174,7 @@ export async function GET(req: NextRequest) {
 		if (sessionId) query = query.eq('examination_session_id', sessionId)
 		if (ciaRound) query = query.eq('cia_round', Number(ciaRound))
 		if (programCode) query = query.eq('program_code', programCode)
+		if (boardCourseCodes) query = query.in('course_code', boardCourseCodes)
 		if (semester) query = query.eq('semester', Number(semester))
 		if (status) query = query.eq('status', status)
 
