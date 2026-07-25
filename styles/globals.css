@@ -2,6 +2,34 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Tamil fonts for question-paper TipTap editor (files in public/fonts/tamil/). */
+@font-face {
+  font-family: 'Noto Sans Tamil';
+  src: url('/fonts/tamil/NotoSansTamil-Regular.ttf') format('truetype');
+  font-weight: normal;
+  font-style: normal;
+  font-display: swap;
+  unicode-range: U+0B80-0BFF, U+200C-200D;
+}
+@font-face {
+  font-family: 'Bamini';
+  src: url('/fonts/tamil/Bamini.ttf') format('truetype');
+  font-weight: normal;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Suntommy';
+  src: url('/fonts/tamil/Suntommy.ttf') format('truetype');
+  font-weight: normal;
+  font-style: normal;
+  font-display: swap;
+}
+
+.qp-rich-editor-body {
+  font-family: inherit, 'Noto Sans Tamil', Bamini, Suntommy, sans-serif;
+}
+
 /* Remove number input spinners for cleaner UI */
 input[type="number"]::-webkit-outer-spin-button,
 input[type="number"]::-webkit-inner-spin-button {

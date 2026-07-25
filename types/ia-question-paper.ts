@@ -181,6 +181,8 @@ export interface IaPaperQuestion {
 	question_text?: string
 	marks?: number
 	options?: IaPaperQuestionOption[]
+	/** CSS font-family for MCQ option inputs (Bamini / Suntommy / Noto Sans Tamil). */
+	option_font?: string | null
 	correct_option?: string
 	co_code?: string
 	k_level?: string

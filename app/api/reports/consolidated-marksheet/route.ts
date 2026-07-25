@@ -496,8 +496,10 @@ function computeSummary(courses: CourseResult[], formattedFolio: string | null) 
 	const creditsEarned = courses
 		.filter(c => c.isPassing && c.creditIncluded !== false)
 		.reduce((s, c) => s + c.credits, 0)
+	// CGPA kept at 3 decimals (COE requirement — store the actual value,
+	// no 2-decimal rounding). DB column is numeric(5,3).
 	const cgpa = totalCredits > 0
-		? Math.round((totalCreditPoints / totalCredits) * 100) / 100
+		? Math.round((totalCreditPoints / totalCredits) * 1000) / 1000
 		: 0
 	const hasFailures = courses.some(c => !c.isPassing)
 	const overallResult: 'PASS' | 'NEEDS IMPROVEMENT' = hasFailures ? 'NEEDS IMPROVEMENT' : 'PASS'

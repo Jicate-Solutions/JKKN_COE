@@ -35,6 +35,7 @@ import { K_LEVELS } from '@/types/ia-question-paper'
 import type { IaQuestionPaper, IaPaperQuestion } from '@/types/ia-question-paper'
 import { QuestionRichEditor } from '@/components/ia/question-rich-editor'
 import { formatApplicability } from '@/lib/ia/course-type-applicability'
+import { TAMIL_FONT_FAMILIES } from '@/lib/ia/tamil-font-meta'
 
 interface Institution {
 	id: string
@@ -1659,19 +1660,50 @@ export default function QuestionPapersPage() {
 													/>
 
 													{Array.isArray(q.options) && q.options.length > 0 && (
-														<div className="mt-2 grid grid-cols-2 gap-2">
-															{q.options.map(o => (
-																<div key={o.key} className="flex items-center gap-1">
-																	<span className="w-5 text-xs text-muted-foreground">{o.key})</span>
-																	<Input
-																		className="h-8"
-																		placeholder={`Option ${o.key}`}
-																		value={o.text}
-																		disabled={!editable}
-																		onChange={e => updateOption(q.id, o.key, e.target.value)}
-																	/>
-																</div>
-															))}
+														<div className="mt-2 space-y-2">
+															<div className="flex items-center gap-2">
+																<Label className="text-xs whitespace-nowrap">Option font</Label>
+																<Select
+																	value={q.option_font || 'default'}
+																	onValueChange={v =>
+																		updateQuestion(q.id, {
+																			option_font: v === 'default' ? null : v,
+																		})
+																	}
+																	disabled={!editable}
+																>
+																	<SelectTrigger className="h-7 w-[150px] text-xs">
+																		<SelectValue placeholder="Default" />
+																	</SelectTrigger>
+																	<SelectContent>
+																		<SelectItem value="default" className="text-xs">Default</SelectItem>
+																		{TAMIL_FONT_FAMILIES.map(f => (
+																			<SelectItem key={f.id} value={f.cssName} className="text-xs">
+																				{f.label}
+																			</SelectItem>
+																		))}
+																	</SelectContent>
+																</Select>
+															</div>
+															<div className="grid grid-cols-2 gap-2">
+																{q.options.map(o => (
+																	<div key={o.key} className="flex items-center gap-1">
+																		<span className="w-5 text-xs text-muted-foreground">{o.key})</span>
+																		<Input
+																			className="h-8"
+																			placeholder={`Option ${o.key}`}
+																			value={o.text}
+																			disabled={!editable}
+																			style={
+																				q.option_font
+																					? { fontFamily: `'${q.option_font}'` }
+																					: undefined
+																			}
+																			onChange={e => updateOption(q.id, o.key, e.target.value)}
+																		/>
+																	</div>
+																))}
+															</div>
 														</div>
 													)}
 

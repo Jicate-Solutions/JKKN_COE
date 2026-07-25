@@ -1,8 +1,9 @@
 'use client'
 
 // Rich question editor: typeable box (bold/italic/underline, sub/superscript,
-// inline math via KaTeX, tables) that emits sanitized HTML. Shares the storage
-// contract with the PDF renderer (math = <span data-latex="…">).
+// inline math via KaTeX, tables, Tamil fonts) that emits sanitized HTML. Shares
+// the storage contract with the PDF renderer (math = <span data-latex="…">;
+// Tamil = style="font-family:…").
 
 import { useEffect, useState, useCallback } from 'react'
 import { useEditor, EditorContent } from '@tiptap/react'
@@ -12,14 +13,23 @@ import { Subscript } from '@tiptap/extension-subscript'
 import { Superscript } from '@tiptap/extension-superscript'
 import { TableKit } from '@tiptap/extension-table'
 import { Placeholder } from '@tiptap/extension-placeholder'
+import { TextStyle, FontFamily } from '@tiptap/extension-text-style'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
+import {
+	Select,
+	SelectContent,
+	SelectItem,
+	SelectTrigger,
+	SelectValue,
+} from '@/components/ui/select'
 import {
 	Bold, Italic, Underline as UnderlineIcon, Subscript as SubIcon, Superscript as SupIcon,
 	Sigma, Table as TableIcon, Rows3, Columns3, Trash2,
 } from 'lucide-react'
 import { MathInline } from './math-node'
 import { EquationEditorDialog } from './equation-editor-dialog'
+import { TAMIL_FONT_FAMILIES } from '@/lib/ia/tamil-font-meta'
 
 interface Props {
 	value: string
@@ -33,6 +43,15 @@ interface Props {
 // Empty-document HTML Tiptap emits — normalise to '' so an untouched question stays blank.
 const EMPTY_HTML = new Set(['', '<p></p>', '<p><br></p>'])
 
+const FONT_OPTIONS = [
+	{ value: 'default', label: 'Default', cssName: '' },
+	...TAMIL_FONT_FAMILIES.map((f) => ({
+		value: f.id,
+		label: f.label,
+		cssName: f.cssName,
+	})),
+]
+
 export function QuestionRichEditor({ value, onChange, onBlur, disabled, placeholder, className }: Props) {
 	const [eqOpen, setEqOpen] = useState(false)
 	const [eqInitial, setEqInitial] = useState('')
@@ -45,6 +64,8 @@ export function QuestionRichEditor({ value, onChange, onBlur, disabled, placehol
 			Underline,
 			Subscript,
 			Superscript,
+			TextStyle,
+			FontFamily,
 			TableKit.configure({ table: { resizable: false } }),
 			MathInline,
 			Placeholder.configure({ placeholder: placeholder || 'Enter the question…' }),
@@ -52,7 +73,7 @@ export function QuestionRichEditor({ value, onChange, onBlur, disabled, placehol
 		content: value || '',
 		editorProps: {
 			attributes: {
-				class: 'prose prose-sm max-w-none min-h-[70px] px-3 py-2 focus:outline-none',
+				class: 'prose prose-sm max-w-none min-h-[70px] px-3 py-2 focus:outline-none qp-rich-editor-body',
 			},
 		},
 		onUpdate: ({ editor }) => {
@@ -115,11 +136,43 @@ export function QuestionRichEditor({ value, onChange, onBlur, disabled, placehol
 	)
 
 	const inTable = editor.isActive('table')
+	const currentFontFamily = String(editor.getAttributes('textStyle').fontFamily || '')
+	const selectedFont =
+		FONT_OPTIONS.find(
+			(o) => o.cssName && currentFontFamily.toLowerCase().includes(o.cssName.toLowerCase())
+		)?.value || 'default'
+
+	const handleFontChange = (id: string) => {
+		const opt = FONT_OPTIONS.find((o) => o.value === id)
+		if (!opt) return
+		if (!opt.cssName) {
+			editor.chain().focus().unsetFontFamily().run()
+		} else {
+			editor.chain().focus().setFontFamily(opt.cssName).run()
+		}
+	}
 
 	return (
-		<div className={cn('rounded-md border bg-background', className)}>
+		<div className={cn('rounded-md border bg-background qp-rich-editor-root', className)}>
 			{!disabled && (
 				<div className="flex flex-wrap items-center gap-0.5 border-b px-1 py-1">
+					<Select value={selectedFont} onValueChange={handleFontChange}>
+						<SelectTrigger
+							className="h-7 w-[140px] text-xs"
+							title="Font — Unicode Tamil / Bamini / Suntommy"
+							onMouseDown={e => e.preventDefault()}
+						>
+							<SelectValue placeholder="Font" />
+						</SelectTrigger>
+						<SelectContent>
+							{FONT_OPTIONS.map((o) => (
+								<SelectItem key={o.value} value={o.value} className="text-xs">
+									{o.label}
+								</SelectItem>
+							))}
+						</SelectContent>
+					</Select>
+					<span className="mx-1 h-5 w-px bg-border" />
 					<Btn title="Bold" active={editor.isActive('bold')} on={() => editor.chain().focus().toggleBold().run()}>
 						<Bold className="h-4 w-4" />
 					</Btn>

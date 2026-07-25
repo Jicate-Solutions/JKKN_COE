@@ -94,14 +94,20 @@ export const maxDuration = 60
 
 ---
 
-## 6. Tamil / Bamini (PDF only) — pending inputs
+## 6. Tamil fonts (Unicode / Bamini / Suntommy)
 
-The HTML template has a commented `@font-face` placeholder (`TAMIL_FONT_CSS`). To enable Tamil:
+Fonts live in `public/fonts/tamil/`. PDF embeds whatever is present as base64 `@font-face`
+(see `lib/ia/tamil-fonts.ts`). The TipTap editor has a Font dropdown with the same family names.
 
-1. Provide the **Bamini `.ttf`** (none in the repo) — embedded as a base64 data URI (Chromium can't fetch external assets).
-2. Confirm whether stored Tamil is **Unicode** or **legacy Bamini-encoded**. **Bamini is a glyph font mapping Latin codepoints — it will NOT render Unicode Tamil.** Unicode Tamil needs a Unicode→TSCII conversion step first; Bamini-encoded text just needs the font embedded.
+| File | Family | Encoding |
+|---|---|---|
+| `NotoSansTamil-Regular.ttf` | Noto Sans Tamil | Unicode (shipped) |
+| `Bamini.ttf` | Bamini | Legacy — drop-in |
+| `Suntommy.ttf` | Suntommy | Legacy — drop-in |
 
-Chromium shapes Tamil far more reliably than jsPDF (which had no Tamil support — `times` only), so this path is strictly better once the font is in.
+- **Unicode**: type with a Unicode Tamil keyboard; Noto covers Tamil codepoints via `unicode-range`.
+- **Bamini / Suntommy**: text is Latin codepoints; select that font in the editor so PDF applies the same face.
+- Sanitizer keeps allowlisted `font-family` on spans so the PDF matches the editor.
 
 ---
 

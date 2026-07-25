@@ -8,11 +8,12 @@
 // bundle), and the HTML is printed through the same Chromium pattern used by
 // lib/pdf/central-valuation-appointment-letter.ts.
 //
-// Tamil/Bamini: the PDF HTML supports an embedded @font-face (see TAMIL_FONT_CSS);
-// drop the Bamini .ttf base64 in there to render Tamil papers. Chromium shapes
-// Tamil far more reliably than jsPDF ever did.
+// Tamil/Bamini/Suntommy: fonts under public/fonts/tamil/ are embedded as base64
+// @font-face (see lib/ia/tamil-fonts.ts). Chromium shapes Tamil far more reliably
+// than jsPDF ever did.
 
 import katex from 'katex'
+import { buildTamilFontFaceCss, canonicalizeFontFamily, listAvailableTamilFonts } from '@/lib/ia/tamil-fonts'
 // puppeteer-core + @sparticuz/chromium are imported LAZILY inside the Vercel branch
 // only — importing them at module top can fail on a local dev machine and take the
 // whole route module (→ Next 404) with it. Local dev uses full `puppeteer`.
@@ -48,13 +49,18 @@ function sanitizeHtml(raw: string): string {
 			while ((a = attrRe.exec(attrs))) {
 				const name = a[1].toLowerCase()
 				const rawVal = a[3] ?? a[4] ?? ''
-				// `style` is not in the allowlist, but we preserve ONLY a text-align
-				// declaration (fixed value enum) so Tiptap's left/center/right survives
-				// into the PDF. Everything else in style — url(), expressions, other
-				// properties — is dropped, so this stays injection-safe.
+				// Preserve safe style declarations only: text-align + allowlisted
+				// Tamil font-family (Unicode / Bamini / Suntommy).
 				if (name === 'style') {
-					const m = /text-align\s*:\s*(left|right|center|justify)/i.exec(rawVal)
-					if (m) kept.push(`style="text-align:${m[1].toLowerCase()}"`)
+					const decls: string[] = []
+					const align = /text-align\s*:\s*(left|right|center|justify)/i.exec(rawVal)
+					if (align) decls.push(`text-align:${align[1].toLowerCase()}`)
+					const ff = /font-family\s*:\s*([^;]+)/i.exec(rawVal)
+					if (ff) {
+						const canon = canonicalizeFontFamily(ff[1])
+						if (canon) decls.push(`font-family:'${canon}'`)
+					}
+					if (decls.length) kept.push(`style="${decls.join(';')}"`)
 					continue
 				}
 				if (!ALLOWED_ATTR.has(name)) continue
@@ -154,26 +160,28 @@ function renderQuestionHtml(raw: string): string {
 	)
 }
 
-function optionLineHtml(opts: any): string {
+/**
+ * MCQ options are plain-text Inputs (not TipTap). Values like "<html>" / "<head>"
+ * must be escaped — running them through sanitizeHtml drops the tag and prints blank.
+ */
+function optionLineHtml(opts: any, optionFont?: string | null): string {
 	if (!Array.isArray(opts) || opts.length === 0) return ''
+	const font = optionFont ? canonicalizeFontFamily(optionFont) : null
+	const style = font ? ` style="font-family:'${font}'"` : ''
 	const items = opts
-		.map((o: any) => `<span class="opt">${escapeHtml(String(o.key))}) ${renderQuestionHtml(o.text || '____')}</span>`)
+		.map((o: any) => {
+			const raw = String(o.text ?? '').trim()
+			const text = raw ? escapeHtml(raw) : '____'
+			return `<span class="opt"${style}>${escapeHtml(String(o.key))}) ${text}</span>`
+		})
 		.join('')
 	return `<div class="options">${items}</div>`
 }
 
 /**
- * Tamil / Bamini support (PDF only).
- * Paste the Bamini font as a base64 data URI below to enable Tamil rendering.
- * NOTE: Bamini is a LEGACY glyph font (maps Latin codepoints) — it renders
- * Bamini-ENCODED text, not Unicode Tamil. If questions are stored as Unicode
- * Tamil, a Unicode→TSCII conversion step is required before this helps; if they
- * are already Bamini-encoded, embedding the font here is sufficient.
+ * Tamil fonts are loaded dynamically from public/fonts/tamil/ (Unicode / Bamini /
+ * Suntommy). See lib/ia/tamil-fonts.ts.
  */
-const TAMIL_FONT_CSS = `
-/* @font-face { font-family: 'Bamini'; src: url(data:font/truetype;base64,PASTE_BAMINI_TTF_BASE64) format('truetype'); } */
-`
-
 export type PdfVariant = 'single' | '2up'
 
 function buildHtml(ctx: {
@@ -186,8 +194,9 @@ function buildHtml(ctx: {
 	paper: any
 	grouped: Map<string, any[]>
 	partByLabel: Map<string, any>
+	tamilFontCss: string
 }): string {
-	const { variant, institutionName, address, examHeading, roman, semesterText, paper, grouped, partByLabel } = ctx
+	const { variant, institutionName, address, examHeading, roman, semesterText, paper, grouped, partByLabel, tamilFontCss } = ctx
 	const isTwoUp = variant === '2up'
 
 	// One table for the WHOLE paper (part headings are full-width rows) so every
@@ -216,7 +225,7 @@ function buildHtml(ctx: {
 						? `<tr><td colspan="4" class="or">(OR)</td></tr>`
 						: ''
 					const prefix = q.sub_label ? `${q.question_number} ${q.sub_label})` : `${q.question_number}.`
-					const body = renderQuestionHtml(q.question_text || '') + optionLineHtml(q.options)
+					const body = renderQuestionHtml(q.question_text || '') + optionLineHtml(q.options, q.option_font)
 					return `${orRow}<tr>
 						<td class="qno">${escapeHtml(prefix)}</td>
 						<td class="qbody">${body}</td>
@@ -259,10 +268,16 @@ function buildHtml(ctx: {
 	return `<!doctype html>
 <html><head><meta charset="utf-8"/>
 <style>
-	${TAMIL_FONT_CSS}
+	${tamilFontCss}
 	@page { size: ${isTwoUp ? 'A4 landscape' : 'A4 portrait'}; margin: ${isTwoUp ? '5mm' : '8mm'}; }
 	* { box-sizing: border-box; font-family: inherit; }
-	html, body { margin: 0; padding: 0; font-family: 'Times New Roman', Times, serif; color: #000; font-size: ${isTwoUp ? '9pt' : '11pt'}; }
+	html, body {
+		margin: 0; padding: 0;
+		/* Unicode Tamil falls through to Noto; Bamini/Suntommy apply only when
+		   TipTap sets font-family on a span (legacy-encoded Latin text). */
+		font-family: 'Times New Roman', 'Noto Sans Tamil', Bamini, Suntommy, Times, serif;
+		color: #000; font-size: ${isTwoUp ? '9pt' : '11pt'};
+	}
 	#sheet { transform-origin: top left; }
 	/* 2-up print: two identical copies side by side, dashed cut-line between them. */
 	#sheet.twoup { display: flex; align-items: stretch; width: 100%; }
@@ -301,10 +316,6 @@ function buildHtml(ctx: {
 	.qbody p { margin: 0 0 2px; }
 	.options { margin-top: 2px; }
 	.options .opt { display: inline-block; margin-right: 12px; }
-	/* Option text is HTML — keep it inline so a stray <p>/<br> can't push options
-	   onto new lines and drag the row's CO/K out of alignment. */
-	.options .opt p { display: inline; margin: 0; }
-	.options .opt br { display: none; }
 	/* CO / K values sit at the top of the row, aligned with the question's first line. */
 	.co, .kl { vertical-align: top; }
 	/* Author-drawn tables inside a question */
@@ -375,7 +386,26 @@ export async function buildPaperPdfHtml(
 	}
 	const roman = ['', 'I', 'II', 'III', 'IV', 'V', 'VI'][paper.cia_round || 1] || String(paper.cia_round || 1)
 
-	const html = buildHtml({ variant, institutionName, address, examHeading, roman, semesterText, paper, grouped, partByLabel })
+	const tamilFontCss = buildTamilFontFaceCss()
+	const available = listAvailableTamilFonts()
+	if (available.length === 0) {
+		console.warn('[QP PDF] No Tamil fonts in public/fonts/tamil/ — Unicode/Bamini/Suntommy may render blank. See public/fonts/tamil/README.md')
+	} else {
+		console.info('[QP PDF] Tamil fonts embedded:', available.join(', '))
+	}
+
+	const html = buildHtml({
+		variant,
+		institutionName,
+		address,
+		examHeading,
+		roman,
+		semesterText,
+		paper,
+		grouped,
+		partByLabel,
+		tamilFontCss,
+	})
 	const isTwoUp = variant === '2up'
 
 	const isVercel = !!process.env.VERCEL || !!process.env.AWS_LAMBDA_FUNCTION_NAME

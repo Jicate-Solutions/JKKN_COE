@@ -147,7 +147,11 @@ export async function buildPaperPdf(
 	}
 	const optionLine = (opts: any) => {
 		if (!Array.isArray(opts) || opts.length === 0) return ''
-		return opts.map((o: any) => `${o.key}) ${stripHtmlToText(o.text) || '____'}`).join('    ')
+		// Options are plain text (e.g. "<html>") — do not strip as HTML tags.
+		return opts.map((o: any) => {
+			const raw = String(o.text ?? '').trim()
+			return `${o.key}) ${raw || '____'}`
+		}).join('    ')
 	}
 	const roman = ['', 'I', 'II', 'III', 'IV', 'V', 'VI'][paper.cia_round || 1] || String(paper.cia_round || 1)
 

@@ -15,6 +15,8 @@ export interface IaQuestionObject {
 	question_text: string | null
 	marks: number | null
 	options: { key: string; text: string }[] | null
+	/** CSS font-family for MCQ options (Bamini / Suntommy / Noto Sans Tamil). */
+	option_font?: string | null
 	correct_option: string | null
 	co_code: string | null
 	k_level: string | null
@@ -94,6 +96,7 @@ export function mergeAuthored(scaffold: IaQuestionObject[], existing: any[]): Ia
 			...s,
 			question_text: e.question_text ?? s.question_text,
 			options,
+			option_font: e.option_font ?? null,
 			correct_option: e.correct_option ?? null,
 			co_code: e.co_code ?? null,
 			k_level: e.k_level ?? null,

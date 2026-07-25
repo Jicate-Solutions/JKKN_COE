@@ -4,26 +4,33 @@ import { getSupabaseParent } from '@/lib/supabase-parent'
 import { headers } from 'next/headers'
 
 /**
- * Fetch permissions for a user based on their role and user_roles
+ * Fetch a user's COE roles AND their permissions in a SINGLE pass.
+ * Previously this was two separate functions that each queried user_roles —
+ * merged here so user_roles is read once (2 queries total instead of 3).
  */
-async function fetchUserPermissions(supabase: any, userId: string | null): Promise<string[]> {
-	if (!userId) return []
+async function fetchRolesAndPermissions(
+	supabase: any,
+	userId: string | null
+): Promise<{ permissions: string[]; coeRoles: string[] }> {
+	if (!userId) return { permissions: [], coeRoles: [] }
 
-	// Get permissions ONLY from COE-assigned roles (user_roles table)
-	// NOT from the MyJKKN global role — that's a different system
+	// Get roles ONLY from COE-assigned roles (user_roles table) — NOT the
+	// MyJKKN global role, which is a different system.
 	const { data: userRoles } = await supabase
 		.from('user_roles')
-		.select('role_id, roles!inner(id, is_active)')
+		.select('role_id, roles!inner(id, name, is_active)')
 		.eq('user_id', userId)
 		.eq('is_active', true)
 
-	if (!userRoles || userRoles.length === 0) return []
+	if (!userRoles || userRoles.length === 0) return { permissions: [], coeRoles: [] }
 
-	const roleIds = userRoles
-		.filter((ur: any) => ur.roles?.is_active !== false)
-		.map((ur: any) => ur.role_id)
+	const activeRoles = userRoles.filter((ur: any) => ur.roles?.is_active !== false)
+	const roleIds = activeRoles.map((ur: any) => ur.role_id)
+	const coeRoles = activeRoles
+		.map((ur: any) => ur.roles?.name)
+		.filter((n: any): n is string => Boolean(n))
 
-	if (roleIds.length === 0) return []
+	if (roleIds.length === 0) return { permissions: [], coeRoles }
 
 	// Fetch permissions for assigned COE roles only
 	const { data: rolePerms } = await supabase
@@ -31,32 +38,14 @@ async function fetchUserPermissions(supabase: any, userId: string | null): Promi
 		.select('permissions!inner(name, is_active)')
 		.in('role_id', roleIds)
 
-	if (!rolePerms) return []
-
 	const permissions = new Set<string>()
-	rolePerms.forEach((rp: any) => {
+	;(rolePerms || []).forEach((rp: any) => {
 		if (rp.permissions?.is_active !== false && rp.permissions?.name) {
 			permissions.add(rp.permissions.name)
 		}
 	})
 
-	return Array.from(permissions)
-}
-
-/**
- * Fetch COE-specific roles for a user from the user_roles table
- */
-async function fetchUserCoeRoles(supabase: any, userId: string | null): Promise<string[]> {
-	if (!userId) return []
-	const { data: userRoles } = await supabase
-		.from('user_roles')
-		.select('roles!inner(name, is_active)')
-		.eq('user_id', userId)
-		.eq('is_active', true)
-	if (!userRoles) return []
-	return userRoles
-		.filter((ur: any) => ur.roles?.is_active !== false && ur.roles?.name)
-		.map((ur: any) => ur.roles.name)
+	return { permissions: Array.from(permissions), coeRoles }
 }
 
 /**
@@ -179,12 +168,21 @@ export async function POST(request: Request) {
 		const realIp = headersList.get('x-real-ip')
 		const ipAddress = forwardedFor?.split(',')[0]?.trim() || realIp || null
 
-		// Check if user exists in local database
-		const { data: existingUser, error: fetchError } = await supabase
-			.from('users')
-			.select('id, email, is_active, avatar_url, institution_id')
-			.eq('email', email)
-			.single()
+		// Look up the user AND the institution CONCURRENTLY — they are
+		// independent (institution lookup keys off the session's institution_id,
+		// not the user), so there's no reason to serialize them.
+		const [userLookup, institutionDetails] = await Promise.all([
+			supabase
+				.from('users')
+				.select('id, email, is_active, avatar_url, institution_id')
+				.eq('email', email)
+				.single(),
+			// Lookup institution from COE local table using institution_id from MyJKKN session.
+			// Uses myjkkn_institution_ids array to handle many-to-one mapping (e.g., CAS Aided + Self → CAS).
+			fetchInstitutionByMyJKKNId(supabase, sessionInstitutionId)
+		])
+
+		const { data: existingUser, error: fetchError } = userLookup
 
 		if (fetchError && fetchError.code !== 'PGRST116') {
 			// PGRST116 = not found, other errors are actual errors
@@ -194,11 +192,6 @@ export async function POST(request: Request) {
 
 		const now = new Date()
 		const nowISO = now.toISOString()
-
-		// Lookup institution from COE local table using institution_id from MyJKKN session
-		// Uses myjkkn_institution_ids array to handle many-to-one mapping (e.g., CAS Aided + Self → CAS)
-		// Example: MyJKKN id "a33138b6-..." → institution_code "CAS"
-		const institutionDetails = await fetchInstitutionByMyJKKNId(supabase, sessionInstitutionId)
 
 		if (existingUser) {
 			// User exists - update last_login
@@ -219,78 +212,96 @@ export async function POST(request: Request) {
 			// Calculate expires_at based on actual token expiry (default 1 hour if not provided)
 			const expiresAt = new Date(now.getTime() + (expires_in || 3600) * 1000).toISOString()
 
-			// Create/update sessions and user_sessions records if tokens are provided
-			if (access_token) {
-				// 1. Update sessions table (main session tracking)
-				// First, mark existing active sessions as inactive
-				await supabase
-					.from('sessions')
-					.update({ is_active: false, updated_at: nowISO })
-					.eq('user_id', existingUser.id)
-					.eq('is_active', true)
+			// The session writes, roles/permissions read, and avatar resolution
+			// are all independent — run them CONCURRENTLY. Previously these were
+			// ~8 sequential DB round-trips, the main source of sync-session latency.
 
-				// Parse user agent for device info
-				const deviceInfo = {
-					browser: extractBrowser(userAgent),
-					os: extractOS(userAgent),
-					device: extractDevice(userAgent),
-					raw: userAgent.substring(0, 255) // Truncate to avoid overflow
+			// (a) Session-tracking writes (only when tokens are provided)
+			const sessionWritesPromise: Promise<unknown> = access_token
+				? (async () => {
+					const deviceInfo = {
+						browser: extractBrowser(userAgent),
+						os: extractOS(userAgent),
+						device: extractDevice(userAgent),
+						raw: userAgent.substring(0, 255) // Truncate to avoid overflow
+					}
+
+					// sessions table: mark old sessions inactive THEN upsert the new
+					// active one. These two MUST stay ordered — if the upsert ran
+					// first, the mark-inactive update would flip it back to inactive.
+					const sessionsTable = (async () => {
+						await supabase
+							.from('sessions')
+							.update({ is_active: false, updated_at: nowISO })
+							.eq('user_id', existingUser.id)
+							.eq('is_active', true)
+
+						await supabase
+							.from('sessions')
+							.upsert({
+								user_id: existingUser.id,
+								session_token: access_token,
+								refresh_token: refresh_token || null,
+								device_info: deviceInfo,
+								ip_address: ipAddress,
+								user_agent: userAgent.substring(0, 500),
+								is_active: true,
+								expires_at: expiresAt,
+								created_at: nowISO,
+								updated_at: nowISO,
+							}, { onConflict: 'session_token' })
+					})()
+
+					// user_sessions table (legacy/backup): independent of `sessions`,
+					// so it runs in parallel with the block above.
+					const userSessionsTable = (async () => {
+						await supabase
+							.from('user_sessions')
+							.delete()
+							.eq('user_id', existingUser.id)
+
+						// Only insert if refresh_token exists (column is NOT NULL)
+						if (refresh_token) {
+							await supabase
+								.from('user_sessions')
+								.insert({
+									user_id: existingUser.id,
+									access_token: access_token,
+									refresh_token: refresh_token,
+									expires_at: expiresAt,
+									created_at: nowISO,
+								})
+						}
+					})()
+
+					await Promise.all([sessionsTable, userSessionsTable])
+				})()
+				: Promise.resolve()
+
+			// (b) Roles + permissions in a single pass (user_roles read once)
+			const rolesPermsPromise = fetchRolesAndPermissions(supabase, existingUser.id)
+
+			// (c) Resolve avatar: COE local → parent Supabase Auth (Google profile photo)
+			const avatarPromise = (async () => {
+				let resolvedAvatar = existingUser.avatar_url || avatar_url || null
+				if (!resolvedAvatar && body.user_id) {
+					resolvedAvatar = await fetchParentAvatar(body.user_id)
+					// Cache the avatar in COE users table for future requests
+					if (resolvedAvatar) {
+						await supabase
+							.from('users')
+							.update({ avatar_url: resolvedAvatar })
+							.eq('id', existingUser.id)
+					}
 				}
+				return resolvedAvatar
+			})()
 
-				// Upsert session (avoids duplicate key on same token)
-				await supabase
-					.from('sessions')
-					.upsert({
-						user_id: existingUser.id,
-						session_token: access_token,
-						refresh_token: refresh_token || null,
-						device_info: deviceInfo,
-						ip_address: ipAddress,
-						user_agent: userAgent.substring(0, 500),
-						is_active: true,
-						expires_at: expiresAt,
-						created_at: nowISO,
-						updated_at: nowISO,
-					}, { onConflict: 'session_token' })
-
-				// 2. Update user_sessions table (legacy/backup)
-				await supabase
-					.from('user_sessions')
-					.delete()
-					.eq('user_id', existingUser.id)
-
-				// Only insert if refresh_token exists (column is NOT NULL)
-				if (refresh_token) {
-					await supabase
-						.from('user_sessions')
-						.insert({
-							user_id: existingUser.id,
-							access_token: access_token,
-							refresh_token: refresh_token,
-							expires_at: expiresAt,
-							created_at: nowISO,
-						})
-				}
-			}
-
-			// Fetch user permissions from database based on role
-			const permissions = await fetchUserPermissions(supabase, existingUser.id)
-
-			// Fetch COE-specific roles for access gating
-			const coeRoles = await fetchUserCoeRoles(supabase, existingUser.id)
-
-			// Resolve avatar: COE local → parent Supabase Auth (Google profile photo)
-			let resolvedAvatar = existingUser.avatar_url || avatar_url || null
-			if (!resolvedAvatar && body.user_id) {
-				resolvedAvatar = await fetchParentAvatar(body.user_id)
-				// Cache the avatar in COE users table for future requests
-				if (resolvedAvatar) {
-					await supabase
-						.from('users')
-						.update({ avatar_url: resolvedAvatar })
-						.eq('id', existingUser.id)
-				}
-			}
+			const [, { permissions, coeRoles }, resolvedAvatar] = await Promise.all([
+				sessionWritesPromise,
+				rolesPermsPromise,
+				avatarPromise
+			])
 
 			// Create response with session data
 			const response = NextResponse.json({
@@ -351,9 +362,9 @@ export async function POST(request: Request) {
 
 			return response
 		} else {
-			// User doesn't exist in local DB - they need to be added by admin
-			// Still try to fetch permissions by role name (in case role exists)
-			const permissions = await fetchUserPermissions(supabase, null)
+			// User doesn't exist in local DB - they need to be added by admin.
+			// No userId → no roles/permissions to fetch (fast path).
+			const permissions: string[] = []
 
 			// Fetch avatar from parent Supabase Auth (Google profile photo)
 			let parentAvatar: string | null = avatar_url || null
