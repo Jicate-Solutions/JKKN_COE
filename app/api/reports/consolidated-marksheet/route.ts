@@ -496,10 +496,12 @@ function computeSummary(courses: CourseResult[], formattedFolio: string | null) 
 	const creditsEarned = courses
 		.filter(c => c.isPassing && c.creditIncluded !== false)
 		.reduce((s, c) => s + c.credits, 0)
-	// CGPA kept at 3 decimals (COE requirement — store the actual value,
-	// no 2-decimal rounding). DB column is numeric(5,3).
+	// CGPA kept at 3 decimals, TRUNCATED (not rounded) — COE requirement:
+	// 594.40/88 = 6.75454… must store as 6.754, never 6.755. DB column is
+	// numeric(5,3). The +1e-6 guards against float underflow so a true
+	// 6.755000 doesn't collapse to 6.754. Mirrors the SQL TRUNC(x, 3) backfill.
 	const cgpa = totalCredits > 0
-		? Math.round((totalCreditPoints / totalCredits) * 1000) / 1000
+		? Math.floor((totalCreditPoints / totalCredits) * 1000 + 1e-6) / 1000
 		: 0
 	const hasFailures = courses.some(c => !c.isPassing)
 	const overallResult: 'PASS' | 'NEEDS IMPROVEMENT' = hasFailures ? 'NEEDS IMPROVEMENT' : 'PASS'
