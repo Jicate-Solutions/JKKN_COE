@@ -903,6 +903,21 @@ export function addStudentMarksheetToDoc(
 	// Now use autoTable for body only (no header)
 	// We'll use empty headers since we drew them manually
 
+	// COURSE CODE and COURSE TITLE indices differ for UG vs PG
+	// UG: PART(0), SEM(1), CODE(2), TITLE(3)... - CODE at 2, TITLE at 3
+	// PG: SEM(0), CODE(1), TITLE(2)... - CODE at 1, TITLE at 2
+	const courseCodeColIdx = hidePartColumn ? 1 : 2
+	const courseTitleColIdx = hidePartColumn ? 2 : 3
+
+	// Course code / title are normalised before rendering: a stray newline or a
+	// double space in the course master makes autoTable split the cell into an
+	// extra (blank) line, which grows the row for no visible reason.
+	// Every course title keeps the SAME font size — long titles wrap onto a
+	// second line, and the row alignment is handled by the table's valign
+	// (see 'top' in the autoTable styles below).
+	const normaliseText = (value: string | undefined | null) =>
+		(value || '').replace(/\s+/g, ' ').trim()
+
 	// Body rows (no header - we drew it manually above)
 	// UG: 14 columns with PART
 	// PG: 13 columns without PART
@@ -918,6 +933,11 @@ export function addStudentMarksheetToDoc(
 		//   Otherwise → "-"
 		const partDisplay = course.part ? partToRoman(course.part) : '-'
 
+		// Course code / title, cleaned of stray newlines and repeated spaces so
+		// autoTable never renders a phantom blank second line.
+		const courseCodeText = normaliseText(course.courseCode)
+		const courseTitleText = normaliseText(course.courseName).toUpperCase()
+
 		// All courses display with white background (no visual distinction for arrears)
 		// Sorting ensures arrears appear first, grouped by semester
 		const baseStyles = {
@@ -928,6 +948,8 @@ export function addStudentMarksheetToDoc(
 			halign: 'left' as const,
 			fontSize: 8
 		}
+		// Course title keeps the same font size as every other cell
+		const titleStyles = leftAlignStyles
 
 		// For comment/status/credit result types: merge the 9 mark columns (ESE_MAX through RESULT)
 		// into a single cell showing the grade text
@@ -961,8 +983,8 @@ export function addStudentMarksheetToDoc(
 
 			const specialCommonCols = [
 				{ content: toRoman(course.semester), styles: baseStyles },
-				{ content: course.courseCode, styles: leftAlignStyles },
-				{ content: course.courseName.toUpperCase(), styles: leftAlignStyles },
+				{ content: courseCodeText, styles: leftAlignStyles },
+				{ content: courseTitleText, styles: titleStyles },
 				{ content: course.credits.toString(), styles: baseStyles },
 				mergedCell,
 				// Consolidated keeps the per-course MONTH & YEAR alongside the merged status cell.
@@ -992,8 +1014,8 @@ export function addStudentMarksheetToDoc(
 		const commonCols = consolidated
 			? [
 				{ content: toRoman(course.semester), styles: baseStyles },
-				{ content: course.courseCode, styles: leftAlignStyles },
-				{ content: course.courseName.toUpperCase(), styles: leftAlignStyles },
+				{ content: courseCodeText, styles: leftAlignStyles },
+				{ content: courseTitleText, styles: titleStyles },
 				{ content: course.credits.toString(), styles: baseStyles },
 				// MAXIMUM MARK — single TOTAL value
 				{ content: course.totalMax.toString(), styles: baseStyles },
@@ -1006,8 +1028,8 @@ export function addStudentMarksheetToDoc(
 			]
 			: [
 				{ content: toRoman(course.semester), styles: baseStyles },
-				{ content: course.courseCode, styles: leftAlignStyles },
-				{ content: course.courseName.toUpperCase(), styles: leftAlignStyles },
+				{ content: courseCodeText, styles: leftAlignStyles },
+				{ content: courseTitleText, styles: titleStyles },
 				{ content: course.credits.toString(), styles: baseStyles },
 				{ content: eseMaxText, styles: baseStyles },
 				{ content: ciaMaxText, styles: baseStyles },
@@ -1035,12 +1057,7 @@ export function addStudentMarksheetToDoc(
 	// Empty headers since we drew them manually
 	const headers: RowInput[] = []
 
-	// Build column styles object
-	// COURSE CODE and COURSE TITLE indices differ for UG vs PG
-	// UG: PART(0), SEM(1), CODE(2), TITLE(3)... - CODE at 2, TITLE at 3
-	// PG: SEM(0), CODE(1), TITLE(2)... - CODE at 1, TITLE at 2
-	const courseCodeColIdx = hidePartColumn ? 1 : 2
-	const courseTitleColIdx = hidePartColumn ? 2 : 3
+	// Build column styles object (courseCodeColIdx / courseTitleColIdx computed above)
 	const columnStyles: Record<number, any> = {}
 	colWidths.forEach((width, i) => {
 		columnStyles[i] = {
@@ -1092,7 +1109,13 @@ export function addStudentMarksheetToDoc(
 			lineWidth: 0,  // No grid lines
 			textColor: COLORS.black,
 			overflow: 'ellipsize',
-			valign: 'middle',
+			// TOP align — NOT middle. A course title that wraps to two lines makes the
+			// row two lines tall; with 'middle' every single-line cell (SEMESTER, CODE,
+			// CREDITS, MARKS, GRADE, MONTH & YEAR) is centred and ends up floating
+			// BETWEEN the two title lines. 'top' puts them on the title's first line.
+			// For single-line rows the row height equals the content height, so 'top'
+			// and 'middle' render identically — only wrapped rows change.
+			valign: 'top',
 			minCellHeight: 3  // Reduced from 6 to 4 for single line spacing
 		},
 		headStyles: {

@@ -234,6 +234,70 @@ const FINAL_MARKS_SELECT = `
 `
 
 // =====================================================
+// ELIGIBILITY-ONLY SELECT
+// The learner dropdown just needs "did this learner clear every
+// course in every semester". Pulling the full FINAL_MARKS_SELECT
+// (course names/credits/parts + the examination_sessions join) for
+// every mark row of a whole program is many times the payload for
+// data that is thrown away. This fragment carries only what
+// evalRowPass + the semester-coverage check read.
+// =====================================================
+
+const ELIGIBILITY_SELECT = `
+	student_id,
+	course_id,
+	external_marks_obtained,
+	external_marks_maximum,
+	total_marks_obtained,
+	total_marks_maximum,
+	is_pass,
+	letter_grade,
+	course_offerings (
+		semester,
+		course_mapping (
+			courses (
+				result_type,
+				evaluation_type
+			)
+		)
+	),
+	exam_registrations (
+		stu_register_no,
+		student_name
+	)
+`
+
+/**
+ * Minimal per-row pass evaluation — mirrors the isPassing/semester outcome of
+ * processFinalMarkRow without building a full CourseResult. Used by the
+ * eligibility-only paths (learner dropdown), where the other 20 fields are
+ * never read.
+ */
+function evalRowPass(fm: any, passingPercentage: number): { isPassing: boolean; semester: number } | null {
+	const courseData = fm.course_offerings?.course_mapping?.courses
+	if (!courseData) return null
+
+	const semester = fm.course_offerings?.semester || 1
+	const resultType: string = courseData.result_type || 'Mark'
+
+	if (resultType === 'comment' || resultType === 'credit' || resultType === 'Status') {
+		const isPassing = fm.letter_grade === 'AAA' ? false : (fm.is_pass ?? true)
+		return { isPassing, semester }
+	}
+
+	const evalType: string = (courseData.evaluation_type || 'CIA + ESE').trim().toUpperCase()
+	const { isPassing } = checkPassStatus(
+		fm.external_marks_obtained || 0,
+		fm.external_marks_maximum || 0,
+		fm.total_marks_obtained || 0,
+		fm.total_marks_maximum || 0,
+		passingPercentage,
+		evalType
+	)
+	return { isPassing, semester }
+}
+
+// =====================================================
 // PROCESS ONE FINAL_MARKS ROW → CourseResult
 // =====================================================
 
@@ -524,6 +588,34 @@ function computeSummary(courses: CourseResult[], formattedFolio: string | null) 
 // =====================================================
 
 /**
+ * The learners_profiles mirror table does not exist in every deployment —
+ * in this one profile data lives ONLY in MyJKKN. PostgREST answers the
+ * query with PGRST205 ("relation does not exist"), so once we've seen that,
+ * stop issuing it: otherwise every report request pays a guaranteed-failing
+ * round-trip before it can start the work that matters.
+ */
+let learnersProfilesMirrorMissing = false
+
+/**
+ * Cross-request cache of resolved learner profiles, keyed by register number.
+ *
+ * With no local mirror, EVERY photo / DOB / name is an external MyJKKN call,
+ * and the same learners are re-fetched each time a marksheet is viewed or a
+ * batch PDF is re-downloaded. Caching collapses those repeats to zero
+ * external calls for the TTL window.
+ */
+interface CachedProfile {
+	photo?: string
+	dob?: string
+	name?: string
+	ext?: any
+	expires: number
+}
+const profileCache = new Map<string, CachedProfile>()
+const PROFILE_CACHE_TTL_MS = 10 * 60 * 1000
+const PROFILE_CACHE_MAX_ENTRIES = 20000
+
+/**
  * Fetch photo/DOB/name/extended-info maps for a set of register numbers.
  * Same coverage strategy as the semester-marksheet report:
  *   1. Local learners_profiles mirror — no lifecycle_status (or any other)
@@ -554,6 +646,32 @@ async function fetchProfileMaps(
 		return { photoMap, dobMap, nameMap, extInfoMap }
 	}
 
+	// --- 0. Serve what we already resolved on a recent request ---
+	const cacheNow = Date.now()
+	for (const rn of registerNumbers) {
+		const cached = profileCache.get(rn)
+		if (!cached || cached.expires <= cacheNow) continue
+		if (cached.photo) photoMap[rn] = cached.photo
+		if (cached.dob) dobMap[rn] = cached.dob
+		if (cached.name) nameMap[rn] = cached.name
+		if (cached.ext) extInfoMap[rn] = cached.ext
+	}
+
+	/** Persist everything resolved this call, then hand back the maps */
+	const commit = () => {
+		if (profileCache.size > PROFILE_CACHE_MAX_ENTRIES) profileCache.clear()
+		const expires = Date.now() + PROFILE_CACHE_TTL_MS
+		for (const rn of registerNumbers) {
+			const photo = photoMap[rn]
+			const dob = dobMap[rn]
+			const name = nameMap[rn]
+			const ext = extInfoMap[rn]
+			if (!photo && !dob && !name && !ext) continue
+			profileCache.set(rn, { photo, dob, name, ext, expires })
+		}
+		return { photoMap, dobMap, nameMap, extInfoMap }
+	}
+
 	const formatDob = (raw: any): string | null => {
 		const dob = new Date(raw)
 		const y = dob.getFullYear()
@@ -562,16 +680,23 @@ async function fetchProfileMaps(
 	}
 
 	// --- 1. Local learners_profiles mirror (no lifecycle/condition filter) ---
+	// Skipped entirely once the table is known to be absent — see
+	// learnersProfilesMirrorMissing.
 	const LP_CHUNK = 100
-	for (let i = 0; i < registerNumbers.length; i += LP_CHUNK) {
+	for (let i = 0; !learnersProfilesMirrorMissing && i < registerNumbers.length; i += LP_CHUNK) {
 		const chunk = registerNumbers.slice(i, i + LP_CHUNK)
 		const { data: lpRows, error: lpErr } = await supabase
 			.from('learners_profiles')
 			.select('register_number, first_name, last_name, date_of_birth, gender, father_name, mother_name, student_photo_url, admission_year')
 			.in('register_number', chunk)
 		if (lpErr) {
-			// learners_profiles table doesn't exist in this deployment — rely on MyJKKN below
-			if (lpErr.code === 'PGRST205') break
+			// learners_profiles table doesn't exist in this deployment — rely on
+			// MyJKKN below, and don't retry the query on later requests
+			if (lpErr.code === 'PGRST205') {
+				learnersProfilesMirrorMissing = true
+				console.log('[Consolidated Marksheet] learners_profiles mirror absent — using MyJKKN API only')
+				break
+			}
 			console.warn('[Consolidated Marksheet] learners_profiles fetch error (non-critical):', lpErr)
 			break
 		}
@@ -602,15 +727,17 @@ async function fetchProfileMaps(
 
 	// --- 2. MyJKKN API for anyone still missing photo or DOB ---
 	const stillMissing = () => registerNumbers.filter(rn => !photoMap[rn] || !dobMap[rn])
-	if (stillMissing().length === 0) {
-		return { photoMap, dobMap, nameMap, extInfoMap }
+	// Anyone still lacking photo, DOB *or* name is worth a targeted lookup
+	const needsLookup = () => registerNumbers.filter(rn => !photoMap[rn] || !dobMap[rn] || !nameMap[rn])
+	if (needsLookup().length === 0) {
+		return commit()
 	}
 
 	const myjkknApiUrl = process.env.MYJKKN_API_URL || 'https://www.jkkn.ai/api'
 	const myjkknApiKey = process.env.MYJKKN_API_KEY || ''
 	if (!myjkknApiKey) {
 		console.log('[Consolidated Marksheet] No MyJKKN API key configured — profiles limited to local mirror')
-		return { photoMap, dobMap, nameMap, extInfoMap }
+		return commit()
 	}
 
 	// Match register numbers tolerantly (case/whitespace, several id fields) —
@@ -682,65 +809,99 @@ async function fetchProfileMaps(
 	// regardless of the requested limit — paginate until a page returns 0 rows.
 	const pageSize = 200
 	const MAX_PAGES = 1000
-	const PAGE_CONCURRENCY = 5
+	const PAGE_CONCURRENCY = 8
+	const TARGETED_CONCURRENCY = 8
+	// Full-institution pagination costs ~1 request per 200 profiles in the
+	// institution NO MATTER how few learners we actually need, and the
+	// lifecycle_status=all sweep walks the entire platform. A targeted
+	// register_number lookup costs exactly 1 request per learner and matches
+	// graduated/inactive learners too, so for anything up to this many
+	// outstanding learners it is strictly cheaper — and for the single-learner
+	// marksheet view it turns 100+ sequential requests into one.
+	const TARGETED_ONLY_THRESHOLD = 60
+	// Hard wall-clock budget for the paginated passes. Whatever is still
+	// missing when it expires falls through to targeted lookups, so a slow
+	// MyJKKN can no longer stall the report indefinitely.
+	const PAGINATION_BUDGET_MS = 20_000
+
+	/** One request per register number, exact match, bounded concurrency */
+	const runTargetedLookups = async (regNos: string[]) => {
+		for (let i = 0; i < regNos.length; i += TARGETED_CONCURRENCY) {
+			const batch = regNos.slice(i, i + TARGETED_CONCURRENCY)
+			await Promise.all(batch.map(async regNo => {
+				const profiles = await fetchProfilePage({ register_number: regNo, limit: '200' })
+				if (profiles && profiles.length > 0) profiles.forEach(applyProfile)
+			}))
+		}
+	}
 
 	try {
-		// 2a. Institution-paginated pass (returns active learners only)
-		for (const myjkknInstId of myjkknIds) {
-			let startPage = 1
-			let done = false
-			while (!done && startPage <= MAX_PAGES) {
-				const pageNums = Array.from({ length: PAGE_CONCURRENCY }, (_, i) => startPage + i)
-				const results = await Promise.all(pageNums.map(pg => fetchProfilePage({
-					institution_id: myjkknInstId,
-					limit: String(pageSize),
-					page: String(pg)
-				})))
-				for (const profiles of results) {
-					if (!profiles || profiles.length === 0) { done = true; continue }
-					profiles.forEach(applyProfile)
-				}
-				if (stillMissing().length === 0) done = true
-				startPage += PAGE_CONCURRENCY
-			}
-		}
+		const outstanding = needsLookup()
 
-		// 2b. Non-active learner sweep. The institution-paginated endpoint only
-		// returns lifecycle_status='active' profiles, so graduated / inactive /
-		// discontinued learners never appear above. lifecycle_status=all returns
-		// every state in a single pass (the API ignores institution_id here).
-		if (stillMissing().length > 0) {
-			let inPage = 1
-			while (inPage <= MAX_PAGES) {
-				const profiles = await fetchProfilePage({
-					lifecycle_status: 'all',
-					limit: String(pageSize),
-					page: String(inPage)
-				})
-				if (!profiles || profiles.length === 0) break
-				profiles.forEach(applyProfile)
-				if (stillMissing().length === 0) break
-				inPage++
-			}
-		}
+		if (outstanding.length <= TARGETED_ONLY_THRESHOLD) {
+			// --- Small cohort (incl. every single-learner request): targeted only ---
+			await runTargetedLookups(outstanding)
+		} else {
+			const paginationDeadline = Date.now() + PAGINATION_BUDGET_MS
 
-		// 2c. Targeted register_number lookup for any straggler (commonly filed
-		// under a different MyJKKN institution_id).
-		const misses = registerNumbers.filter(rn => !(photoMap[rn] && dobMap[rn] && nameMap[rn]))
-		if (misses.length > 0) {
-			console.log(`[Consolidated Marksheet] ${misses.length} learner(s) missing after pagination — running targeted register_number lookup`)
-			for (const regNo of misses) {
-				const profiles = await fetchProfilePage({ register_number: regNo, limit: '200' })
-				if (profiles && profiles.length > 0) {
-					profiles.forEach(applyProfile)
+			// 2a. Institution-paginated pass (returns active learners only)
+			for (const myjkknInstId of myjkknIds) {
+				let startPage = 1
+				let done = false
+				while (!done && startPage <= MAX_PAGES && Date.now() < paginationDeadline) {
+					const pageNums = Array.from({ length: PAGE_CONCURRENCY }, (_, i) => startPage + i)
+					const results = await Promise.all(pageNums.map(pg => fetchProfilePage({
+						institution_id: myjkknInstId,
+						limit: String(pageSize),
+						page: String(pg)
+					})))
+					for (const profiles of results) {
+						if (!profiles || profiles.length === 0) { done = true; continue }
+						profiles.forEach(applyProfile)
+					}
+					if (stillMissing().length === 0) done = true
+					startPage += PAGE_CONCURRENCY
 				}
+			}
+
+			// 2b. Non-active learner sweep. The institution-paginated endpoint only
+			// returns lifecycle_status='active' profiles, so graduated / inactive /
+			// discontinued learners never appear above. lifecycle_status=all returns
+			// every state in a single pass (the API ignores institution_id here).
+			// Only worth walking when a lot are still outstanding — otherwise the
+			// targeted pass below resolves them in far fewer requests.
+			if (stillMissing().length > TARGETED_ONLY_THRESHOLD) {
+				let startPage = 1
+				let done = false
+				while (!done && startPage <= MAX_PAGES && Date.now() < paginationDeadline) {
+					const pageNums = Array.from({ length: PAGE_CONCURRENCY }, (_, i) => startPage + i)
+					const results = await Promise.all(pageNums.map(pg => fetchProfilePage({
+						lifecycle_status: 'all',
+						limit: String(pageSize),
+						page: String(pg)
+					})))
+					for (const profiles of results) {
+						if (!profiles || profiles.length === 0) { done = true; continue }
+						profiles.forEach(applyProfile)
+					}
+					if (stillMissing().length === 0) done = true
+					startPage += PAGE_CONCURRENCY
+				}
+			}
+
+			// 2c. Targeted register_number lookup for any straggler (commonly filed
+			// under a different MyJKKN institution_id, or non-active).
+			const misses = needsLookup()
+			if (misses.length > 0) {
+				console.log(`[Consolidated Marksheet] ${misses.length} learner(s) missing after pagination — running targeted register_number lookup`)
+				await runTargetedLookups(misses)
 			}
 		}
 	} catch (err) {
 		console.error('[Consolidated Marksheet] MyJKKN fetch error (non-critical):', err)
 	}
 
-	return { photoMap, dobMap, nameMap, extInfoMap }
+	return commit()
 }
 
 /** Resolve program UUID from program_code using the local programs table */
@@ -1139,12 +1300,12 @@ export async function GET(req: NextRequest) {
 			}
 
 			// Eligibility: only return learners who have passed ALL courses across
-			// all semesters (no backlogs). We fetch the same fields the marksheet
-			// uses and run the per-course pass check so the filter is identical
-			// to what student-marksheet enforces.
+			// all semesters (no backlogs). We run the same per-course pass check
+			// as student-marksheet, but over the lean ELIGIBILITY_SELECT — the
+			// marksheet-only fields would be discarded here anyway.
 			let query = supabase
 				.from('final_marks')
-				.select(FINAL_MARKS_SELECT)
+				.select(ELIGIBILITY_SELECT)
 				.eq('institutions_id', institutionId)
 				.eq('result_status', 'Published')
 				.eq('is_active', true)
@@ -1154,35 +1315,40 @@ export async function GET(req: NextRequest) {
 				query = query.eq('program_code', programCode)
 			}
 
-			const { data: fmRows, error: fmErr } = await query
-
-			if (fmErr) {
-				console.error('[Consolidated Marksheet API - students] Error:', fmErr)
-				throw fmErr
-			}
-
-			// Resolve program name from MyJKKN so isPGProgram can match by name
-			// (program codes like "PMA" don't start with the M/MBA/MSC prefixes, so
-			//  we MUST consult the program_name pattern to classify them correctly).
-			let programNameStudents = ''
-			if (programCode) {
+			// Program metadata is independent of the marks query — resolve it
+			// concurrently instead of stacking round-trips after it.
+			// Program name matters because codes like "PMA" don't start with the
+			// M/MBA/MSC prefixes, so isPGProgram must consult the name pattern.
+			const metaPromise = (async () => {
+				if (!programCode) return { programName: '', totalSemesters: 0 }
 				const { data: instRow } = await supabase
 					.from('institutions')
 					.select('myjkkn_institution_ids')
 					.eq('id', institutionId)
 					.single()
 				const myjkknIdsStudents: string[] = instRow?.myjkkn_institution_ids || []
-				programNameStudents = await resolveProgramName(supabase, institutionId, myjkknIdsStudents, programCode)
+				const programName = await resolveProgramName(supabase, institutionId, myjkknIdsStudents, programCode)
+				const totalSemesters = await resolveTotalSemesters(
+					supabase, programCode, institutionId, isPGProgram(programCode, programName)
+				)
+				return { programName, totalSemesters }
+			})()
+
+			const [{ data: fmRows, error: fmErr }, meta] = await Promise.all([query, metaPromise])
+
+			if (fmErr) {
+				console.error('[Consolidated Marksheet API - students] Error:', fmErr)
+				throw fmErr
 			}
+
+			const programNameStudents = meta.programName
 
 			// Determine passing % from program code+name (UG=40, PG=50)
 			const isPGStudents = isPGProgram(programCode || '', programNameStudents)
 			const passingPercentageStudents = isPGStudents ? 50 : 40
 
 			// Resolve expected total semesters for this program (UG=6, PG=4 typical)
-			const totalSemestersStudents = programCode
-				? await resolveTotalSemesters(supabase, programCode, institutionId, isPGStudents)
-				: 0
+			const totalSemestersStudents = meta.totalSemesters
 
 			console.log(`[Consolidated Marksheet - students] programCode=${programCode} programName=${programNameStudents} isPG=${isPGStudents} passing%=${passingPercentageStudents} totalSemesters=${totalSemestersStudents}`)
 
@@ -1210,11 +1376,23 @@ export async function GET(req: NextRequest) {
 			const students: { id: string; registerNo: string; name: string }[] = []
 			for (const [sid, group] of Object.entries(studentGroups)) {
 				const deduped = deduplicateBestAttempt(group.rows)
-				const courses = deduped
-					.map(fm => processFinalMarkRow(fm, passingPercentageStudents))
-					.filter((c): c is CourseResult => c !== null)
-				const { eligible } = getEligibilityStatus(courses, totalSemestersStudents)
+
+				let eligible = true
+				const attempted = new Set<number>()
+				for (const fm of deduped) {
+					const row = evalRowPass(fm, passingPercentageStudents)
+					if (!row) continue
+					if (!row.isPassing) { eligible = false; break }
+					if (row.semester > 0) attempted.add(row.semester)
+				}
 				if (!eligible) continue
+
+				// Semester-coverage check — the program must be complete
+				for (let s = 1; s <= totalSemestersStudents; s++) {
+					if (!attempted.has(s)) { eligible = false; break }
+				}
+				if (!eligible) continue
+
 				students.push({ id: sid, registerNo: group.registerNo, name: group.name })
 			}
 
@@ -1881,17 +2059,31 @@ export async function GET(req: NextRequest) {
 				.filter(Boolean)
 			const extInfoMap: Record<string, { firstName?: string; lastName?: string; gender?: string }> = {}
 
-			// 1. Local mirror (fast, chunked)
+			// 0. Reuse anything the marksheet/batch paths already pulled from MyJKKN
+			{
+				const now = Date.now()
+				for (const rn of registerNumbers) {
+					const cached = profileCache.get(rn)
+					if (!cached || cached.expires <= now || !cached.ext) continue
+					extInfoMap[rn] = {
+						firstName: cached.ext.firstName,
+						lastName: cached.ext.lastName,
+						gender: cached.ext.gender
+					}
+				}
+			}
+
+			// 1. Local mirror (fast, chunked) — skipped when the table is absent
 			{
 				const LP_CHUNK = 100
-				for (let i = 0; i < registerNumbers.length; i += LP_CHUNK) {
+				for (let i = 0; !learnersProfilesMirrorMissing && i < registerNumbers.length; i += LP_CHUNK) {
 					const chunk = registerNumbers.slice(i, i + LP_CHUNK)
 					const { data: lpRows, error: lpErr } = await supabase
 						.from('learners_profiles')
 						.select('register_number, first_name, last_name, gender')
 						.in('register_number', chunk)
 					if (lpErr) {
-						if (lpErr.code === 'PGRST205') break // mirror table absent
+						if (lpErr.code === 'PGRST205') { learnersProfilesMirrorMissing = true; break }
 						console.warn('[University Data Export] learners_profiles error:', lpErr)
 						break
 					}
