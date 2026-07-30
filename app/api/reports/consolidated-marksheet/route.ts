@@ -618,14 +618,17 @@ const PROFILE_CACHE_MAX_ENTRIES = 20000
 /**
  * Fetch photo/DOB/name/extended-info maps for a set of register numbers.
  * Same coverage strategy as the semester-marksheet report:
- *   1. Local learners_profiles mirror — no lifecycle_status (or any other)
- *      condition filter, matched purely by register_number.
- *   2. MyJKKN API for anyone still missing photo/DOB:
- *      a. institution-paginated pass (active learners),
- *      b. lifecycle_status=all sweep — covers graduated / inactive /
- *         discontinued learners the active-only endpoint omits,
- *      c. targeted register_number lookup for learners filed under a
- *         different MyJKKN institution_id.
+ *   1. Local learners_profiles mirror — no lifecycle_status filter.
+ *   2. MyJKKN API for anyone still missing photo/DOB/name:
+ *      a. targeted register_number lookup first (small cohorts / active),
+ *      b. institution-paginated pass (active learners),
+ *      c. lifecycle_status=all sweep — covers graduated / inactive /
+ *         discontinued learners (critical for consolidated marksheets),
+ *      d. targeted register_number again for large-cohort stragglers.
+ *
+ * IMPORTANT: MyJKKN's register_number + institution_id queries only return
+ * lifecycle_status=active profiles. Graduated learners MUST be resolved via
+ * the lifecycle_status=all sweep — never rely on targeted alone.
  */
 async function fetchProfileMaps(
 	supabase: ReturnType<typeof getSupabaseServer>,
@@ -797,10 +800,16 @@ async function fetchProfileMaps(
 				},
 				cache: 'no-store',
 			})
-			if (!resp.ok) return null
+			if (!resp.ok) {
+				console.warn(`[Consolidated Marksheet] MyJKKN profiles HTTP ${resp.status} for ${p.toString()}`)
+				return null
+			}
 			const json = await resp.json()
+			// API may return { data: Profile[] } or a bare array
+			if (Array.isArray(json)) return json
 			return json.data || []
-		} catch {
+		} catch (err) {
+			console.warn('[Consolidated Marksheet] MyJKKN profiles fetch error:', err)
 			return null
 		}
 	}
@@ -811,20 +820,18 @@ async function fetchProfileMaps(
 	const MAX_PAGES = 1000
 	const PAGE_CONCURRENCY = 8
 	const TARGETED_CONCURRENCY = 8
-	// Full-institution pagination costs ~1 request per 200 profiles in the
-	// institution NO MATTER how few learners we actually need, and the
-	// lifecycle_status=all sweep walks the entire platform. A targeted
-	// register_number lookup costs exactly 1 request per learner and matches
-	// graduated/inactive learners too, so for anything up to this many
-	// outstanding learners it is strictly cheaper — and for the single-learner
-	// marksheet view it turns 100+ sequential requests into one.
-	const TARGETED_ONLY_THRESHOLD = 60
+	// Targeted register_number lookup is 1 request/learner and works for
+	// *active* profiles — use it first for small cohorts (incl. single-learner
+	// views). It does NOT return graduated/inactive/discontinued learners;
+	// those require the institution / lifecycle_status=all passes below.
+	const TARGETED_FIRST_THRESHOLD = 60
 	// Hard wall-clock budget for the paginated passes. Whatever is still
-	// missing when it expires falls through to targeted lookups, so a slow
-	// MyJKKN can no longer stall the report indefinitely.
+	// missing when it expires is left unresolved rather than stalling the
+	// report indefinitely.
 	const PAGINATION_BUDGET_MS = 20_000
 
-	/** One request per register number, exact match, bounded concurrency */
+	/** One request per register number, exact match, bounded concurrency.
+	 *  Only returns lifecycle_status=active profiles from MyJKKN. */
 	const runTargetedLookups = async (regNos: string[]) => {
 		for (let i = 0; i < regNos.length; i += TARGETED_CONCURRENCY) {
 			const batch = regNos.slice(i, i + TARGETED_CONCURRENCY)
@@ -835,68 +842,75 @@ async function fetchProfileMaps(
 		}
 	}
 
+	/** Paginate MyJKKN profiles with early-exit when photo+DOB are filled. */
+	const runPaginatedPass = async (
+		baseParams: Record<string, string>,
+		deadline: number
+	) => {
+		let startPage = 1
+		let done = false
+		while (!done && startPage <= MAX_PAGES && Date.now() < deadline) {
+			const pageNums = Array.from({ length: PAGE_CONCURRENCY }, (_, i) => startPage + i)
+			const results = await Promise.all(pageNums.map(pg => fetchProfilePage({
+				...baseParams,
+				limit: String(pageSize),
+				page: String(pg),
+			})))
+			for (const profiles of results) {
+				if (!profiles || profiles.length === 0) { done = true; continue }
+				profiles.forEach(applyProfile)
+			}
+			if (stillMissing().length === 0) done = true
+			startPage += PAGE_CONCURRENCY
+		}
+	}
+
 	try {
 		const outstanding = needsLookup()
+		const useTargetedFirst = outstanding.length > 0 && outstanding.length <= TARGETED_FIRST_THRESHOLD
 
-		if (outstanding.length <= TARGETED_ONLY_THRESHOLD) {
-			// --- Small cohort (incl. every single-learner request): targeted only ---
+		// 2a. Fast path for small cohorts: targeted register_number (active only)
+		if (useTargetedFirst) {
+			console.log(`[Consolidated Marksheet] Targeted MyJKKN lookup for ${outstanding.length} learner(s)`)
 			await runTargetedLookups(outstanding)
-		} else {
+		}
+
+		// 2b/2c. Institution pagination + lifecycle_status=all whenever photo/DOB
+		// are still missing. Consolidated marksheet cohorts are frequently
+		// graduated / inactive — the register_number query never returns them.
+		if (stillMissing().length > 0) {
 			const paginationDeadline = Date.now() + PAGINATION_BUDGET_MS
+			const missingBefore = stillMissing().length
+			console.log(`[Consolidated Marksheet] ${missingBefore} learner(s) still missing photo/DOB — paginating MyJKKN profiles`)
 
-			// 2a. Institution-paginated pass (returns active learners only)
+			// 2b. Institution-paginated pass (active learners)
 			for (const myjkknInstId of myjkknIds) {
-				let startPage = 1
-				let done = false
-				while (!done && startPage <= MAX_PAGES && Date.now() < paginationDeadline) {
-					const pageNums = Array.from({ length: PAGE_CONCURRENCY }, (_, i) => startPage + i)
-					const results = await Promise.all(pageNums.map(pg => fetchProfilePage({
-						institution_id: myjkknInstId,
-						limit: String(pageSize),
-						page: String(pg)
-					})))
-					for (const profiles of results) {
-						if (!profiles || profiles.length === 0) { done = true; continue }
-						profiles.forEach(applyProfile)
-					}
-					if (stillMissing().length === 0) done = true
-					startPage += PAGE_CONCURRENCY
-				}
+				if (stillMissing().length === 0 || Date.now() >= paginationDeadline) break
+				await runPaginatedPass({ institution_id: myjkknInstId }, paginationDeadline)
 			}
 
-			// 2b. Non-active learner sweep. The institution-paginated endpoint only
-			// returns lifecycle_status='active' profiles, so graduated / inactive /
-			// discontinued learners never appear above. lifecycle_status=all returns
-			// every state in a single pass (the API ignores institution_id here).
-			// Only worth walking when a lot are still outstanding — otherwise the
-			// targeted pass below resolves them in far fewer requests.
-			if (stillMissing().length > TARGETED_ONLY_THRESHOLD) {
-				let startPage = 1
-				let done = false
-				while (!done && startPage <= MAX_PAGES && Date.now() < paginationDeadline) {
-					const pageNums = Array.from({ length: PAGE_CONCURRENCY }, (_, i) => startPage + i)
-					const results = await Promise.all(pageNums.map(pg => fetchProfilePage({
-						lifecycle_status: 'all',
-						limit: String(pageSize),
-						page: String(pg)
-					})))
-					for (const profiles of results) {
-						if (!profiles || profiles.length === 0) { done = true; continue }
-						profiles.forEach(applyProfile)
-					}
-					if (stillMissing().length === 0) done = true
-					startPage += PAGE_CONCURRENCY
-				}
+			// 2c. Non-active learner sweep (graduated / inactive / discontinued).
+			// Must always run when anyone is still missing — targeted register_number
+			// lookups cannot resolve non-active profiles.
+			if (stillMissing().length > 0 && Date.now() < paginationDeadline) {
+				console.log(`[Consolidated Marksheet] ${stillMissing().length} learner(s) still missing — lifecycle_status=all sweep`)
+				await runPaginatedPass({ lifecycle_status: 'all' }, paginationDeadline)
 			}
 
-			// 2c. Targeted register_number lookup for any straggler (commonly filed
-			// under a different MyJKKN institution_id, or non-active).
-			const misses = needsLookup()
-			if (misses.length > 0) {
-				console.log(`[Consolidated Marksheet] ${misses.length} learner(s) missing after pagination — running targeted register_number lookup`)
-				await runTargetedLookups(misses)
+			// 2d. Targeted register_number for large-cohort stragglers filed under
+			// a different MyJKKN institution_id (small cohorts already tried this).
+			if (!useTargetedFirst) {
+				const misses = needsLookup()
+				if (misses.length > 0) {
+					console.log(`[Consolidated Marksheet] ${misses.length} learner(s) missing after pagination — targeted register_number lookup`)
+					await runTargetedLookups(misses)
+				}
 			}
 		}
+
+		const resolvedPhotos = Object.keys(photoMap).length
+		const resolvedDobs = Object.keys(dobMap).length
+		console.log(`[Consolidated Marksheet] Profile resolve done: ${resolvedPhotos}/${registerNumbers.length} photos, ${resolvedDobs}/${registerNumbers.length} DOBs`)
 	} catch (err) {
 		console.error('[Consolidated Marksheet] MyJKKN fetch error (non-critical):', err)
 	}
