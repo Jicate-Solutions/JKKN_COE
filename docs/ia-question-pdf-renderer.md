@@ -109,6 +109,28 @@ Fonts live in `public/fonts/tamil/`. PDF embeds whatever is present as base64 `@
 - **Bamini / Suntommy**: text is Latin codepoints; select that font in the editor so PDF applies the same face.
 - Sanitizer keeps allowlisted `font-family` on spans so the PDF matches the editor.
 
+### 6.1 Legacy faces must stay OUT of the inheritable stack
+
+`Bamini`/`Suntommy` are TSCII: their **Latin** codepoints carry Tamil glyphs. They were
+listed in the `html, body` stack, and headless Chromium has no `Times New Roman`
+(`@sparticuz/chromium` bundles Open Sans only) while `Noto Sans Tamil` is
+`unicode-range`-limited — so every English character fell through to the legacy face and
+the entire paper printed Tamil (PDF text layer still English). The stack is now
+`BASE_FONT_STACK` in `build-paper-pdf-html.ts`: Latin serifs + Noto Sans Tamil, no legacy
+faces. Same fix applied to `.qp-rich-editor-body` in `styles/globals.css`.
+
+Optional: drop a Times-metric TTF in `public/fonts/latin/` and it is embedded as
+`QP Serif` (first in the stack), so Vercel output matches local Times rendering.
+See `public/fonts/latin/README.md`.
+
+### 6.2 OTS rejects malformed legacy TTFs
+
+`Bamini.ttf` was refused outright by Chromium's sanitizer (bad table-directory
+`searchRange`/`rangeShift`, misaligned `post`, `cmap` subtable declaring 2136 bytes for
+642) — Bamini text silently printed as raw English letters. Repaired in place with
+`node scripts/normalize-sfnt-font.js public/fonts/tamil/Bamini.ttf`; glyph data is
+untouched (verified: all 98 cmap mappings identical before/after).
+
 ---
 
 ## 7. Verification

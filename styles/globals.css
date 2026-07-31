@@ -26,8 +26,12 @@
   font-display: swap;
 }
 
+/* Editor body: Unicode Tamil falls through to Noto (unicode-range limited).
+   Bamini/Suntommy must NEVER be listed here — they are legacy (TSCII) faces whose
+   LATIN codepoints carry Tamil glyphs, so English text would render as Tamil.
+   They apply only when the Font / Option font dropdown sets them on a span. */
 .qp-rich-editor-body {
-  font-family: inherit, 'Noto Sans Tamil', Bamini, Suntommy, sans-serif;
+  font-family: var(--font-space-grotesk), 'Space Grotesk', system-ui, 'Noto Sans Tamil', sans-serif;
 }
 
 /* Remove number input spinners for cleaner UI */

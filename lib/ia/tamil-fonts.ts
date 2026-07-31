@@ -36,12 +36,26 @@ const FONT_FILES: FontFaceSpec[] = [
 	},
 ]
 
-function fontsDir(): string {
-	return path.join(process.cwd(), 'public', 'fonts', 'tamil')
+/**
+ * Optional Latin serif for the PDF body, embedded as 'QP Serif'.
+ * Headless Chromium on Vercel has NO Times New Roman (@sparticuz/chromium ships
+ * Open Sans only). Drop a Times-metric TTF here to make the printed paper look the
+ * same everywhere; without it Chromium just falls back to the host serif.
+ */
+const LATIN_SERIF_FILES = [
+	'Tinos-Regular.ttf',
+	'LiberationSerif-Regular.ttf',
+	'TimesNewRoman.ttf',
+	'times.ttf',
+	'NotoSerif-Regular.ttf',
+]
+
+function fontsDir(sub: 'tamil' | 'latin' = 'tamil'): string {
+	return path.join(process.cwd(), 'public', 'fonts', sub)
 }
 
-function findFontFile(candidates: string[]): string | null {
-	const dir = fontsDir()
+function findFontFile(candidates: string[], sub: 'tamil' | 'latin' = 'tamil'): string | null {
+	const dir = fontsDir(sub)
 	for (const name of candidates) {
 		const full = path.join(dir, name)
 		if (fs.existsSync(full)) return full
@@ -97,6 +111,26 @@ export function buildTamilFontFaceCss(): string {
 }`)
 	}
 	return blocks.join('\n')
+}
+
+/**
+ * @font-face for the Latin body serif ('QP Serif'), if a TTF was placed in
+ * public/fonts/latin/. Returns '' when none is present — the stack then falls back
+ * to the host's serif. Latin-only range so it can never shadow Tamil glyphs.
+ */
+export function buildLatinSerifFontFaceCss(): string {
+	const file = findFontFile(LATIN_SERIF_FILES, 'latin')
+	if (!file) return ''
+	const loaded = readFontAsDataUri(file)
+	if (!loaded) return ''
+	return `@font-face {
+	font-family: 'QP Serif';
+	src: url(${loaded.dataUri}) format('${loaded.format}');
+	font-weight: normal;
+	font-style: normal;
+	font-display: block;
+	unicode-range: U+0000-024F, U+2000-206F, U+20A0-20BF, U+2190-2BFF;
+}`
 }
 
 /** Which Tamil faces are available for logging / UI hints. */

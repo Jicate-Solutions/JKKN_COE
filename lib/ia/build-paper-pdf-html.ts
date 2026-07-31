@@ -13,7 +13,12 @@
 // than jsPDF ever did.
 
 import katex from 'katex'
-import { buildTamilFontFaceCss, canonicalizeFontFamily, listAvailableTamilFonts } from '@/lib/ia/tamil-fonts'
+import {
+	buildLatinSerifFontFaceCss,
+	buildTamilFontFaceCss,
+	canonicalizeFontFamily,
+	listAvailableTamilFonts,
+} from '@/lib/ia/tamil-fonts'
 // puppeteer-core + @sparticuz/chromium are imported LAZILY inside the Vercel branch
 // only — importing them at module top can fail on a local dev machine and take the
 // whole route module (→ Next 404) with it. Local dev uses full `puppeteer`.
@@ -184,6 +189,16 @@ function optionLineHtml(opts: any, optionFont?: string | null): string {
  */
 export type PdfVariant = 'single' | '2up'
 
+/**
+ * Inheritable font stack for the whole paper — Latin serif faces + Unicode Tamil.
+ * 'QP Serif' is the optional Times-metric TTF embedded from public/fonts/latin/
+ * (see buildLatinSerifFontFaceCss); without it Chromium uses whatever serif the
+ * host has ('Times New Roman' on Windows, Open Sans on Vercel).
+ * Bamini/Suntommy are deliberately absent — see the html/body rule below.
+ */
+const BASE_FONT_STACK =
+	`'QP Serif', 'Times New Roman', Times, 'Liberation Serif', 'Tinos', 'DejaVu Serif', 'Noto Serif', 'Noto Sans Tamil', serif`
+
 function buildHtml(ctx: {
 	variant: PdfVariant
 	institutionName: string
@@ -273,9 +288,15 @@ function buildHtml(ctx: {
 	* { box-sizing: border-box; font-family: inherit; }
 	html, body {
 		margin: 0; padding: 0;
-		/* Unicode Tamil falls through to Noto; Bamini/Suntommy apply only when
-		   TipTap sets font-family on a span (legacy-encoded Latin text). */
-		font-family: 'Times New Roman', 'Noto Sans Tamil', Bamini, Suntommy, Times, serif;
+		/* NEVER list Bamini/Suntommy here. They are legacy (TSCII) faces whose LATIN
+		   codepoints carry Tamil glyphs, so any English character that fell through to
+		   them printed as Tamil. Headless Chromium has no 'Times New Roman'
+		   (@sparticuz/chromium ships Open Sans only), and 'Noto Sans Tamil' is
+		   unicode-range-limited to U+0B80-0BFF — so the whole paper turned Tamil.
+		   Legacy faces are reachable ONLY via an explicit font-family on a span
+		   (the editor's Font / Option font dropdowns). Unicode Tamil still falls
+		   through to Noto because of its unicode-range. */
+		font-family: ${BASE_FONT_STACK};
 		color: #000; font-size: ${isTwoUp ? '9pt' : '11pt'};
 	}
 	#sheet { transform-origin: top left; }
@@ -322,7 +343,7 @@ function buildHtml(ctx: {
 	.qbody table { border-collapse: collapse; margin: 3px 0; }
 	.qbody td, .qbody th { border: 1px solid #000; padding: 2px 5px; }
 	.qbody th { font-weight: bold; }
-	math { font-family: 'Times New Roman', Times, serif; font-size: 1em; }
+	math { font-family: ${BASE_FONT_STACK}; font-size: 1em; }
 	.qp-math { white-space: nowrap; }
 </style></head>
 <body>
@@ -386,7 +407,10 @@ export async function buildPaperPdfHtml(
 	}
 	const roman = ['', 'I', 'II', 'III', 'IV', 'V', 'VI'][paper.cia_round || 1] || String(paper.cia_round || 1)
 
-	const tamilFontCss = buildTamilFontFaceCss()
+	// Latin serif first so 'QP Serif' resolves ahead of the Tamil faces in the stack.
+	const tamilFontCss = [buildLatinSerifFontFaceCss(), buildTamilFontFaceCss()]
+		.filter(Boolean)
+		.join('\n')
 	const available = listAvailableTamilFonts()
 	if (available.length === 0) {
 		console.warn('[QP PDF] No Tamil fonts in public/fonts/tamil/ — Unicode/Bamini/Suntommy may render blank. See public/fonts/tamil/README.md')

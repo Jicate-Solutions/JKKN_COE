@@ -268,6 +268,35 @@ const ELIGIBILITY_SELECT = `
 `
 
 /**
+ * Fetch EVERY row of a final_marks query, page by page.
+ *
+ * A single `.range(0, 999999)` does not defeat PostgREST's server-side
+ * max-rows cap — it silently truncates. That is fatal for cohort-wide
+ * eligibility: final_marks rows are written session by session, so the cut
+ * lands mid-cohort and the learners whose later semesters fall past it look
+ * like they never attempted those semesters, i.e. "not eligible".
+ *
+ * `buildQuery()` must return a fresh query builder on every call (a
+ * PostgREST builder is single-use).
+ * Ordered by `id` — a unique tiebreaker, so pages never overlap or skip.
+ */
+const FM_PAGE_SIZE = 500
+async function fetchAllFinalMarkRows(buildQuery: () => any): Promise<any[]> {
+	const all: any[] = []
+	for (let page = 0; page < 200; page++) {
+		const from = page * FM_PAGE_SIZE
+		const { data, error } = await buildQuery()
+			.order('id', { ascending: true })
+			.range(from, from + FM_PAGE_SIZE - 1)
+		if (error) throw error
+		const rows = data || []
+		all.push(...rows)
+		if (rows.length < FM_PAGE_SIZE) break
+	}
+	return all
+}
+
+/**
  * Minimal per-row pass evaluation — mirrors the isPassing/semester outcome of
  * processFinalMarkRow without building a full CourseResult. Used by the
  * eligibility-only paths (learner dropdown), where the other 20 fields are
@@ -597,12 +626,17 @@ function computeSummary(courses: CourseResult[], formattedFolio: string | null) 
 let learnersProfilesMirrorMissing = false
 
 /**
- * Cross-request cache of resolved learner profiles, keyed by register number.
+ * Cross-request cache of resolved learner profiles, keyed by NORMALISED
+ * register number (trim + uppercase).
  *
  * With no local mirror, EVERY photo / DOB / name is an external MyJKKN call,
  * and the same learners are re-fetched each time a marksheet is viewed or a
  * batch PDF is re-downloaded. Caching collapses those repeats to zero
  * external calls for the TTL window.
+ *
+ * The sweep populates this for EVERY row it sees, not just the cohort being
+ * reported — one sweep pulls the whole learner universe anyway, so the next
+ * report (different program, different batch) is served entirely from here.
  */
 interface CachedProfile {
 	photo?: string
@@ -616,24 +650,44 @@ const PROFILE_CACHE_TTL_MS = 10 * 60 * 1000
 const PROFILE_CACHE_MAX_ENTRIES = 20000
 
 /**
- * Fetch photo/DOB/name/extended-info maps for a set of register numbers.
- * Same coverage strategy as the semester-marksheet report:
- *   1. Local learners_profiles mirror — no lifecycle_status filter.
- *   2. MyJKKN API for anyone still missing photo/DOB/name:
- *      a. targeted register_number lookup first (small cohorts / active),
- *      b. institution-paginated pass (active learners),
- *      c. lifecycle_status=all sweep — covers graduated / inactive /
- *         discontinued learners (critical for consolidated marksheets),
- *      d. targeted register_number again for large-cohort stragglers.
+ * When the last COMPLETE lifecycle_status=all sweep finished.
  *
- * IMPORTANT: MyJKKN's register_number + institution_id queries only return
- * lifecycle_status=active profiles. Graduated learners MUST be resolved via
- * the lifecycle_status=all sweep — never rely on targeted alone.
+ * A learner with no MyJKKN profile row at all (no photo on record) can never
+ * be resolved, and would otherwise re-trigger the whole sweep on every single
+ * request — that one straggler is what turned a batch marksheet into a 20s
+ * request. A completed sweep already answered "MyJKKN doesn't have them", so
+ * don't ask again inside the TTL window.
+ */
+let lastFullProfileSweepAt = 0
+
+/**
+ * Fetch photo/DOB/name/extended-info maps for a set of register numbers.
+ *   1. Cross-request profile cache.
+ *   2. Local learners_profiles mirror — no lifecycle_status filter.
+ *   3. ONE bounded MyJKKN sweep for anyone still missing photo/DOB/name.
+ *
+ * MyJKKN /learners/profiles facts, verified against production:
+ *   - `limit` is capped at 200 rows/page no matter what you ask for; the
+ *     response echoes `metadata: { page, limit, total, totalPages }`.
+ *   - `register_number`, `program_code`, `program_id` and `institution_id`
+ *     are all IGNORED server-side — every one of those queries returns the
+ *     same unfiltered list, so a "targeted" or "program-scoped" pass is just
+ *     the full list again at N× the cost. Match client-side instead.
+ *   - Requesting a page past `totalPages` returns HTTP 500. Honour
+ *     `totalPages` or the pass spends its whole budget on 500s.
+ *   - `lifecycle_status=all` is the only filter that works and is a strict
+ *     superset (7160 rows vs 4342 active) — mandatory here, since
+ *     consolidated-marksheet cohorts are usually graduated.
  */
 async function fetchProfileMaps(
 	supabase: ReturnType<typeof getSupabaseServer>,
-	myjkknIds: string[],
-	registerNumbers: string[]
+	// Kept on the signature but deliberately unused: MyJKKN ignores both
+	// institution_id and program_code on /learners/profiles, so scoping the
+	// fetch by them fetches the same unfiltered list. Cohort matching is
+	// client-side. Do not reintroduce them as query params.
+	_myjkknIds: string[],
+	registerNumbers: string[],
+	_programCode?: string
 ): Promise<{
 	photoMap: Record<string, string>
 	dobMap: Record<string, string>
@@ -649,10 +703,16 @@ async function fetchProfileMaps(
 		return { photoMap, dobMap, nameMap, extInfoMap }
 	}
 
+	// Register numbers are matched tolerantly everywhere (cache keys, MyJKKN
+	// rows) — case/whitespace differences are common across the two systems.
+	const norm = (s: any) => (s ?? '').toString().trim().toUpperCase()
+	const regNoByNorm = new Map<string, string>()
+	registerNumbers.forEach(rn => regNoByNorm.set(norm(rn), rn))
+
 	// --- 0. Serve what we already resolved on a recent request ---
 	const cacheNow = Date.now()
 	for (const rn of registerNumbers) {
-		const cached = profileCache.get(rn)
+		const cached = profileCache.get(norm(rn))
 		if (!cached || cached.expires <= cacheNow) continue
 		if (cached.photo) photoMap[rn] = cached.photo
 		if (cached.dob) dobMap[rn] = cached.dob
@@ -670,7 +730,7 @@ async function fetchProfileMaps(
 			const name = nameMap[rn]
 			const ext = extInfoMap[rn]
 			if (!photo && !dob && !name && !ext) continue
-			profileCache.set(rn, { photo, dob, name, ext, expires })
+			profileCache.set(norm(rn), { photo, dob, name, ext, expires })
 		}
 		return { photoMap, dobMap, nameMap, extInfoMap }
 	}
@@ -743,19 +803,45 @@ async function fetchProfileMaps(
 		return commit()
 	}
 
-	// Match register numbers tolerantly (case/whitespace, several id fields) —
-	// same as the semester-marksheet batch path. applyProfile only fills
-	// learners in this cohort, so unrelated rows are harmless.
-	const norm = (s: any) => (s ?? '').toString().trim().toUpperCase()
-	const regNoByNorm = new Map<string, string>()
-	registerNumbers.forEach(rn => regNoByNorm.set(norm(rn), rn))
+	/** Pull the fields we care about out of a raw MyJKKN profile row */
+	const deriveProfile = (lp: any) => {
+		const photo = lp.student_photo_url || lp.photo_url || lp.profile_photo || lp.image_url || undefined
+		const dob = lp.date_of_birth ? (formatDob(lp.date_of_birth) || undefined) : undefined
+		const name = lp.student_name || lp.full_name ||
+			([lp.first_name, lp.last_name].filter(Boolean).join(' ') || undefined)
+		const ext = {
+			firstName: lp.first_name || undefined,
+			lastName: lp.last_name || undefined,
+			fatherName: lp.father_name || undefined,
+			motherName: lp.mother_name || undefined,
+			gender: lp.gender || undefined,
+			admissionYear: lp.admission_year?.toString() || undefined
+		}
+		return { photo, dob, name, ext }
+	}
 
+	// Rows come back unfiltered (see the header note), so a row is matched to
+	// this cohort client-side across every id field MyJKKN might carry it in.
 	const applyProfile = (lp: any) => {
 		const candidates = [
 			lp.register_number, lp.registration_number,
 			lp.roll_number, lp.rollno, lp.roll_no,
 			lp.application_number,
 		]
+		const { photo, dob, name, ext } = deriveProfile(lp)
+
+		// Cache EVERY row the sweep returns, not just this cohort's — the sweep
+		// paid for the whole list, so the next report should cost nothing.
+		if (photo || dob || name) {
+			const expires = Date.now() + PROFILE_CACHE_TTL_MS
+			for (const c of candidates) {
+				const key = norm(c)
+				if (!key) continue
+				if (profileCache.size > PROFILE_CACHE_MAX_ENTRIES) profileCache.clear()
+				profileCache.set(key, { photo, dob, name, ext, expires })
+			}
+		}
+
 		let regNo: string | undefined
 		for (const c of candidates) {
 			const hit = regNoByNorm.get(norm(c))
@@ -763,32 +849,18 @@ async function fetchProfileMaps(
 		}
 		if (!regNo) return
 
-		const profilePhotoUrl = lp.student_photo_url || lp.photo_url || lp.profile_photo || lp.image_url
-		if (profilePhotoUrl && !photoMap[regNo]) photoMap[regNo] = profilePhotoUrl
-
-		if (lp.date_of_birth && !dobMap[regNo]) {
-			const d = formatDob(lp.date_of_birth)
-			if (d) dobMap[regNo] = d
-		}
-
-		if (!nameMap[regNo]) {
-			const constructedName = lp.student_name || lp.full_name || [lp.first_name, lp.last_name].filter(Boolean).join(' ')
-			if (constructedName) nameMap[regNo] = constructedName
-		}
-
-		if (!extInfoMap[regNo]) {
-			extInfoMap[regNo] = {
-				firstName: lp.first_name || undefined,
-				lastName: lp.last_name || undefined,
-				fatherName: lp.father_name || undefined,
-				motherName: lp.mother_name || undefined,
-				gender: lp.gender || undefined,
-				admissionYear: lp.admission_year?.toString() || undefined
-			}
-		}
+		if (photo && !photoMap[regNo]) photoMap[regNo] = photo
+		if (dob && !dobMap[regNo]) dobMap[regNo] = dob
+		if (name && !nameMap[regNo]) nameMap[regNo] = name
+		if (!extInfoMap[regNo]) extInfoMap[regNo] = ext
 	}
 
-	const fetchProfilePage = async (params: Record<string, string>): Promise<any[] | null> => {
+	interface ProfilePage {
+		rows: any[]
+		totalPages: number
+	}
+
+	const fetchProfilePage = async (params: Record<string, string>): Promise<ProfilePage | null> => {
 		const p = new URLSearchParams(params)
 		try {
 			const resp = await fetch(`${myjkknApiUrl}/api-management/learners/profiles?${p.toString()}`, {
@@ -805,106 +877,81 @@ async function fetchProfileMaps(
 				return null
 			}
 			const json = await resp.json()
-			// API may return { data: Profile[] } or a bare array
-			if (Array.isArray(json)) return json
-			return json.data || []
+			// API may return { data: Profile[], metadata: {...} } or a bare array
+			if (Array.isArray(json)) return { rows: json, totalPages: 0 }
+			const meta = json.metadata || json.pagination || {}
+			return { rows: json.data || [], totalPages: Number(meta.totalPages) || 0 }
 		} catch (err) {
 			console.warn('[Consolidated Marksheet] MyJKKN profiles fetch error:', err)
 			return null
 		}
 	}
 
-	// NOTE: the MyJKKN profiles endpoint HARD-CAPS every page at 200 rows
-	// regardless of the requested limit — paginate until a page returns 0 rows.
-	const pageSize = 200
-	const MAX_PAGES = 1000
+	// MyJKKN caps every page at 200 rows regardless of the `limit` asked for,
+	// so ask for exactly that — a bigger number just wastes the round-trip.
+	const PAGE_SIZE = 200
 	const PAGE_CONCURRENCY = 8
-	const TARGETED_CONCURRENCY = 8
-	// Targeted register_number lookup is 1 request/learner and works for
-	// *active* profiles — use it first for small cohorts (incl. single-learner
-	// views). It does NOT return graduated/inactive/discontinued learners;
-	// those require the institution / lifecycle_status=all passes below.
-	const TARGETED_FIRST_THRESHOLD = 60
-	// Hard wall-clock budget for the paginated passes. Whatever is still
-	// missing when it expires is left unresolved rather than stalling the
-	// report indefinitely.
-	const PAGINATION_BUDGET_MS = 20_000
+	// Guard against a malformed totalPages; the real list is ~36 pages.
+	const MAX_PAGES = 500
+	// Hard wall-clock budget. Whatever is still missing when it expires is left
+	// unresolved rather than stalling the report indefinitely.
+	const SWEEP_BUDGET_MS = 20_000
 
-	/** One request per register number, exact match, bounded concurrency.
-	 *  Only returns lifecycle_status=active profiles from MyJKKN. */
-	const runTargetedLookups = async (regNos: string[]) => {
-		for (let i = 0; i < regNos.length; i += TARGETED_CONCURRENCY) {
-			const batch = regNos.slice(i, i + TARGETED_CONCURRENCY)
-			await Promise.all(batch.map(async regNo => {
-				const profiles = await fetchProfilePage({ register_number: regNo, limit: '200' })
-				if (profiles && profiles.length > 0) profiles.forEach(applyProfile)
-			}))
-		}
-	}
+	/**
+	 * One pass over the whole learners/profiles list.
+	 *
+	 * Page 1 carries `metadata.totalPages`; the remaining pages are fetched
+	 * PAGE_CONCURRENCY at a time and the walk STOPS at totalPages — asking for
+	 * page totalPages+1 is what produced the wall of HTTP 500s.
+	 *
+	 * Returns true only when every page was read, which is what licenses
+	 * lastFullProfileSweepAt: an early exit or an errored page means the list
+	 * was not fully seen, so a later request must be free to sweep again.
+	 */
+	const runFullSweep = async (deadline: number): Promise<boolean> => {
+		const base = { lifecycle_status: 'all', limit: String(PAGE_SIZE) }
 
-	/** Paginate MyJKKN profiles with early-exit when photo+DOB are filled. */
-	const runPaginatedPass = async (
-		baseParams: Record<string, string>,
-		deadline: number
-	) => {
-		let startPage = 1
-		let done = false
-		while (!done && startPage <= MAX_PAGES && Date.now() < deadline) {
-			const pageNums = Array.from({ length: PAGE_CONCURRENCY }, (_, i) => startPage + i)
-			const results = await Promise.all(pageNums.map(pg => fetchProfilePage({
-				...baseParams,
-				limit: String(pageSize),
-				page: String(pg),
-			})))
-			for (const profiles of results) {
-				if (!profiles || profiles.length === 0) { done = true; continue }
-				profiles.forEach(applyProfile)
+		const first = await fetchProfilePage({ ...base, page: '1' })
+		if (!first || first.rows.length === 0) return false
+		first.rows.forEach(applyProfile)
+
+		const totalPages = Math.min(first.totalPages || 1, MAX_PAGES)
+		console.log(`[Consolidated Marksheet] MyJKKN profile sweep: ${totalPages} page(s) of ${PAGE_SIZE}`)
+		if (totalPages <= 1) return true
+		if (stillMissing().length === 0) return false
+
+		let complete = true
+		for (let page = 2; page <= totalPages; page += PAGE_CONCURRENCY) {
+			if (Date.now() >= deadline) { complete = false; break }
+			const pageNums: number[] = []
+			for (let i = 0; i < PAGE_CONCURRENCY && page + i <= totalPages; i++) {
+				pageNums.push(page + i)
 			}
-			if (stillMissing().length === 0) done = true
-			startPage += PAGE_CONCURRENCY
+			const results = await Promise.all(
+				pageNums.map(pg => fetchProfilePage({ ...base, page: String(pg) }))
+			)
+			for (const res of results) {
+				if (res === null) { complete = false; continue }
+				res.rows.forEach(applyProfile)
+			}
+			// Cohort satisfied — stop early, but don't claim a complete sweep.
+			if (stillMissing().length === 0) { complete = false; break }
 		}
+		return complete
 	}
 
 	try {
-		const outstanding = needsLookup()
-		const useTargetedFirst = outstanding.length > 0 && outstanding.length <= TARGETED_FIRST_THRESHOLD
-
-		// 2a. Fast path for small cohorts: targeted register_number (active only)
-		if (useTargetedFirst) {
-			console.log(`[Consolidated Marksheet] Targeted MyJKKN lookup for ${outstanding.length} learner(s)`)
-			await runTargetedLookups(outstanding)
-		}
-
-		// 2b/2c. Institution pagination + lifecycle_status=all whenever photo/DOB
-		// are still missing. Consolidated marksheet cohorts are frequently
-		// graduated / inactive — the register_number query never returns them.
 		if (stillMissing().length > 0) {
-			const paginationDeadline = Date.now() + PAGINATION_BUDGET_MS
-			const missingBefore = stillMissing().length
-			console.log(`[Consolidated Marksheet] ${missingBefore} learner(s) still missing photo/DOB — paginating MyJKKN profiles`)
-
-			// 2b. Institution-paginated pass (active learners)
-			for (const myjkknInstId of myjkknIds) {
-				if (stillMissing().length === 0 || Date.now() >= paginationDeadline) break
-				await runPaginatedPass({ institution_id: myjkknInstId }, paginationDeadline)
-			}
-
-			// 2c. Non-active learner sweep (graduated / inactive / discontinued).
-			// Must always run when anyone is still missing — targeted register_number
-			// lookups cannot resolve non-active profiles.
-			if (stillMissing().length > 0 && Date.now() < paginationDeadline) {
-				console.log(`[Consolidated Marksheet] ${stillMissing().length} learner(s) still missing — lifecycle_status=all sweep`)
-				await runPaginatedPass({ lifecycle_status: 'all' }, paginationDeadline)
-			}
-
-			// 2d. Targeted register_number for large-cohort stragglers filed under
-			// a different MyJKKN institution_id (small cohorts already tried this).
-			if (!useTargetedFirst) {
-				const misses = needsLookup()
-				if (misses.length > 0) {
-					console.log(`[Consolidated Marksheet] ${misses.length} learner(s) missing after pagination — targeted register_number lookup`)
-					await runTargetedLookups(misses)
-				}
+			const sweptRecently = Date.now() - lastFullProfileSweepAt < PROFILE_CACHE_TTL_MS
+			if (sweptRecently) {
+				// A complete sweep inside the TTL already cached everything MyJKKN
+				// has. Anyone still missing simply has no profile row — re-sweeping
+				// would return the same list and find them absent again.
+				console.log(`[Consolidated Marksheet] ${stillMissing().length} learner(s) unresolved — recent full sweep already covered MyJKKN, skipping`)
+			} else {
+				console.log(`[Consolidated Marksheet] ${stillMissing().length} learner(s) missing photo/DOB — sweeping MyJKKN profiles`)
+				const complete = await runFullSweep(Date.now() + SWEEP_BUDGET_MS)
+				if (complete) lastFullProfileSweepAt = Date.now()
 			}
 		}
 
@@ -1317,16 +1364,18 @@ export async function GET(req: NextRequest) {
 			// all semesters (no backlogs). We run the same per-course pass check
 			// as student-marksheet, but over the lean ELIGIBILITY_SELECT — the
 			// marksheet-only fields would be discarded here anyway.
-			let query = supabase
-				.from('final_marks')
-				.select(ELIGIBILITY_SELECT)
-				.eq('institutions_id', institutionId)
-				.eq('result_status', 'Published')
-				.eq('is_active', true)
-				.range(0, 999999)
-
-			if (programCode) {
-				query = query.eq('program_code', programCode)
+			// Paginated — a single .range() is capped server-side and the
+			// truncation reads as "learner never attempted semester N", which
+			// silently shrinks this list (28 eligible → 13).
+			const buildEligibilityQuery = () => {
+				let q = supabase
+					.from('final_marks')
+					.select(ELIGIBILITY_SELECT)
+					.eq('institutions_id', institutionId)
+					.eq('result_status', 'Published')
+					.eq('is_active', true)
+				if (programCode) q = q.eq('program_code', programCode)
+				return q
 			}
 
 			// Program metadata is independent of the marks query — resolve it
@@ -1348,12 +1397,10 @@ export async function GET(req: NextRequest) {
 				return { programName, totalSemesters }
 			})()
 
-			const [{ data: fmRows, error: fmErr }, meta] = await Promise.all([query, metaPromise])
-
-			if (fmErr) {
-				console.error('[Consolidated Marksheet API - students] Error:', fmErr)
-				throw fmErr
-			}
+			const [fmRows, meta] = await Promise.all([
+				fetchAllFinalMarkRows(buildEligibilityQuery),
+				metaPromise
+			])
 
 			const programNameStudents = meta.programName
 
@@ -1364,7 +1411,7 @@ export async function GET(req: NextRequest) {
 			// Resolve expected total semesters for this program (UG=6, PG=4 typical)
 			const totalSemestersStudents = meta.totalSemesters
 
-			console.log(`[Consolidated Marksheet - students] programCode=${programCode} programName=${programNameStudents} isPG=${isPGStudents} passing%=${passingPercentageStudents} totalSemesters=${totalSemestersStudents}`)
+			console.log(`[Consolidated Marksheet - students] programCode=${programCode} programName=${programNameStudents} isPG=${isPGStudents} passing%=${passingPercentageStudents} totalSemesters=${totalSemestersStudents} finalMarksRows=${fmRows.length}`)
 
 			// Group rows by student_id, then dedupe best-attempt per course
 			const studentGroups: Record<string, { rows: any[]; registerNo: string; name: string }> = {}
@@ -1411,6 +1458,8 @@ export async function GET(req: NextRequest) {
 			}
 
 			students.sort((a, b) => a.registerNo.localeCompare(b.registerNo))
+
+			console.log(`[Consolidated Marksheet - students] cohort=${Object.keys(studentGroups).length} eligible=${students.length}`)
 
 			return NextResponse.json({
 				students,
@@ -1577,7 +1626,7 @@ export async function GET(req: NextRequest) {
 				console.log(`[Consolidated Marksheet] ===== LEARNER PROFILE LOOKUP =====`)
 				console.log(`[Consolidated Marksheet] registerNo: "${registerNo}"`)
 
-				const { photoMap, dobMap, nameMap, extInfoMap } = await fetchProfileMaps(supabase, myjkknIds, [registerNo])
+				const { photoMap, dobMap, nameMap, extInfoMap } = await fetchProfileMaps(supabase, myjkknIds, [registerNo], effectiveProgramCode)
 
 				photoUrl = photoMap[registerNo] || null
 				dateOfBirth = dobMap[registerNo] || null
@@ -1703,22 +1752,20 @@ export async function GET(req: NextRequest) {
 			}
 
 			// --- Build cohort: distinct student_ids from Published final_marks ---
-			let cohortQuery = supabase
-				.from('final_marks')
-				.select('student_id')
-				.eq('institutions_id', institutionId)
-				.eq('result_status', 'Published')
-				.eq('is_active', true)
-				.range(0, 999999)
+			// Paginated: a single .range() is capped server-side, and any learner
+			// whose rows all sit past the cut disappears from the cohort entirely.
+			const cohortRows = await fetchAllFinalMarkRows(() => {
+				let q = supabase
+					.from('final_marks')
+					.select('student_id')
+					.eq('institutions_id', institutionId)
+					.eq('result_status', 'Published')
+					.eq('is_active', true)
+				if (programCode) q = q.eq('program_code', programCode)
+				return q
+			})
 
-			if (programCode) {
-				cohortQuery = cohortQuery.eq('program_code', programCode)
-			}
-
-			const { data: cohortRows, error: cohortError } = await cohortQuery
-			if (cohortError) throw cohortError
-
-			const allStudentIds = [...new Set((cohortRows || []).map((r: any) => r.student_id).filter(Boolean))]
+			const allStudentIds = [...new Set(cohortRows.map((r: any) => r.student_id).filter(Boolean))]
 
 			if (allStudentIds.length === 0) {
 				return NextResponse.json({ marksheets: [], total: 0 })
@@ -1734,22 +1781,23 @@ export async function GET(req: NextRequest) {
 				idChunks.push(allStudentIds.slice(i, i + FM_CHUNK_SIZE))
 			}
 
+			// Each chunk is paginated too: 40 learners x ~30 courses overshoots
+			// the server row cap, and a truncated chunk costs those learners
+			// their later semesters — they'd be skipped as "incomplete".
 			const fmChunkResults = await Promise.all(
 				idChunks.map(chunk =>
-					supabase
-						.from('final_marks')
-						.select(FINAL_MARKS_SELECT)
-						.in('student_id', chunk)
-						.eq('result_status', 'Published')
-						.eq('is_active', true)
-						.range(0, 999999)
+					fetchAllFinalMarkRows(() =>
+						supabase
+							.from('final_marks')
+							.select(FINAL_MARKS_SELECT)
+							.in('student_id', chunk)
+							.eq('result_status', 'Published')
+							.eq('is_active', true)
+					)
 				)
 			)
 
-			const fmChunkError = fmChunkResults.find(r => r.error)?.error
-			if (fmChunkError) throw fmChunkError
-
-			const allFinalMarks = fmChunkResults.flatMap(r => r.data || [])
+			const allFinalMarks = fmChunkResults.flat()
 			console.log(`[Consolidated Marksheet Batch] Fetched ${allFinalMarks.length} final_marks rows across ${idChunks.length} chunks`)
 
 			// --- Institution myjkkn_institution_ids ---
@@ -1824,7 +1872,7 @@ export async function GET(req: NextRequest) {
 			// then MyJKKN API incl. lifecycle_status=all sweep — same coverage as
 			// the semester-marksheet report.
 			const registerNumbers = Object.values(studentRawMap).map(s => s.registerNo).filter(Boolean)
-			const { photoMap, dobMap, nameMap, extInfoMap } = await fetchProfileMaps(supabase, myjkknIds, registerNumbers)
+			const { photoMap, dobMap, nameMap, extInfoMap } = await fetchProfileMaps(supabase, myjkknIds, registerNumbers, effectiveProgramCode)
 
 			console.log(`[Consolidated Marksheet Batch] Photo/DOB/Name enrichment: ${Object.keys(photoMap).length} photos, ${Object.keys(dobMap).length} DOBs, ${Object.keys(nameMap).length} names`)
 
@@ -2143,52 +2191,32 @@ export async function GET(req: NextRequest) {
 				}
 			}
 
-			// 2. MyJKKN targeted fallback for anyone still missing name/gender
-			const stillMissing = registerNumbers.filter(rn => {
+			// 2. MyJKKN fallback for anyone still missing name/gender.
+			// Routed through fetchProfileMaps so it reuses the shared profile
+			// cache and the single bounded sweep. A per-learner
+			// `register_number` lookup is NOT an option: MyJKKN ignores that
+			// filter and answers with page 1 of the unfiltered list, so it only
+			// ever matched learners who happened to land in the first 200 rows —
+			// at one wasted request per learner.
+			const missingExtInfo = registerNumbers.filter(rn => {
 				const e = extInfoMap[rn]
 				return !e || (!e.firstName && !e.lastName) || !e.gender
 			})
-			if (stillMissing.length > 0 && myjkknIds.length > 0) {
-				const myjkknApiUrl = process.env.MYJKKN_API_URL || 'https://www.jkkn.ai/api'
-				const myjkknApiKey = process.env.MYJKKN_API_KEY || ''
-				if (myjkknApiKey) {
-					const CONCURRENCY = 6
-					for (let i = 0; i < stillMissing.length; i += CONCURRENCY) {
-						const batch = stillMissing.slice(i, i + CONCURRENCY)
-						await Promise.all(batch.map(async (regNo) => {
-							try {
-								const p = new URLSearchParams()
-								p.set('register_number', regNo)
-								p.set('limit', '200')
-								const resp = await fetch(
-									`${myjkknApiUrl}/api-management/learners/profiles?${p.toString()}`,
-									{
-										method: 'GET',
-										headers: {
-											'Authorization': `Bearer ${myjkknApiKey}`,
-											'Accept': 'application/json',
-											'Content-Type': 'application/json',
-										},
-										cache: 'no-store',
-									}
-								)
-								if (!resp.ok) return
-								const json = await resp.json()
-								const profiles: any[] = json.data || []
-								// Only accept an exact register_number match
-								const match = profiles.find((pp: any) => pp.register_number === regNo)
-								if (match) {
-									const e = extInfoMap[regNo] || {}
-									extInfoMap[regNo] = {
-										firstName: e.firstName || match.first_name || undefined,
-										lastName: e.lastName || match.last_name || undefined,
-										gender: e.gender || match.gender || undefined
-									}
-								}
-							} catch (e) {
-								console.warn(`[University Data Export] targeted profile lookup failed for ${regNo}:`, e)
-							}
-						}))
+			if (missingExtInfo.length > 0) {
+				const { extInfoMap: myjkknExt } = await fetchProfileMaps(
+					supabase,
+					myjkknIds,
+					missingExtInfo,
+					programCode
+				)
+				for (const regNo of missingExtInfo) {
+					const match = myjkknExt[regNo]
+					if (!match) continue
+					const e = extInfoMap[regNo] || {}
+					extInfoMap[regNo] = {
+						firstName: e.firstName || match.firstName || undefined,
+						lastName: e.lastName || match.lastName || undefined,
+						gender: e.gender || match.gender || undefined
 					}
 				}
 			}
@@ -2316,26 +2344,26 @@ export async function POST(req: NextRequest) {
 		}
 		const totalSemesters = await resolveTotalSemesters(supabase, programCode, institutionId, isPG)
 
-		// Fetch final_marks for the cohort
-		let fmQuery = supabase
-			.from('final_marks')
-			.select(FINAL_MARKS_SELECT)
-			.eq('institutions_id', institutionId)
-			.eq('program_code', programCode)
-			.eq('result_status', 'Published')
-			.eq('is_active', true)
-			.range(0, 999999)
+		// Fetch final_marks for the cohort — paginated, because a truncated
+		// fetch here strips learners of their later semesters and they get
+		// silently denied a folio.
+		const fmRows = await fetchAllFinalMarkRows(() => {
+			let q = supabase
+				.from('final_marks')
+				.select(FINAL_MARKS_SELECT)
+				.eq('institutions_id', institutionId)
+				.eq('program_code', programCode)
+				.eq('result_status', 'Published')
+				.eq('is_active', true)
+			if (studentIds && studentIds.length > 0) q = q.in('student_id', studentIds)
+			return q
+		})
 
-		if (studentIds && studentIds.length > 0) {
-			fmQuery = fmQuery.in('student_id', studentIds)
-		}
-
-		const { data: fmRows, error: fmErr } = await fmQuery
-		if (fmErr) throw fmErr
+		console.log(`[Consolidated Generate] Fetched ${fmRows.length} final_marks rows for ${programCode}`)
 
 		// Group by student
 		const studentGroups: Record<string, { rows: any[]; registerNo: string; name: string }> = {}
-		for (const row of (fmRows || [])) {
+		for (const row of fmRows) {
 			const sid = row.student_id
 			if (!sid) continue
 			if (!studentGroups[sid]) {
