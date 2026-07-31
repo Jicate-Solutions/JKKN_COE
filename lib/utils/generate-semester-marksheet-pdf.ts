@@ -367,6 +367,16 @@ function generateFolioPlaceholder(): string {
 	return '-'  // Show dash when folio not assigned from database
 }
 
+/**
+ * Format a CGPA for printing: TRUNCATED to 3 decimals, never rounded
+ * (6.75454… → "6.754"), then zero-padded. The APIs already truncate, so this
+ * only guards against a caller handing over an unrounded value — toFixed(3)
+ * alone would round it up.
+ */
+function formatCgpa(value: number): string {
+	return (Math.floor(value * 1000 + 1e-6) / 1000).toFixed(3)
+}
+
 // ============================================================
 // PDF GENERATOR FUNCTION
 // ============================================================
@@ -1245,7 +1255,7 @@ export function addStudentMarksheetToDoc(
 				// Consolidated: overall CGPA shown as a labelled value to the right,
 				// vertically level with the first data row (Part A) — e.g. "CGPA: 6.000"
 				doc.setFontSize(9)
-				doc.text(`CGPA: ${cgpaValue.toFixed(3)}`, MARGIN + 85, gpaRowY)
+				doc.text(`CGPA: ${formatCgpa(cgpaValue)}`, MARGIN + 85, gpaRowY)
 
 				// CLASSIFICATION only (e.g. "FIRST CLASS") below the CGPA —
 				// the "CUMULATIVE GRADE: <letter>" prefix is intentionally omitted
@@ -1262,7 +1272,7 @@ export function addStudentMarksheetToDoc(
 				// record: show the programme CGPA only (no cumulative grade line).
 				doc.setFont('helvetica', 'bold')
 				doc.setFontSize(9)
-				doc.text(`CGPA: ${data.summary.consolidatedCgpa.toFixed(3)}`, MARGIN + 85, gpaRowY)
+				doc.text(`CGPA: ${formatCgpa(data.summary.consolidatedCgpa)}`, MARGIN + 85, gpaRowY)
 				doc.setFontSize(8)
 				doc.setFont('helvetica', 'normal')
 			}
@@ -1292,7 +1302,7 @@ export function addStudentMarksheetToDoc(
 			if (!consolidated && data.summary.consolidatedCgpa !== null && data.summary.consolidatedCgpa !== undefined) {
 				doc.setFont('helvetica', 'bold')
 				doc.setFontSize(9)
-				doc.text(`CGPA: ${data.summary.consolidatedCgpa.toFixed(3)}`, MARGIN + 85, rowY)
+				doc.text(`CGPA: ${formatCgpa(data.summary.consolidatedCgpa)}`, MARGIN + 85, rowY)
 				doc.setFontSize(8)
 				doc.setFont('helvetica', 'normal')
 			}

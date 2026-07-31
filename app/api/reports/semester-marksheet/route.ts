@@ -124,6 +124,42 @@ function getPartOrder(partName: string): number {
 	return index >= 0 ? index : 999
 }
 
+/**
+ * Truncate a CGPA to 3 decimals — NEVER round.
+ * COE requirement: 594.40/88 = 6.75454… must read 6.754, never 6.755.
+ * The +1e-6 guards against float underflow so a true 6.755000 does not
+ * collapse to 6.754. Mirrors computeSummary() in
+ * app/api/reports/consolidated-marksheet/route.ts and the SQL TRUNC(x, 3).
+ */
+function truncateCgpa(value: number): number {
+	return Math.floor(value * 1000 + 1e-6) / 1000
+}
+
+/**
+ * Derive the programme CGPA from a consolidated_results row using the SAME
+ * method as the consolidated marksheet: total_credit_points /
+ * total_credits_registered, truncated to 3 decimals.
+ *
+ * The stored `cgpa` column is NOT trusted as-is: rows written before the
+ * 2026-07-23 widening migration were numeric(4,2), so their CGPA was ROUNDED
+ * to 2 decimals (6.754 → 6.75). Re-deriving from the stored credit totals
+ * reproduces the consolidated marksheet value exactly; the stored cgpa is
+ * only a fallback when the credit totals are missing.
+ */
+function deriveConsolidatedCgpa(row: any): number | null {
+	if (!row) return null
+	const points = Number(row.total_credit_points)
+	const credits = Number(row.total_credits_registered)
+	if (Number.isFinite(points) && Number.isFinite(credits) && credits > 0) {
+		return truncateCgpa(points / credits)
+	}
+	if (row.cgpa !== null && row.cgpa !== undefined) {
+		const stored = Number(row.cgpa)
+		if (Number.isFinite(stored)) return truncateCgpa(stored)
+	}
+	return null
+}
+
 // =====================================================
 // API HANDLERS
 // =====================================================
@@ -838,19 +874,20 @@ export async function GET(req: NextRequest) {
 
 			// Final-semester marksheets (UG sem 6, PG sem 4) show the programme CGPA
 			// when a consolidated_results record exists for the learner.
+			// Derived (not read raw) so it matches the consolidated marksheet's
+			// truncated-to-3-decimals value — see deriveConsolidatedCgpa().
 			let consolidatedCgpa: number | null = null
 			const finalSemester = isPG ? 4 : 6
 			if (parseInt(semester || '0') === finalSemester) {
 				let crQuery = supabase
 					.from('consolidated_results')
-					.select('cgpa')
+					.select('cgpa, total_credit_points, total_credits_registered')
 					.eq('student_id', studentId)
 					.eq('is_active', true)
 				if (semesterResult?.institutions_id) crQuery = crQuery.eq('institutions_id', semesterResult.institutions_id)
 				if (programCode) crQuery = crQuery.eq('program_code', programCode)
 				const { data: crRows } = await crQuery.limit(1)
-				const crCgpa = crRows?.[0]?.cgpa
-				if (crCgpa !== null && crCgpa !== undefined) consolidatedCgpa = Number(crCgpa)
+				consolidatedCgpa = deriveConsolidatedCgpa(crRows?.[0])
 			}
 
 			return NextResponse.json({
@@ -1223,13 +1260,15 @@ export async function GET(req: NextRequest) {
 
 			// Final-semester batches (UG sem 6, PG sem 4) also pull the programme
 			// CGPA from consolidated_results for learners who have a record there.
+			// Credit totals come along so the CGPA can be re-derived truncated —
+			// see deriveConsolidatedCgpa().
 			const consolidatedCgpaMap: Record<string, number> = {}
 			let consolidatedPromise: any = null
 			const batchFinalSemester = batchIsPG ? 4 : 6
 			if (studentIds.length > 0 && semester && parseInt(semester) === batchFinalSemester) {
 				consolidatedPromise = supabase
 					.from('consolidated_results')
-					.select('student_id, cgpa')
+					.select('student_id, cgpa, total_credit_points, total_credits_registered')
 					.in('student_id', studentIds)
 					.eq('institutions_id', institutionId)
 					.eq('is_active', true)
@@ -1469,7 +1508,8 @@ export async function GET(req: NextRequest) {
 					console.error('[Semester Marksheet Batch] consolidated_results query error:', crError)
 				} else if (crRows) {
 					crRows.forEach((cr: any) => {
-						if (cr.cgpa !== null && cr.cgpa !== undefined) consolidatedCgpaMap[cr.student_id] = Number(cr.cgpa)
+						const derived = deriveConsolidatedCgpa(cr)
+						if (derived !== null) consolidatedCgpaMap[cr.student_id] = derived
 					})
 				}
 			}
