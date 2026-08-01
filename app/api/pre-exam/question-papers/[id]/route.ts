@@ -65,7 +65,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
 		const supabase = getSupabaseServer()
 		const { id } = await params
 		const body = await req.json()
-		const { questions, status, subject_title, exam_date, paper_setter_id, duration_minutes, base_updated_at } = body
+		const { questions, status, subject_title, exam_date, paper_setter_id, duration_minutes, default_font, base_updated_at } = body
 
 		const { data: paper } = await supabase
 			.from('ia_question_papers')
@@ -151,6 +151,8 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
 		if (exam_date !== undefined) patch.exam_date = exam_date || null
 		if (paper_setter_id !== undefined) patch.paper_setter_id = paper_setter_id || null
 		if (duration_minutes !== undefined) patch.duration_minutes = duration_minutes ? parseInt(duration_minutes) : null
+		// Paper-wide common font (null clears it → questions/options fall back to defaults)
+		if (default_font !== undefined) patch.default_font = default_font || null
 
 		if (Object.keys(patch).length === 0) {
 			return NextResponse.json({ ...paper, questions: readQuestions(paper), saved_count: 0 })

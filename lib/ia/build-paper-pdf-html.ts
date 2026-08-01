@@ -210,8 +210,10 @@ function buildHtml(ctx: {
 	grouped: Map<string, any[]>
 	partByLabel: Map<string, any>
 	tamilFontCss: string
+	/** Paper-wide common font (already canonicalized), or null. */
+	defaultFont: string | null
 }): string {
-	const { variant, institutionName, address, examHeading, roman, semesterText, paper, grouped, partByLabel, tamilFontCss } = ctx
+	const { variant, institutionName, address, examHeading, roman, semesterText, paper, grouped, partByLabel, tamilFontCss, defaultFont } = ctx
 	const isTwoUp = variant === '2up'
 
 	// One table for the WHOLE paper (part headings are full-width rows) so every
@@ -240,7 +242,8 @@ function buildHtml(ctx: {
 						? `<tr><td colspan="4" class="or">(OR)</td></tr>`
 						: ''
 					const prefix = q.sub_label ? `${q.question_number} ${q.sub_label})` : `${q.question_number}.`
-					const body = renderQuestionHtml(q.question_text || '') + optionLineHtml(q.options, q.option_font)
+					// Per-question option font wins; otherwise fall back to the paper-wide common font.
+					const body = renderQuestionHtml(q.question_text || '') + optionLineHtml(q.options, q.option_font ?? defaultFont)
 					return `${orRow}<tr>
 						<td class="qno">${escapeHtml(prefix)}</td>
 						<td class="qbody">${body}</td>
@@ -335,6 +338,12 @@ function buildHtml(ctx: {
 	.kl { text-align: center; font-weight: bold; font-size: 9pt; }
 	.or { text-align: center; font-weight: bold; }
 	.qbody p { margin: 0 0 2px; }
+	/* Paper-wide common font: question bodies render in it unless an inline span
+	   (explicit per-selection font) overrides. Scoped to .qbody so question numbers,
+	   CO/K columns and headings keep the Latin serif — never put a legacy TSCII face
+	   on html/body (see the html/body rule above). Math resets to the serif stack via
+	   the math rule below, so formulae stay correct. */
+	${defaultFont ? `.qbody { font-family: '${defaultFont}'; }` : ''}
 	.options { margin-top: 2px; }
 	.options .opt { display: inline-block; margin-right: 12px; }
 	/* CO / K values sit at the top of the row, aligned with the question's first line. */
@@ -418,6 +427,9 @@ export async function buildPaperPdfHtml(
 		console.info('[QP PDF] Tamil fonts embedded:', available.join(', '))
 	}
 
+	// Paper-wide common font → canonicalize to an embedded face, or null.
+	const defaultFont = paper.default_font ? canonicalizeFontFamily(paper.default_font) : null
+
 	const html = buildHtml({
 		variant,
 		institutionName,
@@ -429,6 +441,7 @@ export async function buildPaperPdfHtml(
 		grouped,
 		partByLabel,
 		tamilFontCss,
+		defaultFont,
 	})
 	const isTwoUp = variant === '2up'
 

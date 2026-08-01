@@ -9,7 +9,7 @@ import {
 	PopoverContent,
 	PopoverTrigger,
 } from '@/components/ui/popover'
-import { CoeCalendarEvent, CoeCalendarCategory, COE_CATEGORY_CONFIG } from '@/types/coe-calendar'
+import { CoeCalendarEvent, resolveCategoryStyle } from '@/types/coe-calendar'
 
 interface CalendarExam {
 	id: string
@@ -437,7 +437,7 @@ export const ExamCalendar = memo(function ExamCalendar({
 									}
 
 									const event = chip.data as CoeCalendarEvent
-									const config = COE_CATEGORY_CONFIG[event.exam_category as CoeCalendarCategory]
+									const config = resolveCategoryStyle(event.exam_category)
 									const shortTitle = event.event_title
 										.replace(' - Last Date', '')
 										.replace('Last date for ', '')
@@ -535,7 +535,7 @@ export const ExamCalendar = memo(function ExamCalendar({
 											})}
 
 											{cell.coeEvents.map(event => {
-												const config = COE_CATEGORY_CONFIG[event.exam_category as CoeCalendarCategory]
+												const config = resolveCategoryStyle(event.exam_category)
 												return (
 													<div
 														key={event.id}
@@ -643,7 +643,7 @@ export const ExamCalendar = memo(function ExamCalendar({
 
 									{/* COE Calendar events */}
 									{group.coeEvents.map(event => {
-										const config = COE_CATEGORY_CONFIG[event.exam_category as CoeCalendarCategory]
+										const config = resolveCategoryStyle(event.exam_category)
 										return (
 											<div
 												key={event.id}

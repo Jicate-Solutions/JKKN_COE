@@ -31,7 +31,10 @@
    LATIN codepoints carry Tamil glyphs, so English text would render as Tamil.
    They apply only when the Font / Option font dropdown sets them on a span. */
 .qp-rich-editor-body {
-  font-family: var(--font-space-grotesk), 'Space Grotesk', system-ui, 'Noto Sans Tamil', sans-serif;
+  /* --qp-editor-font is set by the wrapper when a paper-wide common font is chosen;
+     otherwise it falls back to the default UI stack. Explicit per-selection font
+     marks (inline spans) still override this. */
+  font-family: var(--qp-editor-font, var(--font-space-grotesk), 'Space Grotesk', system-ui, 'Noto Sans Tamil', sans-serif);
 }
 
 /* Remove number input spinners for cleaner UI */

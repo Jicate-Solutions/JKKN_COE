@@ -38,6 +38,13 @@ interface Props {
 	disabled?: boolean
 	placeholder?: string
 	className?: string
+	/**
+	 * Paper-wide common font. Applied as the editor body's base font so unstyled
+	 * text renders in it live; an explicit per-selection font (toolbar) still
+	 * overrides via inline marks. Keeps the on-screen look in step with the PDF,
+	 * which reads the same default from the paper.
+	 */
+	defaultFontFamily?: string | null
 }
 
 // Empty-document HTML Tiptap emits — normalise to '' so an untouched question stays blank.
@@ -52,7 +59,7 @@ const FONT_OPTIONS = [
 	})),
 ]
 
-export function QuestionRichEditor({ value, onChange, onBlur, disabled, placeholder, className }: Props) {
+export function QuestionRichEditor({ value, onChange, onBlur, disabled, placeholder, className, defaultFontFamily }: Props) {
 	const [eqOpen, setEqOpen] = useState(false)
 	const [eqInitial, setEqInitial] = useState('')
 
@@ -137,10 +144,16 @@ export function QuestionRichEditor({ value, onChange, onBlur, disabled, placehol
 
 	const inTable = editor.isActive('table')
 	const currentFontFamily = String(editor.getAttributes('textStyle').fontFamily || '')
-	const selectedFont =
-		FONT_OPTIONS.find(
-			(o) => o.cssName && currentFontFamily.toLowerCase().includes(o.cssName.toLowerCase())
-		)?.value || 'default'
+	// The value the toolbar dropdown shows: an explicit mark on the caret wins;
+	// otherwise fall back to the paper-wide common font so the control reflects
+	// what's actually rendering.
+	const explicitFont = FONT_OPTIONS.find(
+		(o) => o.cssName && currentFontFamily.toLowerCase().includes(o.cssName.toLowerCase())
+	)?.value
+	const inheritedFont = defaultFontFamily
+		? FONT_OPTIONS.find((o) => o.cssName && o.cssName.toLowerCase() === defaultFontFamily.toLowerCase())?.value
+		: undefined
+	const selectedFont = explicitFont || inheritedFont || 'default'
 
 	const handleFontChange = (id: string) => {
 		const opt = FONT_OPTIONS.find((o) => o.value === id)
@@ -225,7 +238,17 @@ export function QuestionRichEditor({ value, onChange, onBlur, disabled, placehol
 				</div>
 			)}
 
-			<EditorContent editor={editor} className="qp-rich-editor" />
+			{/* Common font cascades onto the content via --qp-editor-font; explicit
+			    per-selection marks (inline spans) still override it. */}
+			<div
+				style={
+					defaultFontFamily
+						? ({ ['--qp-editor-font']: `'${defaultFontFamily}'` } as React.CSSProperties)
+						: undefined
+				}
+			>
+				<EditorContent editor={editor} className="qp-rich-editor" />
+			</div>
 
 			<EquationEditorDialog
 				open={eqOpen}

@@ -25,6 +25,7 @@ export const API_MODULES = [
 	'bos-experts',
 	'bos-reports',
 	'ia',
+	'coe-calendar',
 ] as const
 
 export const API_OPERATIONS = [

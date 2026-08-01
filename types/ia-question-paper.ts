@@ -209,6 +209,8 @@ export interface IaQuestionPaper {
 	exam_date?: string
 	duration_minutes?: number
 	max_marks?: number
+	/** Paper-wide default CSS font-family applied to all questions/options unless overridden. */
+	default_font?: string | null
 	status: PaperStatus
 	paper_setter_id?: string
 	created_at: string

@@ -672,6 +672,7 @@ export default function QuestionPapersPage() {
 					questions: editable ? questions : undefined,
 					subject_title: paper.subject_title,
 					exam_date: paper.exam_date,
+					default_font: paper.default_font ?? null, // paper-wide common font
 					base_updated_at: paper.updated_at, // optimistic-concurrency token
 					...(nextStatus ? { status: nextStatus } : {}),
 				}),
@@ -1509,6 +1510,36 @@ export default function QuestionPapersPage() {
 								) : null}
 							</div>
 
+							{/* Common Font — one control that sets the default font for every
+							    question and option in this paper. Individual questions/options
+							    can still override below. Persisted on Save. */}
+							<div className="flex flex-wrap items-center gap-2 rounded-md border bg-muted/30 px-3 py-2">
+								<Label className="whitespace-nowrap text-xs font-semibold">Common Font</Label>
+								<Select
+									value={paper.default_font || 'default'}
+									onValueChange={v => {
+										setDirty(true)
+										setPaper({ ...paper, default_font: v === 'default' ? null : v })
+									}}
+									disabled={!editable}
+								>
+									<SelectTrigger className="h-8 w-[170px] text-xs">
+										<SelectValue placeholder="Default" />
+									</SelectTrigger>
+									<SelectContent>
+										<SelectItem value="default" className="text-xs">Default</SelectItem>
+										{TAMIL_FONT_FAMILIES.map(f => (
+											<SelectItem key={f.id} value={f.cssName} className="text-xs">
+												{f.label}
+											</SelectItem>
+										))}
+									</SelectContent>
+								</Select>
+								<span className="text-xs text-muted-foreground">
+									Applies to all questions &amp; options (including new ones). Override any single one below · Save to keep.
+								</span>
+							</div>
+
 							<div className="grid grid-cols-2 gap-3">
 								<div>
 									<Label className="text-xs">Course Name</Label>
@@ -1656,6 +1687,7 @@ export default function QuestionPapersPage() {
 														value={q.question_text || ''}
 														disabled={!editable}
 														placeholder="Enter the question…"
+														defaultFontFamily={paper.default_font}
 														onChange={html => updateQuestion(q.id, { question_text: html })}
 													/>
 
@@ -1672,11 +1704,15 @@ export default function QuestionPapersPage() {
 																	}
 																	disabled={!editable}
 																>
-																	<SelectTrigger className="h-7 w-[150px] text-xs">
+																	<SelectTrigger className="h-7 w-[170px] text-xs">
 																		<SelectValue placeholder="Default" />
 																	</SelectTrigger>
 																	<SelectContent>
-																		<SelectItem value="default" className="text-xs">Default</SelectItem>
+																		<SelectItem value="default" className="text-xs">
+																			{paper.default_font
+																				? `Common (${TAMIL_FONT_FAMILIES.find(f => f.cssName === paper.default_font)?.label || paper.default_font})`
+																				: 'Default'}
+																		</SelectItem>
 																		{TAMIL_FONT_FAMILIES.map(f => (
 																			<SelectItem key={f.id} value={f.cssName} className="text-xs">
 																				{f.label}
@@ -1695,8 +1731,9 @@ export default function QuestionPapersPage() {
 																			value={o.text}
 																			disabled={!editable}
 																			style={
-																				q.option_font
-																					? { fontFamily: `'${q.option_font}'` }
+																				// Per-option override wins; otherwise inherit the paper-wide common font.
+																				(q.option_font || paper.default_font)
+																					? { fontFamily: `'${q.option_font || paper.default_font}'` }
 																					: undefined
 																			}
 																			onChange={e => updateOption(q.id, o.key, e.target.value)}
