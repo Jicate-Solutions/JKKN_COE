@@ -609,20 +609,39 @@ export function SemesterMarksheetTab() {
 				currentOperation: `Loading learner photos (0/${marksheets.length})...`
 			}))
 
-			const photoBase64Array: (string | null)[] = []
-			for (let i = 0; i < marksheets.length; i++) {
-				const data = marksheets[i]
-				if (data.student.photoUrl) {
-					const photo = await fetchImageAsBase64(data.student.photoUrl)
-					photoBase64Array.push(photo)
-				} else {
-					photoBase64Array.push(null)
-				}
+			// Photos are fetched in parallel batches, not one after another. A
+			// 175-learner programme used to serialise 175 round trips through
+			// /api/utils/image-to-base64 — minutes of dead time before jsPDF even
+			// started. The cache also collapses learners who share a photo URL to a
+			// single request. Concurrency is capped so the image API isn't flooded
+			// (fetchImageAsBase64 already backs off on 429).
+			const PHOTO_CONCURRENCY = 8
+			const photoBase64Array: (string | null)[] = new Array(marksheets.length).fill(null)
+			const photoCache = new Map<string, Promise<string | null>>()
+			let photosDone = 0
+
+			const photoTasks = marksheets
+				.map((data: any, index: number) => ({ url: data.student.photoUrl as string | undefined, index }))
+				.filter((t: { url?: string }) => !!t.url)
+
+			for (let i = 0; i < photoTasks.length; i += PHOTO_CONCURRENCY) {
+				const batch = photoTasks.slice(i, i + PHOTO_CONCURRENCY)
+				await Promise.all(batch.map(async ({ url, index }: { url?: string; index: number }) => {
+					try {
+						if (!photoCache.has(url!)) {
+							photoCache.set(url!, fetchImageAsBase64(url!))
+						}
+						photoBase64Array[index] = await photoCache.get(url!)!
+					} catch {
+						photoBase64Array[index] = null
+					}
+					photosDone++
+				}))
 
 				setPdfProgress(prev => ({
 					...prev,
-					currentStep: 1 + i + 1,
-					currentOperation: `Loading learner photos (${i + 1}/${marksheets.length})...`
+					currentStep: 1 + photosDone,
+					currentOperation: `Loading learner photos (${photosDone}/${photoTasks.length})...`
 				}))
 			}
 

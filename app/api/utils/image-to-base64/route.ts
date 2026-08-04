@@ -3,13 +3,66 @@ import { NextResponse } from 'next/server'
 /**
  * API route to fetch an image and convert it to base64
  * This is needed because client-side fetch of Supabase storage URLs may fail due to CORS
+ *
+ * PERFORMANCE: results are memoised per URL for CACHE_TTL_MS. Batch reports call
+ * this once per learner, and a user typically downloads the same cohort more than
+ * once (with header / without header, or after tweaking a filter) — without the
+ * cache every one of those runs re-downloaded every photo from origin. The cache
+ * is bounded by both entry count and total bytes so a large batch cannot grow the
+ * server heap without limit.
  */
+
+const CACHE_TTL_MS = 10 * 60 * 1000
+const MAX_ENTRIES = 600
+const MAX_CACHE_BYTES = 64 * 1024 * 1024
+
+interface CachedImage {
+	dataUri: string
+	bytes: number
+	cachedAt: number
+}
+
+const imageCache = new Map<string, CachedImage>()
+let cacheBytes = 0
+
+function readCache(url: string): string | null {
+	const hit = imageCache.get(url)
+	if (!hit) return null
+	if (Date.now() - hit.cachedAt > CACHE_TTL_MS) {
+		imageCache.delete(url)
+		cacheBytes -= hit.bytes
+		return null
+	}
+	// Refresh insertion order so hot images survive eviction
+	imageCache.delete(url)
+	imageCache.set(url, hit)
+	return hit.dataUri
+}
+
+function writeCache(url: string, dataUri: string) {
+	const bytes = dataUri.length
+	if (bytes > MAX_CACHE_BYTES) return  // single image too large to be worth caching
+
+	const existing = imageCache.get(url)
+	if (existing) cacheBytes -= existing.bytes
+
+	imageCache.set(url, { dataUri, bytes, cachedAt: Date.now() })
+	cacheBytes += bytes
+
+	// Evict oldest entries until back within both limits
+	while (imageCache.size > MAX_ENTRIES || cacheBytes > MAX_CACHE_BYTES) {
+		const oldestKey = imageCache.keys().next().value
+		if (oldestKey === undefined) break
+		const oldest = imageCache.get(oldestKey)!
+		imageCache.delete(oldestKey)
+		cacheBytes -= oldest.bytes
+	}
+}
+
 export async function GET(request: Request) {
 	try {
 		const { searchParams } = new URL(request.url)
 		const imageUrl = searchParams.get('url')
-
-		console.log('[Image to Base64] Received request for URL:', imageUrl?.substring(0, 100))
 
 		if (!imageUrl) {
 			return NextResponse.json({ error: 'URL parameter is required' }, { status: 400 })
@@ -17,16 +70,18 @@ export async function GET(request: Request) {
 
 		// Validate URL format
 		try {
-			const parsedUrl = new URL(imageUrl)
-			console.log('[Image to Base64] URL host:', parsedUrl.host)
+			new URL(imageUrl)
 		} catch {
 			console.error('[Image to Base64] Invalid URL format:', imageUrl)
 			return NextResponse.json({ error: 'Invalid URL format', base64: null }, { status: 200 })
 		}
 
-		// Fetch the image from the URL with timeout
-		console.log('[Image to Base64] Fetching image with 15s timeout...')
+		const cached = readCache(imageUrl)
+		if (cached) {
+			return NextResponse.json({ base64: cached, cached: true })
+		}
 
+		// Fetch the image from the URL with timeout
 		const controller = new AbortController()
 		const timeoutId = setTimeout(() => controller.abort(), 15000)  // 15 second timeout
 
@@ -42,15 +97,13 @@ export async function GET(request: Request) {
 		} catch (fetchError: any) {
 			clearTimeout(timeoutId)
 			if (fetchError.name === 'AbortError') {
-				console.error('[Image to Base64] Fetch timeout after 15 seconds')
+				console.error('[Image to Base64] Fetch timeout after 15 seconds:', imageUrl?.substring(0, 100))
 				return NextResponse.json({ error: 'Fetch timeout', base64: null }, { status: 200 })
 			}
 			console.error('[Image to Base64] Fetch error:', fetchError.message || fetchError)
 			return NextResponse.json({ error: `Fetch failed: ${fetchError.message}`, base64: null }, { status: 200 })
 		}
 		clearTimeout(timeoutId)
-
-		console.log('[Image to Base64] Fetch response status:', response.status, response.statusText)
 
 		if (!response.ok) {
 			console.warn(`[Image to Base64] Failed to fetch image: ${response.status} ${response.statusText}`)
@@ -59,7 +112,6 @@ export async function GET(request: Request) {
 
 		// Get the content type
 		const contentType = response.headers.get('content-type') || 'image/jpeg'
-		console.log('[Image to Base64] Content-Type:', contentType)
 
 		// Verify it's actually an image
 		if (!contentType.startsWith('image/')) {
@@ -78,10 +130,9 @@ export async function GET(request: Request) {
 
 		const base64 = Buffer.from(arrayBuffer).toString('base64')
 
-		console.log('[Image to Base64] Converted to base64, size:', base64.length, 'chars, bytes:', arrayBuffer.byteLength)
-
 		// Return as data URI
 		const dataUri = `data:${contentType};base64,${base64}`
+		writeCache(imageUrl, dataUri)
 
 		return NextResponse.json({ base64: dataUri })
 

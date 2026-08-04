@@ -1,6 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
 import { fetchAllMyJKKNPrograms } from '@/services/myjkkn-service'
+import {
+	getMyJKKNProfileIndex,
+	getCachedMyJKKNProfileIndex,
+	lookupMyJKKNProfile,
+	normalizeRegisterNumber,
+	profileDateOfBirth,
+	profileFullName,
+	profilePhotoUrl,
+} from '@/lib/myjkkn-profile-cache'
 
 // =====================================================
 // GRADE CONVERSION TABLE (UG)
@@ -161,6 +170,124 @@ function deriveConsolidatedCgpa(row: any): number | null {
 }
 
 // =====================================================
+// EXTERNAL LOOKUPS (MyJKKN) — cached
+// =====================================================
+
+/**
+ * Programme list for one MyJKKN institution, memoised process-wide.
+ * fetchAllMyJKKNPrograms is a paginated external HTTP call, and this route used
+ * to make it on EVERY request — once per institution id — purely to turn one
+ * program CODE into one program NAME. Programme lists change about never, so a
+ * short TTL removes the call from the hot path entirely.
+ */
+const PROGRAM_CACHE_TTL_MS = 10 * 60 * 1000
+const programCache = new Map<string, { programs: any[]; fetchedAt: number }>()
+
+async function getProgramsForInstitution(myjkknInstId: string): Promise<any[]> {
+	const hit = programCache.get(myjkknInstId)
+	if (hit && Date.now() - hit.fetchedAt < PROGRAM_CACHE_TTL_MS) return hit.programs
+
+	const programs = await fetchAllMyJKKNPrograms({
+		institution_id: myjkknInstId,
+		limit: 100,
+		is_active: true
+	})
+	programCache.set(myjkknInstId, { programs: programs || [], fetchedAt: Date.now() })
+	return programs || []
+}
+
+/**
+ * Programme name for a program CODE. Institutions are queried concurrently and
+ * the FIRST institution in the list that knows the code wins, preserving the
+ * priority order of the previous sequential loop.
+ */
+async function resolveProgramName(programCode: string, myjkknInstIds: string[]): Promise<string> {
+	if (!programCode || myjkknInstIds.length === 0) return ''
+	try {
+		const perInstitution = await Promise.all(
+			myjkknInstIds.map((id) => getProgramsForInstitution(id).catch(() => [] as any[]))
+		)
+		for (const programs of perInstitution) {
+			// MyJKKN returns program_id as the CODE (e.g. "UEN"), not a UUID
+			const match = programs.find((p: any) =>
+				p.program_id === programCode || p.program_code === programCode
+			)
+			if (match) return match.program_name || match.name || ''
+		}
+	} catch (error) {
+		console.warn('[Semester Marksheet] Failed to fetch program name from MyJKKN:', error)
+	}
+	return ''
+}
+
+/**
+ * Resolve ONE learner's MyJKKN profile as cheaply as possible.
+ *
+ * The steps are ordered by cost, cheapest first:
+ *   1. the process-wide profile index if it is already warm — no network at all
+ *   2. a targeted register_number query — ONE HTTP call, and it resolves the
+ *      active learners that make up the overwhelming majority of loads
+ *   3. the full cached sweep, which additionally covers non-active learners
+ *      (absent / discontinued / graduated) that step 2 never returns
+ *
+ * This replaces a cascade that ran an institution-roster pagination, THEN a
+ * global lifecycle sweep, THEN a targeted query — every one of them sequential,
+ * uncached, and re-run from scratch on every request. The ordering there
+ * encoded the sequence in which the fallbacks were added as bug fixes, not
+ * their cost, so the common case paid tens of round trips to jkkn.ai before
+ * reaching the single call that answers it.
+ */
+async function resolveLearnerProfile(registerNo: string): Promise<any | null> {
+	const want = normalizeRegisterNumber(registerNo)
+	if (!want) return null
+
+	const warm = lookupMyJKKNProfile(getCachedMyJKKNProfileIndex(), registerNo)
+	if (warm) return warm
+
+	const apiKey = process.env.MYJKKN_API_KEY || ''
+	if (!apiKey) {
+		console.log('[Semester Marksheet] No MyJKKN API key configured')
+		return null
+	}
+	const apiUrl = process.env.MYJKKN_API_URL || 'https://www.jkkn.ai/api'
+
+	try {
+		const params = new URLSearchParams()
+		params.set('register_number', registerNo)
+		params.set('limit', '200')
+		const resp = await fetch(
+			`${apiUrl}/api-management/learners/profiles?${params.toString()}`,
+			{
+				method: 'GET',
+				headers: {
+					'Authorization': `Bearer ${apiKey}`,
+					'Accept': 'application/json',
+					'Content-Type': 'application/json',
+				},
+				cache: 'no-store',
+			}
+		)
+		if (resp.ok) {
+			const json = await resp.json()
+			// IMPORTANT: accept ONLY an exact (normalised) register_number match. Do
+			// NOT fall back to profiles[0] — MyJKKN's register_number filter returns
+			// unrelated profiles when no exact match exists, and taking the first
+			// would attach a stranger's name / DOB / photo to this learner.
+			const hit = (json.data || []).find(
+				(p: any) => normalizeRegisterNumber(p.register_number) === want
+			)
+			if (hit) return hit
+		}
+	} catch (e) {
+		console.warn(`[Semester Marksheet] Targeted profile lookup failed for ${registerNo}:`, e)
+	}
+
+	// Not an active learner (or filed under a register-number variant the API's
+	// own filter does not match) — fall back to the full cached sweep.
+	return lookupMyJKKNProfile(await getMyJKKNProfileIndex(), registerNo)
+}
+
+// =====================================================
 // API HANDLERS
 // =====================================================
 
@@ -231,8 +358,30 @@ export async function GET(req: NextRequest) {
 			// 	query = query.eq('course_offerings.semester', parseInt(semester))
 			// }
 
+			// PERFORMANCE: the semester_results lookup below needs only studentId +
+			// sessionId, both known up front, so it does NOT have to wait for the
+			// (much heavier, 3-level-embed) final_marks query. Issue it now and await
+			// both together — saves a full DB round trip on every marksheet load.
+			//
+			// A learner can have multiple semester_results rows in the same session
+			// (regular semester + arrear semesters re-attempted), so .single() would
+			// error and drop folio/CGPA — pick the requested semester's row, falling
+			// back to the highest semester in the session.
+			const semesterResultsPromise = supabase
+				.from('semester_results')
+				.select('*')
+				.eq('student_id', studentId)
+				.eq('examination_session_id', sessionId)
+				.order('semester', { ascending: false })
+
 			// Override default 1000-row limit so students with many courses/arrears aren't truncated
-			const { data: finalMarks, error: fmError } = await query.range(0, 100000)
+			const [
+				{ data: finalMarks, error: fmError },
+				{ data: semesterResultRows },
+			] = await Promise.all([
+				query.range(0, 100000),
+				semesterResultsPromise,
+			])
 
 			if (fmError) {
 				console.error('Error fetching final marks:', fmError)
@@ -253,17 +402,7 @@ export async function GET(req: NextRequest) {
 			// learnerName starts as the exam_registration name; overridden from MyJKKN profile below
 			let learnerName = studentName
 
-			// Get semester result for GPA summary (fetch early to get program_code for learner lookup)
-			// A learner can have multiple semester_results rows in the same session
-			// (regular semester + arrear semesters re-attempted), so .single() would
-			// error and drop folio/CGPA — pick the requested semester's row,
-			// falling back to the highest semester in the session.
-			const { data: semesterResultRows } = await supabase
-				.from('semester_results')
-				.select('*')
-				.eq('student_id', studentId)
-				.eq('examination_session_id', sessionId)
-				.order('semester', { ascending: false })
+			// Semester result for the GPA summary — query issued above, alongside final_marks.
 			const semesterResult = (semester
 				? semesterResultRows?.find(sr => sr.semester === parseInt(semester))
 				: null) || semesterResultRows?.[0] || null
@@ -287,306 +426,67 @@ export async function GET(req: NextRequest) {
 				batchName?: string
 			} = {}
 
-			// Fetch learner profile from MyJKKN API (primary source)
-			// Include program_id (UUID) and institution to help narrow down results since search by register_number may not work
+			// PERFORMANCE: resolve the COE institution row ONCE, and resolve it
+			// CONCURRENTLY with the MyJKKN profile lookup — the two are independent.
+			//
+			// This block previously did three wasteful things on every marksheet load:
+			//   1. It queried `institutions` here; the profile block below queried the
+			//      same row a second time, and the program-name fallback a third time.
+			//   2. It ran a full fetchAllMyJKKNPrograms() — an external, paginated HTTP
+			//      request — purely to compute `myjkknProgramId`, which was assigned,
+			//      logged, and then NEVER READ anywhere in the route. Deleted outright.
+			//   3. It blocked the profile lookup instead of running alongside it.
 			const institutionIdForLookup = semesterResult?.institutions_id
-			console.log(`[Semester Marksheet] ===== LEARNER PROFILE LOOKUP =====`)
-			console.log(`[Semester Marksheet] registerNo: "${registerNo}"`)
-			console.log(`[Semester Marksheet] programCode: "${programCode}"`)
-			console.log(`[Semester Marksheet] institutionIdForLookup (COE): "${institutionIdForLookup}"`)
+			console.log(`[Semester Marksheet] ===== LEARNER PROFILE LOOKUP ===== registerNo="${registerNo}" programCode="${programCode}" institution="${institutionIdForLookup}"`)
 
-			// Get MyJKKN institution IDs for filtering
-			let myjkknInstitutionId: string | null = null
-			let myjkknProgramId: string | null = null  // UUID, not string code
-			if (institutionIdForLookup) {
-				const { data: institution, error: instErr } = await supabase
-					.from('institutions')
-					.select('myjkkn_institution_ids, institution_code')
-					.eq('id', institutionIdForLookup)
-					.single()
+			const [institutionRes, matchingProfile] = await Promise.all([
+				institutionIdForLookup
+					? supabase
+						.from('institutions')
+						.select('myjkkn_institution_ids, institution_code')
+						.eq('id', institutionIdForLookup)
+						.single()
+					: Promise.resolve({ data: null, error: null } as any),
+				registerNo ? resolveLearnerProfile(registerNo) : Promise.resolve(null),
+			])
 
-				if (instErr) {
-					console.error(`[Semester Marksheet] Failed to lookup institution:`, instErr)
-				}
-
-				console.log(`[Semester Marksheet] Institution lookup result:`, {
-					institution_code: institution?.institution_code,
-					myjkkn_institution_ids: institution?.myjkkn_institution_ids
-				})
-
-				const myjkknIds = institution?.myjkkn_institution_ids || []
-				if (myjkknIds.length > 0) {
-					myjkknInstitutionId = myjkknIds[0]  // Use first MyJKKN institution ID
-					console.log(`[Semester Marksheet] Using MyJKKN institution_id: ${myjkknInstitutionId}`)
-
-					// Look up MyJKKN program_id (UUID) from program_code
-					// The external API needs program_id (UUID), not program_code (string)
-					if (programCode) {
-						try {
-							// Use direct service call instead of internal HTTP request
-							const programs = await fetchAllMyJKKNPrograms({
-								institution_id: myjkknInstitutionId || undefined,
-								limit: 100,
-								is_active: true
-							})
-							// Find program by code (MyJKKN uses program_id as code field)
-							const matchingProg = programs.find((p: any) =>
-								(p.program_id === programCode || p.program_code === programCode)
-							)
-
-							if (matchingProg && matchingProg.id) {
-								myjkknProgramId = matchingProg.id  // This is the UUID
-								console.log(`[Semester Marksheet] Found MyJKKN program UUID: ${myjkknProgramId} for code ${programCode}`)
-							}
-						} catch (progErr) {
-							console.error('[Semester Marksheet] Failed to look up program_id:', progErr)
-							if (progErr instanceof Error) {
-								console.error('[Semester Marksheet] Program lookup error details:', {
-									name: progErr.name,
-									message: progErr.message,
-									stack: progErr.stack
-								})
-							}
-						}
-					}
-				}
+			if (institutionRes.error) {
+				console.error('[Semester Marksheet] Failed to lookup institution:', institutionRes.error)
 			}
+			const myjkknInstIds: string[] = institutionRes.data?.myjkkn_institution_ids || []
 
 			if (registerNo) {
 				// ====================================================================
-				// Fetch learner profile data from MyJKKN API (photo, DOB, extended info)
-				// Query each myjkkn_institution_id until we find a matching profile
+				// Apply the MyJKKN profile (photo, DOB, extended info) resolved above.
+				// resolveLearnerProfile() owns the lookup strategy — see its comment.
 				// ====================================================================
-				try {
-					const myjkknApiUrl = process.env.MYJKKN_API_URL || 'https://www.jkkn.ai/api'
-					const myjkknApiKey = process.env.MYJKKN_API_KEY || ''
+				if (matchingProfile) {
+					console.log(`[Semester Marksheet] Found MyJKKN profile for: ${registerNo}`)
 
-					console.log(`[Semester Marksheet] Fetching learner profile from MyJKKN API for: ${registerNo}`)
+					const resolvedPhoto = profilePhotoUrl(matchingProfile)
+					if (resolvedPhoto) photoUrl = resolvedPhoto
 
-					// Get myjkkn_institution_ids from the COE institution
-					const profileInstitutionId = semesterResult?.institutions_id
-					let myjkknInstIds: string[] = []
+					const resolvedDob = profileDateOfBirth(matchingProfile)
+					if (resolvedDob) dateOfBirth = resolvedDob
 
-					if (profileInstitutionId) {
-						const { data: profileInstitution } = await supabase
-							.from('institutions')
-							.select('myjkkn_institution_ids')
-							.eq('id', profileInstitutionId)
-							.single()
-
-						myjkknInstIds = profileInstitution?.myjkkn_institution_ids || []
-						console.log(`[Semester Marksheet] Institution ${profileInstitutionId} has ${myjkknInstIds.length} myjkkn_institution_ids:`, myjkknInstIds)
+					// Extract extended info for JasperReports compatibility
+					learnerExtendedInfo = {
+						firstName: matchingProfile.first_name || undefined,
+						middleName: undefined,
+						lastName: matchingProfile.last_name || undefined,
+						fatherName: matchingProfile.father_name || undefined,
+						motherName: matchingProfile.mother_name || undefined,
+						guardianName: undefined,
+						gender: matchingProfile.gender || undefined,
+						admissionYear: matchingProfile.admission_year?.toString() || undefined,
+						batchName: undefined
 					}
 
-					// Query MyJKKN API for each institution ID until we find a match
-					let matchingProfile: any = null
-
-					if (myjkknApiKey && myjkknInstIds.length > 0) {
-						for (const myjkknInstId of myjkknInstIds) {
-							if (matchingProfile) break // Stop if we found a match
-
-							// Paginate through all profiles.
-							// NOTE: the MyJKKN profiles endpoint HARD-CAPS every page at
-							// 200 rows regardless of the `limit` we request. The previous
-							// code requested limit=1000 and stopped as soon as a page
-							// returned fewer than 1000 rows (`length === pageSize`) — which
-							// is ALWAYS true on the very first page (200 !== 1000), so it
-							// only ever scanned the first 200 learners and silently dropped
-							// everyone after them (e.g. 25JUGCOM019). Keep paginating until a
-							// page comes back empty, matching the batch path's logic.
-							const pageSize = 200
-							const MAX_PAGES = 1000 // safety cap against an infinite loop
-							// Match register_number tolerantly (case/whitespace) — same as batch.
-							const normReg = (s: any) => (s ?? '').toString().trim().toUpperCase()
-							const wantReg = normReg(registerNo)
-							let page = 1
-							let hasMorePages = true
-
-							while (hasMorePages && !matchingProfile && page <= MAX_PAGES) {
-								const profileParams = new URLSearchParams()
-								profileParams.set('institution_id', myjkknInstId)
-								profileParams.set('limit', String(pageSize))
-								profileParams.set('page', String(page))
-
-								console.log(`[Semester Marksheet] Querying MyJKKN API with institution_id: ${myjkknInstId}, page: ${page}`)
-
-								const profileResponse = await fetch(
-									`${myjkknApiUrl}/api-management/learners/profiles?${profileParams.toString()}`,
-									{
-										method: 'GET',
-										headers: {
-											'Authorization': `Bearer ${myjkknApiKey}`,
-											'Accept': 'application/json',
-											'Content-Type': 'application/json',
-										},
-										cache: 'no-store',
-									}
-								)
-
-								if (profileResponse.ok) {
-									const profileData = await profileResponse.json()
-									const profiles = profileData.data || []
-									console.log(`[Semester Marksheet] MyJKKN institution ${myjkknInstId} page ${page} returned ${profiles.length} profiles`)
-
-									// Find matching profile by register_number (tolerant match)
-									matchingProfile = profiles.find((p: any) =>
-										normReg(p.register_number) === wantReg
-									)
-
-									if (matchingProfile) {
-										console.log(`[Semester Marksheet] Found profile in institution ${myjkknInstId}: register_number=${matchingProfile.register_number}, photo=${matchingProfile.student_photo_url?.substring(0, 60)}...`)
-									}
-
-									// Keep going until a page returns NO rows. Do not compare
-									// against the requested limit — the API caps pages at 200.
-									hasMorePages = profiles.length > 0
-									page++
-								} else {
-									hasMorePages = false
-								}
-							}
-						}
-					} else if (!myjkknApiKey) {
-						console.log(`[Semester Marksheet] No MyJKKN API key configured`)
-					} else {
-						console.log(`[Semester Marksheet] No myjkkn_institution_ids found for institution`)
-					}
-
-					// Non-active-learner sweep. The institution-paginated endpoint (and the
-					// register_number query) only return lifecycle_status='active' profiles, so
-					// an absent / discontinued / graduated learner is never matched above. Look
-					// for them explicitly via lifecycle_status=all — one pass covering every
-					// lifecycle state (the API ignores institution_id and register_number here,
-					// returning the full set to filter locally).
-					if (!matchingProfile && myjkknApiKey && registerNo) {
-						try {
-							const normRegInactive = (s: any) => (s ?? '').toString().trim().toUpperCase()
-							const wantRegInactive = normRegInactive(registerNo)
-							let inPage = 1
-							let inMore = true
-							while (inMore && !matchingProfile && inPage <= 1000) {
-								const p = new URLSearchParams()
-								p.set('lifecycle_status', 'all')
-								p.set('limit', '200')
-								p.set('page', String(inPage))
-								const resp = await fetch(
-									`${myjkknApiUrl}/api-management/learners/profiles?${p.toString()}`,
-									{
-										method: 'GET',
-										headers: {
-											'Authorization': `Bearer ${myjkknApiKey}`,
-											'Accept': 'application/json',
-											'Content-Type': 'application/json',
-										},
-										cache: 'no-store',
-									}
-								)
-								if (!resp.ok) break
-								const json = await resp.json()
-								const profiles: any[] = json.data || []
-								matchingProfile = profiles.find((pp: any) => normRegInactive(pp.register_number) === wantRegInactive) || null
-								inMore = profiles.length > 0
-								inPage++
-							}
-							if (matchingProfile) {
-								console.log(`[Semester Marksheet] Found INACTIVE learner profile for ${registerNo}`)
-							}
-						} catch (e) {
-							console.warn(`[Semester Marksheet] Inactive sweep error for ${registerNo}:`, e)
-						}
-					}
-
-					// Targeted fallback: if pagination missed the learner (e.g. they're
-					// filed under a different institution_id in MyJKKN), do a direct
-					// register_number lookup across all institutions.
-					if (!matchingProfile && myjkknApiKey && registerNo) {
-						console.log(`[Semester Marksheet] Pagination missed ${registerNo} — running targeted register_number lookup`)
-						try {
-							const targetParams = new URLSearchParams()
-							targetParams.set('register_number', registerNo)
-							targetParams.set('limit', '200')
-							const targetResp = await fetch(
-								`${myjkknApiUrl}/api-management/learners/profiles?${targetParams.toString()}`,
-								{
-									method: 'GET',
-									headers: {
-										'Authorization': `Bearer ${myjkknApiKey}`,
-										'Accept': 'application/json',
-										'Content-Type': 'application/json',
-									},
-									cache: 'no-store',
-								}
-							)
-							if (targetResp.ok) {
-								const targetData = await targetResp.json()
-								const targetProfiles = targetData.data || []
-								// IMPORTANT: only accept an exact register_number match.
-								// Do NOT fall back to targetProfiles[0] — MyJKKN's
-								// register_number query sometimes returns unrelated
-								// profiles when no exact match exists, and picking
-								// the first one would attach a stranger's data
-								// (name, DOB, photo) to the wrong learner.
-								matchingProfile = targetProfiles.find((p: any) =>
-									p.register_number === registerNo
-								) || null
-								if (matchingProfile) {
-									console.log(`[Semester Marksheet] Targeted lookup found profile for ${registerNo}`)
-								}
-							}
-						} catch (e) {
-							console.warn(`[Semester Marksheet] Targeted lookup error for ${registerNo}:`, e)
-						}
-					}
-
-					if (matchingProfile) {
-						console.log(`[Semester Marksheet] Found MyJKKN profile for: ${registerNo}`)
-
-						// Get photo URL from MyJKKN (try multiple possible field names)
-						const profilePhotoUrl = matchingProfile.student_photo_url ||
-							matchingProfile.photo_url ||
-							matchingProfile.profile_photo ||
-							matchingProfile.image_url
-						if (profilePhotoUrl) {
-							photoUrl = profilePhotoUrl
-							console.log(`[Semester Marksheet] Photo URL from MyJKKN: ${photoUrl}`)
-						}
-
-						// Get DOB from MyJKKN
-						if (matchingProfile.date_of_birth) {
-							const dob = new Date(matchingProfile.date_of_birth)
-							const dobYear = dob.getFullYear()
-							if (!isNaN(dob.getTime()) && dobYear >= 1900 && dobYear <= 2050) {
-								dateOfBirth = `${String(dob.getDate()).padStart(2, '0')}-${String(dob.getMonth() + 1).padStart(2, '0')}-${dobYear}`
-								console.log(`[Semester Marksheet] DOB from MyJKKN: ${dateOfBirth}`)
-							}
-						}
-
-						// Extract extended info for JasperReports compatibility
-						learnerExtendedInfo = {
-							firstName: matchingProfile.first_name || undefined,
-							middleName: undefined,
-							lastName: matchingProfile.last_name || undefined,
-							fatherName: matchingProfile.father_name || undefined,
-							motherName: matchingProfile.mother_name || undefined,
-							guardianName: undefined,
-							gender: matchingProfile.gender || undefined,
-							admissionYear: matchingProfile.admission_year?.toString() || undefined,
-							batchName: undefined
-						}
-
-						// Override name with MyJKKN profile name (more accurate than exam_registrations)
-						const myjkknFullName = matchingProfile.student_name || matchingProfile.full_name || ''
-						const constructedName = myjkknFullName ||
-							[matchingProfile.first_name, matchingProfile.last_name].filter(Boolean).join(' ')
-						if (constructedName) {
-							learnerName = constructedName
-							console.log(`[Semester Marksheet] Name from MyJKKN: "${learnerName}"`)
-						}
-					} else {
-						console.log(`[Semester Marksheet] No matching profile found in MyJKKN global query for: ${registerNo}`)
-					}
-				} catch (myjkknError) {
-					console.error('[Semester Marksheet] MyJKKN API error (non-critical):', myjkknError)
+					// Override name with MyJKKN profile name (more accurate than exam_registrations)
+					const constructedName = profileFullName(matchingProfile)
+					if (constructedName) learnerName = constructedName
+				} else {
+					console.log(`[Semester Marksheet] No matching profile found in MyJKKN for: ${registerNo}`)
 				}
 
 				// FALLBACK: the MyJKKN profiles API omits learners whose
@@ -628,43 +528,11 @@ export async function GET(req: NextRequest) {
 				})
 			}
 
+			// Program name falls back to MyJKKN. Reuses the institution row already
+			// fetched above (this used to re-query `institutions` a third time) and
+			// the memoised programme list.
 			if (programCode && !programName) {
-				// Get institution to look up program
-				const institutionId = semesterResult?.institutions_id
-				if (institutionId) {
-					const { data: institution } = await supabase
-						.from('institutions')
-						.select('myjkkn_institution_ids')
-						.eq('id', institutionId)
-						.single()
-
-					const myjkknIds: string[] = institution?.myjkkn_institution_ids || []
-
-					if (myjkknIds.length > 0) {
-						try {
-							// Use direct service call instead of internal HTTP request
-							for (const myjkknInstId of myjkknIds) {
-								const programs = await fetchAllMyJKKNPrograms({
-									institution_id: myjkknInstId,
-									limit: 100,
-									is_active: true
-								})
-
-								// Find program by code (MyJKKN uses program_id as code)
-								const matchingProgram = programs.find((p: any) =>
-									(p.program_id === programCode || p.program_code === programCode)
-								)
-
-								if (matchingProgram) {
-									programName = matchingProgram.program_name || (matchingProgram as any).name || ''
-									break
-								}
-							}
-						} catch (error) {
-							console.warn('[Semester Marksheet] Failed to fetch program name from MyJKKN:', error)
-						}
-					}
-				}
+				programName = await resolveProgramName(programCode, myjkknInstIds)
 			}
 
 			// Process courses and group by part
@@ -995,13 +863,30 @@ export async function GET(req: NextRequest) {
 				.eq('is_active', true)
 			if (programCode) fmScopeQuery = fmScopeQuery.eq('program_code', programCode)
 
-			// Override default 1000-row limit on both scope queries
-			const [srScopeRes, fmScopeRes] = await Promise.all([
+			// Override default 1000-row limit on both scope queries.
+			// The exam session and institution rows depend on nothing but the request
+			// params, so they ride along in this same round trip instead of being
+			// fetched afterwards, behind the (much heavier) final_marks read.
+			const [srScopeRes, fmScopeRes, examSessionResult, institutionResult] = await Promise.all([
 				srScopeQuery.range(0, 1000000),
 				fmScopeQuery.range(0, 1000000),
+				supabase
+					.from('examination_sessions')
+					.select('session_name, month_year')
+					.eq('id', sessionId)
+					.single(),
+				supabase
+					.from('institutions')
+					.select('myjkkn_institution_ids')
+					.eq('id', institutionId)
+					.single(),
 			])
 			if (srScopeRes.error) throw srScopeRes.error
 			if (fmScopeRes.error) throw fmScopeRes.error
+
+			const sessionName = examSessionResult.data?.session_name || ''
+			const sessionMonthYear = examSessionResult.data?.month_year || ''
+			const myjkknIds: string[] = institutionResult.data?.myjkkn_institution_ids || []
 
 			const scopedStudentIds = [...new Set([
 				...((srScopeRes.data || []).map((r: any) => r.student_id)),
@@ -1011,6 +896,16 @@ export async function GET(req: NextRequest) {
 			if (scopedStudentIds.length === 0) {
 				return NextResponse.json({ marksheets: [], total: 0 })
 			}
+
+			// PERFORMANCE: the MyJKKN profile sweep and the programme-name lookup are
+			// both external HTTP work that depends on nothing in the marks data, so
+			// both start NOW and overlap the final_marks fetch below instead of
+			// running after it. On a warm cache neither touches the network at all.
+			const profileIndexPromise = getMyJKKNProfileIndex().catch((err) => {
+				console.error('[Semester Marksheet Batch] MyJKKN profile sweep failed (non-critical):', err)
+				return null
+			})
+			const programNamePromise = resolveProgramName(programCode || '', myjkknIds)
 
 			// Fetch every paper for the scoped students (mirrors the single-student query:
 			// no program_code filter, no semester filter — so arrears from earlier
@@ -1085,52 +980,9 @@ export async function GET(req: NextRequest) {
 			const finalMarks = fmChunkResults.flatMap((r) => r.data || [])
 			console.log(`[Semester Marksheet Batch] Cohort=${scopedStudentIds.length}, fetched ${finalMarks.length} final_marks rows across ${idChunks.length} chunks`)
 
-			// Fetch exam session and institution in parallel (performance optimization)
-			const [examSessionResult, institutionResult] = await Promise.all([
-				supabase
-					.from('examination_sessions')
-					.select('session_name, month_year')
-					.eq('id', sessionId)
-					.single(),
-				supabase
-					.from('institutions')
-					.select('myjkkn_institution_ids')
-					.eq('id', institutionId)
-					.single()
-			])
-
-			const sessionName = examSessionResult.data?.session_name || ''
-			const sessionMonthYear = examSessionResult.data?.month_year || ''
-			const myjkknIds: string[] = institutionResult.data?.myjkkn_institution_ids || []
-
-			// Fetch program name from MyJKKN API for PG detection
-			let batchProgramName = ''
-			if (programCode && myjkknIds.length > 0) {
-
-				if (myjkknIds.length > 0) {
-					try {
-						// Use direct service call instead of internal HTTP request
-						for (const myjkknInstId of myjkknIds) {
-							const programs = await fetchAllMyJKKNPrograms({
-								institution_id: myjkknInstId,
-								limit: 100,
-								is_active: true
-							})
-
-							const matchingProgram = programs.find((p: any) =>
-								(p.program_id === programCode || p.program_code === programCode)
-							)
-
-							if (matchingProgram) {
-								batchProgramName = matchingProgram.program_name || (matchingProgram as any).name || ''
-								break
-							}
-						}
-					} catch (error) {
-						console.warn('[Semester Marksheet Batch] Failed to fetch program name from MyJKKN:', error)
-					}
-				}
-			}
+			// Program name for PG detection — the lookup was started before the
+			// final_marks fetch, so by now it has usually already resolved.
+			const batchProgramName = await programNamePromise
 
 			// Determine if this is a PG program (for passing percentage)
 			const batchIsPG = isPGProgram(programCode || '', batchProgramName)
@@ -1277,171 +1129,41 @@ export async function GET(req: NextRequest) {
 
 			if (registerNumbers.length > 0) {
 				// ====================================================================
-				// Fetch photo URL and DOB from MyJKKN API using myjkkn_institution_ids
+				// Photo / DOB / name from the shared MyJKKN profile index.
+				//
+				// This replaces three stacked, sequential, uncached passes over the
+				// MyJKKN API that ran on EVERY batch download:
+				//   1. an institution-scoped roster pagination (active learners only)
+				//   2. a full lifecycle_status=all sweep, page by page, for the
+				//      non-active learners pass 1 structurally cannot return
+				//   3. ONE targeted HTTP call per still-missing learner — O(cohort)
+				//      extra round trips, hundreds of them for a full programme
+				// Pass 2 is a superset of pass 1 (every lifecycle state, and the
+				// endpoint ignores institution_id anyway), and pass 3 re-asked the
+				// same endpoint for rows pass 2 had already returned. So one sweep,
+				// memoised process-wide, answers all three — and the sweep itself was
+				// started before the final_marks fetch, so it is usually already done.
 				// ====================================================================
-				console.log(`[Semester Marksheet Batch] Fetching from MyJKKN API for ${registerNumbers.length} students`)
+				console.log(`[Semester Marksheet Batch] Resolving MyJKKN profiles for ${registerNumbers.length} learners`)
 
-				try {
-					const myjkknApiUrl = process.env.MYJKKN_API_URL || 'https://www.jkkn.ai/api'
-					const myjkknApiKey = process.env.MYJKKN_API_KEY || ''
+				const profileIndex = await profileIndexPromise
 
-					// Match register numbers tolerantly: normalize case/whitespace and
-					// accept any of several MyJKKN id fields. Some profiles store the
-					// register number under roll_number / application_number, or with
-					// stray spacing/casing, which broke the strict `===` match and left
-					// those learners without photo/DOB.
-					const norm = (s: any) => (s ?? '').toString().trim().toUpperCase()
-					const regNoByNorm = new Map<string, string>()  // normalized -> original COE regNo
-					registerNumbers.forEach((rn) => regNoByNorm.set(norm(rn), rn))
+				if (profileIndex) {
+					for (const regNo of registerNumbers) {
+						const profile = lookupMyJKKNProfile(profileIndex, regNo)
+						if (!profile) continue
 
-					const applyProfile = (lp: any) => {
-						const candidates = [
-							lp.register_number, lp.registration_number,
-							lp.roll_number, lp.rollno, lp.roll_no,
-							lp.application_number,
-						]
-						let regNo: string | undefined
-						for (const c of candidates) {
-							const hit = regNoByNorm.get(norm(c))
-							if (hit) { regNo = hit; break }
-						}
-						if (!regNo) return
-						const profilePhotoUrl = lp.student_photo_url || lp.photo_url || lp.profile_photo || lp.image_url
-						if (profilePhotoUrl && !photoMap[regNo]) photoMap[regNo] = profilePhotoUrl
-						if (lp.date_of_birth && !dobMap[regNo]) {
-							const dob = new Date(lp.date_of_birth)
-							if (!isNaN(dob.getTime())) {
-								dobMap[regNo] = `${String(dob.getDate()).padStart(2, '0')}-${String(dob.getMonth() + 1).padStart(2, '0')}-${dob.getFullYear()}`
-							}
-						}
+						const photo = profilePhotoUrl(profile)
+						if (photo && !photoMap[regNo]) photoMap[regNo] = photo
+
+						const dob = profileDateOfBirth(profile)
+						if (dob && !dobMap[regNo]) dobMap[regNo] = dob
+
 						if (!nameMap[regNo]) {
-							const constructedName = lp.student_name || lp.full_name || [lp.first_name, lp.last_name].filter(Boolean).join(' ')
-							if (constructedName) nameMap[regNo] = constructedName
+							const name = profileFullName(profile)
+							if (name) nameMap[regNo] = name
 						}
 					}
-
-					if (myjkknApiKey && myjkknIds.length > 0) {
-						const pageSize = 1000
-						const MAX_PAGES = 1000      // safety cap
-						const PAGE_CONCURRENCY = 5  // fetch 5 pages at a time instead of 1
-
-						const fetchPage = async (myjkknInstId: string, page: number): Promise<any[] | null> => {
-							const p = new URLSearchParams()
-							p.set('institution_id', myjkknInstId)
-							p.set('limit', String(pageSize))
-							p.set('page', String(page))
-							const resp = await fetch(`${myjkknApiUrl}/api-management/learners/profiles?${p.toString()}`, {
-								method: 'GET',
-								headers: {
-									'Authorization': `Bearer ${myjkknApiKey}`,
-									'Accept': 'application/json',
-									'Content-Type': 'application/json',
-								},
-								cache: 'no-store',
-							})
-							if (!resp.ok) return null
-							const json = await resp.json()
-							return json.data || []
-						}
-
-						for (const myjkknInstId of myjkknIds) {
-							let startPage = 1
-							let done = false
-							while (!done && startPage <= MAX_PAGES) {
-								const pageNums = Array.from({ length: PAGE_CONCURRENCY }, (_, i) => startPage + i)
-								const results = await Promise.all(pageNums.map((pg) => fetchPage(myjkknInstId, pg)))
-								for (const profiles of results) {
-									// null (HTTP error) or empty page => reached the end
-									if (!profiles || profiles.length === 0) { done = true; continue }
-									profiles.forEach(applyProfile)
-								}
-								// Early-exit once every learner has both photo and DOB
-								if (registerNumbers.every((rn) => photoMap[rn] && dobMap[rn])) done = true
-								startPage += PAGE_CONCURRENCY
-							}
-						}
-
-						// Non-active learner sweep. The institution-paginated endpoint only returns
-						// lifecycle_status='active' profiles, so learners in any other state
-						// (inactive = absent / discontinued, graduated = passed out, etc.) never
-						// appear above and would show no photo/DOB. lifecycle_status=all returns
-						// every state in a single pass. This query ignores institution_id and
-						// returns the full set across all institutions; applyProfile only fills
-						// learners in this cohort, so the unrelated rows are harmless.
-						if (registerNumbers.some((rn) => !photoMap[rn] || !dobMap[rn])) {
-							let inPage = 1
-							let inDone = false
-							while (!inDone && inPage <= MAX_PAGES) {
-								const p = new URLSearchParams()
-								p.set('lifecycle_status', 'all')
-								p.set('limit', String(pageSize))
-								p.set('page', String(inPage))
-								const resp = await fetch(`${myjkknApiUrl}/api-management/learners/profiles?${p.toString()}`, {
-									method: 'GET',
-									headers: {
-										'Authorization': `Bearer ${myjkknApiKey}`,
-										'Accept': 'application/json',
-										'Content-Type': 'application/json',
-									},
-									cache: 'no-store',
-								})
-								if (!resp.ok) break
-								const json = await resp.json()
-								const profiles: any[] = json.data || []
-								if (profiles.length === 0) { inDone = true; break }
-								profiles.forEach(applyProfile)
-								// Stop early once every learner has photo + DOB.
-								if (!registerNumbers.some((rn) => !photoMap[rn] || !dobMap[rn])) { inDone = true; break }
-								inPage++
-							}
-						}
-
-						// Targeted fallback — for any learner the institution-paginated
-						// sweep didn't find (commonly because they're filed under a
-						// different MyJKKN institution_id), do a direct register_number
-						// query. This catches alumni / cross-institution promotions.
-						const stillMissingFromMyJKKN = registerNumbers.filter(
-							(rn) => !(photoMap[rn] && dobMap[rn] && nameMap[rn])
-						)
-						if (stillMissingFromMyJKKN.length > 0) {
-							console.log(`[Semester Marksheet Batch] ${stillMissingFromMyJKKN.length} learner(s) missing after pagination — running targeted register_number lookup`)
-							for (const regNo of stillMissingFromMyJKKN) {
-								try {
-									const p = new URLSearchParams()
-									p.set('register_number', regNo)
-									p.set('limit', '200')
-									const resp = await fetch(
-										`${myjkknApiUrl}/api-management/learners/profiles?${p.toString()}`,
-										{
-											method: 'GET',
-											headers: {
-												'Authorization': `Bearer ${myjkknApiKey}`,
-												'Accept': 'application/json',
-												'Content-Type': 'application/json',
-											},
-											cache: 'no-store',
-										}
-									)
-									if (resp.ok) {
-										const json = await resp.json()
-										const profiles: any[] = json.data || []
-										profiles.forEach(applyProfile)
-										if (profiles.length > 0) {
-											console.log(`[Semester Marksheet Batch] Targeted lookup found ${profiles.length} profile(s) for ${regNo}`)
-										}
-									}
-								} catch (e) {
-									console.warn(`[Semester Marksheet Batch] Targeted lookup error for ${regNo}:`, e)
-								}
-							}
-						}
-					} else if (!myjkknApiKey) {
-						console.log(`[Semester Marksheet Batch] No MyJKKN API key configured`)
-					} else {
-						console.log(`[Semester Marksheet Batch] No myjkkn_institution_ids found for institution`)
-					}
-				} catch (err) {
-					console.error('[Semester Marksheet Batch] MyJKKN fetch error (non-critical):', err)
 				}
 
 				// FALLBACK (same strategy the /api/myjkkn/learner-profiles proxy uses):
@@ -1454,16 +1176,26 @@ export async function GET(req: NextRequest) {
 				if (stillMissing.length > 0) {
 					console.log(`[Semester Marksheet Batch] ${stillMissing.length} learners missing photo/DOB from MyJKKN API — filling from local learners_profiles mirror`)
 					const LP_CHUNK = 50
+					const lpChunks: string[][] = []
 					for (let i = 0; i < stillMissing.length; i += LP_CHUNK) {
-						const chunk = stillMissing.slice(i, i + LP_CHUNK)
-						const { data: lpRows, error: lpErr } = await supabase
-							.from('learners_profiles')
-							.select('register_number, roll_number, first_name, last_name, date_of_birth, student_photo_url')
-							.in('register_number', chunk)
+						lpChunks.push(stillMissing.slice(i, i + LP_CHUNK))
+					}
+					// Chunks are independent — run them together instead of one round
+					// trip after another.
+					const lpResults = await Promise.all(
+						lpChunks.map((chunk) =>
+							supabase
+								.from('learners_profiles')
+								.select('register_number, roll_number, first_name, last_name, date_of_birth, student_photo_url')
+								.in('register_number', chunk)
+						)
+					)
+					for (const { data: lpRows, error: lpErr } of lpResults) {
 						if (lpErr) {
 							// learners_profiles table doesn't exist in this deployment — silently skip
-							if (lpErr.code === 'PGRST205') break
-							console.warn('[Semester Marksheet Batch] learners_profiles fallback error (non-critical):', lpErr)
+							if (lpErr.code !== 'PGRST205') {
+								console.warn('[Semester Marksheet Batch] learners_profiles fallback error (non-critical):', lpErr)
+							}
 							break
 						}
 						;(lpRows || []).forEach((lp: any) => {
@@ -1679,28 +1411,25 @@ export async function GET(req: NextRequest) {
 				return NextResponse.json({ programs: [] })
 			}
 
-			// Fetch programs from MyJKKN API for each institution ID
-			// Use direct service call instead of internal HTTP request
-			const allPrograms: any[] = []
-
-			for (const myjkknInstId of myjkknInstitutionIds) {
-				try {
-					const programs = await fetchAllMyJKKNPrograms({
-						institution_id: myjkknInstId,
-						limit: 100,
-						is_active: true
-					})
-
-					// Client-side filter by institution_id
-					const filteredPrograms = Array.isArray(programs)
-						? programs.filter((p: any) => p.institution_id === myjkknInstId && p.is_active !== false)
-						: []
-
-					allPrograms.push(...filteredPrograms)
-				} catch (error) {
-					console.error(`[Semester Marksheet API] Error fetching programs for inst ${myjkknInstId}:`, error)
-				}
-			}
+			// Fetch programs from MyJKKN for each institution ID. Institutions are
+			// queried concurrently and the programme lists are memoised, so this
+			// dropdown no longer pays a serial external round trip per institution
+			// every time the report page loads.
+			const perInstitutionPrograms = await Promise.all(
+				myjkknInstitutionIds.map(async (myjkknInstId) => {
+					try {
+						const programs = await getProgramsForInstitution(myjkknInstId)
+						// Client-side filter by institution_id
+						return Array.isArray(programs)
+							? programs.filter((p: any) => p.institution_id === myjkknInstId && p.is_active !== false)
+							: []
+					} catch (error) {
+						console.error(`[Semester Marksheet API] Error fetching programs for inst ${myjkknInstId}:`, error)
+						return []
+					}
+				})
+			)
+			const allPrograms: any[] = perInstitutionPrograms.flat()
 
 			// Deduplicate by program_code (MyJKKN uses program_id as the CODE field, not UUID!)
 			// Per myjkkn-coe-dev-rules: use program_id || program_code for the code field

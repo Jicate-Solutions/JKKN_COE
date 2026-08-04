@@ -713,13 +713,20 @@ export function addStudentMarksheetToDoc(
 	// Column widths for course table - must sum to CONTENT_WIDTH (194mm)
 	// UG: 14 columns with PART
 	// PG: 13 columns without PART (TITLE column gets extra width)
+	//
+	// COURSE CODE is 30mm (was 26mm, originally 20mm). Long codes (e.g.
+	// "24UGCOM1C05T") wrapped to two lines at the narrower widths, which made every
+	// row in the table two lines tall and ate the fixed vertical budget. Each
+	// widening is taken out of COURSE TITLE so the row total stays at 190mm — the
+	// manual outer border and the vertical column dividers below are drawn from
+	// these same widths, so the sum MUST NOT change.
 	const colWidths = consolidated
 		? (hidePartColumn
-			? [8, 20, 93, 7, 12, 12, 12, 12, 14]        // PG consolidated: 9 cols (no PART)
-			: [8, 8, 20, 85, 7, 12, 12, 12, 12, 14])    // UG consolidated: 10 cols (with PART)
+			? [8, 22, 91, 7, 12, 12, 12, 12, 14]        // PG consolidated: 9 cols (no PART)
+			: [8, 8, 30, 75, 7, 12, 12, 12, 12, 14])    // UG consolidated: 10 cols (with PART)
 		: (hidePartColumn
-			? [6, 20, 95, 6, 6, 6, 7, 7, 7, 7, 7, 7, 9]  // 13 columns = 190mm (no PART)
-			: [6, 6, 20, 89, 6, 6, 6, 7, 7, 7, 7, 7, 7, 9])  // 14 columns = 190mm (with PART)
+			? [6, 22, 93, 6, 6, 6, 7, 7, 7, 7, 7, 7, 9]  // 13 columns = 190mm (no PART)
+			: [6, 6, 30, 79, 6, 6, 6, 7, 7, 7, 7, 7, 7, 9])  // 14 columns = 190mm (with PART)
 
 	// ===== MANUALLY DRAW VERTICAL HEADER =====
 	const headerHeight = 25  // Total header height (two rows)
