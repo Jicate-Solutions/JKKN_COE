@@ -21,6 +21,8 @@ Internal admin/portal routes (under `/api/admin`, `/api/auth`, `/api/master`, `/
   - [Grade System](#grade-system)
   - [Courses](#courses)
   - [Course Mapping](#course-mapping)
+  - [Exam Timetables](#exam-timetables)
+  - [COE Calendar](#coe-calendar)
   - [Exam Registrations](#exam-registrations)
   - [Learners](#learners)
   - [Internal Marks](#internal-marks)
@@ -462,6 +464,162 @@ Update by ID. Body: `{ id, ...fieldsToUpdate }`. `institutions_id` cannot be cha
 #### `DELETE /api/v1/course-mapping?id=<uuid>`
 
 **Permission:** `course-mapping:delete`
+
+---
+
+### Exam Timetables
+
+The published exam schedule — one row per course, date and session (FN/AN).
+Programme, course and examination-session details are resolved server-side so a
+child app can render a timetable without any follow-up lookups.
+
+**View only:** there are no create/update/delete operations on this resource —
+timetables are authored in the COE portal.
+
+**Institution mapping.** MyJKKN keeps SF and aided institutions as separate
+records while COE collapses both into one; pass MyJKKN institution UUIDs via
+`myjkkn_institution_ids` and the API resolves them through
+`institutions.myjkkn_institution_ids`. COE-native callers can use
+`institution_code` or `institutions_id` instead.
+
+#### `GET /api/v1/exam-timetables`
+
+**Permission:** `timetables:read`
+
+**Query params:**
+
+| Name | Type | Required | Notes |
+|---|---|---|---|
+| `id` | UUID | no | Returns a single record as `{ data: {...} }` |
+| `myjkkn_institution_ids` | csv of UUIDs | no | MyJKKN institution UUIDs |
+| `institutions_id` | csv of UUIDs | no | COE institution UUIDs |
+| `institution_code` | csv | no | e.g. `CAS,JKKNCP` |
+| `examination_session_id` | csv of UUIDs | no | — |
+| `session_code` | csv | no | e.g. `NOV2025` |
+| `exam_type` | csv | no | `Theory`, `Practical`, `Project`, `Field Work`, `Group Project` |
+| `course_code` | csv | no | — |
+| `program_code` | csv | no | Resolved through `course_offerings` |
+| `session` | csv | no | `FN`, `AN` |
+| `exam_date` | date | no | Exact date, `YYYY-MM-DD` |
+| `from` / `to` | date | no | Inclusive date window |
+| `is_published` | string | no | `true` (**default**), `false`, `all` |
+| `search` | string | no | Matches `course_code` or `course_name` |
+| `limit` | number | no | Default 500, max 5000 |
+| `offset` | number | no | Default 0 |
+
+Only published rows are returned unless `is_published` says otherwise — an
+unpublished timetable is still a draft and must not reach learners.
+
+**Response (200):** `{ data: [...], count, total, limit, offset, request_id }`
+
+Each row:
+
+```json
+{
+  "id": "uuid",
+  "institutions_id": "uuid",
+  "institution_code": "CAS",
+  "institution_name": "JKKN College of Arts and Science",
+  "myjkkn_institution_ids": ["uuid", "uuid"],
+  "examination_session_id": "uuid",
+  "session_code": "NOV2025",
+  "session_name": "November 2025",
+  "month_year": "Nov 2025",
+  "course_id": "uuid",
+  "course_code": "BCA101",
+  "course_name": "Programming in C",
+  "course_offering_id": "uuid",
+  "program_id": "uuid",
+  "program_code": "BCA",
+  "program_name": "Bachelor of Computer Applications",
+  "program_type": "UG",
+  "semester": 1,
+  "section": null,
+  "exam_date": "2025-11-18",
+  "exam_time": "10:00:00",
+  "exam_end_time": "13:00:00",
+  "session": "FN",
+  "session_label": "Forenoon",
+  "duration_minutes": 180,
+  "exam_type": "Theory",
+  "exam_mode": "Offline",
+  "batch_capacity": null,
+  "is_published": true,
+  "instructions": null,
+  "created_at": "2025-10-02T06:11:23.000Z",
+  "updated_at": "2025-10-02T06:11:23.000Z"
+}
+```
+
+---
+
+### COE Calendar
+
+The examination calendar feed — exam windows, fee deadlines, result dates and
+other dated events, each tagged with the audience allowed to see it.
+
+**View only:** there are no create/update/delete operations on this resource —
+calendar events are authored in the COE portal.
+
+**Audience filtering is the point of this resource.** Every row carries
+`visible_to_roles`, and a caller only receives rows overlapping the roles it
+asks for. Rows tagged `COE_OFFICE` therefore never reach a learner-facing
+request. Omitting `roles` returns everything the key is allowed to see, so a
+child app rendering a learner view **must** pass `roles=LEARNERS`.
+
+Valid tags: `ALL`, `LEARNERS`, `TEACHING`, `NON_TEACHING`, `ADMINISTRATIVE`,
+`MANAGEMENT`, `ACCOUNTS`, `COE_OFFICE`. `ALL` is a stored value, not a
+tick-everything shortcut — a row tagged `{ALL}` overlaps every caller.
+
+`program_codes = null` means the event applies to every programme, and those
+rows are always returned alongside the ones naming a requested code.
+
+#### `GET /api/v1/coe-calendar`
+
+**Permission:** `coe-calendar:read`
+
+**Query params:**
+
+| Name | Type | Required | Notes |
+|---|---|---|---|
+| `id` | UUID | no | Returns a single record as `{ data: {...} }` |
+| `roles` | csv | no | Audience tags — see above |
+| `myjkkn_institution_ids` | csv of UUIDs | no | Matched against the row's mirrored `myjkkn_institution_ids` (GIN indexed) |
+| `institution_code` | string | no | Alternative institution filter |
+| `academic_year` | string | no | e.g. `2025-2026` |
+| `exam_category` | csv | no | Category codes |
+| `programme_type` | string | no | `UG`, `PG`, `BOTH` |
+| `program_codes` | csv | no | Also returns institution-wide events (`program_codes = null`) |
+| `from` / `to` | date | no | Date window; returns **overlapping** events, not just those starting inside |
+| `status` | string | no | `ACTIVE` (**default**), `INACTIVE`, `ALL` |
+| `limit` | number | no | Default 500, max 5000 |
+
+**Response (200):** `{ data: [...], count, request_id }`
+
+Each row carries the table's columns plus a resolved `category` block:
+
+```json
+{
+  "id": "uuid",
+  "institutions_id": "uuid",
+  "institution_code": "CAS",
+  "myjkkn_institution_ids": ["uuid", "uuid"],
+  "academic_year": "2025-2026",
+  "programme_type": "UG",
+  "exam_category": "ESE",
+  "event_title": "End Semester Examinations - Odd",
+  "event_description": "Theory examinations for all UG programmes",
+  "event_start_date": "2025-11-18",
+  "event_end_date": "2025-12-02",
+  "visible_to_roles": ["LEARNERS", "TEACHING"],
+  "program_codes": ["BCA", "BCOM"],
+  "status": "ACTIVE",
+  "category": { "label": "End Semester Exam", "color_code": "#e11d48" }
+}
+```
+
+`category` presentation travels with the feed so child apps don't have to
+hardcode colours that only exist in the COE UI.
 
 ---
 

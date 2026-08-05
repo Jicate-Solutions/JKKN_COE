@@ -42,6 +42,9 @@ const ENDPOINT_MODULE_ALIASES: Record<string, ApiModule> = {
 	// Aggregate CIA/internal view — governed by the CIA report permission, so a
 	// key already granted cia-report:read can call it.
 	'student-cia-view': 'cia-report',
+	// Exam timetable feed — the module is registered as `timetables`, so keys
+	// already granted timetables:* can call /api/v1/exam-timetables.
+	'exam-timetables': 'timetables',
 }
 
 /**

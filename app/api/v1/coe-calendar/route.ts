@@ -8,10 +8,24 @@ import { csv } from '@/lib/coe-calendar/validate'
 // CORS preflight for browser-based child apps
 export const OPTIONS = corsOptionsHandler
 
+const EVENT_SELECT =
+	'id, institutions_id, institution_code, myjkkn_institution_ids, academic_year,' +
+	' programme_type, exam_category, event_title, event_description,' +
+	' event_start_date, event_end_date, visible_to_roles, program_codes, status,' +
+	' is_bulk_uploaded, created_at, updated_at'
+
+/** Guards a stored row against the key's institution scope. */
+function institutionAllowed(context: ExternalApiContext, institutionsId: string): boolean {
+	if (!context.allowedInstitutionIds?.length) return true
+	return context.allowedInstitutionIds.includes(institutionsId)
+}
+
 /**
  * GET /api/v1/coe-calendar
  *
  * External COE calendar feed for MyJKKN and other child applications.
+ * **View only:** there are no create/update/delete operations on this resource —
+ * calendar events are authored in the COE portal.
  *
  * Permission required: coe-calendar:read
  * Auth: X-API-Key-Id + X-API-Secret headers
@@ -23,6 +37,7 @@ export const OPTIONS = corsOptionsHandler
  * callers rendering a learner view must pass roles=LEARNERS.
  *
  * Query params:
+ *   id                      single event UUID (returns one record)
  *   roles                   csv of audience tags (LEARNERS, TEACHING, ...)
  *   myjkkn_institution_ids  csv of MyJKKN institution UUIDs
  *   institution_code        alternative institution filter
@@ -39,6 +54,24 @@ export const GET = withExternalAuth(async (request: Request, context: ExternalAp
 	try {
 		const supabase = getSupabaseServer()
 		const { searchParams } = new URL(request.url)
+
+		// ---- single record ----
+		const id = searchParams.get('id')
+		if (id) {
+			const { data, error } = await supabase
+				.from('coe_calendar')
+				.select(EVENT_SELECT)
+				.eq('id', id)
+				.maybeSingle()
+
+			if (error || !data) {
+				return NextResponse.json({ error: 'Calendar event not found' }, { status: 404 })
+			}
+			if (!institutionAllowed(context, data.institutions_id)) {
+				return NextResponse.json({ error: 'Access denied for this institution' }, { status: 403 })
+			}
+			return NextResponse.json({ data, request_id: context.requestId })
+		}
 
 		const rolesParam = searchParams.get('roles')
 		const myjkknIds = csv(searchParams.get('myjkkn_institution_ids'))
