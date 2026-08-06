@@ -121,7 +121,10 @@ export const POST = withExternalAuth(async (request: Request, context: ExternalA
 		const { error: pErr } = await supabase.from('ia_template_parts').insert(rows)
 		if (pErr) {
 			await supabase.from('ia_paper_templates').delete().eq('id', template.id)
-			return NextResponse.json({ error: pErr.message }, { status: 500 })
+			return NextResponse.json(
+				{ error: `Parts could not be saved, so the template was not created: ${pErr.message}` },
+				{ status: 500 }
+			)
 		}
 	}
 
@@ -161,12 +164,28 @@ export const PUT = withExternalAuth(async (request: Request, context: ExternalAp
 	const { error } = await supabase.from('ia_paper_templates').update(patch).eq('id', id)
 	if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
+	// Replace parts wholesale, but restore the old rows if the insert fails —
+	// otherwise a rejected save leaves the template with zero parts.
 	if (Array.isArray(parts)) {
+		const { data: previousParts } = await supabase
+			.from('ia_template_parts')
+			.select('*')
+			.eq('template_id', id)
+
 		await supabase.from('ia_template_parts').delete().eq('template_id', id)
+
 		if (parts.length > 0) {
 			const rows = parts.map((p: any, i: number) => ({ template_id: id, ...normalizePart(p, i) }))
 			const { error: pErr } = await supabase.from('ia_template_parts').insert(rows)
-			if (pErr) return NextResponse.json({ error: pErr.message }, { status: 500 })
+			if (pErr) {
+				if (previousParts && previousParts.length > 0) {
+					await supabase.from('ia_template_parts').insert(previousParts)
+				}
+				return NextResponse.json(
+					{ error: `Parts could not be saved — the template is unchanged: ${pErr.message}` },
+					{ status: 500 }
+				)
+			}
 		}
 	}
 

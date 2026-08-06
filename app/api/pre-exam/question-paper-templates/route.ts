@@ -179,7 +179,10 @@ export async function POST(req: NextRequest) {
 				console.error('Error creating template parts:', partsError)
 				// Roll back the header so we don't leave a partless template
 				await supabase.from('ia_paper_templates').delete().eq('id', template.id)
-				return NextResponse.json({ error: partsError.message }, { status: 500 })
+				return NextResponse.json(
+					{ error: `Parts could not be saved, so the template was not created: ${partsError.message}` },
+					{ status: 500 }
+				)
 			}
 		}
 
@@ -238,9 +241,17 @@ export async function PUT(req: NextRequest) {
 			return NextResponse.json({ error: error.message }, { status: 500 })
 		}
 
-		// If parts supplied, replace them wholesale (simplest correct semantics)
+		// If parts supplied, replace them wholesale (simplest correct semantics).
+		// The delete must be undoable: without the restore below, a failing insert
+		// leaves the template with zero parts — a silent wipe of saved work.
 		if (Array.isArray(parts)) {
+			const { data: previousParts } = await supabase
+				.from('ia_template_parts')
+				.select('*')
+				.eq('template_id', id)
+
 			await supabase.from('ia_template_parts').delete().eq('template_id', id)
+
 			if (parts.length > 0) {
 				const rows = parts.map((p: any, i: number) => ({
 					template_id: id,
@@ -249,7 +260,13 @@ export async function PUT(req: NextRequest) {
 				const { error: partsError } = await supabase.from('ia_template_parts').insert(rows)
 				if (partsError) {
 					console.error('Error replacing template parts:', partsError)
-					return NextResponse.json({ error: partsError.message }, { status: 500 })
+					if (previousParts && previousParts.length > 0) {
+						await supabase.from('ia_template_parts').insert(previousParts)
+					}
+					return NextResponse.json(
+						{ error: `Parts could not be saved — the template is unchanged: ${partsError.message}` },
+						{ status: 500 }
+					)
 				}
 			}
 		}
