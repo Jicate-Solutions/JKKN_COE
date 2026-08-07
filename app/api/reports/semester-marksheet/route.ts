@@ -145,26 +145,26 @@ function truncateCgpa(value: number): number {
 }
 
 /**
- * Derive the programme CGPA from a consolidated_results row using the SAME
- * method as the consolidated marksheet: total_credit_points /
- * total_credits_registered, truncated to 3 decimals.
+ * Programme CGPA for a learner, read from consolidated_results.cgpa.
  *
- * The stored `cgpa` column is NOT trusted as-is: rows written before the
- * 2026-07-23 widening migration were numeric(4,2), so their CGPA was ROUNDED
- * to 2 decimals (6.754 → 6.75). Re-deriving from the stored credit totals
- * reproduces the consolidated marksheet value exactly; the stored cgpa is
- * only a fallback when the credit totals are missing.
+ * That column — numeric(5,3), already holding the truncated-to-3dp value — is
+ * the single source of truth shared by the consolidated marksheet, this
+ * semester marksheet and the university-data Excel export (MAJ_PER), so all
+ * three print the same number.
+ *
+ * Re-deriving from total_credit_points / total_credits_registered is kept only
+ * as a fallback for rows where cgpa was never written.
  */
-function deriveConsolidatedCgpa(row: any): number | null {
+function readConsolidatedCgpa(row: any): number | null {
 	if (!row) return null
+	if (row.cgpa !== null && row.cgpa !== undefined) {
+		const stored = Number(row.cgpa)
+		if (Number.isFinite(stored)) return stored
+	}
 	const points = Number(row.total_credit_points)
 	const credits = Number(row.total_credits_registered)
 	if (Number.isFinite(points) && Number.isFinite(credits) && credits > 0) {
 		return truncateCgpa(points / credits)
-	}
-	if (row.cgpa !== null && row.cgpa !== undefined) {
-		const stored = Number(row.cgpa)
-		if (Number.isFinite(stored)) return truncateCgpa(stored)
 	}
 	return null
 }
@@ -741,9 +741,9 @@ export async function GET(req: NextRequest) {
 			const percentage = totalMaxMarks > 0 ? Math.round((totalSecured / totalMaxMarks) * 10000) / 100 : 0
 
 			// Final-semester marksheets (UG sem 6, PG sem 4) show the programme CGPA
-			// when a consolidated_results record exists for the learner.
-			// Derived (not read raw) so it matches the consolidated marksheet's
-			// truncated-to-3-decimals value — see deriveConsolidatedCgpa().
+			// when a consolidated_results record exists for the learner — read
+			// straight from consolidated_results.cgpa so it matches the
+			// consolidated marksheet exactly — see readConsolidatedCgpa().
 			let consolidatedCgpa: number | null = null
 			const finalSemester = isPG ? 4 : 6
 			if (parseInt(semester || '0') === finalSemester) {
@@ -755,7 +755,7 @@ export async function GET(req: NextRequest) {
 				if (semesterResult?.institutions_id) crQuery = crQuery.eq('institutions_id', semesterResult.institutions_id)
 				if (programCode) crQuery = crQuery.eq('program_code', programCode)
 				const { data: crRows } = await crQuery.limit(1)
-				consolidatedCgpa = deriveConsolidatedCgpa(crRows?.[0])
+				consolidatedCgpa = readConsolidatedCgpa(crRows?.[0])
 			}
 
 			return NextResponse.json({
@@ -1112,8 +1112,8 @@ export async function GET(req: NextRequest) {
 
 			// Final-semester batches (UG sem 6, PG sem 4) also pull the programme
 			// CGPA from consolidated_results for learners who have a record there.
-			// Credit totals come along so the CGPA can be re-derived truncated —
-			// see deriveConsolidatedCgpa().
+			// Credit totals come along only as a fallback for rows whose cgpa
+			// was never written — see readConsolidatedCgpa().
 			const consolidatedCgpaMap: Record<string, number> = {}
 			let consolidatedPromise: any = null
 			const batchFinalSemester = batchIsPG ? 4 : 6
@@ -1240,8 +1240,8 @@ export async function GET(req: NextRequest) {
 					console.error('[Semester Marksheet Batch] consolidated_results query error:', crError)
 				} else if (crRows) {
 					crRows.forEach((cr: any) => {
-						const derived = deriveConsolidatedCgpa(cr)
-						if (derived !== null) consolidatedCgpaMap[cr.student_id] = derived
+						const cgpa = readConsolidatedCgpa(cr)
+						if (cgpa !== null) consolidatedCgpaMap[cr.student_id] = cgpa
 					})
 				}
 			}

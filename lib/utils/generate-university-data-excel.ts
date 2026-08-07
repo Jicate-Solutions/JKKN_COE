@@ -96,11 +96,13 @@ export async function generateUniversityDataExcel(
 			const raw = row[col.key]
 			cell.font = { name: 'Calibri', size: 11 }
 			cell.border = thinBorder
-			// MAJ_PER (CGPA) is written as a real number with 2-decimal format;
-			// every other column stays text so reg numbers / codes never coerce.
+			// MAJ_PER (CGPA) is written as a real number with 3-decimal format —
+			// consolidated_results.cgpa is numeric(5,3) and is truncated (not
+			// rounded) to 3dp upstream, so all three digits must survive the export.
+			// Every other column stays text so reg numbers / codes never coerce.
 			if (col.key === 'MAJ_PER' && typeof raw === 'number') {
 				cell.value = raw
-				cell.numFmt = '0.00'
+				cell.numFmt = '0.000'
 				cell.alignment = { horizontal: 'right', vertical: 'middle' }
 			} else {
 				cell.value = raw ?? ''

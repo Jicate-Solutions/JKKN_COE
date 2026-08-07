@@ -583,7 +583,15 @@ function buildPartBreakdown(courses: CourseResult[]): PartBreakdown[] {
 // COMPUTE SUMMARY FIELDS
 // =====================================================
 
-function computeSummary(courses: CourseResult[], formattedFolio: string | null) {
+/**
+ * @param storedCgpa consolidated_results.cgpa for this learner, when a row
+ *   exists. That column is the single source of truth for the programme CGPA —
+ *   the same value the university-data Excel export writes to MAJ_PER — so any
+ *   READ path must show it verbatim rather than recomputing. Omit it on the
+ *   `generate` action: that path is what WRITES the column, so it has to use
+ *   the course-level computation below.
+ */
+function computeSummary(courses: CourseResult[], formattedFolio: string | null, storedCgpa?: number | null) {
 	const totalCredits = courses.reduce((s, c) => s + (c.creditIncluded !== false ? c.credits : 0), 0)
 	const totalCreditPoints = courses.reduce((s, c) => s + (c.creditIncluded !== false ? c.creditPoints : 0), 0)
 	const creditsEarned = courses
@@ -593,9 +601,14 @@ function computeSummary(courses: CourseResult[], formattedFolio: string | null) 
 	// 594.40/88 = 6.75454… must store as 6.754, never 6.755. DB column is
 	// numeric(5,3). The +1e-6 guards against float underflow so a true
 	// 6.755000 doesn't collapse to 6.754. Mirrors the SQL TRUNC(x, 3) backfill.
-	const cgpa = totalCredits > 0
+	const computedCgpa = totalCredits > 0
 		? Math.floor((totalCreditPoints / totalCredits) * 1000 + 1e-6) / 1000
 		: 0
+	// Stored value wins; the computation above is the fallback for learners with
+	// no consolidated_results row yet (marksheet previewed before generation).
+	const cgpa = storedCgpa !== null && storedCgpa !== undefined && Number.isFinite(storedCgpa)
+		? storedCgpa
+		: computedCgpa
 	const hasFailures = courses.some(c => !c.isPassing)
 	const overallResult: 'PASS' | 'NEEDS IMPROVEMENT' = hasFailures ? 'NEEDS IMPROVEMENT' : 'PASS'
 	const classification = getClassification(cgpa)
@@ -1598,6 +1611,8 @@ export async function GET(req: NextRequest) {
 			let lastMonthYear = ''
 			let lastMonth = ''
 			let lastYear = ''
+			// Programme CGPA as stored — printed verbatim on the marksheet.
+			let storedCgpa: number | null = null
 
 			if (programUuid) {
 				const { data: consolidatedRow } = await supabase
@@ -1611,6 +1626,10 @@ export async function GET(req: NextRequest) {
 				if (consolidatedRow) {
 					formattedFolio = consolidatedRow.formatted_folio_number || null
 					lastSessionId = consolidatedRow.last_examination_session_id || null
+					if (consolidatedRow.cgpa !== null && consolidatedRow.cgpa !== undefined) {
+						const n = Number(consolidatedRow.cgpa)
+						if (Number.isFinite(n)) storedCgpa = n
+					}
 				}
 			}
 
@@ -1740,7 +1759,7 @@ export async function GET(req: NextRequest) {
 			}
 
 			const partBreakdown = buildPartBreakdown(courses)
-			const summary = computeSummary(courses, formattedFolio)
+			const summary = computeSummary(courses, formattedFolio, storedCgpa)
 
 			// Cumulative GRADE + CLASSIFICATION from the cgpa_grade_system table.
 			// Exemplary/Distinction only for first-appearance passes (no arrears).
@@ -1878,13 +1897,15 @@ export async function GET(req: NextRequest) {
 				? await resolveTotalSemesters(supabase, effectiveProgramCode, institutionId, batchIsPG)
 				: 0
 
-			// --- Kick off consolidated_results folio fetch concurrently ---
+			// --- Kick off consolidated_results folio + CGPA fetch concurrently ---
 			const folioMap: Record<string, string | null> = {}
+			// Programme CGPA as stored — printed verbatim on each marksheet.
+			const storedCgpaMap: Record<string, number> = {}
 			const consolidatedFolioPromise: Promise<void> = (async () => {
 				if (!programUuid || allStudentIds.length === 0) return
 				const { data: crRows, error: crErr } = await supabase
 					.from('consolidated_results')
-					.select('student_id, formatted_folio_number')
+					.select('student_id, formatted_folio_number, cgpa')
 					.in('student_id', allStudentIds)
 					.eq('institutions_id', institutionId)
 					.eq('program_id', programUuid)
@@ -1895,6 +1916,10 @@ export async function GET(req: NextRequest) {
 				}
 				for (const row of (crRows || [])) {
 					folioMap[row.student_id] = row.formatted_folio_number || null
+					if (row.cgpa !== null && row.cgpa !== undefined) {
+						const n = Number(row.cgpa)
+						if (Number.isFinite(n)) storedCgpaMap[row.student_id] = n
+					}
 				}
 			})()
 
@@ -1966,7 +1991,7 @@ export async function GET(req: NextRequest) {
 
 				const partBreakdown = buildPartBreakdown(courses)
 				const folio = folioMap[sid] ?? null
-				const summary = computeSummary(courses, folio)
+				const summary = computeSummary(courses, folio, storedCgpaMap[sid] ?? null)
 				// Exemplary/Distinction only for first-appearance passes (no arrears)
 				const batchFirstAppearance = !hasArrearHistory(student.rows, batchPassingPercentage)
 				const { cumulativeGrade, classification: cumulativeClassification } = resolveCumulativeGrade(batchCgpaBands, summary.cgpa, batchFirstAppearance)
