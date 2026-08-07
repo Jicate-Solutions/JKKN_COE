@@ -2056,9 +2056,10 @@ export async function GET(req: NextRequest) {
 		//   NEW_CODE  <- institutions.code
 		//   REG_NO / MAJ_PER (cgpa) / MAJ_CLSS_E (part_a_classification) /
 		//     YR_COMP (last_appearance_month + year)  <- consolidated_results
-		//   ENG_NAME / GENDER  <- MyJKKN learners/profiles
+		//   ENG_NAME (first_name) / T_INITIAL (last_name) / GENDER
+		//                                     <- learners_profiles / MyJKKN profiles
 		//   E_DEGNAME / E_BRANCHNA / DEGREE  <- MyJKKN programs
-		//   TAMIL_NAME / T_INITIAL / MEDIUM  <- no source, emitted blank
+		//   TAMIL_NAME  <- no source, emitted blank; MEDIUM <- derived from program name
 		// =====================================================
 		if (action === 'university-data-export') {
 			const institutionId = searchParams.get('institutionId')
@@ -2298,8 +2299,11 @@ export async function GET(req: NextRequest) {
 			// --- Build rows ---
 			const excelRows: UniversityDataRow[] = consolidatedRows.map((r: any) => {
 				const ext = extInfoMap[r.register_number] || {}
-				// ENG_NAME = learners_profile.first_name + last_name
-				const engName = [ext.firstName, ext.lastName].filter(Boolean).join(' ').toUpperCase()
+				// ENG_NAME = learners_profile.first_name (given name only)
+				// T_INITIAL = learners_profile.last_name (the initial, kept in its
+				// own column — do NOT append it to ENG_NAME)
+				const engName = (ext.firstName || '').toUpperCase()
+				const tInitial = (ext.lastName || '').toUpperCase()
 				const yrComp = [r.last_appearance_month, r.last_appearance_year]
 					.filter(v => v !== null && v !== undefined && v !== '')
 					.join(' ')
@@ -2315,7 +2319,7 @@ export async function GET(req: NextRequest) {
 					E_BRANCHNA: branchName,
 					ENG_NAME: engName,
 					TAMIL_NAME: '',
-					T_INITIAL: '',
+					T_INITIAL: tInitial,
 					// DEGREE = full program name (e.g. "M.Sc. MATHEMATICS")
 					DEGREE: programName,
 					MEDIUM: medium,

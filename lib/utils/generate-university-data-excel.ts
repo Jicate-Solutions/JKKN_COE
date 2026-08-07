@@ -13,9 +13,12 @@ import ExcelJS from 'exceljs'
  *   - NEW_CODE                          institutions.code
  *   - REG_NO / MAJ_PER / MAJ_CLSS_E /   consolidated_results
  *     YR_COMP
- *   - ENG_NAME / GENDER                 MyJKKN learners/profiles API
+ *   - ENG_NAME                          learners_profiles.first_name
+ *   - T_INITIAL                         learners_profiles.last_name
+ *   - GENDER                            learners_profiles.gender
  *   - E_DEGNAME / E_BRANCHNA / DEGREE   MyJKKN programs API
- *   - TAMIL_NAME / T_INITIAL / MEDIUM   no source in COE/MyJKKN — emitted blank
+ *   - MEDIUM                            derived from the program name
+ *   - TAMIL_NAME                        no source in COE/MyJKKN — emitted blank
  */
 
 export interface UniversityDataRow {
