@@ -1469,6 +1469,55 @@ export async function GET(req: NextRequest) {
 		}
 
 		// =====================================================
+		// ACTION: existing
+		// Lightweight read of consolidated_results rows already generated for a
+		// program. The generate page uses this to mark learners as "already
+		// generated" and pre-select only the missing ones — batch-marksheet
+		// recomputes every learner's full marksheet just to surface a folio,
+		// which is far too heavy for a status column.
+		// =====================================================
+		if (action === 'existing') {
+			const institutionId = searchParams.get('institutionId')
+			const programCode = searchParams.get('programCode')
+
+			if (!institutionId || !programCode) {
+				return NextResponse.json(
+					{ error: 'institutionId and programCode are required' },
+					{ status: 400 }
+				)
+			}
+
+			const programUuid = await resolveProgramUuid(supabase, programCode, institutionId)
+			if (!programUuid) {
+				// No local programs mirror row yet → nothing can have been generated
+				return NextResponse.json({ existing: [], total: 0 })
+			}
+
+			const { data: crRows, error: crErr } = await supabase
+				.from('consolidated_results')
+				.select('student_id, register_number, formatted_folio_number, cgpa, result_class')
+				.eq('institutions_id', institutionId)
+				.eq('program_id', programUuid)
+				.range(0, 999999)
+
+			if (crErr) {
+				console.error('[Consolidated Marksheet - existing]', crErr)
+				return NextResponse.json({ error: crErr.message }, { status: 500 })
+			}
+
+			return NextResponse.json({
+				existing: (crRows || []).map(r => ({
+					studentId: r.student_id,
+					registerNo: r.register_number,
+					folio: r.formatted_folio_number || null,
+					cgpa: r.cgpa,
+					resultClass: r.result_class
+				})),
+				total: crRows?.length || 0
+			})
+		}
+
+		// =====================================================
 		// ACTION: student-marksheet
 		// Full consolidated marksheet for a single learner
 		// =====================================================
@@ -2344,22 +2393,78 @@ export async function POST(req: NextRequest) {
 		}
 		const totalSemesters = await resolveTotalSemesters(supabase, programCode, institutionId, isPG)
 
+		// -------------------------------------------------
+		// Already-generated guard — INSERT ONLY, never update.
+		// A consolidated CGPA is computed once and then frozen: once a learner
+		// has a consolidated_results row, this endpoint must never recompute or
+		// overwrite it (folio numbers are printed/shared, and a silent CGPA
+		// change after issue is not acceptable). Only learners with no row are
+		// generated. Fetched unfiltered by student — one row per graduating
+		// learner is small, and a long .in() list truncates the GET URL.
+		// -------------------------------------------------
+		const existingByStudent: Record<
+			string,
+			{ id: string; registerNo: string | null; folio: string | null; hasFolio: boolean }
+		> = {}
+		{
+			const { data: exRows, error: exErr } = await supabase
+				.from('consolidated_results')
+				.select('id, student_id, register_number, folio_number, formatted_folio_number')
+				.eq('institutions_id', institutionId)
+				.eq('program_id', programUuid)
+				.range(0, 999999)
+
+			if (exErr) {
+				console.error('[Consolidated Generate] Existing-row lookup failed:', exErr)
+				return NextResponse.json(
+					{ error: 'Failed to read existing consolidated results', detail: exErr.message },
+					{ status: 500 }
+				)
+			}
+			for (const r of (exRows || [])) {
+				if (!r.student_id) continue
+				existingByStudent[r.student_id] = {
+					id: r.id,
+					registerNo: r.register_number || null,
+					folio: r.formatted_folio_number || null,
+					hasFolio: !!r.folio_number
+				}
+			}
+		}
+
+		const alreadyGenerated: { studentId: string; registerNo: string; folio: string | null }[] = []
+
+		// Requested learners that already have a row — reported back, not touched
+		const requestedIds = studentIds && studentIds.length > 0 ? studentIds : null
+		if (requestedIds) {
+			for (const id of requestedIds) {
+				const ex = existingByStudent[id]
+				if (ex) alreadyGenerated.push({ studentId: id, registerNo: ex.registerNo || '', folio: ex.folio })
+			}
+		}
+
+		// Only the missing learners go through compute + insert
+		const pendingIds = requestedIds ? requestedIds.filter(id => !existingByStudent[id]) : null
+
 		// Fetch final_marks for the cohort — paginated, because a truncated
 		// fetch here strips learners of their later semesters and they get
-		// silently denied a folio.
-		const fmRows = await fetchAllFinalMarkRows(() => {
-			let q = supabase
-				.from('final_marks')
-				.select(FINAL_MARKS_SELECT)
-				.eq('institutions_id', institutionId)
-				.eq('program_code', programCode)
-				.eq('result_status', 'Published')
-				.eq('is_active', true)
-			if (studentIds && studentIds.length > 0) q = q.in('student_id', studentIds)
-			return q
-		})
+		// silently denied a folio. Skipped entirely when every requested
+		// learner already has a consolidated row.
+		const fmRows = (pendingIds && pendingIds.length === 0)
+			? []
+			: await fetchAllFinalMarkRows(() => {
+				let q = supabase
+					.from('final_marks')
+					.select(FINAL_MARKS_SELECT)
+					.eq('institutions_id', institutionId)
+					.eq('program_code', programCode)
+					.eq('result_status', 'Published')
+					.eq('is_active', true)
+				if (pendingIds && pendingIds.length > 0) q = q.in('student_id', pendingIds)
+				return q
+			})
 
-		console.log(`[Consolidated Generate] Fetched ${fmRows.length} final_marks rows for ${programCode}`)
+		console.log(`[Consolidated Generate] Fetched ${fmRows.length} final_marks rows for ${programCode} (already generated: ${Object.keys(existingByStudent).length})`)
 
 		// Group by student
 		const studentGroups: Record<string, { rows: any[]; registerNo: string; name: string }> = {}
@@ -2385,6 +2490,20 @@ export async function POST(req: NextRequest) {
 		const generatedRowIds: string[] = []
 
 		for (const [sid, group] of Object.entries(studentGroups)) {
+			// Already has a consolidated row → leave it exactly as issued.
+			// (Covers the whole-program run, where pendingIds is null.)
+			const existingRow = existingByStudent[sid]
+			if (existingRow) {
+				if (!requestedIds) {
+					alreadyGenerated.push({
+						studentId: sid,
+						registerNo: existingRow.registerNo || group.registerNo,
+						folio: existingRow.folio
+					})
+				}
+				continue
+			}
+
 			const deduped = deduplicateBestAttempt(group.rows)
 			const courses = deduped
 				.map(fm => processFinalMarkRow(fm, passingPercentage))
@@ -2474,7 +2593,7 @@ export async function POST(req: NextRequest) {
 				part_b_classification: partColMap['Part B']?.classification
 			}
 
-			const upsertRow = {
+			const insertRow = {
 				institutions_id: institutionId,
 				student_id: sid,
 				program_id: programUuid,
@@ -2507,34 +2626,50 @@ export async function POST(req: NextRequest) {
 				...partRow
 			}
 
-			// Upsert by (institutions_id, student_id, program_id)
-			const { data: upserted, error: upsertErr } = await supabase
+			// INSERT only — never upsert. The unique key
+			// (institutions_id, student_id, program_id) is the backstop for a
+			// row created between the pre-check above and this write.
+			const { data: inserted, error: insertErr } = await supabase
 				.from('consolidated_results')
-				.upsert(upsertRow, {
-					onConflict: 'institutions_id,student_id,program_id',
-					ignoreDuplicates: false
-				})
+				.insert(insertRow)
 				.select('id, folio_number')
 				.single()
 
-			if (upsertErr) {
-				console.error('[Consolidated Generate] Upsert error for', sid, upsertErr)
-				skipped.push({ studentId: sid, registerNo: group.registerNo, reason: 'Database upsert failed' })
+			if (insertErr) {
+				if ((insertErr as any).code === '23505') {
+					// Raced with a concurrent generate — treat as already
+					// generated, do not overwrite the winner's row.
+					alreadyGenerated.push({ studentId: sid, registerNo: group.registerNo, folio: null })
+					continue
+				}
+				console.error('[Consolidated Generate] Insert error for', sid, insertErr)
+				skipped.push({ studentId: sid, registerNo: group.registerNo, reason: 'Database insert failed' })
 				continue
 			}
 
 			generated.push({
-				id: upserted.id,
+				id: inserted.id,
 				studentId: sid,
 				registerNo: group.registerNo,
 				name: group.name
 			})
-			if (!upserted.folio_number) {
-				generatedRowIds.push(upserted.id)
+			if (!inserted.folio_number) {
+				generatedRowIds.push(inserted.id)
 			}
 		}
 
-		// Bulk-assign folios for newly-created rows that don't have one yet
+		// An existing row that never got a folio is unusable (the marksheet is
+		// shared by folio), so complete it. This assigns the missing folio only —
+		// no CGPA or credit column is recomputed or rewritten.
+		const folioBackfillIds = Object.entries(existingByStudent)
+			.filter(([sid, ex]) => !ex.hasFolio && (!requestedIds || requestedIds.includes(sid)))
+			.map(([, ex]) => ex.id)
+		if (folioBackfillIds.length > 0) {
+			console.log(`[Consolidated Generate] Back-filling folio for ${folioBackfillIds.length} existing row(s) with no folio`)
+			generatedRowIds.push(...folioBackfillIds)
+		}
+
+		// Bulk-assign folios for rows that don't have one yet
 		let folioAssignedCount = 0
 		const folioResults: any[] = []
 		if (generatedRowIds.length > 0) {
@@ -2550,11 +2685,14 @@ export async function POST(req: NextRequest) {
 			}
 		}
 
-		console.log(`[Consolidated Generate] generated=${generated.length} skipped=${skipped.length} folios=${folioAssignedCount}`)
+		console.log(`[Consolidated Generate] generated=${generated.length} alreadyGenerated=${alreadyGenerated.length} skipped=${skipped.length} folios=${folioAssignedCount}`)
 
 		return NextResponse.json({
 			generated: generated.length,
+			alreadyGeneratedCount: alreadyGenerated.length,
+			alreadyGenerated,
 			folioAssignedCount,
+			folioBackfilledCount: folioBackfillIds.length,
 			folioResults,
 			learners: generated,
 			skipped

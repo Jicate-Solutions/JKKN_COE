@@ -32,7 +32,10 @@ interface Program { program_code: string; program_name: string }
 interface Eligible { id: string; registerNo: string; name: string }
 interface GenerateResult {
 	generated: number
+	alreadyGeneratedCount: number
+	alreadyGenerated: Array<{ studentId: string; registerNo: string; folio: string | null }>
 	folioAssignedCount: number
+	folioBackfilledCount: number
 	folioResults: Array<{
 		consolidated_result_id: string
 		assigned_folio_prefix: string
@@ -73,7 +76,10 @@ export default function GenerateConsolidatedMarksheetPage() {
 	const [programOpen, setProgramOpen] = useState(false)
 
 	const [result, setResult] = useState<GenerateResult | null>(null)
-	const [existingFolios, setExistingFolios] = useState<Record<string, string>>({})
+	// studentId → folio (null when the row exists but has no folio yet).
+	// A key being present means "already generated" — those learners are never
+	// regenerated, so they are excluded from selection.
+	const [existingFolios, setExistingFolios] = useState<Record<string, string | null>>({})
 
 	useEffect(() => { if (isReady) fetchInstitutions() }, [isReady])
 	useEffect(() => {
@@ -142,21 +148,23 @@ export default function GenerateConsolidatedMarksheetPage() {
 			}
 			const list: Eligible[] = data.students || []
 			setEligible(list)
-			// Select all by default
-			setSelectedIds(new Set(list.map(l => l.id)))
 
-			// Fetch existing folios so we can show "already generated" status
+			// Read which learners already have a consolidated result, so only
+			// the missing ones are pre-selected — an existing CGPA is never
+			// regenerated.
+			let map: Record<string, string | null> = {}
 			if (list.length > 0) {
-				const folioRes = await fetch(`/api/reports/consolidated-marksheet?action=batch-marksheet&institutionId=${institutionId}&programCode=${encodeURIComponent(programCode)}`)
-				if (folioRes.ok) {
-					const folioData = await folioRes.json()
-					const map: Record<string, string> = {}
-					for (const m of (folioData.marksheets || [])) {
-						if (m.summary?.formattedFolio) map[m.student.id] = m.summary.formattedFolio
+				const existingRes = await fetch(`/api/reports/consolidated-marksheet?action=existing&institutionId=${institutionId}&programCode=${encodeURIComponent(programCode)}`)
+				if (existingRes.ok) {
+					const existingData = await existingRes.json()
+					for (const e of (existingData.existing || [])) {
+						map[e.studentId] = e.folio || null
 					}
-					setExistingFolios(map)
 				}
 			}
+			setExistingFolios(map)
+			// Select only learners with no consolidated result yet
+			setSelectedIds(new Set(list.filter(l => !(l.id in map)).map(l => l.id)))
 		} catch (e) {
 			console.error('[Generate Consolidated] eligible:', e)
 		} finally {
@@ -171,6 +179,11 @@ export default function GenerateConsolidatedMarksheetPage() {
 		}
 	}, [selectedProgramCode, selectedInstitutionId, fetchEligible])
 
+	// Already-generated learners are excluded from every count and from
+	// selection — their CGPA and folio are issued and must not be recomputed.
+	const pending = eligible.filter(l => !(l.id in existingFolios))
+	const generatedCount = eligible.length - pending.length
+
 	const toggleOne = (id: string, checked: boolean) => {
 		setSelectedIds(prev => {
 			const next = new Set(prev)
@@ -181,7 +194,8 @@ export default function GenerateConsolidatedMarksheetPage() {
 	}
 
 	const toggleAll = (checked: boolean) => {
-		if (checked) setSelectedIds(new Set(eligible.map(l => l.id)))
+		// "Select all" means all pending learners — already-generated ones stay out
+		if (checked) setSelectedIds(new Set(pending.map(l => l.id)))
 		else setSelectedIds(new Set())
 	}
 
@@ -226,16 +240,29 @@ export default function GenerateConsolidatedMarksheetPage() {
 			}))
 			setResult({ ...data, learners: learnersWithFolios })
 
-			// Refresh existing folio map
+			// Refresh existing map — newly generated learners are now off-limits
 			const newMap = { ...existingFolios }
 			for (const l of learnersWithFolios) {
-				if (l.folio) newMap[l.studentId] = l.folio
+				newMap[l.studentId] = l.folio || null
+			}
+			for (const a of (data.alreadyGenerated || [])) {
+				newMap[a.studentId] = a.folio || null
 			}
 			setExistingFolios(newMap)
+			// Drop everything just generated out of the selection
+			setSelectedIds(prev => {
+				const next = new Set(prev)
+				for (const sid of Object.keys(newMap)) next.delete(sid)
+				return next
+			})
 
+			const parts = [`${data.generated} marksheet(s) generated`]
+			if (data.folioAssignedCount) parts.push(`${data.folioAssignedCount} folio(s) assigned`)
+			if (data.alreadyGeneratedCount) parts.push(`${data.alreadyGeneratedCount} already generated (unchanged)`)
+			if (data.skipped?.length > 0) parts.push(`${data.skipped.length} skipped`)
 			toast({
 				title: '✅ Generated',
-				description: `${data.generated} marksheet(s) generated, ${data.folioAssignedCount} folio(s) assigned${data.skipped?.length > 0 ? `, ${data.skipped.length} skipped` : ''}`,
+				description: parts.join(', '),
 				className: 'bg-green-50 border-green-200 text-green-800'
 			})
 		} catch (e) {
@@ -261,7 +288,7 @@ export default function GenerateConsolidatedMarksheetPage() {
 	}
 
 	const totalChecked = selectedIds.size
-	const allChecked = eligible.length > 0 && totalChecked === eligible.length
+	const allChecked = pending.length > 0 && totalChecked === pending.length
 
 	return (
 		<SidebarProvider>
@@ -300,6 +327,7 @@ export default function GenerateConsolidatedMarksheetPage() {
 							<CardDescription>
 								Computes overall CGPA + part-wise CGPA across all semesters and assigns a consolidated folio number (CJU24UC0001 format).
 								Only learners who have cleared every course across every semester of the program are eligible.
+								Learners whose CGPA was already generated are never recomputed — only the missing ones are generated.
 							</CardDescription>
 						</CardHeader>
 						<CardContent>
@@ -406,7 +434,8 @@ export default function GenerateConsolidatedMarksheetPage() {
 											Eligible Learners ({eligible.length})
 										</CardTitle>
 										<CardDescription>
-											{totalChecked} selected. Folio numbers will be assigned in register-number order.
+											{generatedCount} already generated (skipped) &middot; {pending.length} pending &middot; {totalChecked} selected.
+											Folio numbers will be assigned in register-number order.
 										</CardDescription>
 									</div>
 									<Button
@@ -440,13 +469,16 @@ export default function GenerateConsolidatedMarksheetPage() {
 										</TableHeader>
 										<TableBody>
 											{eligible.map(l => {
+												const isGenerated = l.id in existingFolios
 												const folio = existingFolios[l.id]
 												return (
-													<TableRow key={l.id}>
+													<TableRow key={l.id} className={cn(isGenerated && 'bg-muted/30')}>
 														<TableCell>
 															<Checkbox
 																checked={selectedIds.has(l.id)}
+																disabled={isGenerated}
 																onCheckedChange={(c) => toggleOne(l.id, !!c)}
+																aria-label={isGenerated ? 'Already generated' : 'Select learner'}
 															/>
 														</TableCell>
 														<TableCell className="font-mono text-sm">{l.registerNo}</TableCell>
@@ -454,8 +486,10 @@ export default function GenerateConsolidatedMarksheetPage() {
 														<TableCell>
 															{folio ? (
 																<Badge variant="outline" className="font-mono text-xs">{folio}</Badge>
+															) : isGenerated ? (
+																<Badge variant="outline" className="text-xs">Generated · folio pending</Badge>
 															) : (
-																<Badge variant="secondary" className="text-xs">Not assigned</Badge>
+																<Badge variant="secondary" className="text-xs">Not generated</Badge>
 															)}
 														</TableCell>
 														<TableCell className="text-right">
@@ -510,7 +544,8 @@ export default function GenerateConsolidatedMarksheetPage() {
 									Generation Result
 								</CardTitle>
 								<CardDescription className="text-emerald-800">
-									{result.generated} marksheet(s) generated &middot; {result.folioAssignedCount} folio(s) newly assigned &middot; {result.skipped.length} skipped
+									{result.generated} marksheet(s) generated &middot; {result.folioAssignedCount} folio(s) newly assigned &middot;{' '}
+									{result.alreadyGeneratedCount || 0} already generated (left unchanged) &middot; {result.skipped.length} skipped
 								</CardDescription>
 							</CardHeader>
 							{result.skipped.length > 0 && (

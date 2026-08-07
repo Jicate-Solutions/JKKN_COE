@@ -218,7 +218,8 @@ const COLORS = {
 	lightBlue: [173, 216, 230] as [number, number, number], // Light blue for alternating
 	cream: [255, 255, 230] as [number, number, number],    // Cream/yellow for info cells
 	white: [255, 255, 255] as [number, number, number],
-	black: [0, 0, 0] as [number, number, number]
+	black: [0, 0, 0] as [number, number, number],
+	red: [200, 29, 49] as [number, number, number]       // #C81D31 crimson — "CONSOLIDATED MARK SHEET" title
 }
 
 // ============================================================
@@ -584,6 +585,23 @@ export function addStudentMarksheetToDoc(
 	const col4 = CONTENT_WIDTH - col1 - col2 - col3  // Value 2 (remaining width = 35mm)
 
 	const infoBoxY = currentY
+
+	// ===== "CONSOLIDATED MARK SHEET" TITLE (consolidated layout only) =====
+	// Sits in the empty band between the top margin and the info table, centred on
+	// the page. The photo occupies the right of that band (x >= 173mm) and this
+	// title is ~55mm wide around the page centre, so the two never collide.
+	if (consolidated) {
+		// Gap between the bottom of the title and the top of the info table.
+		// The title is all-caps (no descenders) so its baseline IS its bottom edge.
+		// The table border is stroked at 0.5mm centred on infoBoxY, so half of it
+		// (0.25mm) sits ABOVE infoBoxY — subtract that too or the gap eats into the line.
+		const TITLE_GAP = 0.4
+		doc.setFont('helvetica', 'bold')
+		doc.setFontSize(10)
+		doc.setTextColor(...COLORS.red)
+		doc.text('CONSOLIDATED MARK SHEET', pageWidth / 2, infoBoxY - 0.25 - TITLE_GAP, { align: 'center' })
+		doc.setTextColor(...COLORS.black)
+	}
 
 	// Draw thick outer border for student info table first
 	doc.setDrawColor(...COLORS.black)
@@ -1075,14 +1093,28 @@ export function addStudentMarksheetToDoc(
 	const headers: RowInput[] = []
 
 	// Build column styles object (courseCodeColIdx / courseTitleColIdx computed above)
+	//
+	// TEXT_GUTTER — right padding for the wrapping text columns. autoTable breaks
+	// lines at (cellWidth - horizontal padding + 1pt), so with the default 0.5mm
+	// padding a line may end up only ~0.15mm short of the column divider — e.g.
+	// "ELECTIVE COURSE-VI ENGLISH LITERATURE FOR NTA, NET, SET &" measures 90.34mm
+	// in the 91mm consolidated TITLE cell and prints flush against the CREDITS
+	// border. The gutter keeps wrapped text clear of the divider line.
+	const TEXT_GUTTER = 1.5
 	const columnStyles: Record<number, any> = {}
 	colWidths.forEach((width, i) => {
+		const isWrapCol = i === courseCodeColIdx || i === courseTitleColIdx
 		columnStyles[i] = {
 			cellWidth: width,
 			// CODE and TITLE columns = left aligned; rest = center
-			halign: (i === courseCodeColIdx || i === courseTitleColIdx) ? 'left' : 'center',
+			halign: isWrapCol ? 'left' : 'center',
 			// Enable text wrap for COURSE CODE and COURSE TITLE columns (so long codes never truncate)
-			overflow: (i === courseCodeColIdx || i === courseTitleColIdx) ? 'linebreak' : 'ellipsize'
+			overflow: isWrapCol ? 'linebreak' : 'ellipsize',
+			// Keep the vertical top/bottom padding identical to styles.cellPadding
+			// so row heights are unchanged; only the right gutter grows.
+			...(isWrapCol
+				? { cellPadding: { top: 0.5, right: TEXT_GUTTER, bottom: 0.5, left: 0.5 } }
+				: {})
 		}
 	})
 
