@@ -378,6 +378,23 @@ function formatCgpa(value: number): string {
 	return (Math.floor(value * 1000 + 1e-6) / 1000).toFixed(3)
 }
 
+/**
+ * Format a grade point for printing: TRUNCATED to 1 decimal, never rounded
+ * (9.35 → "9.3"). The APIs already truncate; this guards against a caller
+ * handing over an unrounded value, since toFixed(1) alone would round it up.
+ */
+function formatGradePoint(value: number): string {
+	return (Math.floor(value * 10 + 1e-6) / 10).toFixed(1)
+}
+
+/**
+ * Format a GPA for printing: TRUNCATED to 2 decimals, never rounded
+ * (7.7714… → "7.77"). Same guard as formatGradePoint.
+ */
+function formatGpa(value: number): string {
+	return (Math.floor(value * 100 + 1e-6) / 100).toFixed(2)
+}
+
 // ============================================================
 // PDF GENERATOR FUNCTION
 // ============================================================
@@ -960,7 +977,7 @@ export function addStudentMarksheetToDoc(
 	const body: RowInput[] = data.courses.map(course => {
 		// Use enhanced result status (handles absent, malpractice, ineligible, etc.)
 		const resultStatus = getEnhancedResultStatus(course)
-		const displayGradePoint = course.isAbsent ? '0' : (course.gradePoint > 0 ? course.gradePoint.toFixed(1) : '0')
+		const displayGradePoint = course.isAbsent ? '0' : (course.gradePoint > 0 ? formatGradePoint(course.gradePoint) : '0')
 		const displayGrade = course.isAbsent ? 'AAA' : course.letterGrade
 		// PART column:
 		//   UG with Part I-V → roman numeral (I, II, III, IV, V)
@@ -1265,7 +1282,7 @@ export function addStudentMarksheetToDoc(
 
 				// GPA (omitted on the consolidated marksheet)
 				if (!consolidated) {
-					const gpaText = part.partGPA.toFixed(2)
+					const gpaText = formatGpa(part.partGPA)
 					const gpaTextWidth = doc.getTextWidth(gpaText)
 					doc.text(gpaText, MARGIN + 68 - gpaTextWidth / 2, rowY)
 				}
@@ -1331,7 +1348,7 @@ export function addStudentMarksheetToDoc(
 
 			// GPA (omitted on the consolidated marksheet)
 			if (!consolidated) {
-				const gpaText = (data.summary.semesterGPA || 0).toFixed(2)
+				const gpaText = formatGpa(data.summary.semesterGPA || 0)
 				const gpaTextWidth = doc.getTextWidth(gpaText)
 				doc.text(gpaText, MARGIN + 68 - gpaTextWidth / 2, rowY)
 			}

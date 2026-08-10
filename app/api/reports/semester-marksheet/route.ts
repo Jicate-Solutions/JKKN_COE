@@ -51,8 +51,9 @@ function getGradeFromPercentage(
 	}
 
 	// Use continuous grade point calculation
-	// Grade point = percentage / 10 (capped at range boundaries)
-	const continuousGP = Math.round((percentage / 10) * 10) / 10
+	// Grade point = percentage / 10 (capped at range boundaries), truncated to
+	// one decimal — never rounded (93.5% → 9.3, not 9.4)
+	const continuousGP = truncateGradePoint(percentage / 10)
 
 	for (const grade of UG_GRADE_TABLE) {
 		if (percentage >= grade.min && percentage <= grade.max) {
@@ -142,6 +143,23 @@ function getPartOrder(partName: string): number {
  */
 function truncateCgpa(value: number): number {
 	return Math.floor(value * 1000 + 1e-6) / 1000
+}
+
+/**
+ * Truncate a grade point to ONE decimal — NEVER round.
+ * COE requirement: the 200-mark project at 187/200 = 93.5% → 9.35 must print
+ * 9.3, not 9.4. Credit points are earned on this same truncated value so the
+ * GPA can be reproduced from the grade points printed on the marksheet.
+ */
+function truncateGradePoint(value: number): number {
+	return Math.floor(value * 10 + 1e-6) / 10
+}
+
+/**
+ * Truncate a GPA to TWO decimals — NEVER round (163.2/21 = 7.7714… → 7.77).
+ */
+function truncateGpa(value: number): number {
+	return Math.floor(value * 100 + 1e-6) / 100
 }
 
 /**
@@ -620,9 +638,16 @@ export async function GET(req: NextRequest) {
 
 				// If failed, grade point becomes 0
 				const finalGradePoint = isSpecialType ? 0 : ((isPassing && !isAbsent) ? (gradePoint || 0) : 0)
+				// final_marks.grade_points is stored at 2 decimals (percentage / 10)
+				// and only ever has a 2nd decimal when the course max is not 100 —
+				// e.g. the 200-mark project, 187/200 = 93.5% → 9.35. The marksheet
+				// prints the TRUNCATED 9.3, so credit points must come from 9.3 too
+				// (credit × 9.3), otherwise the printed GPA cannot be reproduced
+				// from the printed grade points.
+				const displayGradePoint = truncateGradePoint(finalGradePoint)
 				const credits = courseData.credit || 0
 				const creditIncluded = courseData.credit_included !== false
-				const creditPoints = isSpecialType ? 0 : credits * finalGradePoint
+				const creditPoints = isSpecialType ? 0 : credits * displayGradePoint
 
 				const part = courseData.course_part_master || 'Part III'
 
@@ -642,7 +667,7 @@ export async function GET(req: NextRequest) {
 					ciaMarks,
 					totalMarks,
 					percentage: Math.round(percentage * 100) / 100,
-					gradePoint: Math.round(finalGradePoint * 10) / 10,
+					gradePoint: displayGradePoint,
 					letterGrade: letterGrade || (isSpecialType ? '-' : 'U'),
 					creditPoints: Math.round(creditPoints * 10) / 10,
 					isPassing,
@@ -706,7 +731,7 @@ export async function GET(req: NextRequest) {
 			// Calculate part-wise GPA
 			Object.values(partGroups).forEach(part => {
 				part.partGPA = part.totalCredits > 0
-					? Math.round((part.totalCreditPoints / part.totalCredits) * 100) / 100
+					? truncateGpa(part.totalCreditPoints / part.totalCredits)
 					: 0
 			})
 
@@ -719,7 +744,7 @@ export async function GET(req: NextRequest) {
 			const totalCredits = processedCourses.reduce((sum, c) => sum + (c.creditIncluded !== false ? c.credits : 0), 0)
 			const totalCreditPoints = processedCourses.reduce((sum, c) => sum + (c.creditIncluded !== false ? c.creditPoints : 0), 0)
 			const semesterGPA = totalCredits > 0
-				? Math.round((totalCreditPoints / totalCredits) * 100) / 100
+				? truncateGpa(totalCreditPoints / totalCredits)
 				: 0
 
 			// Calculate credits earned (only passed courses, excluding credit_included = false)
@@ -1039,9 +1064,12 @@ export async function GET(req: NextRequest) {
 					: checkPassStatus(eseMarks, eseMax, totalMarks, totalMax || 100, batchPassingPercentage, evalType)
 
 				const finalGradePoint = isSpecialType ? 0 : ((isPassing && !isAbsent) ? (gradePoint || 0) : 0)
+				// Truncated to one decimal — see the single-learner branch above:
+				// what is printed (9.3, never 9.4) is what earns credit points.
+				const displayGradePoint = truncateGradePoint(finalGradePoint)
 				const credits = courseData.credit || 0
 				const creditIncluded = courseData.credit_included !== false
-				const creditPoints = isSpecialType ? 0 : credits * finalGradePoint
+				const creditPoints = isSpecialType ? 0 : credits * displayGradePoint
 
 				// CIA-only (evalType 'CIA') has no ESE max; ESE-only (evalType 'ESE') has no CIA max.
 				// Don't apply the legacy 75/25 fallback to those legitimately-zero components.
@@ -1062,7 +1090,7 @@ export async function GET(req: NextRequest) {
 					ciaMarks,
 					totalMarks,
 					percentage: Math.round(percentage * 100) / 100,
-					gradePoint: Math.round(finalGradePoint * 10) / 10,
+					gradePoint: displayGradePoint,
 					letterGrade: letterGrade || (isSpecialType ? '-' : 'U'),
 					creditPoints: Math.round(creditPoints * 10) / 10,
 					isPassing,
@@ -1310,7 +1338,7 @@ export async function GET(req: NextRequest) {
 				// Calculate part-wise GPA
 				Object.values(partGroups).forEach(part => {
 					part.partGPA = part.totalCredits > 0
-						? Math.round((part.totalCreditPoints / part.totalCredits) * 100) / 100
+						? truncateGpa(part.totalCreditPoints / part.totalCredits)
 						: 0
 				})
 
@@ -1323,7 +1351,7 @@ export async function GET(req: NextRequest) {
 				const totalCredits = student.courses.reduce((sum: number, c: any) => sum + (c.creditIncluded !== false ? c.credits : 0), 0)
 				const totalCreditPoints = student.courses.reduce((sum: number, c: any) => sum + (c.creditIncluded !== false ? c.creditPoints : 0), 0)
 				const semesterGPA = totalCredits > 0
-					? Math.round((totalCreditPoints / totalCredits) * 100) / 100
+					? truncateGpa(totalCreditPoints / totalCredits)
 					: 0
 
 				const creditsEarned = student.courses

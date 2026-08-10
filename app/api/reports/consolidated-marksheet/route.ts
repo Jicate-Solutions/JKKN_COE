@@ -33,6 +33,24 @@ const PART_DESCRIPTIONS: Record<string, string> = {
 const PART_ORDER = ['Part I', 'Part II', 'Part III', 'Part IV', 'Part V', 'Part A', 'Part B']
 
 /**
+ * Truncate a grade point to ONE decimal — NEVER round.
+ * COE requirement: the 200-mark project at 187/200 = 93.5% → 9.35 must print
+ * 9.3, not 9.4. The +1e-6 guards against float underflow so a true 9.300000
+ * does not collapse to 9.2. Mirrors truncateGradePoint() in
+ * app/api/reports/semester-marksheet/route.ts.
+ */
+function truncateGradePoint(value: number): number {
+	return Math.floor(value * 10 + 1e-6) / 10
+}
+
+/**
+ * Truncate a part GPA to TWO decimals — NEVER round.
+ */
+function truncateGpa(value: number): number {
+	return Math.floor(value * 100 + 1e-6) / 100
+}
+
+/**
  * Get grade details from percentage
  * Supports continuous/interpolated grade points
  */
@@ -44,7 +62,8 @@ function getGradeFromPercentage(
 		return { gradePoint: 0, letterGrade: 'AAA', description: 'ABSENT' }
 	}
 
-	const continuousGP = Math.round((percentage / 10) * 10) / 10
+	// Truncated to one decimal — never rounded (93.5% → 9.3, not 9.4)
+	const continuousGP = truncateGradePoint(percentage / 10)
 
 	for (const grade of UG_GRADE_TABLE) {
 		if (percentage >= grade.min && percentage <= grade.max) {
@@ -367,9 +386,18 @@ function processFinalMarkRow(fm: any, passingPercentage: number): CourseResult |
 		: checkPassStatus(eseMarks, eseMax, totalMarks, totalMax, passingPercentage, evalType)
 
 	const finalGradePoint = isSpecialType ? 0 : ((isPassing && !isAbsent) ? (gradePoint || 0) : 0)
+	// The grade point is TRUNCATED to ONE decimal before it earns credit points.
+	// final_marks.grade_points is stored at 2 decimals (percentage / 10), which
+	// only ever has a 2nd decimal when the course max is not 100 — e.g. the
+	// 200-mark project, 187/200 = 93.5% → 9.35. The marksheet prints 9.3 (never
+	// rounded up to 9.4), so the credit points must come from 9.3 too:
+	// credit × 9.3 = 65.1, not credit × 9.35 = 65.45. Printing one number and
+	// grading on another is what made the CGPA irreproducible from the
+	// marksheet itself.
+	const displayGradePoint = truncateGradePoint(finalGradePoint)
 	const credits = courseData.credit || 0
 	const creditIncluded = courseData.credit_included !== false
-	const creditPoints = isSpecialType ? 0 : credits * finalGradePoint
+	const creditPoints = isSpecialType ? 0 : credits * displayGradePoint
 
 	const part = courseData.course_part_master || 'Part III'
 
@@ -393,7 +421,7 @@ function processFinalMarkRow(fm: any, passingPercentage: number): CourseResult |
 		ciaMarks,
 		totalMarks,
 		percentage: Math.round(percentage * 100) / 100,
-		gradePoint: Math.round(finalGradePoint * 10) / 10,
+		gradePoint: displayGradePoint,
 		letterGrade: letterGrade || (isSpecialType ? '-' : 'U'),
 		creditPoints: Math.round(creditPoints * 10) / 10,
 		isPassing,
@@ -569,7 +597,7 @@ function buildPartBreakdown(courses: CourseResult[]): PartBreakdown[] {
 
 	for (const part of Object.values(partGroups)) {
 		part.partCGPA = part.totalCredits > 0
-			? Math.round((part.totalCreditPoints / part.totalCredits) * 100) / 100
+			? truncateGpa(part.totalCreditPoints / part.totalCredits)
 			: 0
 		part.classification = getClassification(part.partCGPA)
 	}
@@ -1114,9 +1142,22 @@ async function resolveProgramName(
  * round-trip per learner in batch mode.
  */
 function pickCgpaBand(rows: any[] | null | undefined, cgpa: number): any {
-	return (rows || []).find(
+	const list = rows || []
+	const exact = list.find(
 		r => cgpa >= Number(r.min_cgpa) && cgpa <= Number(r.max_cgpa)
 	)
+	if (exact) return exact
+	// The seeded bands leave a gap at every boundary (…8.49 | 8.50…, …8.99 |
+	// 9.00…) while CGPA is kept to 3 decimals, so a value like 8.995 matches no
+	// band and the marksheet would print a blank cumulative grade. Fall back to
+	// the highest band whose floor the CGPA clears — inside a band this changes
+	// nothing, in a gap it picks the lower of the two neighbours.
+	let best: any = null
+	for (const r of list) {
+		const min = Number(r.min_cgpa)
+		if (cgpa >= min && (!best || min > Number(best.min_cgpa))) best = r
+	}
+	return best
 }
 
 async function fetchCgpaBands(
@@ -2422,6 +2463,12 @@ export async function POST(req: NextRequest) {
 		}
 		const totalSemesters = await resolveTotalSemesters(supabase, programCode, institutionId, isPG)
 
+		// CGPA→classification bands, fetched once for the whole run. The saved
+		// part_a_classification is a LOOKUP on the cgpa value being written —
+		// not a second computation — so the DB row, the marksheet and the
+		// university export all read the same band for the same number.
+		const genCgpaBands = await fetchCgpaBands(supabase, institutionId, isPG)
+
 		// -------------------------------------------------
 		// Already-generated guard — INSERT ONLY, never update.
 		// A consolidated CGPA is computed once and then frozen: once a learner
@@ -2594,6 +2641,19 @@ export async function POST(req: NextRequest) {
 					classification: p.classification || null
 				}
 			}
+			// PG classification comes from the OVERALL programme CGPA — the same
+			// number written to consolidated_results.cgpa two lines below — resolved
+			// through the PG bands in cgpa_grade_system. Previously this column held
+			// getClassification(partA.partCGPA), i.e. Part A's own GPA, which the
+			// university export then printed as MAJ_CLSS_E; a learner with a strong
+			// Part A and a weaker overall CGPA got the wrong class.
+			const genFirstAppearance = !hasArrearHistory(group.rows, passingPercentage)
+			const overallClassification = resolveCumulativeGrade(
+				genCgpaBands,
+				summary.cgpa,
+				genFirstAppearance
+			).classification
+
 			const partRow = {
 				part_i_credits_earned: partColMap['Part I']?.credits || 0,
 				part_i_cgpa: partColMap['Part I']?.cgpa,
@@ -2612,7 +2672,9 @@ export async function POST(req: NextRequest) {
 				part_v_classification: partColMap['Part V']?.classification,
 				part_a_credits_earned: partColMap['Part A']?.credits || 0,
 				part_a_cgpa: partColMap['Part A']?.cgpa,
-				part_a_classification: partColMap['Part A']?.classification,
+				part_a_classification: isPG
+					? overallClassification
+					: (partColMap['Part A']?.classification ?? null),
 				part_b_credits_earned: partColMap['Part B']?.credits || 0,
 				// All-inclusive Part B credit total: EVERY Part B course credit,
 				// ignoring credit_included and pass status, with fm.credit
