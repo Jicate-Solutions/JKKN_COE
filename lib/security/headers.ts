@@ -47,6 +47,13 @@ function buildCspHeader(nonce: string): string {
 		"img-src 'self' data: blob: https://*.supabase.co https://jkkn.ai https://*.jkkn.ai https://*.googleusercontent.com",
 
 		// API connections: self + Supabase + MyJKKN parent app + Google auth
+		//
+		// The bug reporter platform is deliberately absent: the SDK is pointed at
+		// a same-origin proxy (app/api/v1/bug-reporter/[...path]) which 'self'
+		// already covers. Calling it directly from the browser would be blocked
+		// here and surface only as an opaque "TypeError: Failed to fetch", with
+		// no CORS or network detail to explain it. Route new third-party clients
+		// through a proxy the same way rather than widening this list.
 		"connect-src 'self' https://*.supabase.co https://jkkn.ai https://*.jkkn.ai wss://*.supabase.co https://accounts.google.com",
 
 		// Allow Google Sign-In iframe

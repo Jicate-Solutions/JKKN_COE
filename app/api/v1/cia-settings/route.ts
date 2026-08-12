@@ -19,6 +19,15 @@ import type { ExternalApiContext } from '@/types/api-management'
  *   POST   /api/v1/cia-settings   (body: full setting payload)
  *   PUT    /api/v1/cia-settings   (body: { id, ...updateFields })
  *   DELETE /api/v1/cia-settings?id=
+ *
+ * Round shape (cia_rounds[]):
+ *   { round, round_name, entry_from?, entry_to?, session_from?, session_to?,
+ *     total_periods?, attended_periods?, conversion_rule_id?,
+ *     mark_entry_type?: 'direct' | 'question_wise',   // defaults to 'direct'
+ *     components: [{ code, name, max_marks }] }
+ *
+ * Question-wise rounds take their question list from the round's question paper
+ * (ia_question_papers.questions) — questions are never stored on the setting.
  */
 
 function checkInstitutionAccess(context: ExternalApiContext, institutionsId: string): NextResponse | null {
@@ -26,6 +35,21 @@ function checkInstitutionAccess(context: ExternalApiContext, institutionsId: str
 		if (!context.allowedInstitutionIds.includes(institutionsId)) {
 			return NextResponse.json({ error: 'Access denied for this institution' }, { status: 403 })
 		}
+	}
+	return null
+}
+
+const MARK_ENTRY_TYPES = ['direct', 'question_wise']
+
+/**
+ * Validates how marks are keyed in for a round. Question-wise rounds take their question
+ * list from the round's question paper (ia_question_papers.questions), so nothing about
+ * questions is stored on the setting itself.
+ */
+function validateRoundMarkEntry(round: any): string | null {
+	const entryType = round.mark_entry_type || 'direct'
+	if (!MARK_ENTRY_TYPES.includes(entryType)) {
+		return `${round.round_name}: mark_entry_type must be 'direct' or 'question_wise'`
 	}
 	return null
 }
@@ -71,7 +95,7 @@ function validateRound(round: any, useCourseMax: boolean): string | null {
 	if (round.total_periods != null && round.attended_periods != null && round.attended_periods > round.total_periods) {
 		return `${round.round_name}: attended_periods cannot exceed total_periods`
 	}
-	return null
+	return validateRoundMarkEntry(round)
 }
 
 /**

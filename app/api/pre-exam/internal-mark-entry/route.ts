@@ -223,6 +223,121 @@ export async function GET(request: Request) {
 				})
 			}
 
+			// ─── Question paper(s) for a question-wise CIA round ───
+			// Returns the question list faculty key marks against. Papers are keyed by
+			// (cia_setting_id, cia_round, course_offering_id, set_number) — one per A/B set.
+			case 'question-paper': {
+				const ciaSettingId = searchParams.get('cia_setting_id')
+				const ciaRound = searchParams.get('cia_round')
+				const courseOfferingId = searchParams.get('course_offering_id')
+				const paperSessionId = searchParams.get('examination_session_id')
+
+				if (!ciaRound || !courseOfferingId) {
+					return NextResponse.json({ error: 'cia_round and course_offering_id are required' }, { status: 400 })
+				}
+
+				// Match on the identity the generator actually writes:
+				// (examination_session_id, cia_round, course_offering_id) — the same triple
+				// it de-duplicates on. cia_setting_id is NOT filtered here because
+				// /api/pre-exam/question-papers stores it as NULL unless a caller passes it,
+				// which the Question Papers UI does not.
+				let query = supabase
+					.from('ia_question_papers')
+					.select('id, cia_setting_id, template_id, set_number, set_label, subject_title, max_marks, status, questions')
+					.eq('cia_round', Number(ciaRound))
+					.eq('course_offering_id', courseOfferingId)
+					.eq('is_active', true)
+					.order('set_number')
+
+				if (paperSessionId) query = query.eq('examination_session_id', paperSessionId)
+
+				const { data: allPapers, error: papersError } = await query
+
+				if (papersError) {
+					console.error('Error fetching question papers:', papersError)
+					return NextResponse.json({ error: 'Failed to fetch question paper' }, { status: 500 })
+				}
+
+				// Prefer papers stamped with this setting; otherwise fall back to the
+				// unstamped ones. A paper belonging to a *different* setting is never used.
+				const rows = allPapers || []
+				const exact = ciaSettingId ? rows.filter((p: any) => p.cia_setting_id === ciaSettingId) : []
+				const papers = exact.length > 0 ? exact : rows.filter((p: any) => !p.cia_setting_id)
+
+				// "Answer any N of M" lives on the template part, not on the paper's
+				// questions, so pull the parts for every template these papers came from.
+				const templateIds = [...new Set(papers.map((p: any) => p.template_id).filter(Boolean))]
+				const answerLimits = new Map<string, number>() // `${template_id}|${part_label}` → num_to_answer
+				if (templateIds.length > 0) {
+					const { data: templateParts } = await supabase
+						.from('ia_template_parts')
+						.select('template_id, part_label, num_questions, num_to_answer')
+						.in('template_id', templateIds)
+						.eq('is_active', true)
+					for (const tp of (templateParts || [])) {
+						const limit = Number(tp.num_to_answer)
+						// Only a real restriction when fewer than the questions on offer
+						if (limit > 0 && limit < Number(tp.num_questions || 0)) {
+							answerLimits.set(`${tp.template_id}|${tp.part_label}`, limit)
+						}
+					}
+				}
+
+				// Normalize each paper's questions into flat entry columns.
+				// Choice alternatives ("OR" questions) stay in the list — a learner answers
+				// one of them, so they share a choice_group the UI/validator restricts to
+				// a single answer. Group = same part + same question number (6a / 6b).
+				const result = papers.map((p: any) => {
+					const raw = (Array.isArray(p.questions) ? p.questions : [])
+						.slice()
+						.sort((a: any, b: any) => (a?.display_order ?? 0) - (b?.display_order ?? 0))
+
+					const questions = raw
+						.map((q: any) => ({
+							id: String(q?.id ?? ''),
+							label: `${q?.question_number ?? ''}${q?.sub_label || ''}`,
+							part_label: q?.part_label || null,
+							choice_group: `${q?.part_label ?? ''}|${q?.question_number ?? ''}`,
+							marks: Number(q?.marks) || 0,
+							is_choice_alternative: !!q?.is_choice_alternative,
+							// Course outcome + Bloom's level, as tagged on the paper
+							co_code: q?.co_code || null,
+							k_level: q?.k_level || null,
+							question_text: q?.question_text || null,
+						}))
+						.filter((q: any) => q.id)
+
+					// One entry per part: how many distinct question groups it holds and
+					// how many of them a learner may answer.
+					const partOrder: string[] = []
+					const groupsByPart = new Map<string, Set<string>>()
+					for (const q of questions) {
+						const part = q.part_label || ''
+						if (!groupsByPart.has(part)) { groupsByPart.set(part, new Set()); partOrder.push(part) }
+						groupsByPart.get(part)!.add(q.choice_group)
+					}
+					const parts = partOrder.map(part => ({
+						part_label: part,
+						group_count: groupsByPart.get(part)!.size,
+						num_to_answer: answerLimits.get(`${p.template_id}|${part}`) ?? null,
+					}))
+
+					return {
+						id: p.id,
+						set_number: p.set_number,
+						set_label: p.set_label,
+						subject_title: p.subject_title,
+						max_marks: p.max_marks == null ? null : Number(p.max_marks),
+						status: p.status,
+						questions,
+						parts,
+						questions_total: questions.reduce((s: number, q: any) => s + q.marks, 0),
+					}
+				})
+
+				return NextResponse.json(result)
+			}
+
 			case 'learners': {
 				const courseOfferingId = searchParams.get('course_offering_id')
 				const sessionId = searchParams.get('examination_session_id')
@@ -535,6 +650,19 @@ export async function POST(request: Request) {
 		// Calculate total max marks from components
 		const totalMaxMarks = Object.values(max_marks || {}).reduce((sum: number, val: any) => sum + (Number(val) || 0), 0)
 
+		// Question-wise rounds send a per-question breakdown alongside the component
+		// marks: { [component_code]: { paper_id, set_number, set_label, marks: { [question_id]: mark } } }.
+		// The component mark is re-derived from that sum here so a stale client-side
+		// total can never be persisted out of step with its questions.
+		const questionSum = (questionMarks: any, code: string): number | null => {
+			const entry = questionMarks?.[code]
+			if (!entry || typeof entry !== 'object' || !entry.marks || typeof entry.marks !== 'object') return null
+			return Object.values(entry.marks).reduce((sum: number, v: any) => sum + (Number(v) || 0), 0)
+		}
+
+		// Effective per-component mark for each row, reused by the max-marks validation below
+		const effectiveMarks: Record<string, number>[] = []
+
 		// Build insert records
 		const records = learner_marks.map((lm: any) => {
 			const record: any = {
@@ -564,10 +692,14 @@ export async function POST(request: Request) {
 			let totalMarks = 0
 			const extraMarks: Record<string, number> = {}
 			const extraMarksMax: Record<string, number> = {}
+			const questionMarks = (lm.question_marks && typeof lm.question_marks === 'object') ? lm.question_marks : {}
+			const rowMarks: Record<string, number> = {}
 			for (const [code, maxVal] of Object.entries(max_marks || {})) {
 				const markField = markFieldMap[code]
 				const maxField = maxFieldMap[code]
-				const mark = Number(lm.marks?.[code]) || 0
+				const qSum = questionSum(questionMarks, code)
+				const mark = qSum != null ? qSum : (Number(lm.marks?.[code]) || 0)
+				rowMarks[code] = mark
 				if (markField) {
 					record[markField] = mark
 				} else {
@@ -583,7 +715,14 @@ export async function POST(request: Request) {
 
 			record.extra_marks = extraMarks
 			record.extra_marks_max = extraMarksMax
+			// Only write question_marks when the client actually sent a breakdown.
+			// Omitting it leaves an existing row's stored questions untouched instead
+			// of blanking them (e.g. a re-save made while the paper failed to load).
+			if (Object.keys(questionMarks).length > 0) {
+				record.question_marks = questionMarks
+			}
 			record.total_internal_marks = totalMarks
+			effectiveMarks.push(rowMarks)
 			return record
 		})
 
@@ -592,11 +731,93 @@ export async function POST(request: Request) {
 		for (let i = 0; i < records.length; i++) {
 			const lm = learner_marks[i]
 			for (const [code, maxVal] of Object.entries(max_marks || {})) {
-				const mark = Number(lm.marks?.[code]) || 0
+				const mark = effectiveMarks[i]?.[code] ?? 0
 				const max = Number(maxVal) || 0
 				if (mark > max) {
 					const regNo = lm.register_no || `Row ${i + 1}`
 					errors.push(`${regNo}: ${code} mark (${mark}) exceeds max (${max})`)
+				}
+			}
+		}
+
+		// ── Question-wise rules, enforced server-side ──
+		// A learner may answer only one question of an OR pair, and no more than
+		// "answer any N" questions in a part. The UI blocks both, but a stale tab or
+		// a direct API call must not be able to slip past them.
+		const paperIds = [...new Set(
+			learner_marks.flatMap((lm: any) =>
+				Object.values(lm.question_marks || {}).map((e: any) => e?.paper_id).filter(Boolean)
+			)
+		)] as string[]
+
+		if (paperIds.length > 0) {
+			const { data: paperRows } = await supabase
+				.from('ia_question_papers')
+				.select('id, template_id, questions')
+				.in('id', paperIds)
+
+			const templateIds = [...new Set((paperRows || []).map((p: any) => p.template_id).filter(Boolean))]
+			const answerLimits = new Map<string, number>()
+			if (templateIds.length > 0) {
+				const { data: templateParts } = await supabase
+					.from('ia_template_parts')
+					.select('template_id, part_label, num_questions, num_to_answer')
+					.in('template_id', templateIds)
+					.eq('is_active', true)
+				for (const tp of (templateParts || [])) {
+					const limit = Number(tp.num_to_answer)
+					if (limit > 0 && limit < Number(tp.num_questions || 0)) {
+						answerLimits.set(`${tp.template_id}|${tp.part_label}`, limit)
+					}
+				}
+			}
+
+			// paper id → question id → { part, group, label, marks }
+			const paperIndex = new Map<string, Map<string, any>>()
+			for (const p of (paperRows || [])) {
+				const index = new Map<string, any>()
+				for (const q of (Array.isArray(p.questions) ? p.questions : [])) {
+					const part = q?.part_label ?? ''
+					index.set(String(q?.id ?? ''), {
+						part,
+						group: `${part}|${q?.question_number ?? ''}`,
+						label: `${q?.question_number ?? ''}${q?.sub_label || ''}`,
+						marks: Number(q?.marks) || 0,
+						limit: answerLimits.get(`${p.template_id}|${part}`) ?? null,
+					})
+				}
+				paperIndex.set(p.id, index)
+			}
+
+			for (const lm of learner_marks) {
+				const regNo = lm.register_no || lm.student_id
+				for (const entry of Object.values(lm.question_marks || {}) as any[]) {
+					const index = paperIndex.get(entry?.paper_id)
+					if (!index) continue
+					const answeredByGroup = new Map<string, string[]>()
+					const groupsByPart = new Map<string, Set<string>>()
+					for (const [qId, val] of Object.entries(entry.marks || {})) {
+						if (val == null || val === '') continue
+						const meta = index.get(qId)
+						if (!meta) continue
+						if (meta.marks > 0 && Number(val) > meta.marks) {
+							errors.push(`${regNo}: Q${meta.label} mark (${val}) exceeds question max (${meta.marks})`)
+						}
+						answeredByGroup.set(meta.group, [...(answeredByGroup.get(meta.group) || []), meta.label])
+						if (!groupsByPart.has(meta.part)) groupsByPart.set(meta.part, new Set())
+						groupsByPart.get(meta.part)!.add(meta.group)
+					}
+					for (const [group, labels] of answeredByGroup) {
+						if (labels.length > 1) {
+							errors.push(`${regNo}: only one of Q${labels.join(' / Q')} may be answered (OR choice)`)
+						}
+					}
+					for (const [part, groups] of groupsByPart) {
+						const limit = [...index.values()].find((m: any) => m.part === part)?.limit
+						if (limit != null && groups.size > limit) {
+							errors.push(`${regNo}: Part ${part} allows any ${limit} question(s), ${groups.size} answered`)
+						}
+					}
 				}
 			}
 		}
@@ -624,14 +845,14 @@ export async function POST(request: Request) {
 		const existingMap = new Map((existingRows || []).map(r => [r.student_id, r.id]))
 
 		const toInsert: any[] = []
-		const toUpdate: { id: string, data: any }[] = []
+		const toUpdate: { id: string, studentId: string, data: any }[] = []
 
 		for (const record of records) {
 			const existingId = existingMap.get(record.student_id)
 			if (existingId) {
 				// Update existing row
 				const { institutions_id: _i, examination_session_id: _e, course_offering_id: _c, student_id: _s, exam_registration_id: _r, cia_round: _cr, ...updateFields } = record
-				toUpdate.push({ id: existingId, data: updateFields })
+				toUpdate.push({ id: existingId, studentId: record.student_id, data: updateFields })
 			} else {
 				toInsert.push(record)
 			}
@@ -653,17 +874,49 @@ export async function POST(request: Request) {
 			insertCount = inserted?.length || 0
 		}
 
-		// Update existing records one by one
-		for (const { id, data: updateData } of toUpdate) {
-			const { error: updateError } = await supabase
-				.from('cia_marks')
-				.update(updateData)
-				.eq('id', id)
-			if (updateError) {
-				console.error('Error updating cia_marks:', updateError)
-			} else {
-				updateCount++
+		// Update existing rows in small parallel batches — a sequential loop meant
+		// 60 round trips for a full class re-save, which is exactly when a flaky
+		// connection drops out half way.
+		const UPDATE_BATCH = 10
+		const failedRegisterNos: string[] = []
+		const regNoByStudent = new Map<string, string>(
+			learner_marks.map((lm: any) => [lm.student_id, lm.register_no || lm.student_id])
+		)
+
+		for (let i = 0; i < toUpdate.length; i += UPDATE_BATCH) {
+			const batch = toUpdate.slice(i, i + UPDATE_BATCH)
+			const results = await Promise.all(
+				batch.map(({ id, data: updateData }) =>
+					supabase
+						.from('cia_marks')
+						.update(updateData)
+						.eq('id', id)
+						.then(res => ({ studentId: updateData.student_id, error: res.error }))
+						.catch(err => ({ studentId: updateData.student_id, error: err }))
+				)
+			)
+			for (const res of results) {
+				if (res.error) {
+					console.error('Error updating cia_marks:', res.error)
+					failedRegisterNos.push(regNoByStudent.get(res.studentId) || 'unknown')
+				} else {
+					updateCount++
+				}
 			}
+		}
+
+		// A partial write must never look like a clean save — the caller has to know
+		// which learners still need re-saving.
+		if (failedRegisterNos.length > 0) {
+			return NextResponse.json({
+				success: false,
+				error: `Saved ${insertCount + updateCount} of ${records.length} learners — ${failedRegisterNos.length} failed. Re-save to retry; learners already saved will simply update.`,
+				details: failedRegisterNos,
+				count: insertCount + updateCount,
+				inserted: insertCount,
+				updated: updateCount,
+				failed: failedRegisterNos.length,
+			}, { status: 500 })
 		}
 
 		return NextResponse.json({
@@ -671,6 +924,7 @@ export async function POST(request: Request) {
 			count: insertCount + updateCount,
 			inserted: insertCount,
 			updated: updateCount,
+			failed: 0,
 			message: `Saved marks: ${insertCount} new, ${updateCount} updated`
 		}, { status: 201 })
 	} catch (error) {

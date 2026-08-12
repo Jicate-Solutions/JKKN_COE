@@ -32,6 +32,8 @@ Internal admin/portal routes (under `/api/admin`, `/api/auth`, `/api/master`, `/
   - [CIA Marks — Sync](#cia-marks--sync)
   - [CIA Marks — Report](#cia-marks--report)
   - [Student CIA View (aggregate)](#student-cia-view-aggregate)
+  - [IA — Question Papers](#ia--question-papers)
+  - [IA — Paper Templates, Question Types, Course Outcomes](#ia--paper-templates-question-types-course-outcomes)
   - [BOS Compositions](#bos-compositions)
   - [BOS Meetings](#bos-meetings)
   - [BOS Experts](#bos-experts)
@@ -810,7 +812,7 @@ CRUD over `cia_entry_settings` (round/component configuration for a session × p
 | `examination_session_id` | **yes** | |
 | `program_code` | no | Filters by `program_codes` array containment |
 
-**Response (200):** bare array of `cia_entry_settings` rows.
+**Response (200):** bare array of `cia_entry_settings` rows. Each row's `cia_rounds` array carries the round shape shown under [`POST`](#post-apiv1cia-settings) below, including `mark_entry_type`.
 
 #### `POST /api/v1/cia-settings`
 
@@ -832,6 +834,8 @@ CRUD over `cia_entry_settings` (round/component configuration for a session × p
   "session_to": "2026-02-28",
   "total_periods": 30,
   "attended_periods": 28,
+  "conversion_rule_id": null,
+  "mark_entry_type": "direct",
   "components": [
     { "code": "assignment", "name": "Assignment", "max_marks": 10 },
     {
@@ -844,6 +848,24 @@ CRUD over `cia_entry_settings` (round/component configuration for a session × p
   ]
 }
 ```
+
+**`mark_entry_type`** — how faculty key in marks for the round. Optional; omitting it means `"direct"`.
+
+| Value | Meaning |
+|---|---|
+| `direct` | One total per component (Test 1 = 18). Default. |
+| `question_wise` | Per-question marks that sum to the component total. |
+
+Validated on both `POST` and `PUT`. Any other value rejects the whole request:
+
+```json
+{ "error": "CIA-1: mark_entry_type must be 'direct' or 'question_wise'" }
+```
+
+Two things this endpoint deliberately does **not** do:
+
+- **Questions are never stored on the setting.** A `question_wise` round takes its question list from the round's question paper (`ia_question_papers.questions`) — see [IA — Question Papers](#ia--question-papers). Do not send a `questions[]` array on a component; it is ignored.
+- **No paper-existence check.** A `question_wise` round saves fine before any paper is authored, because papers are authored later in the cycle. Consumers must handle the "round is question-wise but no paper yet" state rather than assuming one exists.
 
 #### `PUT /api/v1/cia-settings`
 
@@ -915,7 +937,13 @@ Upsert CIA marks in bulk. Designed for MyJKKN to push marks into COE.
 - Status: `marks_status`, `remarks`
 - Audit: `created_by`, `updated_by`, `submitted_by` (all UUIDs)
 
+Any field outside this set is silently stripped before the write.
+
 A record is rejected if **no component has marks > 0** and `total_internal_marks` is also 0.
+
+**Per-question marks are not accepted here.** `question_marks` is not in the allowed-field set, so this route can carry a component total but not the per-question breakdown behind it. Question-wise marks are currently written only by COE's own entry screen. See [IA — Question Papers](#ia--question-papers) for the storage shape.
+
+> **Drift warning.** Existing rows are updated field-by-field on the upsert key, and `question_marks` is left untouched. A row entered question-wise in COE (`test_1_mark = 18` over a breakdown summing to 18) that is later synced with `test_1_mark = 20` ends up with a component total of 20 sitting on a breakdown that still sums to 18, with no error raised. Until the sync route handles this, avoid syncing a component that a round has configured as `question_wise`.
 
 **Response shape:**
 
@@ -1016,6 +1044,168 @@ component not yet entered is `null` and a round with no entries has
 
 ➡ **Full schema, examples, TypeScript types and the old→new migration map:**
 [student-cia-view-integration.md](./student-cia-view-integration.md)
+
+---
+
+### IA — Question Papers
+
+Internal Assessment question papers, authored per examination session × CIA round × course offering × set. These are the source of the entry columns for a CIA round configured with `mark_entry_type: "question_wise"` (see [CIA Settings](#cia-settings)).
+
+All `/api/v1/ia/*` endpoints are governed by the **`ia`** module — `ia:read`, `ia:create`, `ia:update`, `ia:delete`.
+
+Every endpoint resolves the institution from `institution_code` (query param on GET, body field on POST), falling back to the API key's own institution.
+
+#### `GET /api/v1/ia/question-papers`
+
+List papers. **Permission:** `ia:read`
+
+**Query params:**
+
+| Name | Notes |
+|---|---|
+| `institution_code` | e.g. `CAS`. Defaults to the key's institution |
+| `examination_session_id` | |
+| `cia_round` | Integer |
+| `program_code` | |
+| `semester` | Integer |
+| `status` | `draft` \| `submitted` \| `approved` \| `locked` |
+| `course_code` | Single code, or **comma-separated** for a staff member's assigned courses |
+| `author_id` | MyJKKN staff profile UUID stamped on the paper |
+
+**Response (200):** `{ data: [...] }`, ordered by `course_code` then `set_number`, capped at 10,000 rows.
+
+The `questions` array is **stripped from every row** in this payload and replaced by a boolean `authored` (true when any question has non-empty text). Use the list to select a paper; call the detail endpoint to render one.
+
+```json
+{ "data": [
+  {
+    "id": "uuid",
+    "cia_setting_id": "uuid",
+    "cia_round": 1,
+    "course_offering_id": "uuid",
+    "course_code": "23UCS01",
+    "set_number": 1,
+    "set_label": "A",
+    "max_marks": 30,
+    "status": "approved",
+    "authored": true
+  }
+] }
+```
+
+#### `POST /api/v1/ia/question-papers`
+
+Generate papers for a program + semester, scaffolded from a matching template. **Permission:** `ia:create`
+
+**Required body:** `examination_session_id`, `program_code`, `semester`.
+
+**Other fields:** `institution_code`, `cia_setting_id`, `cia_round` (default `1`), `cia_round_name`, `template_id`, `author_id`.
+
+Without `template_id`, COE picks the active CIA-scoped template whose Course Type applicability covers each course's `course_category` — courses no template applies to get no paper. Courses with `multiple_qp_set` produce one paper per set (A/B).
+
+Returns `404` when the selection matches no course offerings, `400` when the institution has no active CIA template.
+
+#### `GET /api/v1/ia/question-papers/{id}`
+
+Full paper, including the two joins needed to build and validate an entry grid. **Permission:** `ia:read`
+
+Questions arrive pre-sorted by `display_order`.
+
+```json
+{ "data": {
+  "…all paper columns…": "…",
+  "questions": [
+    {
+      "id": "uuid",
+      "part_label": "A",
+      "question_number": 6,
+      "sub_label": "a",
+      "is_choice_alternative": false,
+      "question_type_code": "short",
+      "question_text": "…",
+      "marks": 5,
+      "options": null,
+      "correct_option": null,
+      "co_code": "CO2",
+      "k_level": "K3",
+      "display_order": 11
+    }
+  ],
+  "template_parts": [
+    { "part_label": "B", "num_questions": 5, "num_to_answer": 3, "…": "…" }
+  ],
+  "course_outcomes": [ { "co_code": "CO2", "co_description": "…" } ]
+} }
+```
+
+`questions[].id` is stable across renumbering and reordering. **Always key saved marks by it, never by index or question number.**
+
+#### `PUT /api/v1/ia/question-papers/{id}`
+
+Save authored content, change status, or rebuild from the template. **Permission:** `ia:update`
+
+| Body | Effect |
+|---|---|
+| `questions[]` | Merges `question_text`, `marks`, `options`, `correct_option`, `co_code`, `k_level` onto existing questions by `id`. Unknown ids are ignored; questions cannot be added or removed this way. |
+| `status` | One of the four statuses; stamps `submitted_at` / `approved_at` / `locked_at`. `approved` also records `approved_by` from `author_id`. |
+| `regenerate: true` | Re-scaffolds from the template. **Draft only.** Returns `409 AUTHORED` if any question already has text — pass `force: true` to overwrite. |
+| `subject_title`, `exam_date`, `duration_minutes`, `paper_setter_id` | Set directly. |
+| `base_updated_at` | Optimistic lock. A mismatch returns `409 CONFLICT` — *"Paper changed elsewhere. Reload before saving."* |
+
+Questions are editable only while the paper is `draft` or `submitted`. Otherwise: `400 Cannot edit questions while <status>`.
+
+Response includes `saved_count` (number of questions written).
+
+#### `DELETE /api/v1/ia/question-papers/{id}`
+
+**Permission:** `ia:delete`
+
+#### `GET /api/v1/ia/question-papers/{id}/pdf`
+
+Rendered question paper PDF. **Permission:** `ia:read`
+
+---
+
+#### Question-wise mark storage
+
+Per-question marks live in `cia_marks.question_marks` (JSONB, default `{}`), keyed by **component code** — a round can have several components and only one is paper-backed.
+
+```json
+{
+  "test_1": {
+    "paper_id": "uuid",
+    "set_number": 1,
+    "set_label": "A",
+    "marks": { "<question id>": 3, "<question id>": 2.5 }
+  }
+}
+```
+
+The breakdown is **additive** — the component column (`test_1_mark`, `assignment_marks`, or `extra_marks[code]`) still holds the sum, so everything reading component totals is unaffected. An omitted question id means *not attempted*, which is how the unanswered half of an OR pair is recorded. Editing `question_marks` on a row with `is_locked = true` raises *"Cannot modify locked CIA marks. Unlock first."*
+
+#### Validation rules for question-wise entry
+
+Enforced server-side by COE's entry route. Any consumer building its own entry UI should mirror them so faculty get immediate feedback:
+
+| Rule | Source | Rejection |
+|---|---|---|
+| A question's mark cannot exceed its own max | `questions[].marks` | `Q6a mark (7) exceeds question max (5)` |
+| Only one branch of an OR pair may be answered | Choice group = `part_label` + `question_number`, so `6a`/`6b` are one group | `only one of Q6a / Q6b may be answered (OR choice)` |
+| A part's "answer any N" limit is respected | `template_parts[].num_to_answer` — binds only when `> 0` and `< num_questions` | Exceeding the part's answer limit |
+
+These rules do **not** run on `/api/v1/cia-marks/sync`, which does not accept per-question data at all.
+
+---
+
+### IA — Paper Templates, Question Types, Course Outcomes
+
+Supporting masters behind question papers. All governed by the **`ia`** module and scoped by `institution_code`.
+
+| Endpoint | Methods | Purpose |
+|---|---|---|
+| `/api/v1/ia/paper-templates` | `GET` `POST` `PUT` `DELETE` | Versioned paper-format templates and their parts (A/B/C), including `num_questions`, `marks_per_question`, choice config and `num_to_answer` |
+| `/api/v1/ia/question-types` | `GET` `POST` `PUT` `DELETE` | Per-institution question-type registry (MCQ, short, essay, …) referenced by template parts |
+| `/api/v1/ia/course-outcomes` | `GET` `POST` `DELETE` | CO master per course (CO1…CO5); supplies the CO dropdown when authoring questions |
 
 ---
 

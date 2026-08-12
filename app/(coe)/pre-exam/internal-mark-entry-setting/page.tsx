@@ -79,7 +79,16 @@ interface RoundComponent {
 	code: string
 	name: string
 	max_marks: number
+	attendance_total_periods?: number
+	attendance_attended_periods?: number
 }
+
+// How faculty key in marks for a round:
+//   'direct'        → one total per component (Test 1 = 18)
+//   'question_wise' → per-question marks summing to the component total; the question
+//                     list comes from the round's approved question paper
+//                     (ia_question_papers.questions), not from this setting.
+type MarkEntryType = 'direct' | 'question_wise'
 
 interface CIARound {
 	round: number
@@ -91,6 +100,7 @@ interface CIARound {
 	conversion_rule_id?: string
 	total_periods?: number     // total class periods in session window (manual now, MyJKKN later)
 	attended_periods?: number  // default/template attended periods (manual now, MyJKKN later)
+	mark_entry_type?: MarkEntryType
 	components: RoundComponent[]
 }
 
@@ -119,7 +129,7 @@ interface CIAEntrySetting {
 }
 
 // ─── Empty form ───
-const emptyRound = (): CIARound => ({ round: 1, round_name: 'CIA-1', components: [] })
+const emptyRound = (): CIARound => ({ round: 1, round_name: 'CIA-1', mark_entry_type: 'direct', components: [] })
 const emptyForm = () => ({
 	institutions_id: '',
 	setting_name: '',
@@ -385,7 +395,7 @@ export default function CIAEntrySettingPage() {
 
 	const addRound = () => {
 		const n = form.cia_rounds.length + 1
-		setForm(prev => ({ ...prev, cia_rounds: [...prev.cia_rounds, { round: n, round_name: `CIA-${n}`, components: [] }] }))
+		setForm(prev => ({ ...prev, cia_rounds: [...prev.cia_rounds, { round: n, round_name: `CIA-${n}`, mark_entry_type: 'direct', components: [] }] }))
 	}
 	const removeRound = (idx: number) => {
 		setForm(prev => ({
@@ -1003,6 +1013,18 @@ export default function CIAEntrySettingPage() {
 													{form.use_course_max && (
 														<Badge variant="outline" className="text-xs">From course</Badge>
 													)}
+													<Select
+														value={round.mark_entry_type || 'direct'}
+														onValueChange={(v: MarkEntryType) => updateRound(rIdx, { mark_entry_type: v })}
+													>
+														<SelectTrigger className="h-7 w-[150px] text-xs" title="How faculty enter marks for this round">
+															<SelectValue />
+														</SelectTrigger>
+														<SelectContent>
+															<SelectItem value="direct" className="text-xs">Direct entry</SelectItem>
+															<SelectItem value="question_wise" className="text-xs">Question-wise</SelectItem>
+														</SelectContent>
+													</Select>
 													{featureFlags.ciaRoundsV2 && editingId && (
 														<Button variant="outline" size="sm" className="h-7 text-xs" type="button"
 															onClick={() => setTimetableDialog({ open: true, round: round.round, roundName: round.round_name })}>
@@ -1150,6 +1172,18 @@ export default function CIAEntrySettingPage() {
 													</div>
 												) : null
 											})()}
+
+											{/* Question-wise rounds draw their questions from the generated question paper */}
+											{(round.mark_entry_type || 'direct') === 'question_wise' && (
+												<div className="mt-3 rounded-md border border-amber-200 bg-amber-50/50 dark:border-amber-900 dark:bg-amber-950/20 px-2 py-1.5">
+													<p className="text-[10px] text-muted-foreground">
+														Questions are not configured here — they come from the question paper generated for this round in{' '}
+														<Link href="/pre-exam/question-papers" className="font-medium text-foreground underline underline-offset-2">Question Papers</Link>
+														{' '}(built from a <Link href="/pre-exam/question-paper-templates" className="font-medium text-foreground underline underline-offset-2">Question Paper Template</Link>).
+														Faculty key in each question separately and the component total is the sum.
+													</p>
+												</div>
+											)}
 
 											{/* Add custom component inline */}
 											<div className="mt-3 rounded-md border border-dashed bg-muted/30 p-2 space-y-2">

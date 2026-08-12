@@ -1,6 +1,22 @@
 import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
 
+const MARK_ENTRY_TYPES = ['direct', 'question_wise']
+
+/**
+ * Validates how marks are keyed in for a round. Question-wise rounds take their question
+ * list from the round's question paper (ia_question_papers.questions), so nothing about
+ * questions is stored on the setting itself.
+ * Returns an error message, or null when the round is valid.
+ */
+function validateRoundMarkEntry(round: any): string | null {
+	const entryType = round.mark_entry_type || 'direct'
+	if (!MARK_ENTRY_TYPES.includes(entryType)) {
+		return `${round.round_name}: mark_entry_type must be 'direct' or 'question_wise'`
+	}
+	return null
+}
+
 // GET: Fetch CIA entry settings with filters
 export async function GET(request: Request) {
 	try {
@@ -148,6 +164,11 @@ export async function POST(request: Request) {
 			if (round.total_periods != null && round.attended_periods != null && round.attended_periods > round.total_periods) {
 				return NextResponse.json({ error: `${round.round_name}: attended_periods cannot exceed total_periods` }, { status: 400 })
 			}
+			// Mark entry type
+			const entryError = validateRoundMarkEntry(round)
+			if (entryError) {
+				return NextResponse.json({ error: entryError }, { status: 400 })
+			}
 		}
 
 		const { data, error } = await supabase
@@ -244,6 +265,11 @@ export async function PUT(request: Request) {
 							return NextResponse.json({ error: `${round.round_name} → Attendance: attended periods cannot exceed total periods` }, { status: 400 })
 						}
 					}
+				}
+				// Mark entry type
+				const entryError = validateRoundMarkEntry(round)
+				if (entryError) {
+					return NextResponse.json({ error: entryError }, { status: 400 })
 				}
 			}
 			// Sync total_rounds
