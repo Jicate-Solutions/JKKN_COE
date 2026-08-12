@@ -3,6 +3,15 @@ import { getSupabaseServer } from '@/lib/supabase-server'
 import { withExternalAuth } from '@/lib/api-auth/middleware'
 import type { ExternalApiContext } from '@/types/api-management'
 import { invalidateStudentCiaCaches } from '@/lib/cia-view/cache'
+import {
+	COMPONENT_MARK_COLUMN,
+	buildPaperIndex,
+	collectPaperIds,
+	isQuestionMarksMap,
+	pruneStaleQuestionMarks,
+	questionSum,
+	validateQuestionMarks,
+} from '@/lib/cia/question-marks'
 
 /**
  * POST /api/v1/cia-marks/sync
@@ -20,6 +29,12 @@ import { invalidateStudentCiaCaches } from '@/lib/cia-view/cache'
  * MyJKKN sends: institutions_id, examination_session_id, course_offering_id,
  *               student_id, exam_registration_id, cia_round, marks, totals
  * COE resolves: program_id, course_id (from course_offerings table)
+ *
+ * Question-wise rounds may also send `question_marks` (see lib/cia/question-marks).
+ * Where a component has a breakdown, its total is re-derived here from the sum
+ * rather than taken from the caller, so the two can never be stored in
+ * disagreement. The same OR-pair and answer-any-N rules COE's own entry route
+ * enforces are applied here too.
  */
 
 // Fields that MyJKKN can send — anything outside this set is stripped
@@ -47,6 +62,9 @@ const ALLOWED_FIELDS = new Set([
 	// End-user-defined components (Option C — JSONB keyed by component code,
 	// e.g. {"ai_tools": 8, "interactive_mode": 5}). Mirrors extra_marks_max.
 	'extra_marks', 'extra_marks_max',
+	// Per-question breakdown for question-wise rounds (JSONB keyed by component
+	// code). The component column still holds the sum — see lib/cia/question-marks.
+	'question_marks',
 	// Grade
 	'grade',
 	// Submission
@@ -81,7 +99,12 @@ const COMPONENT_MARK_FIELDS = [
  *   - AND total_internal_marks is also null/undefined/0
  * We accept total-only records (e.g., attendance aggregations) to stay flexible.
  */
-function hasAnyMark(record: SyncRecord): boolean {
+function hasAnyMark(record: SyncRecord, derived: Record<string, number> = {}): boolean {
+	// A question-wise record may carry its marks only as a breakdown; the totals
+	// derived from it count as marks just as a directly-sent component does.
+	for (const val of Object.values(derived)) {
+		if (val > 0) return true
+	}
 	for (const field of COMPONENT_MARK_FIELDS) {
 		const val = record[field]
 		if (val !== undefined && val !== null && Number(val) > 0) return true
@@ -144,6 +167,11 @@ export const POST = withExternalAuth(async (request: Request, ctx: ExternalApiCo
 		offeringMap.set(o.id, { course_id: o.course_id, program_id: o.program_id })
 	}
 
+	// ── Index the question papers referenced by this batch (one pair of queries) ──
+	// Needed to check per-question maxima, OR pairs and answer-any-N limits. Empty
+	// for a batch with no question-wise records, in which case nothing is queried.
+	const paperIndex = await buildPaperIndex(supabase, collectPaperIds(records as any[]))
+
 	// ── Validate each record ──
 	const validRecords: SyncRecord[] = []
 	const results: SyncResult[] = []
@@ -172,6 +200,33 @@ export const POST = withExternalAuth(async (request: Request, ctx: ExternalApiCo
 			continue
 		}
 
+		// ── Question-wise breakdown ──
+		// Reject a malformed shape rather than storing something no reader can use.
+		if (raw.question_marks !== undefined && !isQuestionMarksMap(raw.question_marks)) {
+			results.push({ index: i, student_id: String(raw.student_id), course_offering_id: coId, status: 'error', error: 'question_marks must be an object keyed by component code' })
+			continue
+		}
+
+		// Same rules COE's own entry route enforces — a direct API call must not
+		// be able to slip past the OR-pair and answer-any-N limits the UI blocks.
+		const subject = String(raw.register_no || raw.student_id)
+		const questionErrors = validateQuestionMarks(paperIndex, raw.question_marks, subject)
+		if (questionErrors.length > 0) {
+			results.push({ index: i, student_id: String(raw.student_id), course_offering_id: coId, status: 'error', error: questionErrors.join('; ') })
+			continue
+		}
+
+		// Each component with a breakdown takes its total from that breakdown, not
+		// from the caller — so a stale client-side total can never be persisted out
+		// of step with the questions behind it.
+		const derivedComponents: Record<string, number> = {}
+		if (isQuestionMarksMap(raw.question_marks)) {
+			for (const code of Object.keys(raw.question_marks)) {
+				const sum = questionSum(raw.question_marks, code)
+				if (sum != null) derivedComponents[code] = sum
+			}
+		}
+
 		// Validate marks range (if totals provided)
 		if (raw.total_internal_marks !== undefined && raw.max_internal_marks !== undefined) {
 			const total = Number(raw.total_internal_marks)
@@ -184,7 +239,7 @@ export const POST = withExternalAuth(async (request: Request, ctx: ExternalApiCo
 
 		// Layer 4: Reject records with no actual marks — prevents empty submissions
 		// leaking through when client-side guards (button disabled, dialog handler) fail.
-		if (!hasAnyMark(raw)) {
+		if (!hasAnyMark(raw, derivedComponents)) {
 			results.push({
 				index: i,
 				student_id: String(raw.student_id),
@@ -199,6 +254,19 @@ export const POST = withExternalAuth(async (request: Request, ctx: ExternalApiCo
 		const sanitized: SyncRecord = {}
 		for (const key of ALLOWED_FIELDS) {
 			if (raw[key] !== undefined) sanitized[key] = raw[key]
+		}
+
+		// Apply the derived totals over whatever the caller sent for those columns.
+		// A component code with no dedicated column (a custom one added via CIA
+		// settings) rolls into extra_marks instead, matching the entry route.
+		if (Object.keys(derivedComponents).length > 0) {
+			const extra: Record<string, unknown> = { ...(sanitized.extra_marks as Record<string, unknown> || {}) }
+			for (const [code, sum] of Object.entries(derivedComponents)) {
+				const column = COMPONENT_MARK_COLUMN[code]
+				if (column) sanitized[column] = sum
+				else extra[code] = sum
+			}
+			sanitized.extra_marks = extra
 		}
 
 		// Auto-resolve program_id + course_id
@@ -266,13 +334,20 @@ export const POST = withExternalAuth(async (request: Request, ctx: ExternalApiCo
 	// on insert. Routing those to UPDATE lets the update reactivate the row.
 	const { data: existingRows } = await supabase
 		.from('cia_marks')
-		.select('student_id, course_offering_id, examination_session_id, cia_round')
+		.select('student_id, course_offering_id, examination_session_id, cia_round, question_marks')
 		.in('student_id', studentIds)
 		.in('course_offering_id', coIds)
 		.in('examination_session_id', sessionIds)
 
-	const existingSet = new Set(
-		(existingRows || []).map(r => `${r.student_id}|${r.course_offering_id}|${r.examination_session_id}|${r.cia_round}`)
+	const rowKey = (r: { student_id: unknown, course_offering_id: unknown, examination_session_id: unknown, cia_round: unknown }) =>
+		`${r.student_id}|${r.course_offering_id}|${r.examination_session_id}|${r.cia_round}`
+
+	const existingSet = new Set((existingRows || []).map(rowKey))
+
+	// Breakdowns already on file, so an overwrite of the component total they sum
+	// to can drop them instead of leaving them stale underneath a new number.
+	const storedQuestionMarks = new Map<string, unknown>(
+		(existingRows || []).map(r => [rowKey(r), r.question_marks])
 	)
 
 	// Split into inserts and updates
@@ -280,8 +355,24 @@ export const POST = withExternalAuth(async (request: Request, ctx: ExternalApiCo
 	const toUpdate: { record: SyncRecord, key: string }[] = []
 
 	for (const record of validRecords) {
-		const key = `${record.student_id}|${record.course_offering_id}|${record.examination_session_id}|${record.cia_round}`
+		const key = rowKey(record as any)
 		if (existingSet.has(key)) {
+			// Which components this write lands on — the set whose stored breakdowns
+			// would otherwise be left summing to a total that no longer exists.
+			const written: string[] = []
+			for (const [code, column] of Object.entries(COMPONENT_MARK_COLUMN)) {
+				if (record[column] !== undefined) written.push(code)
+			}
+			// Custom components live in extra_marks, keyed by the same component codes.
+			const extra = record.extra_marks
+			if (extra && typeof extra === 'object' && !Array.isArray(extra)) {
+				written.push(...Object.keys(extra as Record<string, unknown>))
+			}
+
+			const pruned = pruneStaleQuestionMarks(storedQuestionMarks.get(key), record.question_marks, written)
+			if (pruned !== undefined) record.question_marks = pruned
+			else delete record.question_marks
+
 			toUpdate.push({ record, key })
 		} else {
 			toInsert.push(record)

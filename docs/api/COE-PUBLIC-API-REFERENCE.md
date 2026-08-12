@@ -941,9 +941,15 @@ Any field outside this set is silently stripped before the write.
 
 A record is rejected if **no component has marks > 0** and `total_internal_marks` is also 0.
 
-**Per-question marks are not accepted here.** `question_marks` is not in the allowed-field set, so this route can carry a component total but not the per-question breakdown behind it. Question-wise marks are currently written only by COE's own entry screen. See [IA — Question Papers](#ia--question-papers) for the storage shape.
+**Per-question marks** may be sent as `question_marks`, in the shape described under [IA — Question Papers](#ia--question-papers). Three rules apply, all enforced server-side:
 
-> **Drift warning.** Existing rows are updated field-by-field on the upsert key, and `question_marks` is left untouched. A row entered question-wise in COE (`test_1_mark = 18` over a breakdown summing to 18) that is later synced with `test_1_mark = 20` ends up with a component total of 20 sitting on a breakdown that still sums to 18, with no error raised. Until the sync route handles this, avoid syncing a component that a round has configured as `question_wise`.
+1. **The breakdown wins.** Any component with a breakdown has its total re-derived from the sum of that breakdown, ignoring whatever the caller sent for that column. A stale client-side total therefore cannot be persisted out of step with the questions behind it. A component code with no dedicated column rolls into `extra_marks`, as it does everywhere else.
+2. **Overwriting a total drops a stale breakdown.** If a record writes a component mark *without* supplying a breakdown for that component, and the stored row already has one, that breakdown is cleared as part of the same write. Breakdowns for components the record leaves alone survive untouched. This keeps the invariant that a stored breakdown always sums to its component column.
+3. **The question-wise rules are checked.** Per-question maxima, OR pairs and per-part "answer any N" limits are validated exactly as on COE's own entry route — the two share one implementation (`lib/cia/question-marks`). A record that breaks them is rejected with the failing rules joined into its `error`.
+
+A malformed `question_marks` (anything that is not an object keyed by component code) is rejected rather than stored. A record whose only marks are a breakdown is accepted — the derived totals count as marks for the "no marks provided" check.
+
+A breakdown referencing a paper that no longer exists is stored without rule-checking rather than rejected, so a batch is never blocked by a deleted paper.
 
 **Response shape:**
 
@@ -1193,7 +1199,11 @@ Enforced server-side by COE's entry route. Any consumer building its own entry U
 | Only one branch of an OR pair may be answered | Choice group = `part_label` + `question_number`, so `6a`/`6b` are one group | `only one of Q6a / Q6b may be answered (OR choice)` |
 | A part's "answer any N" limit is respected | `template_parts[].num_to_answer` — binds only when `> 0` and `< num_questions` | Exceeding the part's answer limit |
 
-These rules do **not** run on `/api/v1/cia-marks/sync`, which does not accept per-question data at all.
+These rules run on **both** writers — COE's entry route and `/api/v1/cia-marks/sync` — from one shared implementation, so they cannot drift apart. Mirror them in your own UI anyway, so faculty get immediate feedback instead of a rejected batch.
+
+**Absence** is recorded as `cia_marks.grade = 'AAA'`, matching the grading module and bulk internal marks. An absent learner's components are zeroed and any stored breakdown is cleared — a zero *without* that grade means the learner sat the assessment and scored nothing, which is a different fact.
+
+**Paper status gate.** Marks may only be entered against a paper that is `submitted`, `approved` or `locked`. Drafts are excluded because they can still be re-authored or rebuilt from their template, which would leave entered marks pointing at questions that no longer exist.
 
 ---
 

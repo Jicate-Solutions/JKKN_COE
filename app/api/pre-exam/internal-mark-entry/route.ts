@@ -1,5 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
+import { ENTRY_READY_PAPER_STATUSES, buildPaperIndex, collectPaperIds, questionSum, validateQuestionMarks } from '@/lib/cia/question-marks'
+
+// Absence lives in cia_marks.grade, matching bulk-internal-marks and the grading
+// module. The column's CHECK constraint allows 'AAA' alongside the commendations.
+const ABSENT_GRADE = 'AAA'
 
 export async function GET(request: Request) {
 	try {
@@ -241,12 +246,16 @@ export async function GET(request: Request) {
 				// it de-duplicates on. cia_setting_id is NOT filtered here because
 				// /api/pre-exam/question-papers stores it as NULL unless a caller passes it,
 				// which the Question Papers UI does not.
+				// Draft papers are excluded: a draft can still be re-authored or rebuilt
+				// underneath marks already keyed against it, which would silently
+				// re-point them. Marks may only be entered once a paper is submitted.
 				let query = supabase
 					.from('ia_question_papers')
 					.select('id, cia_setting_id, template_id, set_number, set_label, subject_title, max_marks, status, questions')
 					.eq('cia_round', Number(ciaRound))
 					.eq('course_offering_id', courseOfferingId)
 					.eq('is_active', true)
+					.in('status', ENTRY_READY_PAPER_STATUSES)
 					.order('set_number')
 
 				if (paperSessionId) query = query.eq('examination_session_id', paperSessionId)
@@ -652,13 +661,9 @@ export async function POST(request: Request) {
 
 		// Question-wise rounds send a per-question breakdown alongside the component
 		// marks: { [component_code]: { paper_id, set_number, set_label, marks: { [question_id]: mark } } }.
-		// The component mark is re-derived from that sum here so a stale client-side
-		// total can never be persisted out of step with its questions.
-		const questionSum = (questionMarks: any, code: string): number | null => {
-			const entry = questionMarks?.[code]
-			if (!entry || typeof entry !== 'object' || !entry.marks || typeof entry.marks !== 'object') return null
-			return Object.values(entry.marks).reduce((sum: number, v: any) => sum + (Number(v) || 0), 0)
-		}
+		// The component mark is re-derived from that sum (see lib/cia/question-marks)
+		// so a stale client-side total can never be persisted out of step with its
+		// questions.
 
 		// Effective per-component mark for each row, reused by the max-marks validation below
 		const effectiveMarks: Record<string, number>[] = []
@@ -689,16 +694,23 @@ export async function POST(request: Request) {
 			// Custom codes added via CIA settings (e.g. ai_tools_usage, interactive_mode)
 			// → stored in extra_marks / extra_marks_max JSONB. Without this, custom
 			// component marks were silently dropped.
+			// An absent learner has no marks at all — every component is zeroed and the
+			// row is stamped grade 'AAA', the convention the grading module and
+			// bulk-internal-marks already read. A zero without that grade means the
+			// learner sat the assessment and scored nothing, which is a different fact.
+			const isAbsent = lm.is_absent === true
+			record.grade = isAbsent ? ABSENT_GRADE : null
+
 			let totalMarks = 0
 			const extraMarks: Record<string, number> = {}
 			const extraMarksMax: Record<string, number> = {}
-			const questionMarks = (lm.question_marks && typeof lm.question_marks === 'object') ? lm.question_marks : {}
+			const questionMarks = (!isAbsent && lm.question_marks && typeof lm.question_marks === 'object') ? lm.question_marks : {}
 			const rowMarks: Record<string, number> = {}
 			for (const [code, maxVal] of Object.entries(max_marks || {})) {
 				const markField = markFieldMap[code]
 				const maxField = maxFieldMap[code]
 				const qSum = questionSum(questionMarks, code)
-				const mark = qSum != null ? qSum : (Number(lm.marks?.[code]) || 0)
+				const mark = isAbsent ? 0 : (qSum != null ? qSum : (Number(lm.marks?.[code]) || 0))
 				rowMarks[code] = mark
 				if (markField) {
 					record[markField] = mark
@@ -718,7 +730,11 @@ export async function POST(request: Request) {
 			// Only write question_marks when the client actually sent a breakdown.
 			// Omitting it leaves an existing row's stored questions untouched instead
 			// of blanking them (e.g. a re-save made while the paper failed to load).
-			if (Object.keys(questionMarks).length > 0) {
+			// Absent is the exception: it must clear any breakdown already on file,
+			// or the row would keep per-question marks under a zeroed total.
+			if (isAbsent) {
+				record.question_marks = {}
+			} else if (Object.keys(questionMarks).length > 0) {
 				record.question_marks = questionMarks
 			}
 			record.total_internal_marks = totalMarks
@@ -743,83 +759,11 @@ export async function POST(request: Request) {
 		// ── Question-wise rules, enforced server-side ──
 		// A learner may answer only one question of an OR pair, and no more than
 		// "answer any N" questions in a part. The UI blocks both, but a stale tab or
-		// a direct API call must not be able to slip past them.
-		const paperIds = [...new Set(
-			learner_marks.flatMap((lm: any) =>
-				Object.values(lm.question_marks || {}).map((e: any) => e?.paper_id).filter(Boolean)
-			)
-		)] as string[]
-
-		if (paperIds.length > 0) {
-			const { data: paperRows } = await supabase
-				.from('ia_question_papers')
-				.select('id, template_id, questions')
-				.in('id', paperIds)
-
-			const templateIds = [...new Set((paperRows || []).map((p: any) => p.template_id).filter(Boolean))]
-			const answerLimits = new Map<string, number>()
-			if (templateIds.length > 0) {
-				const { data: templateParts } = await supabase
-					.from('ia_template_parts')
-					.select('template_id, part_label, num_questions, num_to_answer')
-					.in('template_id', templateIds)
-					.eq('is_active', true)
-				for (const tp of (templateParts || [])) {
-					const limit = Number(tp.num_to_answer)
-					if (limit > 0 && limit < Number(tp.num_questions || 0)) {
-						answerLimits.set(`${tp.template_id}|${tp.part_label}`, limit)
-					}
-				}
-			}
-
-			// paper id → question id → { part, group, label, marks }
-			const paperIndex = new Map<string, Map<string, any>>()
-			for (const p of (paperRows || [])) {
-				const index = new Map<string, any>()
-				for (const q of (Array.isArray(p.questions) ? p.questions : [])) {
-					const part = q?.part_label ?? ''
-					index.set(String(q?.id ?? ''), {
-						part,
-						group: `${part}|${q?.question_number ?? ''}`,
-						label: `${q?.question_number ?? ''}${q?.sub_label || ''}`,
-						marks: Number(q?.marks) || 0,
-						limit: answerLimits.get(`${p.template_id}|${part}`) ?? null,
-					})
-				}
-				paperIndex.set(p.id, index)
-			}
-
-			for (const lm of learner_marks) {
-				const regNo = lm.register_no || lm.student_id
-				for (const entry of Object.values(lm.question_marks || {}) as any[]) {
-					const index = paperIndex.get(entry?.paper_id)
-					if (!index) continue
-					const answeredByGroup = new Map<string, string[]>()
-					const groupsByPart = new Map<string, Set<string>>()
-					for (const [qId, val] of Object.entries(entry.marks || {})) {
-						if (val == null || val === '') continue
-						const meta = index.get(qId)
-						if (!meta) continue
-						if (meta.marks > 0 && Number(val) > meta.marks) {
-							errors.push(`${regNo}: Q${meta.label} mark (${val}) exceeds question max (${meta.marks})`)
-						}
-						answeredByGroup.set(meta.group, [...(answeredByGroup.get(meta.group) || []), meta.label])
-						if (!groupsByPart.has(meta.part)) groupsByPart.set(meta.part, new Set())
-						groupsByPart.get(meta.part)!.add(meta.group)
-					}
-					for (const [group, labels] of answeredByGroup) {
-						if (labels.length > 1) {
-							errors.push(`${regNo}: only one of Q${labels.join(' / Q')} may be answered (OR choice)`)
-						}
-					}
-					for (const [part, groups] of groupsByPart) {
-						const limit = [...index.values()].find((m: any) => m.part === part)?.limit
-						if (limit != null && groups.size > limit) {
-							errors.push(`${regNo}: Part ${part} allows any ${limit} question(s), ${groups.size} answered`)
-						}
-					}
-				}
-			}
+		// a direct API call must not be able to slip past them. Shared with
+		// /api/v1/cia-marks/sync so the two writers cannot drift apart.
+		const paperIndex = await buildPaperIndex(supabase, collectPaperIds(learner_marks))
+		for (const lm of learner_marks) {
+			errors.push(...validateQuestionMarks(paperIndex, lm.question_marks, lm.register_no || lm.student_id))
 		}
 
 		if (errors.length > 0) {

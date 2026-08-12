@@ -10,6 +10,8 @@ interface LearnerMark {
 	student_name: string
 	component_marks: Record<string, number>
 	total: number
+	/** Learner did not sit the assessment — printed as "AB", never as a zero. */
+	is_absent?: boolean
 }
 
 interface ComponentDef {
@@ -184,12 +186,15 @@ export function generateInternalMarksPDF(data: InternalMarksPDFData): string {
 			learner.student_name,
 		]
 		data.components.forEach(c => {
+			// An absent learner has no marks to print — a zero here would read as
+			// "sat the assessment and scored nothing", which is a different fact.
+			if (learner.is_absent) { row.push('AB'); return }
 			const mark = learner.component_marks[c.code]
 			// Option B: treat "not entered" the same as "entered as 0".
 			row.push(mark != null ? mark : 0)
 		})
-		row.push(learner.total)
-		row.push(numberToWords(learner.total))
+		row.push(learner.is_absent ? 'AB' : learner.total)
+		row.push(learner.is_absent ? 'ABSENT' : numberToWords(learner.total))
 		return row
 	})
 
