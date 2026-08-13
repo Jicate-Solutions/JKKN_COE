@@ -1237,6 +1237,94 @@ function resolveCumulativeGrade(
 	return { cumulativeGrade: '', classification: fallback }
 }
 
+const normalizeAlnum = (s: string) => (s || '').replace(/[^a-z0-9]/gi, '').toLowerCase()
+
+/**
+ * Resolve a program's descriptive name and display name from the MyJKKN
+ * programs API — the authority for both, since the COE mirror leaves
+ * display_name NULL.
+ *
+ *   program_name  "MASTER OF COMMERCE"  -> E_DEGNAME
+ *   display_name  "COMMERCE"            -> E_BRANCHNA
+ *
+ * MyJKKN returns the program CODE in `program_id` (e.g. "PCM"); the typed
+ * service maps it to `program_code`, so both shapes are matched. Returns empty
+ * strings when MyJKKN is unreachable or has no matching program, letting the
+ * caller fall back to local data.
+ */
+async function fetchMyJKKNProgram(
+	myjkknIds: string[],
+	programCode: string
+): Promise<{ programName: string; displayName: string }> {
+	const apiUrl = process.env.MYJKKN_API_URL || 'https://www.jkkn.ai/api'
+	const apiKey = process.env.MYJKKN_API_KEY || ''
+	const empty = { programName: '', displayName: '' }
+	if (!apiKey || myjkknIds.length === 0 || !programCode) return empty
+
+	const target = normalizeAlnum(programCode)
+
+	for (const instId of myjkknIds) {
+		try {
+			const resp = await fetch(
+				`${apiUrl}/api-management/organizations/programs?institution_id=${instId}&is_active=true&limit=1000`,
+				{
+					headers: {
+						Authorization: `Bearer ${apiKey}`,
+						Accept: 'application/json'
+					},
+					cache: 'no-store'
+				}
+			)
+			if (!resp.ok) {
+				console.warn(`[University Data Export] MyJKKN programs ${resp.status} for inst ${instId}`)
+				continue
+			}
+			const json = await resp.json()
+			const programs: any[] = json?.data || json || []
+			// Raw MyJKKN returns the CODE in program_id; the typed service maps it
+			// to program_code — handle both shapes.
+			const hit = programs.find(
+				p => normalizeAlnum(p?.program_code || p?.program_id || '') === target
+			)
+			const programName = (hit?.program_name || '').toString().trim()
+			const displayName = (hit?.display_name || '').toString().trim()
+			if (programName || displayName) return { programName, displayName }
+		} catch (err) {
+			console.warn('[University Data Export] MyJKKN programs fetch failed:', err)
+		}
+	}
+	return empty
+}
+
+/**
+ * Match a degree abbreviation against the START of a program name and return
+ * what follows it, or null when the name does not begin with that degree.
+ *
+ * Matching ignores dots/spaces/case ("M.Sc." matches "MSC") but MUST land on a
+ * word boundary. Without the boundary check, degree code "MA" matched the
+ * first two letters of "Master of Commerce" and the export printed
+ * E_BRANCHNA = "STER OF COMMERCE" (and picked M.A. as the degree for an M.Com
+ * cohort).
+ */
+function degreePrefixRest(programName: string, degreeCode: string): string | null {
+	const name = (programName || '').trim()
+	const dc = normalizeAlnum(degreeCode)
+	if (!name || !dc) return null
+
+	let normAcc = ''
+	for (let i = 0; i < name.length; i++) {
+		normAcc += normalizeAlnum(name[i])
+		if (normAcc.length > dc.length) return null
+		if (normAcc !== dc) continue
+		// The abbreviation must end at a separator or end-of-string — never
+		// mid-word.
+		const next = name[i + 1]
+		if (next !== undefined && /[a-z0-9]/i.test(next)) return null
+		return name.slice(i + 1).replace(/^[\s.\-]+/, '').trim()
+	}
+	return null
+}
+
 /**
  * Derive the BRANCH from a program name by stripping the leading degree
  * abbreviation. e.g. ("M.Sc. MATHEMATICS", "M.Sc") -> "MATHEMATICS".
@@ -1247,19 +1335,8 @@ function stripDegreePrefix(programName: string, degreeCode: string): string {
 	const name = (programName || '').trim()
 	if (!name) return ''
 
-	const normalize = (s: string) => s.replace(/[^a-z0-9]/gi, '').toLowerCase()
-	const dc = normalize(degreeCode)
-
-	if (dc) {
-		let normAcc = ''
-		for (let i = 0; i < name.length; i++) {
-			normAcc += normalize(name[i])
-			if (normAcc === dc) {
-				return name.slice(i + 1).replace(/^[\s.\-]+/, '').trim()
-			}
-			if (normAcc.length >= dc.length) break
-		}
-	}
+	const rest = degreePrefixRest(name, degreeCode)
+	if (rest) return rest
 
 	// Fallback: drop the first whitespace token if it looks like a degree abbrev
 	const parts = name.split(/\s+/)
@@ -1267,6 +1344,32 @@ function stripDegreePrefix(programName: string, degreeCode: string): string {
 		return parts.slice(1).join(' ').trim()
 	}
 	return name
+}
+
+/**
+ * Expand a stored month value to the full uppercase English month name.
+ * consolidated_results.last_appearance_month is written short ("APR") by the
+ * generator and those rows are frozen, so the university export normalises at
+ * read time. Accepts short names, full names and 1-12 numerics; anything
+ * unrecognised is returned uppercased and unchanged.
+ */
+const FULL_MONTHS = [
+	'JANUARY', 'FEBRUARY', 'MARCH', 'APRIL', 'MAY', 'JUNE',
+	'JULY', 'AUGUST', 'SEPTEMBER', 'OCTOBER', 'NOVEMBER', 'DECEMBER'
+]
+
+function expandMonthName(month: unknown): string {
+	if (month === null || month === undefined) return ''
+	const raw = month.toString().trim().toUpperCase()
+	if (!raw) return ''
+
+	// Numeric month (1-12 or "04")
+	const num = Number(raw)
+	if (Number.isInteger(num) && num >= 1 && num <= 12) return FULL_MONTHS[num - 1]
+
+	// Short or full name — "JUN"/"JUNE" both resolve, prefix match is unambiguous
+	const hit = FULL_MONTHS.find(m => m.startsWith(raw))
+	return hit || raw
 }
 
 // =====================================================
@@ -2095,7 +2198,7 @@ export async function GET(req: NextRequest) {
 		// One row per consolidated_results record for the selected
 		// institution + program.
 		//   NEW_CODE  <- institutions.code
-		//   REG_NO / MAJ_PER (cgpa) / MAJ_CLSS_E (part_a_classification) /
+		//   REG_NO / MAJ_PER (cgpa) / MAJ_CLSS_E (part_a_classification + grade) /
 		//     YR_COMP (last_appearance_month + year)  <- consolidated_results
 		//   ENG_NAME (first_name) / T_INITIAL (last_name) / GENDER
 		//                                     <- learners_profiles / MyJKKN profiles
@@ -2136,7 +2239,7 @@ export async function GET(req: NextRequest) {
 			// --- Consolidated results for the cohort ---
 			let crQuery = supabase
 				.from('consolidated_results')
-				.select('register_number, cgpa, result_class, part_a_classification, last_appearance_month, last_appearance_year')
+				.select('register_number, cgpa, grade, part_a_classification, last_appearance_month, last_appearance_year')
 				.eq('institutions_id', institutionId)
 				.eq('is_active', true)
 				.order('register_number', { ascending: true })
@@ -2162,25 +2265,69 @@ export async function GET(req: NextRequest) {
 				)
 			}
 
-			// --- Degree / branch / medium from LOCAL tables (no MyJKKN) ---
-			//   For a program name like "M.Sc. MATHEMATICS":
-			//   E_DEGNAME  <- degrees.degree_name ("MASTER OF SCIENCE"), via degree_id/degree_code
-			//   E_BRANCHNA <- program name minus the degree prefix ("MATHEMATICS")
-			//   DEGREE     <- programs.program_name (full, e.g. "M.Sc. MATHEMATICS")
+			// --- Degree / branch / medium ---
+			// Local programs/degrees seed the values; MyJKKN then overrides both
+			// names, since the COE mirror leaves display_name NULL. For PCM:
+			//   E_DEGNAME  <- programs.program_name ("MASTER OF COMMERCE")
+			//   E_BRANCHNA <- programs.display_name ("COMMERCE")
+			//   DEGREE     <- programs.program_name
 			//   MEDIUM     <- ENGLISH by default, TAMIL for a Tamil program
 			let degreeName = ''
 			let programName = ''
+			let displayName = ''
 			let branchName = ''
 			let medium = 'ENGLISH'
 			{
-				const { data: progRow } = await supabase
+				// NOT .maybeSingle(): a duplicate program_code row (e.g. one entered
+				// in the master alongside a stub auto-created by generate-results,
+				// which writes no display_name) makes maybeSingle return null data
+				// with an error that the old destructure discarded — blanking
+				// display_name, program_name and every column derived from them.
+				// Fetch all matches and prefer the row that actually has a
+				// display_name. Falls back to institution_code scope for rows the
+				// master created before institutions_id was populated.
+				let progRows: any[] = []
+				const { data: byId, error: progErr } = await supabase
 					.from('programs')
-					.select('program_name, degree_code, degree_id')
+					.select('program_name, display_name, degree_code, degree_id')
 					.eq('program_code', programCode)
 					.eq('institutions_id', institutionId)
-					.maybeSingle()
+				if (progErr) {
+					console.error('[University Data Export] programs lookup error:', progErr)
+				}
+				progRows = byId || []
+
+				if (progRows.length === 0 && inst?.institution_code) {
+					const { data: byCode, error: byCodeErr } = await supabase
+						.from('programs')
+						.select('program_name, display_name, degree_code, degree_id')
+						.eq('program_code', programCode)
+						.eq('institution_code', inst.institution_code)
+					if (byCodeErr) {
+						console.error('[University Data Export] programs institution_code lookup error:', byCodeErr)
+					}
+					progRows = byCode || []
+				}
+
+				const progRow =
+					progRows.find(p => (p?.display_name || '').trim()) || progRows[0] || null
 
 				programName = (progRow?.program_name || '').trim()
+				displayName = ((progRow as any)?.display_name || '').trim()
+
+				// MyJKKN is the authority for both names — the COE mirror leaves
+				// display_name NULL. MyJKKN holds them already split:
+				//   program_name "MASTER OF COMMERCE" -> E_DEGNAME
+				//   display_name "COMMERCE"           -> E_BRANCHNA
+				const myjkknProgram = await fetchMyJKKNProgram(myjkknIds, programCode)
+				if (myjkknProgram.programName) programName = myjkknProgram.programName
+				if (myjkknProgram.displayName) displayName = myjkknProgram.displayName
+
+				console.log(
+					`[University Data Export] program ${programCode}: matched ${progRows.length} local row(s), ` +
+					`myjkkn program_name="${myjkknProgram.programName}" display_name="${myjkknProgram.displayName}" ` +
+					`-> effective program_name="${programName}" display_name="${displayName}"`
+				)
 				const degreeCode = progRow?.degree_code || ''
 				const degreeId = (progRow as any)?.degree_id || null
 
@@ -2201,7 +2348,9 @@ export async function GET(req: NextRequest) {
 
 				const normalize = (s: string) => (s || '').replace(/[^a-z0-9]/gi, '').toLowerCase()
 
-				// E_DEGNAME: match by degree_id, then degree_code, then by the
+				// Degree row is still resolved: it supplies the degree_code used to
+				// derive the branch fallback, and degree_name as the E_DEGNAME
+				// fallback. Match by degree_id, then degree_code, then by the
 				// degree abbreviation that prefixes the program name.
 				let degRow: any = null
 				if (degreeId) degRow = degList.find(d => d.id === degreeId)
@@ -2209,21 +2358,35 @@ export async function GET(req: NextRequest) {
 					degRow = degList.find(d => normalize(d.degree_code) === normalize(degreeCode))
 				}
 				if (!degRow && programName) {
-					const normName = normalize(programName)
+					// Word-boundary aware: "MA" must not match "Master of Commerce".
 					const candidates = degList
-						.filter(d => d.degree_code && normName.startsWith(normalize(d.degree_code)))
+						.filter(d => d.degree_code && degreePrefixRest(programName, d.degree_code) !== null)
 						.sort((a, b) => normalize(b.degree_code).length - normalize(a.degree_code).length)
 					degRow = candidates[0] || null
 				}
-				degreeName = (degRow?.degree_name || '').toUpperCase()
+				// Last resort: the program name IS the degree name
+				// ("Master of Commerce"), so match on degree_name directly.
+				if (!degRow && programName) {
+					degRow = degList.find(d => normalize(d.degree_name) === normalize(programName)) || null
+				}
+				// E_DEGNAME = programs.program_name ("MASTER OF COMMERCE"),
+				// uppercased. Falls back to the matched degrees.degree_name only
+				// when the program has no name at all.
+				degreeName = (programName || degRow?.degree_name || '').toUpperCase()
 
-				// E_BRANCHNA = program name minus the degree abbreviation
-				// (use the matched degree's code when available)
+				// E_BRANCHNA = programs.display_name ("COMMERCE"), uppercased.
+				// Falls back to the program name minus its degree abbreviation
+				// when display_name is unset.
 				const effectiveDegreeCode = degRow?.degree_code || degreeCode
-				branchName = stripDegreePrefix(programName, effectiveDegreeCode).toUpperCase()
+				branchName = (displayName || stripDegreePrefix(programName, effectiveDegreeCode)).toUpperCase()
 
-				// MEDIUM: Tamil program -> TAMIL, else ENGLISH
-				if (/tamil/i.test(programName)) medium = 'TAMIL'
+				// MEDIUM: Tamil program -> TAMIL, else ENGLISH.
+				// Must test the branch too: MyJKKN splits "M.A. TAMIL" into
+				// program_name "MASTER OF ARTS" + display_name "TAMIL", so the
+				// language only appears in the branch half.
+				if (/tamil/i.test(programName) || /tamil/i.test(displayName) || /tamil/i.test(branchName)) {
+					medium = 'TAMIL'
+				}
 			}
 
 			// --- ENG_NAME + GENDER (first_name, last_name, gender) ---
@@ -2345,16 +2508,29 @@ export async function GET(req: NextRequest) {
 				// own column — do NOT append it to ENG_NAME)
 				const engName = (ext.firstName || '').toUpperCase()
 				const tInitial = (ext.lastName || '').toUpperCase()
-				const yrComp = [r.last_appearance_month, r.last_appearance_year]
+				// YR_COMP = full month name + year, e.g. "APRIL 2025".
+				// last_appearance_month is stored short ("APR") by the generator, so
+				// it is expanded here; already-full and numeric values pass through.
+				const yrComp = [expandMonthName(r.last_appearance_month), r.last_appearance_year]
 					.filter(v => v !== null && v !== undefined && v !== '')
 					.join(' ')
+				// "FIRST CLASS" + "A+" -> "FIRST CLASS WITH A+ GRADE"
+				const partAClass = (r.part_a_classification || '').toString().trim().toUpperCase()
+				const cumulativeGrade = (r.grade || '').toString().trim().toUpperCase()
+				const majClass = partAClass && cumulativeGrade
+					? `${partAClass} WITH ${cumulativeGrade} GRADE`
+					: partAClass
 				return {
 					NEW_CODE: newCode,
 					REG_NO: r.register_number || '',
 					// MAJ_PER = overall CGPA as a numeric cell (per user mapping)
 					MAJ_PER: r.cgpa !== null && r.cgpa !== undefined ? Number(r.cgpa) : '',
-					// MAJ_CLSS_E = Part A classification (uppercase); fall back to overall result_class
-					MAJ_CLSS_E: (r.part_a_classification || r.result_class || '').toString().toUpperCase(),
+					// MAJ_CLSS_E = "<part_a_classification> WITH <grade> GRADE",
+					// e.g. "FIRST CLASS WITH A GRADE". No fallback on the
+					// classification — blank when unset. The " WITH ... GRADE"
+					// suffix is dropped when grade is null (no matching CGPA band)
+					// so the cell never reads "FIRST CLASS WITH  GRADE".
+					MAJ_CLSS_E: majClass,
 					YR_COMP: yrComp,
 					E_DEGNAME: degreeName,
 					E_BRANCHNA: branchName,
@@ -2648,11 +2824,17 @@ export async function POST(req: NextRequest) {
 			// university export then printed as MAJ_CLSS_E; a learner with a strong
 			// Part A and a weaker overall CGPA got the wrong class.
 			const genFirstAppearance = !hasArrearHistory(group.rows, passingPercentage)
-			const overallClassification = resolveCumulativeGrade(
+			// The same band lookup also yields the cumulative letter GRADE saved
+			// to consolidated_results.grade, so the stored grade and the grade
+			// printed on the marksheet always come from one resolution.
+			const {
+				cumulativeGrade: overallGrade,
+				classification: overallClassification
+			} = resolveCumulativeGrade(
 				genCgpaBands,
 				summary.cgpa,
 				genFirstAppearance
-			).classification
+			)
 
 			const partRow = {
 				part_i_credits_earned: partColMap['Part I']?.credits || 0,
@@ -2698,6 +2880,9 @@ export async function POST(req: NextRequest) {
 				total_credits_earned: summary.creditsEarned,
 				total_credit_points: summary.totalCreditPoints,
 				cgpa: summary.cgpa,
+				// Cumulative letter grade for the CGPA above, from cgpa_grade_system.
+				// NULL when no band matched (table absent / CGPA outside every band).
+				grade: overallGrade || null,
 				percentage: summary.cgpa > 0 ? Math.min(100, summary.cgpa * 10) : 0,
 				// DB constraint allows only: Distinction | First Class | Second Class | Pass | Fail
 				// The summary.classification field uses richer human labels for UI/PDF;

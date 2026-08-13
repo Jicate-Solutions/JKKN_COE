@@ -10,13 +10,23 @@ import ExcelJS from 'exceljs'
  *   ENG_NAME | TAMIL_NAME | T_INITIAL | DEGREE | MEDIUM | GENDER
  *
  * Data sources:
- *   - NEW_CODE                          institutions.code
- *   - REG_NO / MAJ_PER / MAJ_CLSS_E /   consolidated_results
- *     YR_COMP
+ *   - NEW_CODE                          institutions.code || institution_code
+ *   - REG_NO                            consolidated_results.register_number
+ *   - MAJ_PER                           consolidated_results.cgpa
+ *   - MAJ_CLSS_E                        consolidated_results.part_a_classification
+ *                                       + " WITH " + .grade + " GRADE", e.g.
+ *                                       "FIRST CLASS WITH A+ GRADE". Blank when
+ *                                       the classification is unset (no fallback);
+ *                                       suffix dropped when grade is null.
+ *   - YR_COMP                           consolidated_results.last_appearance_month
+ *                                       (expanded to the full month name) + _year
  *   - ENG_NAME                          learners_profiles.first_name
  *   - T_INITIAL                         learners_profiles.last_name
  *   - GENDER                            learners_profiles.gender
- *   - E_DEGNAME / E_BRANCHNA / DEGREE   MyJKKN programs API
+ *   - E_DEGNAME                         MyJKKN programs.program_name
+ *                                       ("MASTER OF COMMERCE"), uppercased
+ *   - E_BRANCHNA                        MyJKKN programs.display_name ("COMMERCE")
+ *   - DEGREE                            programs.program_name
  *   - MEDIUM                            derived from the program name
  *   - TAMIL_NAME                        no source in COE/MyJKKN — emitted blank
  */
