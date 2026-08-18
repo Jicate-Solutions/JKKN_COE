@@ -107,6 +107,81 @@ async function fetchMyJKKNPaginated(
 	return all
 }
 
+// ── MyJKKN learner profile cache ──
+// Profiles change rarely but the sweep costs many sequential 200-row pages, and the same
+// institution is hit again every time the user switches report type. Cache per institution.
+const PROFILE_CACHE_TTL_MS = 10 * 60 * 1000
+const profileCache = new Map<string, { at: number; data: any[] }>()
+
+/** Keep only the fields the reports actually read — cached rows stay small */
+function slimProfile(p: any) {
+	return {
+		register_number: p.register_number,
+		student_name: p.student_name || p.full_name || [p.first_name, p.last_name].filter(Boolean).join(' ') || null,
+		date_of_birth: p.date_of_birth || null,
+		gender: p.gender || null,
+	}
+}
+
+/** True when the given profiles resolve every register number we need */
+function coversAll(profiles: any[], needed: Set<string>): boolean {
+	if (needed.size === 0) return true
+	const seen = new Set<string>()
+	for (const p of profiles) {
+		if (p.register_number && needed.has(p.register_number)) seen.add(p.register_number)
+	}
+	return seen.size >= needed.size
+}
+
+async function fetchLearnerProfilesCached(
+	apiUrl: string,
+	instIds: string[],
+	apiKey: string,
+	needed: Set<string>
+): Promise<any[]> {
+	try {
+		const now = Date.now()
+		const cached: any[] = []
+		const stale: string[] = []
+		for (const id of instIds) {
+			const hit = profileCache.get(id)
+			if (hit && now - hit.at < PROFILE_CACHE_TTL_MS) cached.push(...hit.data)
+			else stale.push(id)
+		}
+
+		// Everything cached and every learner resolved — no network call at all
+		if (stale.length === 0 && coversAll(cached, needed)) {
+			console.log(`[ExamReports] Profile cache hit (${cached.length} rows, 0 requests)`)
+			return cached
+		}
+
+		// Partially cached: only sweep the institutions we lack. If the cache is complete but
+		// doesn't cover these learners (an earlier sweep stopped early), re-sweep all of them.
+		const toFetch = stale.length > 0 ? stale : instIds
+		const found = new Set<string>()
+		for (const p of cached) {
+			if (p.register_number && needed.has(p.register_number)) found.add(p.register_number)
+		}
+
+		const results = await Promise.all(toFetch.map(instId =>
+			fetchMyJKKNPaginated(apiUrl, 'learners/profiles', instId, apiKey, 200, (profiles) => {
+				for (const p of profiles) {
+					if (p.register_number && needed.has(p.register_number)) found.add(p.register_number)
+				}
+				return found.size >= needed.size
+			}).then(rows => {
+				const slim = rows.map(slimProfile)
+				profileCache.set(instId, { at: Date.now(), data: slim })
+				return slim
+			})
+		))
+
+		return stale.length > 0 ? [...cached, ...results.flat()] : results.flat()
+	} catch {
+		return []
+	}
+}
+
 export async function GET(request: Request) {
 	try {
 		const supabase = getSupabaseServer()
@@ -190,26 +265,18 @@ export async function GET(request: Request) {
 		const registerNumbers = [...new Set(allRegistrations.map(r => r.stu_register_no).filter(Boolean))]
 		const registerNumberSet = new Set(registerNumbers)
 
+		// Only the student-* reports print learner name / DOB / gender
+		const needsLearnerProfiles = report_type.startsWith('student-')
+
 		const [courseMappings, myjkknProfilesRaw] = await Promise.all([
 			// Course mapping (parallel batches)
 			fetchBatchedIn(uniqueCourseIds, (batch) =>
 				supabase.from('course_mapping').select('course_id, course_order').in('course_id', batch)
 			),
-			// MyJKKN learner profiles (all institutions in parallel, with early termination)
-			(registerNumbers.length > 0 && myjkknIds.length > 0 && myjkknApiKey)
-				? (() => {
-					const foundSet = new Set<string>()
-					return Promise.all(myjkknIds.map(instId =>
-						fetchMyJKKNPaginated(myjkknApiUrl, 'learners/profiles', instId, myjkknApiKey, 200, (profiles) => {
-							for (const p of profiles) {
-								if (p.register_number && registerNumberSet.has(p.register_number)) {
-									foundSet.add(p.register_number.toUpperCase())
-								}
-							}
-							return foundSet.size >= registerNumbers.length
-						})
-					)).then(results => results.flat()).catch(() => [] as any[])
-				})()
+			// MyJKKN learner profiles — only the learner-detail reports read names/DOB/gender.
+			// Count and date-wise reports aggregate by course, so skip the sweep entirely for them.
+			(needsLearnerProfiles && registerNumbers.length > 0 && myjkknIds.length > 0 && myjkknApiKey)
+				? fetchLearnerProfilesCached(myjkknApiUrl, myjkknIds, myjkknApiKey, registerNumberSet)
 				: Promise.resolve([] as any[]),
 		])
 
@@ -301,7 +368,7 @@ export async function GET(request: Request) {
 				}
 			}
 		}
-		console.log(`[ExamReports] Names: ${nameMap.size}/${registerNumbers.length}, DOBs: ${dobMap.size}/${registerNumbers.length} from MyJKKN`)
+		console.log(`[ExamReports] Names: ${nameMap.size}/${registerNumbers.length}, DOBs: ${dobMap.size}/${registerNumbers.length} from MyJKKN${needsLearnerProfiles ? '' : ' (profile sweep skipped for this report)'}`)
 
 		// Offering map
 		const offeringMap = new Map(

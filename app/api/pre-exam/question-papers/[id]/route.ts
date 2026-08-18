@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
 import { scaffoldQuestions, mergeAuthored } from '@/lib/ia/paper-scaffold'
+import { readSubQuestions, validateSubMarks, canSplit } from '@/lib/ia/sub-questions'
 import { hasAnyCoeRole } from '@/lib/auth/check-user-permission'
 
 const EDITABLE_STATUSES = ['draft', 'submitted']
@@ -126,17 +127,32 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
 			for (const q of questions) {
 				const base = byId.get(q.id)
 				if (!base) continue
+				// Sub-divisions are author-defined; normalize (relabel i/ii, drop junk)
+				// and refuse them on objective questions, which have nothing to split.
+				const subs = canSplit(base) ? readSubQuestions(q) : []
 				byId.set(q.id, {
 					...base,
 					question_text: q.question_text ?? null,
 					marks: q.marks ?? base.marks ?? null,
 					options: q.options ?? null,
 					correct_option: q.correct_option ?? null,
-					co_code: q.co_code ?? null,
-					k_level: q.k_level ?? null,
+					// A split question's CO / K-level live on its sub-divisions.
+					co_code: subs.length > 0 ? null : q.co_code ?? null,
+					k_level: subs.length > 0 ? null : q.k_level ?? null,
+					sub_questions: subs.length > 0 ? subs : null,
 				})
 			}
 			patch.questions = current.map((q: any) => byId.get(q.id))
+
+			// Sub-division marks must add up to the parent question's marks. The UI
+			// blocks Save, but a stale tab or a direct API call must not slip past.
+			const subErrors = validateSubMarks(patch.questions)
+			if (subErrors.length > 0) {
+				return NextResponse.json(
+					{ error: 'SUB_MARKS', message: subErrors.join(' · ') },
+					{ status: 400 }
+				)
+			}
 			savedCount = current.length
 		}
 

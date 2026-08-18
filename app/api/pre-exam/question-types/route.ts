@@ -1,6 +1,37 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
 
+/**
+ * Question types are per-institution rows, so a mutation must name the
+ * institution it is acting on and match the row it targets — otherwise a
+ * stale institution_code on the client edits/deletes another institution's
+ * type by id.
+ */
+async function assertTypeInInstitution(
+	supabase: ReturnType<typeof getSupabaseServer>,
+	id: string,
+	institutionCode: string | null | undefined
+): Promise<{ error: string; status: number } | null> {
+	if (!institutionCode) {
+		return { error: 'institution_code is required', status: 400 }
+	}
+	const { data, error } = await supabase
+		.from('ia_question_types')
+		.select('id, institution_code')
+		.eq('id', id)
+		.maybeSingle()
+
+	if (error) return { error: error.message, status: 500 }
+	if (!data) return { error: 'Question type not found', status: 404 }
+	if (data.institution_code !== institutionCode) {
+		return {
+			error: `This question type belongs to institution "${data.institution_code}" and cannot be changed from "${institutionCode}"`,
+			status: 403,
+		}
+	}
+	return null
+}
+
 // GET - list question types (optionally scoped by institution_code)
 export async function GET(req: NextRequest) {
 	try {
@@ -105,9 +136,16 @@ export async function PUT(req: NextRequest) {
 	try {
 		const supabase = getSupabaseServer()
 		const body = await req.json()
-		const { id, ...updateData } = body
+		// institution_code is immutable here; it is read only to prove the caller
+		// is acting within the institution that owns the row.
+		const { id, institution_code: callerInstitutionCode, ...updateData } = body
 
 		if (!id) return NextResponse.json({ error: 'Question type ID is required' }, { status: 400 })
+
+		const ownership = await assertTypeInInstitution(supabase, id, callerInstitutionCode)
+		if (ownership) {
+			return NextResponse.json({ error: ownership.error }, { status: ownership.status })
+		}
 
 		if (updateData.default_option_count !== undefined && updateData.default_option_count !== null) {
 			updateData.default_option_count =
@@ -118,7 +156,6 @@ export async function PUT(req: NextRequest) {
 		}
 		// institution + code are immutable after creation
 		delete updateData.institutions_id
-		delete updateData.institution_code
 
 		const { data, error } = await supabase
 			.from('ia_question_types')
@@ -145,6 +182,15 @@ export async function DELETE(req: NextRequest) {
 		const { searchParams } = new URL(req.url)
 		const id = searchParams.get('id')
 		if (!id) return NextResponse.json({ error: 'Question type ID is required' }, { status: 400 })
+
+		const ownership = await assertTypeInInstitution(
+			supabase,
+			id,
+			searchParams.get('institution_code')
+		)
+		if (ownership) {
+			return NextResponse.json({ error: ownership.error }, { status: ownership.status })
+		}
 
 		// Resolve the type_code to check usage
 		const { data: qtype } = await supabase

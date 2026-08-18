@@ -169,6 +169,21 @@ export interface IaPaperQuestionOption {
 	text: string
 }
 
+/**
+ * One sub-division of a question ("12 a) i."). Author-defined per paper; their
+ * marks must sum exactly to the parent question's marks. One level only.
+ */
+export interface IaPaperSubQuestion {
+	id: string
+	/** Roman numeral, recomputed on add/remove ("i", "ii", "iii"). */
+	label: string
+	question_text?: string | null
+	marks?: number | null
+	co_code?: string | null
+	k_level?: string | null
+	display_order: number
+}
+
 export interface IaPaperQuestion {
 	id: string
 	paper_id: string
@@ -186,6 +201,12 @@ export interface IaPaperQuestion {
 	correct_option?: string
 	co_code?: string
 	k_level?: string
+	/**
+	 * Author-defined sub-divisions (i / ii / iii). Empty or absent = not split.
+	 * When split, the parent's question_text is an optional shared stem and the
+	 * parent's CO / K-level are unused — each sub-division carries its own.
+	 */
+	sub_questions?: IaPaperSubQuestion[] | null
 	display_order: number
 }
 

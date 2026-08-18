@@ -4,6 +4,7 @@ import { withExternalAuth } from '@/lib/api-auth/middleware'
 import type { ExternalApiContext } from '@/types/api-management'
 import { institutionAllowed } from '@/lib/ia/v1-helpers'
 import { scaffoldQuestions, mergeAuthored } from '@/lib/ia/paper-scaffold'
+import { readSubQuestions, validateSubMarks, canSplit } from '@/lib/ia/sub-questions'
 
 /** /api/v1/ia/question-papers/{id} — detail / save / rebuild / delete (questions JSONB). */
 
@@ -92,17 +93,26 @@ export const PUT = withExternalAuth(async (request: Request, context: ExternalAp
 		for (const q of questions) {
 			const base = byId.get(q.id)
 			if (!base) continue
+			// Author-defined sub-divisions; objective questions cannot be split.
+			const subs = canSplit(base) ? readSubQuestions(q) : []
 			byId.set(q.id, {
 				...base,
 				question_text: q.question_text ?? null,
 				marks: q.marks ?? base.marks ?? null,
 				options: q.options ?? null,
 				correct_option: q.correct_option ?? null,
-				co_code: q.co_code ?? null,
-				k_level: q.k_level ?? null,
+				// A split question's CO / K-level live on its sub-divisions.
+				co_code: subs.length > 0 ? null : q.co_code ?? null,
+				k_level: subs.length > 0 ? null : q.k_level ?? null,
+				sub_questions: subs.length > 0 ? subs : null,
 			})
 		}
 		patch.questions = current.map((q: any) => byId.get(q.id))
+
+		const subErrors = validateSubMarks(patch.questions)
+		if (subErrors.length > 0) {
+			return NextResponse.json({ error: 'SUB_MARKS', message: subErrors.join(' · ') }, { status: 400 })
+		}
 		savedCount = current.length
 	}
 

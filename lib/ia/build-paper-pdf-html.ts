@@ -13,6 +13,7 @@
 // than jsPDF ever did.
 
 import katex from 'katex'
+import { readSubQuestions } from './sub-questions'
 import {
 	buildLatinSerifFontFaceCss,
 	buildTamilFontFaceCss,
@@ -244,6 +245,37 @@ function buildHtml(ctx: {
 					const prefix = q.sub_label ? `${q.question_number} ${q.sub_label})` : `${q.question_number}.`
 					// Per-question option font wins; otherwise fall back to the paper-wide common font.
 					const body = renderQuestionHtml(q.question_text || '') + optionLineHtml(q.options, q.option_font ?? defaultFont)
+
+					// Author-defined sub-divisions ("12 a) i. (8) / ii. (7)"): the parent
+					// row keeps only its optional stem — marks and CO/K move to the subs.
+					const subs = readSubQuestions(q)
+					if (subs.length > 0) {
+						// With no stem, the question number rides the first sub-division's row
+						// (as in a printed paper) instead of taking an empty row of its own.
+						const hasStem = (q.question_text || '').replace(/<[^>]*>/g, '').trim() !== ''
+						const subRows = subs
+							.map((sb, i) => {
+								const marks = sb.marks == null ? '' : ` <span class="sub-marks">(${sb.marks})</span>`
+								const qno = !hasStem && i === 0 ? escapeHtml(prefix) : ''
+								return `<tr>
+									<td class="qno">${qno}</td>
+									<td class="qbody sub"><span class="sub-lbl">${escapeHtml(sb.label)}.</span> ${renderQuestionHtml(sb.question_text || '')}${marks}</td>
+									<td class="co">${escapeHtml(sb.co_code || '')}</td>
+									<td class="kl">${escapeHtml(sb.k_level || '')}</td>
+								</tr>`
+							})
+							.join('')
+						const stemRow = hasStem
+							? `<tr>
+								<td class="qno">${escapeHtml(prefix)}</td>
+								<td class="qbody">${body}</td>
+								<td class="co"></td>
+								<td class="kl"></td>
+							</tr>`
+							: ''
+						return `${orRow}${stemRow}${subRows}`
+					}
+
 					return `${orRow}<tr>
 						<td class="qno">${escapeHtml(prefix)}</td>
 						<td class="qbody">${body}</td>
@@ -338,6 +370,12 @@ function buildHtml(ctx: {
 	.kl { text-align: center; font-weight: bold; font-size: 9pt; }
 	.or { text-align: center; font-weight: bold; }
 	.qbody p { margin: 0 0 2px; }
+	/* Sub-divisions ("12 a) i. … (8)"): indented under their parent question, with
+	   the marks printed inline at the end of the sub-division's text. */
+	.qbody.sub { padding-left: 5mm; }
+	.qbody.sub p { display: inline; }
+	.sub-lbl { font-weight: bold; }
+	.sub-marks { font-weight: bold; white-space: nowrap; }
 	/* Paper-wide common font: question bodies render in it unless an inline span
 	   (explicit per-selection font) overrides. Scoped to .qbody so question numbers,
 	   CO/K columns and headings keep the Latin serif — never put a legacy TSCII face

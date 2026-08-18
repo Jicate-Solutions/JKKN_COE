@@ -2,6 +2,7 @@
 // question objects (incl. "(OR)" choice alternatives and MCQ option slots) from
 // template parts. Stored as ia_question_papers.questions (JSONB).
 import { randomUUID } from 'crypto'
+import type { IaSubQuestion } from './sub-questions'
 
 const LETTERS = 'abcdefghij'
 
@@ -20,6 +21,11 @@ export interface IaQuestionObject {
 	correct_option: string | null
 	co_code: string | null
 	k_level: string | null
+	/**
+	 * Author-defined sub-divisions ("12 a) i. / ii."). null / [] = not split.
+	 * Never scaffolded from the template — the paper author adds them.
+	 */
+	sub_questions?: IaSubQuestion[] | null
 	display_order: number
 }
 
@@ -51,6 +57,7 @@ export function scaffoldQuestions(parts: any[]): IaQuestionObject[] {
 				correct_option: null,
 				co_code: null,
 				k_level: null,
+				sub_questions: null,
 				display_order: ++order,
 			})
 			if (part.has_choice) {
@@ -67,6 +74,7 @@ export function scaffoldQuestions(parts: any[]): IaQuestionObject[] {
 					correct_option: null,
 					co_code: null,
 					k_level: null,
+					sub_questions: null,
 					display_order: ++order,
 				})
 			}
@@ -100,6 +108,8 @@ export function mergeAuthored(scaffold: IaQuestionObject[], existing: any[]): Ia
 			correct_option: e.correct_option ?? null,
 			co_code: e.co_code ?? null,
 			k_level: e.k_level ?? null,
+			// Author-defined splits survive a Rebuild, like authored text does.
+			sub_questions: Array.isArray(e.sub_questions) && e.sub_questions.length > 0 ? e.sub_questions : null,
 		}
 	})
 }

@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useMemo, useCallback } from "react"
+import { useState, useEffect, useMemo, useCallback, useRef } from "react"
 import { useSessionSync } from '@/hooks/use-session-sync'
 import { AppSidebar } from "@/components/layout/app-sidebar"
 import { AppHeader } from "@/components/layout/app-header"
@@ -42,6 +42,12 @@ interface InstitutionOption {
 	name: string
 }
 
+interface ProgramOption {
+	program_code: string
+	program_name: string | null
+	program_order: number | null
+}
+
 interface SessionOption {
 	id: string
 	session_code: string
@@ -50,8 +56,14 @@ interface SessionOption {
 
 const COURSE_CATEGORY_OPTIONS = ['Theory', 'Practical', 'Project', 'Field Work']
 
+// Fallback semester list — used until a report is generated and real semesters are known
+const DEFAULT_SEMESTER_OPTIONS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+// Sentinel for registrations whose course offering carries no semester
+const UNMAPPED_SEMESTER = 0
+
 const ROMAN = ['', 'I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X']
 function toRoman(n: number): string { return ROMAN[n] || String(n) }
+function semesterLabel(n: number): string { return n === UNMAPPED_SEMESTER ? 'Not Mapped' : toRoman(n) }
 
 type ReportCategory = 'exam-reg-app' | 'registration' | 'exam-date'
 
@@ -93,9 +105,14 @@ export default function ExamRegistrationReportsPage() {
 	// Filter state
 	const [institutions, setInstitutions] = useState<InstitutionOption[]>([])
 	const [sessions, setSessions] = useState<SessionOption[]>([])
+	const [programs, setPrograms] = useState<ProgramOption[]>([])
 	const [selectedInstitutionId, setSelectedInstitutionId] = useState<string>('')
 	const { selectedSessionId, setSelectedSessionId, mustSelectSession } = useSessionSync()
 	const [selectedCourseCategories, setSelectedCourseCategories] = useState<string[]>([])
+	// Empty = All Programs (no filtering)
+	const [selectedPrograms, setSelectedPrograms] = useState<string[]>([])
+	// Empty = All Semesters (no filtering)
+	const [selectedSemesters, setSelectedSemesters] = useState<number[]>([])
 	const [selectedReportCategory, setSelectedReportCategory] = useState<ReportCategory | ''>('')
 	const [selectedReportType, setSelectedReportType] = useState<ReportType | ''>('')
 
@@ -111,6 +128,7 @@ export default function ExamRegistrationReportsPage() {
 	// Loading states
 	const [loadingInstitutions, setLoadingInstitutions] = useState(false)
 	const [loadingSessions, setLoadingSessions] = useState(false)
+	const [loadingPrograms, setLoadingPrograms] = useState(false)
 	const [loadingReport, setLoadingReport] = useState(false)
 	const [exportingPdf, setExportingPdf] = useState(false)
 	const [exportingExcel, setExportingExcel] = useState(false)
@@ -119,6 +137,12 @@ export default function ExamRegistrationReportsPage() {
 	const [institutionOpen, setInstitutionOpen] = useState(false)
 	const [sessionOpen, setSessionOpen] = useState(false)
 	const [categoryOpen, setCategoryOpen] = useState(false)
+	const [semesterOpen, setSemesterOpen] = useState(false)
+	const [programOpen, setProgramOpen] = useState(false)
+
+	// Report response cache — switching report types re-runs an expensive query for data
+	// that is identical per (institution, session, report type). Key → last response.
+	const reportCacheRef = useRef<Map<string, { data: any[]; meta: NonNullable<typeof reportMeta> }>>(new Map())
 
 	// Pagination
 	const [currentPage, setCurrentPage] = useState(1)
@@ -177,17 +201,58 @@ export default function ExamRegistrationReportsPage() {
 		}
 	}, [])
 
+	const fetchPrograms = useCallback(async (institutionId: string) => {
+		try {
+			setLoadingPrograms(true)
+			setPrograms([])
+
+			// Primary source: MyJKKN programs (the local programs table is often sparse)
+			let list: ProgramOption[] = []
+			try {
+				const res = await fetch(`/api/reports/marksheet-distribution/programs?institution_id=${institutionId}`)
+				if (res.ok) {
+					const data = await res.json()
+					list = data.programs || data.data || (Array.isArray(data) ? data : [])
+				}
+			} catch (e) {
+				console.warn('MyJKKN programs lookup failed:', e)
+			}
+
+			// Fallback: local programs table
+			if (list.length === 0) {
+				const res = await fetch(`/api/filters/programs?institution_id=${institutionId}`)
+				if (res.ok) {
+					const data = await res.json()
+					list = Array.isArray(data) ? data : data.data || []
+				}
+			}
+
+			setPrograms(list)
+		} catch (error) {
+			console.error('Error fetching programs:', error)
+		} finally {
+			setLoadingPrograms(false)
+		}
+	}, [])
+
+	useEffect(() => {
+		reportCacheRef.current.clear()
+	}, [selectedInstitutionId, selectedSessionId])
+
 	useEffect(() => {
 		if (selectedInstitutionId) {
 			fetchSessions(selectedInstitutionId)
+			fetchPrograms(selectedInstitutionId)
 			setSelectedSessionId('')
 			setSelectedCourseCategories([])
+			setSelectedPrograms([])
+			setSelectedSemesters([])
 			setSelectedReportCategory('')
 			setSelectedReportType('')
 			setReportData([])
 			setReportMeta(null)
 		}
-	}, [selectedInstitutionId, fetchSessions])
+	}, [selectedInstitutionId, fetchSessions, fetchPrograms])
 
 	// Reset pagination on data change
 	useEffect(() => {
@@ -196,10 +261,25 @@ export default function ExamRegistrationReportsPage() {
 
 	// ── Generate Report ──
 
-	const fetchReport = useCallback(async (reportType?: ReportType) => {
+	const fetchReport = useCallback(async (reportType?: ReportType, force = false) => {
 		const typeToFetch = reportType || selectedReportType
 		if (!selectedInstitutionId || !selectedSessionId || !typeToFetch) {
 			return
+		}
+
+		const cacheKey = `${selectedInstitutionId}|${selectedSessionId}|${typeToFetch}`
+		if (!force) {
+			const cached = reportCacheRef.current.get(cacheKey)
+			if (cached) {
+				setReportData(cached.data)
+				setReportMeta(cached.meta)
+				toast({
+					title: 'Report Ready',
+					description: `${cached.data.length} registration records.`,
+					className: 'bg-green-50 border-green-200 text-green-800',
+				})
+				return
+			}
 		}
 
 		try {
@@ -215,17 +295,20 @@ export default function ExamRegistrationReportsPage() {
 			}
 
 			const result = await res.json()
-			setReportData(result.data || [])
-			setReportMeta({
+			const data = result.data || []
+			const meta = {
 				institution_name: result.institution_name || '',
 				institution_code: result.institution_code || '',
 				session_name: result.session_name || '',
 				session_code: result.session_code || '',
-			})
+			}
+			reportCacheRef.current.set(cacheKey, { data, meta })
+			setReportData(data)
+			setReportMeta(meta)
 
 			toast({
 				title: 'Report Generated',
-				description: `Found ${result.data?.length || 0} registration records.`,
+				description: `Found ${data.length} registration records.`,
 				className: 'bg-green-50 border-green-200 text-green-800',
 			})
 		} catch (error) {
@@ -242,23 +325,103 @@ export default function ExamRegistrationReportsPage() {
 
 	// Auto-generate: when report type is selected and filters are set
 	const handleReportTypeSelect = useCallback((type: ReportType) => {
+		// Clicking the already-selected report is an explicit "regenerate" — bypass the cache
+		const force = type === selectedReportType
 		setSelectedReportType(type)
 		if (selectedInstitutionId && selectedSessionId) {
 			// Small delay to let state update visually before loading
-			setTimeout(() => fetchReport(type), 50)
+			setTimeout(() => fetchReport(type, force), 50)
 		}
-	}, [selectedInstitutionId, selectedSessionId, fetchReport])
+	}, [selectedInstitutionId, selectedSessionId, selectedReportType, fetchReport])
 
-	// ── Filtered report data (by course category) ──
+	// ── Program options (derived from the generated report) ──
+
+	const programOptions = useMemo(() => {
+		const map = new Map<string, { code: string; name: string; order: number }>()
+
+		if (reportData.length > 0) {
+			// Report exists — list exactly the program codes present in it, so a selection
+			// can never silently match nothing (master-list codes may differ from registration codes)
+			const nameByCode = new Map(programs.map(p => [p.program_code, p.program_name || '']))
+			for (const r of reportData) {
+				const code = r.course_offering?.program_code || r.program_code
+				if (!code || map.has(code)) continue
+				map.set(code, {
+					code,
+					name: r.course_offering?.program_name || nameByCode.get(code) || '',
+					order: r.course_offering?.program_order ?? 999,
+				})
+			}
+		} else {
+			// Before any report is generated, offer the institution's programs
+			for (const p of programs) {
+				if (!p.program_code || map.has(p.program_code)) continue
+				map.set(p.program_code, { code: p.program_code, name: p.program_name || '', order: p.program_order ?? 999 })
+			}
+		}
+
+		return [...map.values()].sort((a, b) => (a.order - b.order) || a.code.localeCompare(b.code))
+	}, [programs, reportData])
+
+	// Drop programs that no longer exist once a new report is generated
+	useEffect(() => {
+		const codes = new Set(programOptions.map(p => p.code))
+		setSelectedPrograms(prev => {
+			const next = prev.filter(c => codes.has(c))
+			return next.length === prev.length ? prev : next
+		})
+	}, [programOptions])
+
+	// ── Semester options (derived from the generated report, fallback to 1-10) ──
+
+	const semesterOptions = useMemo(() => {
+		const found = new Set<number>()
+		let hasUnmapped = false
+		for (const r of reportData) {
+			const sem = Number(r.course_offering?.semester)
+			if (sem > 0) found.add(sem)
+			else hasUnmapped = true
+		}
+		// Report with rows but no mapped semester at all: only "Not Mapped" makes sense
+		if (found.size === 0) return hasUnmapped ? [UNMAPPED_SEMESTER] : DEFAULT_SEMESTER_OPTIONS
+		const list = [...found].sort((a, b) => a - b)
+		// 0 = rows whose course offering has no semester — selectable so they stay reachable
+		return hasUnmapped ? [...list, UNMAPPED_SEMESTER] : list
+	}, [reportData])
+
+	// Drop semesters that no longer exist once a new report is generated
+	useEffect(() => {
+		setSelectedSemesters(prev => {
+			const next = prev.filter(s => semesterOptions.includes(s))
+			return next.length === prev.length ? prev : next
+		})
+	}, [semesterOptions])
+
+	// ── Filtered report data (by course category + program + semester) ──
 
 	const filteredReportData = useMemo(() => {
-		if (selectedCourseCategories.length === 0 || selectedCourseCategories.length === COURSE_CATEGORY_OPTIONS.length) return reportData
+		const categoryActive = selectedCourseCategories.length > 0 && selectedCourseCategories.length < COURSE_CATEGORY_OPTIONS.length
+		const programActive = selectedPrograms.length > 0 && selectedPrograms.length < programOptions.length
+		const semesterActive = selectedSemesters.length > 0 && selectedSemesters.length < semesterOptions.length
+		if (!categoryActive && !programActive && !semesterActive) return reportData
 		return reportData.filter(r => {
-			const cat = r.course_offering?.course_category
-			// Include rows with unknown category (fallback offerings) — don't silently drop them
-			return !cat || selectedCourseCategories.includes(cat)
+			if (categoryActive) {
+				const cat = r.course_offering?.course_category
+				// Include rows with unknown category (fallback offerings) — don't silently drop them
+				if (cat && !selectedCourseCategories.includes(cat)) return false
+			}
+			if (programActive) {
+				const code = r.course_offering?.program_code || r.program_code
+				if (!code || !selectedPrograms.includes(code)) return false
+			}
+			if (semesterActive) {
+				const sem = Number(r.course_offering?.semester)
+				// Strict match: a row without a semester only shows under "Not Mapped"
+				if (!selectedSemesters.includes(sem > 0 ? sem : UNMAPPED_SEMESTER)) return false
+			}
+			return true
 		})
-	}, [reportData, selectedCourseCategories])
+	}, [reportData, selectedCourseCategories, selectedPrograms, programOptions, selectedSemesters, semesterOptions])
 
 	// Student-type reports: count unique learners (by register no), not raw registration rows
 	const STUDENT_REPORT_TYPES = ['student-fee-details', 'student-exam-registration', 'student-exam-registration-summary', 'student-wise-application', 'student-wise-registration']
@@ -715,7 +878,7 @@ export default function ExamRegistrationReportsPage() {
 							{/* All dropdowns in one row */}
 							<div className={cn(
 								"grid gap-3",
-								mustSelectInstitution ? "grid-cols-1 md:grid-cols-2 lg:grid-cols-4" : "grid-cols-1 md:grid-cols-3"
+								mustSelectInstitution ? "grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6" : "grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5"
 							)}>
 								{/* Institution (only for super_admin with "All Institutions") */}
 								{mustSelectInstitution && (
@@ -858,6 +1021,113 @@ export default function ExamRegistrationReportsPage() {
 									</Popover>
 								</div>
 
+								{/* Program (multi-select, optional — default All Programs) */}
+								<div className="space-y-1.5">
+									<Label className="text-xs">Program <span className="text-muted-foreground font-normal">(Optional)</span></Label>
+									<Popover open={programOpen} onOpenChange={setProgramOpen}>
+										<PopoverTrigger asChild>
+											<Button variant="outline" role="combobox" className="w-full justify-between text-xs h-9" disabled={!selectedSessionId}>
+												<span className="truncate">
+													{loadingPrograms
+														? 'Loading...'
+														: selectedPrograms.length === 0 || selectedPrograms.length === programOptions.length
+															? 'All Programs'
+															: selectedPrograms.join(', ')}
+												</span>
+												<ChevronsUpDown className="h-3 w-3 ml-2 opacity-50" />
+											</Button>
+										</PopoverTrigger>
+										<PopoverContent className="w-[320px] p-0">
+											<Command>
+												<CommandInput placeholder="Search program..." className="h-8 text-xs" />
+												<CommandList>
+													<CommandEmpty className="py-2 text-xs">No program found.</CommandEmpty>
+													<CommandGroup>
+														<CommandItem
+															value="All Programs"
+															onSelect={() => setSelectedPrograms([])}
+															className="text-xs font-medium"
+														>
+															<Check className={cn("mr-2 h-3 w-3", selectedPrograms.length === 0 || selectedPrograms.length === programOptions.length ? "opacity-100" : "opacity-0")} />
+															All Programs
+														</CommandItem>
+													</CommandGroup>
+													<CommandGroup>
+														{programOptions.map((prog) => (
+															<CommandItem
+																key={prog.code}
+																value={`${prog.code} ${prog.name}`}
+																onSelect={() => {
+																	setSelectedPrograms(prev =>
+																		prev.includes(prog.code)
+																			? prev.filter(v => v !== prog.code)
+																			: [...prev, prog.code]
+																	)
+																}}
+																className="text-xs"
+															>
+																<Check className={cn("mr-2 h-3 w-3", selectedPrograms.includes(prog.code) ? "opacity-100" : "opacity-0")} />
+																<span className="truncate">{prog.name ? `${prog.code} - ${prog.name}` : prog.code}</span>
+															</CommandItem>
+														))}
+													</CommandGroup>
+												</CommandList>
+											</Command>
+										</PopoverContent>
+									</Popover>
+								</div>
+
+								{/* Semester (multi-select, optional — default All Semesters) */}
+								<div className="space-y-1.5">
+									<Label className="text-xs">Semester <span className="text-muted-foreground font-normal">(Optional)</span></Label>
+									<Popover open={semesterOpen} onOpenChange={setSemesterOpen}>
+										<PopoverTrigger asChild>
+											<Button variant="outline" role="combobox" className="w-full justify-between text-xs h-9" disabled={!selectedSessionId}>
+												<span className="truncate">
+													{selectedSemesters.length === 0 || selectedSemesters.length === semesterOptions.length
+														? 'All Semesters'
+														: selectedSemesters.slice().sort((a, b) => a - b).map(semesterLabel).join(', ')}
+												</span>
+												<ChevronsUpDown className="h-3 w-3 ml-2 opacity-50" />
+											</Button>
+										</PopoverTrigger>
+										<PopoverContent className="w-[220px] p-0">
+											<Command>
+												<CommandList>
+													<CommandGroup>
+														<CommandItem
+															onSelect={() => setSelectedSemesters([])}
+															className="text-xs font-medium"
+														>
+															<Check className={cn("mr-2 h-3 w-3", selectedSemesters.length === 0 || selectedSemesters.length === semesterOptions.length ? "opacity-100" : "opacity-0")} />
+															All Semesters
+														</CommandItem>
+													</CommandGroup>
+													<CommandGroup>
+														{semesterOptions.map((sem) => (
+															<CommandItem
+																key={sem}
+																value={`Semester ${sem}`}
+																onSelect={() => {
+																	setSelectedSemesters(prev =>
+																		prev.includes(sem)
+																			? prev.filter(v => v !== sem)
+																			: [...prev, sem]
+																	)
+																}}
+																className="text-xs"
+															>
+																<Check className={cn("mr-2 h-3 w-3", selectedSemesters.includes(sem) ? "opacity-100" : "opacity-0")} />
+																{sem === UNMAPPED_SEMESTER ? 'Not Mapped' : `Semester ${toRoman(sem)}`}
+															</CommandItem>
+														))}
+													</CommandGroup>
+												</CommandList>
+											</Command>
+										</PopoverContent>
+									</Popover>
+								</div>
+
 								{/* Reports Category Dropdown */}
 								<div className="space-y-1.5">
 									<Label className="text-xs">Reports *</Label>
@@ -954,6 +1224,11 @@ export default function ExamRegistrationReportsPage() {
 							{selectedReportType && reportData.length > 0 && reportMeta && (
 								<div className="border-t pt-4">
 									<div className="flex items-center gap-3 flex-wrap">
+										{filteredReportData.length === 0 && (
+											<Badge variant="outline" className="text-xs border-amber-300 bg-amber-50 text-amber-800">
+												{reportData.length} records hidden by the Category / Program / Semester filters
+											</Badge>
+										)}
 										<Badge variant="outline" className="text-xs">
 											{reportMeta.institution_code} - {reportMeta.institution_name}
 										</Badge>

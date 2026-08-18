@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
+import { hasAnyCoeRole } from '@/lib/auth/check-user-permission'
 
 function normalizePart(part: any, index: number) {
 	return {
@@ -26,6 +27,37 @@ function normalizePart(part: any, index: number) {
 	}
 }
 
+/**
+ * Templates are maintained per institution, so every mutation must name the
+ * institution it is acting on and match the row it targets. Without this a
+ * stale or wrong `institution_code` on the client silently edits/deletes
+ * another institution's template by id.
+ */
+async function assertTemplateInInstitution(
+	supabase: ReturnType<typeof getSupabaseServer>,
+	id: string,
+	institutionCode: string | null | undefined
+): Promise<{ error: string; status: number } | null> {
+	if (!institutionCode) {
+		return { error: 'institution_code is required', status: 400 }
+	}
+	const { data, error } = await supabase
+		.from('ia_paper_templates')
+		.select('id, institution_code')
+		.eq('id', id)
+		.maybeSingle()
+
+	if (error) return { error: error.message, status: 500 }
+	if (!data) return { error: 'Template not found', status: 404 }
+	if (data.institution_code !== institutionCode) {
+		return {
+			error: `This template belongs to institution "${data.institution_code}" and cannot be changed from "${institutionCode}"`,
+			status: 403,
+		}
+	}
+	return null
+}
+
 // GET - list templates with parts
 export async function GET(req: NextRequest) {
 	try {
@@ -34,6 +66,20 @@ export async function GET(req: NextRequest) {
 		const institutionCode = searchParams.get('institution_code')
 		const examScope = searchParams.get('exam_scope')
 		const status = searchParams.get('status')
+		// Cross-institution listing must be asked for explicitly, so a caller that
+		// simply forgot institution_code gets an error instead of every
+		// institution's templates.
+		const allInstitutions = searchParams.get('all_institutions') === 'true'
+
+		if (!institutionCode && !allInstitutions) {
+			return NextResponse.json({ error: 'institution_code is required' }, { status: 400 })
+		}
+		if (!institutionCode && !(await hasAnyCoeRole(['super_admin']))) {
+			return NextResponse.json(
+				{ error: 'Only a super admin can list templates across all institutions' },
+				{ status: 403 }
+			)
+		}
 
 		let query = supabase
 			.from('ia_paper_templates')
@@ -204,9 +250,16 @@ export async function PUT(req: NextRequest) {
 	try {
 		const supabase = getSupabaseServer()
 		const body = await req.json()
-		const { id, parts, ...updateData } = body
+		// institution_code is immutable on a template; it is read here only to
+		// prove the caller is acting within the institution that owns the row.
+		const { id, parts, institution_code: callerInstitutionCode, ...updateData } = body
 
 		if (!id) return NextResponse.json({ error: 'Template ID is required' }, { status: 400 })
+
+		const ownership = await assertTemplateInInstitution(supabase, id, callerInstitutionCode)
+		if (ownership) {
+			return NextResponse.json({ error: ownership.error }, { status: ownership.status })
+		}
 
 		if (updateData.regulation_code) {
 			const { data: regulation } = await supabase
@@ -224,7 +277,6 @@ export async function PUT(req: NextRequest) {
 
 		// header + institution are immutable; strip joined / derived fields
 		delete updateData.institutions_id
-		delete updateData.institution_code
 		delete updateData.total_marks
 		delete updateData.version_number
 		delete updateData.ia_template_parts
@@ -291,6 +343,15 @@ export async function DELETE(req: NextRequest) {
 		const { searchParams } = new URL(req.url)
 		const id = searchParams.get('id')
 		if (!id) return NextResponse.json({ error: 'Template ID is required' }, { status: 400 })
+
+		const ownership = await assertTemplateInInstitution(
+			supabase,
+			id,
+			searchParams.get('institution_code')
+		)
+		if (ownership) {
+			return NextResponse.json({ error: ownership.error }, { status: ownership.status })
+		}
 
 		const { data: papers } = await supabase
 			.from('ia_question_papers')

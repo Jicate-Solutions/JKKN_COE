@@ -27,7 +27,7 @@ import { useToast } from '@/hooks/common/use-toast'
 import { useInstitutionFilter } from '@/hooks/use-institution-filter'
 import {
 	Loader2, MoreHorizontal, PlusCircle, Plus, X, Save, Trash2, FileText,
-	CheckCircle2, Archive, Settings2, Search, RefreshCw, ChevronsUpDown,
+	CheckCircle2, Archive, Settings2, Search, RefreshCw, ChevronsUpDown, Copy, Building2,
 } from 'lucide-react'
 import type {
 	IaPaperTemplate, IaTemplatePartFormData, IaQuestionType, ExamScope,
@@ -208,18 +208,34 @@ export default function QuestionPaperTemplatesPage() {
 	const [typeForm, setTypeForm] = useState<TypeForm>(emptyTypeForm())
 	const [typeSaving, setTypeSaving] = useState(false)
 
+	// Copy-to-institution sheet
+	const [copySource, setCopySource] = useState<IaPaperTemplate | null>(null)
+	const [copyTargetId, setCopyTargetId] = useState('')
+	const [copying, setCopying] = useState(false)
+
+	// Super admin on "All Institutions" with no local pick: templates are listed
+	// across every institution (read-only overview) instead of showing nothing.
+	// Question types stay per-institution, so that tab still needs a pick.
+	const viewingAllInstitutions = mustSelectInstitution && !localInstitutionId
+	const institutionName = (code: string) =>
+		institutions.find(i => i.institution_code === code)?.name || code
+
 	// ===== Data =====
 	useEffect(() => {
 		if (isReady) fetchInstitutions()
 	}, [isReady])
 
 	useEffect(() => {
-		if (isReady && effectiveInstitutionCode) {
+		if (!isReady) return
+		if (effectiveInstitutionCode) {
 			fetchTemplates()
 			fetchQuestionTypes()
+		} else if (viewingAllInstitutions) {
+			fetchTemplates()
+			setQuestionTypes([])
 		}
 		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [isReady, institutionId, localInstitutionId, effectiveInstitutionCode])
+	}, [isReady, institutionId, localInstitutionId, effectiveInstitutionCode, viewingAllInstitutions])
 
 	const fetchInstitutions = async () => {
 		try {
@@ -241,12 +257,26 @@ export default function QuestionPaperTemplatesPage() {
 	}
 
 	const fetchTemplates = async () => {
+		if (!effectiveInstitutionCode && !viewingAllInstitutions) return
 		try {
 			setLoading(true)
-			const res = await fetch(
-				`/api/pre-exam/question-paper-templates?institution_code=${encodeURIComponent(effectiveInstitutionCode)}`
-			)
-			if (res.ok) setTemplates(await res.json())
+			// The API rejects a missing institution_code outright, so the
+			// cross-institution read has to opt in explicitly.
+			const query = effectiveInstitutionCode
+				? `institution_code=${encodeURIComponent(effectiveInstitutionCode)}`
+				: 'all_institutions=true'
+			const res = await fetch(`/api/pre-exam/question-paper-templates?${query}`)
+			if (res.ok) {
+				setTemplates(await res.json())
+			} else {
+				const d = await res.json().catch(() => ({}))
+				setTemplates([])
+				toast({
+					title: 'Could not load templates',
+					description: d.error || 'Request failed',
+					variant: 'destructive',
+				})
+			}
 		} catch (e) {
 			console.error('Failed to fetch templates:', e)
 		} finally {
@@ -284,9 +314,11 @@ export default function QuestionPaperTemplatesPage() {
 			total: templates.length,
 			active: templates.filter(t => t.status === 'active').length,
 			defaults: templates.filter(t => t.is_default).length,
-			types: activeTypes.length,
+			// No institution picked means no type catalogue is loaded — show a dash
+			// rather than a misleading 0.
+			types: viewingAllInstitutions ? '—' : activeTypes.length,
 		}),
-		[templates, activeTypes]
+		[templates, activeTypes, viewingAllInstitutions]
 	)
 
 	const formTotal = useMemo(() => form.parts.reduce((s, p) => s + partMax(p), 0), [form.parts])
@@ -299,6 +331,14 @@ export default function QuestionPaperTemplatesPage() {
 	}
 
 	const openEdit = (t: IaPaperTemplate) => {
+		// Part editing needs the OWNING institution's question types, and in the
+		// all-institutions view none are loaded — scope the page to that
+		// institution so the type dropdown is populated (and the edit is saved
+		// against the right one).
+		if (viewingAllInstitutions) {
+			const owner = institutions.find(i => i.institution_code === t.institution_code)
+			if (owner) setLocalInstitutionId(owner.id)
+		}
 		setEditingId(t.id)
 		setForm({
 			template_code: t.template_code,
@@ -390,9 +430,10 @@ export default function QuestionPaperTemplatesPage() {
 		}
 		try {
 			setSaving(true)
+			const editing = editingId ? templates.find(t => t.id === editingId) : null
 			const payload = {
 				...form,
-				institution_code: effectiveInstitutionCode,
+				institution_code: editing?.institution_code || effectiveInstitutionCode,
 				...(editingId ? { id: editingId } : {}),
 			}
 			const res = await fetch('/api/pre-exam/question-paper-templates', {
@@ -417,7 +458,9 @@ export default function QuestionPaperTemplatesPage() {
 			const res = await fetch('/api/pre-exam/question-paper-templates', {
 				method: 'PUT',
 				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ id: t.id, status }),
+				// The row's own code, not the current filter — in the
+				// all-institutions view they are not the same.
+				body: JSON.stringify({ id: t.id, status, institution_code: t.institution_code }),
 			})
 			if (!res.ok) {
 				const d = await res.json()
@@ -433,9 +476,10 @@ export default function QuestionPaperTemplatesPage() {
 	const remove = async (t: IaPaperTemplate) => {
 		if (!confirm(`Delete template "${t.template_name}"? This cannot be undone.`)) return
 		try {
-			const res = await fetch(`/api/pre-exam/question-paper-templates?id=${t.id}`, {
-				method: 'DELETE',
-			})
+			const res = await fetch(
+				`/api/pre-exam/question-paper-templates?id=${t.id}&institution_code=${encodeURIComponent(t.institution_code)}`,
+				{ method: 'DELETE' }
+			)
 			if (!res.ok) {
 				const d = await res.json()
 				throw new Error(d.error || 'Delete failed')
@@ -444,6 +488,46 @@ export default function QuestionPaperTemplatesPage() {
 			fetchTemplates()
 		} catch (e: any) {
 			toast({ title: 'Delete failed', description: e.message, variant: 'destructive' })
+		}
+	}
+
+	// ===== Copy to another institution =====
+	const openCopy = (t: IaPaperTemplate) => {
+		setCopySource(t)
+		setCopyTargetId('')
+	}
+
+	const runCopy = async () => {
+		if (!copySource) return
+		const target = institutions.find(i => i.id === copyTargetId)
+		if (!target) {
+			toast({ title: 'Choose a target institution', variant: 'destructive' })
+			return
+		}
+		try {
+			setCopying(true)
+			const res = await fetch('/api/pre-exam/question-paper-templates/copy', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					id: copySource.id,
+					target_institution_code: target.institution_code,
+				}),
+			})
+			const data = await res.json()
+			if (!res.ok) throw new Error(data.error || 'Copy failed')
+			toast({
+				title: `Copied to ${target.name}`,
+				description: data.types_copied
+					? `Created as a draft (v${data.version_number}); ${data.types_copied} question type(s) were carried over.`
+					: `Created as a draft (v${data.version_number}). Activate it there when ready.`,
+			})
+			setCopySource(null)
+			fetchTemplates()
+		} catch (e: any) {
+			toast({ title: 'Copy failed', description: e.message, variant: 'destructive' })
+		} finally {
+			setCopying(false)
 		}
 	}
 
@@ -505,7 +589,10 @@ export default function QuestionPaperTemplatesPage() {
 	const removeType = async (t: IaQuestionType) => {
 		if (!confirm(`Delete question type "${t.type_label}"?`)) return
 		try {
-			const res = await fetch(`/api/pre-exam/question-types?id=${t.id}`, { method: 'DELETE' })
+			const res = await fetch(
+				`/api/pre-exam/question-types?id=${t.id}&institution_code=${encodeURIComponent(t.institution_code)}`,
+				{ method: 'DELETE' }
+			)
 			if (!res.ok) {
 				const d = await res.json()
 				throw new Error(d.error || 'Delete failed')
@@ -567,7 +654,7 @@ export default function QuestionPaperTemplatesPage() {
 								<Label className="whitespace-nowrap">Institution</Label>
 								<Select value={localInstitutionId} onValueChange={setLocalInstitutionId}>
 									<SelectTrigger className="max-w-sm">
-										<SelectValue placeholder="Select an institution to manage templates" />
+										<SelectValue placeholder="All institutions — pick one to manage templates" />
 									</SelectTrigger>
 									<SelectContent>
 										{institutions.map(i => (
@@ -577,6 +664,16 @@ export default function QuestionPaperTemplatesPage() {
 										))}
 									</SelectContent>
 								</Select>
+								{viewingAllInstitutions ? (
+									<p className="text-xs text-muted-foreground">
+										Showing every institution&rsquo;s templates. Pick one to add templates or
+										manage its question types.
+									</p>
+								) : (
+									<Button variant="ghost" size="sm" onClick={() => setLocalInstitutionId('')}>
+										<Building2 className="mr-2 h-4 w-4" /> View all
+									</Button>
+								)}
 							</CardContent>
 						</Card>
 					)}
@@ -633,6 +730,7 @@ export default function QuestionPaperTemplatesPage() {
 									<Table>
 										<TableHeader>
 											<TableRow>
+												{viewingAllInstitutions && <TableHead>Institution</TableHead>}
 												<TableHead>Code</TableHead>
 												<TableHead>Name</TableHead>
 												<TableHead>Scope</TableHead>
@@ -646,19 +744,29 @@ export default function QuestionPaperTemplatesPage() {
 										<TableBody>
 											{loading ? (
 												<TableRow>
-													<TableCell colSpan={8} className="py-10 text-center">
+													<TableCell colSpan={viewingAllInstitutions ? 9 : 8} className="py-10 text-center">
 														<Loader2 className="mx-auto h-5 w-5 animate-spin text-muted-foreground" />
 													</TableCell>
 												</TableRow>
 											) : filtered.length === 0 ? (
 												<TableRow>
-													<TableCell colSpan={8} className="py-10 text-center text-muted-foreground">
-														No templates yet. Click “New Template” to build one.
+													<TableCell
+														colSpan={viewingAllInstitutions ? 9 : 8}
+														className="py-10 text-center text-muted-foreground"
+													>
+														{viewingAllInstitutions
+															? 'No templates in any institution yet. Pick an institution above to build one.'
+															: 'No templates yet. Click “New Template” to build one.'}
 													</TableCell>
 												</TableRow>
 											) : (
 												filtered.map(t => (
 													<TableRow key={t.id}>
+														{viewingAllInstitutions && (
+															<TableCell className="whitespace-nowrap text-sm">
+																{institutionName(t.institution_code)}
+															</TableCell>
+														)}
 														<TableCell className="font-medium">{t.template_code}</TableCell>
 														<TableCell>{t.template_name}</TableCell>
 														<TableCell className="uppercase text-xs">{t.exam_scope}</TableCell>
@@ -675,6 +783,11 @@ export default function QuestionPaperTemplatesPage() {
 																</DropdownMenuTrigger>
 																<DropdownMenuContent align="end">
 																	<DropdownMenuItem onClick={() => openEdit(t)}>Edit</DropdownMenuItem>
+																	{institutions.length > 1 && (
+																		<DropdownMenuItem onClick={() => openCopy(t)}>
+																			<Copy className="mr-2 h-4 w-4" /> Copy to institution…
+																		</DropdownMenuItem>
+																	)}
 																	{t.status !== 'active' && (
 																		<DropdownMenuItem onClick={() => setStatus(t, 'active')}>
 																			<CheckCircle2 className="mr-2 h-4 w-4" /> Activate
@@ -709,7 +822,8 @@ export default function QuestionPaperTemplatesPage() {
 							<Card>
 								<CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0">
 									<p className="text-sm text-muted-foreground">
-										Types available when building template parts. Institutions can add their own.
+										Types available when building template parts, maintained separately for each
+										institution. New institutions start from the standard set and can add their own.
 									</p>
 									<Button onClick={openCreateType} disabled={mustSelectInstitution && !localInstitutionId}>
 										<PlusCircle className="mr-2 h-4 w-4" /> Add Type
@@ -731,7 +845,9 @@ export default function QuestionPaperTemplatesPage() {
 											{questionTypes.length === 0 ? (
 												<TableRow>
 													<TableCell colSpan={6} className="py-10 text-center text-muted-foreground">
-														No question types. Add one to start building templates.
+														{viewingAllInstitutions
+															? 'Question types are maintained per institution — pick one above to view or edit them.'
+															: 'No question types. Add one to start building templates.'}
 													</TableCell>
 												</TableRow>
 											) : (
@@ -1171,6 +1287,65 @@ export default function QuestionPaperTemplatesPage() {
 									<Save className="mr-2 h-4 w-4" />
 								)}
 								{typeEditingId ? 'Update' : 'Add'}
+							</Button>
+						</div>
+					</div>
+				</SheetContent>
+			</Sheet>
+
+			{/* Copy a template into another institution */}
+			<Sheet open={!!copySource} onOpenChange={o => !o && setCopySource(null)}>
+				<SheetContent className="w-full sm:max-w-md">
+					<SheetHeader>
+						<SheetTitle>Copy template to another institution</SheetTitle>
+					</SheetHeader>
+					<div className="mt-4 space-y-4">
+						<div className="rounded-md border bg-muted/40 p-3 text-sm">
+							<p className="font-medium">{copySource?.template_name}</p>
+							<p className="text-muted-foreground">
+								{copySource?.template_code} &middot; {copySource?.ia_template_parts?.length || 0} part(s)
+								&middot; {Number(copySource?.total_marks || 0)} marks
+							</p>
+							<p className="mt-1 text-xs text-muted-foreground">
+								From {copySource ? institutionName(copySource.institution_code) : ''}
+							</p>
+						</div>
+
+						<div>
+							<Label>Copy to</Label>
+							<Select value={copyTargetId} onValueChange={setCopyTargetId}>
+								<SelectTrigger>
+									<SelectValue placeholder="Select the target institution" />
+								</SelectTrigger>
+								<SelectContent>
+									{institutions
+										.filter(i => i.institution_code !== copySource?.institution_code)
+										.map(i => (
+											<SelectItem key={i.id} value={i.id}>
+												{i.name} ({i.institution_code})
+											</SelectItem>
+										))}
+								</SelectContent>
+							</Select>
+						</div>
+
+						<p className="text-xs text-muted-foreground">
+							The copy is created as a <strong>draft</strong> and is not marked default, so the
+							target institution&rsquo;s live templates are untouched. Any question type it is
+							missing is carried over with it.
+						</p>
+
+						<div className="flex justify-end gap-2">
+							<Button variant="outline" onClick={() => setCopySource(null)}>
+								Cancel
+							</Button>
+							<Button onClick={runCopy} disabled={copying || !copyTargetId}>
+								{copying ? (
+									<Loader2 className="mr-2 h-4 w-4 animate-spin" />
+								) : (
+									<Copy className="mr-2 h-4 w-4" />
+								)}
+								Copy
 							</Button>
 						</div>
 					</div>

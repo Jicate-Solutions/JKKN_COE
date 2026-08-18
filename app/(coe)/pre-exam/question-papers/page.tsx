@@ -29,10 +29,14 @@ import { useAuth } from '@/lib/auth/auth-context-parent'
 import { cn } from '@/lib/utils'
 import {
 	Loader2, MoreHorizontal, FileText, FileDown, Wand2, Save, Trash2, Send, CheckCircle2, Lock,
-	Check, ChevronsUpDown, RefreshCw, Plus, X, Download, GraduationCap, Layers,
+	Check, ChevronsUpDown, RefreshCw, Plus, X, Download, GraduationCap, Layers, Split, AlertTriangle,
 } from 'lucide-react'
 import { K_LEVELS } from '@/types/ia-question-paper'
-import type { IaQuestionPaper, IaPaperQuestion } from '@/types/ia-question-paper'
+import type { IaQuestionPaper, IaPaperQuestion, IaPaperSubQuestion } from '@/types/ia-question-paper'
+import {
+	readSubQuestions, relabelSubs, subTotal, canSplit, validateSubMarks, newId, romanLabel,
+	MAX_SUB_QUESTIONS,
+} from '@/lib/ia/sub-questions'
 import { QuestionRichEditor } from '@/components/ia/question-rich-editor'
 import { formatApplicability } from '@/lib/ia/course-type-applicability'
 import { TAMIL_FONT_FAMILIES } from '@/lib/ia/tamil-font-meta'
@@ -661,8 +665,56 @@ export default function QuestionPapersPage() {
 		)
 	}
 
+	// ===== Sub-divisions (12 a) i. / ii.) =====
+	// The template fixes the slot's total marks; the author decides how to split it.
+	const patchSubs = (qid: string, next: IaPaperSubQuestion[]) => {
+		setDirty(true)
+		setQuestions(prev =>
+			prev.map(q => (q.id === qid ? { ...q, sub_questions: next.length > 0 ? relabelSubs(next) : null } : q))
+		)
+	}
+
+	const addSubQuestion = (q: IaPaperQuestion) => {
+		const subs = readSubQuestions(q)
+		if (subs.length >= MAX_SUB_QUESTIONS) return
+		const parentMarks = Number(q.marks) || 0
+		// First split seeds two halves of the parent budget (8 + 7 for a 15-mark slot);
+		// later additions come in at 0 so the author allocates deliberately.
+		const seeded: IaPaperSubQuestion[] =
+			subs.length === 0
+				? [
+					{ id: newId(), label: romanLabel(0), question_text: null, marks: Math.ceil(parentMarks / 2), co_code: q.co_code || null, k_level: q.k_level || null, display_order: 1 },
+					{ id: newId(), label: romanLabel(1), question_text: null, marks: Math.floor(parentMarks / 2), co_code: q.co_code || null, k_level: q.k_level || null, display_order: 2 },
+				]
+				: [...subs, { id: newId(), label: romanLabel(subs.length), question_text: null, marks: 0, co_code: null, k_level: null, display_order: subs.length + 1 }]
+		patchSubs(q.id, seeded)
+	}
+
+	const updateSubQuestion = (qid: string, subId: string, patch: Partial<IaPaperSubQuestion>) => {
+		const q = questions.find(x => x.id === qid)
+		if (!q) return
+		patchSubs(qid, readSubQuestions(q).map(s => (s.id === subId ? { ...s, ...patch } : s)))
+	}
+
+	const removeSubQuestion = (qid: string, subId: string) => {
+		const q = questions.find(x => x.id === qid)
+		if (!q) return
+		patchSubs(qid, readSubQuestions(q).filter(s => s.id !== subId))
+	}
+
+	// Blocks Save/Submit while any split question's marks don't add up to its parent.
+	const subMarkErrors = useMemo(() => validateSubMarks(questions), [questions])
+
 	const saveQuestions = async (nextStatus?: string) => {
 		if (!paper) return
+		if (editable && subMarkErrors.length > 0) {
+			toast({
+				title: 'Sub-division marks don’t add up',
+				description: subMarkErrors.slice(0, 3).join(' · '),
+				variant: 'destructive',
+			})
+			return
+		}
 		try {
 			setSavingPaper(true)
 			const res = await fetch(`/api/pre-exam/question-papers/${paper.id}`, {
@@ -1025,7 +1077,10 @@ export default function QuestionPapersPage() {
 	const hasAuthored = useMemo(
 		() =>
 			questions.some(
-				q => (q.question_text || '').trim() !== '' || (q.options || []).some(o => (o.text || '').trim() !== '')
+				q =>
+					(q.question_text || '').trim() !== '' ||
+					(q.options || []).some(o => (o.text || '').trim() !== '') ||
+					readSubQuestions(q).some(sb => (sb.question_text || '').trim() !== '')
 			),
 		[questions]
 	)
@@ -1674,19 +1729,61 @@ export default function QuestionPapersPage() {
 											)}
 										</div>
 										<div className="space-y-3 p-3">
-											{qs.map(q => (
+											{qs.map(q => {
+												// Sub-divisions: the template fixes this slot's marks; the author
+												// splits that budget across i. / ii. — it must add up exactly.
+												const subs = readSubQuestions(q)
+												const split = subs.length > 0
+												const budget = Number(q.marks) || 0
+												const allocated = subTotal(subs)
+												const balanced = allocated === budget && subs.every(sb => sb.marks != null)
+												const splittable = canSplit(q)
+												return (
 												<div key={q.id} className="rounded border bg-background p-2">
-													<div className="mb-1 flex items-center gap-2 text-xs text-muted-foreground">
+													<div className="mb-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
 														<span className="font-medium text-foreground">
 															{q.is_choice_alternative ? '(OR) ' : ''}Q{q.question_number}
 															{q.sub_label ? ` ${q.sub_label})` : ''}
 														</span>
-														<span>· {Number(q.marks) || 0} marks</span>
+														<span>· {budget} marks</span>
+														{split && (
+															<Badge
+																variant="outline"
+																className={
+																	balanced
+																		? 'bg-green-100 text-green-700 border-green-200'
+																		: 'bg-red-100 text-red-700 border-red-200'
+																}
+															>
+																{subs.length} sub-division{subs.length > 1 ? 's' : ''} · {allocated}/{budget}
+															</Badge>
+														)}
+														{editable && splittable && (
+															<Button
+																size="sm"
+																variant="ghost"
+																className="ml-auto h-6 px-2 text-xs"
+																disabled={subs.length >= MAX_SUB_QUESTIONS}
+																onClick={() => addSubQuestion(q)}
+																title={
+																	split
+																		? 'Add another sub-division (i, ii, iii…)'
+																		: `Split this ${budget}-mark question into sub-divisions`
+																}
+															>
+																<Split className="mr-1 h-3 w-3" />
+																{split ? 'Add sub-division' : 'Split into sub-divisions'}
+															</Button>
+														)}
 													</div>
 													<QuestionRichEditor
 														value={q.question_text || ''}
 														disabled={!editable}
-														placeholder="Enter the question…"
+														placeholder={
+															split
+																? 'Optional shared stem — e.g. “For the circuit shown below:” (leave blank to print nothing)'
+																: 'Enter the question…'
+														}
 														defaultFontFamily={paper.default_font}
 														onChange={html => updateQuestion(q.id, { question_text: html })}
 													/>
@@ -1766,7 +1863,7 @@ export default function QuestionPapersPage() {
 																</Select>
 															</div>
 														)}
-														{(part?.capture_co ?? true) && (
+														{(part?.capture_co ?? true) && !split && (
 															<div className="flex items-center gap-1">
 																<Label className="text-xs">CO</Label>
 																<Select
@@ -1787,7 +1884,7 @@ export default function QuestionPapersPage() {
 																</Select>
 															</div>
 														)}
-														{(part?.capture_klevel ?? true) && (
+														{(part?.capture_klevel ?? true) && !split && (
 															<div className="flex items-center gap-1">
 																<Label className="text-xs">K</Label>
 																<Select
@@ -1809,14 +1906,130 @@ export default function QuestionPapersPage() {
 															</div>
 														)}
 													</div>
+
+													{split && (
+														<div className="mt-2 space-y-2 rounded border border-dashed bg-muted/20 p-2">
+															<div className="flex items-center justify-between text-xs">
+																<span className="font-medium">Sub-divisions</span>
+																<span className={balanced ? 'text-green-700' : 'text-red-600'}>
+																	{balanced ? (
+																		`Allocated ${allocated} / ${budget} ✓`
+																	) : (
+																		<span className="inline-flex items-center gap-1">
+																			<AlertTriangle className="h-3 w-3" />
+																			Allocated {allocated} / {budget} — must total {budget}
+																		</span>
+																	)}
+																</span>
+															</div>
+															{subs.map(sb => (
+																<div key={sb.id} className="rounded border bg-background p-2">
+																	<div className="mb-1 flex flex-wrap items-center gap-2 text-xs">
+																		<span className="font-medium">{sb.label}.</span>
+																		<div className="flex items-center gap-1">
+																			<Label className="text-xs">Marks</Label>
+																			<Input
+																				type="number"
+																				min={0}
+																				max={budget}
+																				step="0.5"
+																				className="h-7 w-20"
+																				value={sb.marks ?? ''}
+																				disabled={!editable}
+																				onChange={e =>
+																					updateSubQuestion(q.id, sb.id, {
+																						marks: e.target.value === '' ? null : Number(e.target.value),
+																					})
+																				}
+																			/>
+																		</div>
+																		{(part?.capture_co ?? true) && (
+																			<div className="flex items-center gap-1">
+																				<Label className="text-xs">CO</Label>
+																				<Select
+																					value={sb.co_code || ''}
+																					onValueChange={v => updateSubQuestion(q.id, sb.id, { co_code: v })}
+																					disabled={!editable}
+																				>
+																					<SelectTrigger className="h-7 w-24">
+																						<SelectValue placeholder="CO" />
+																					</SelectTrigger>
+																					<SelectContent>
+																						{coOptions.map(code => (
+																							<SelectItem key={code} value={code}>
+																								{code}
+																							</SelectItem>
+																						))}
+																					</SelectContent>
+																				</Select>
+																			</div>
+																		)}
+																		{(part?.capture_klevel ?? true) && (
+																			<div className="flex items-center gap-1">
+																				<Label className="text-xs">K</Label>
+																				<Select
+																					value={sb.k_level || ''}
+																					onValueChange={v => updateSubQuestion(q.id, sb.id, { k_level: v })}
+																					disabled={!editable}
+																				>
+																					<SelectTrigger className="h-7 w-20">
+																						<SelectValue placeholder="K" />
+																					</SelectTrigger>
+																					<SelectContent>
+																						{K_LEVELS.map(k => (
+																							<SelectItem key={k.code} value={k.code}>
+																								{k.code}
+																							</SelectItem>
+																						))}
+																					</SelectContent>
+																				</Select>
+																			</div>
+																		)}
+																		{editable && (
+																			<Button
+																				size="sm"
+																				variant="ghost"
+																				className="ml-auto h-6 px-2 text-xs text-destructive"
+																				onClick={() => removeSubQuestion(q.id, sb.id)}
+																				title="Remove this sub-division"
+																			>
+																				<X className="h-3 w-3" />
+																			</Button>
+																		)}
+																	</div>
+																	<QuestionRichEditor
+																		value={sb.question_text || ''}
+																		disabled={!editable}
+																		placeholder={`Sub-division ${sb.label}…`}
+																		defaultFontFamily={paper.default_font}
+																		onChange={html => updateSubQuestion(q.id, sb.id, { question_text: html })}
+																	/>
+																</div>
+															))}
+														</div>
+													)}
 												</div>
-											))}
+												)
+											})}
 										</div>
 									</div>
 								)
 							})}
 
 							{/* Actions */}
+							{editable && subMarkErrors.length > 0 && (
+								<div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+									<div className="mb-1 flex items-center gap-1 font-medium">
+										<AlertTriangle className="h-3.5 w-3.5" />
+										Sub-division marks must total the question’s marks
+									</div>
+									<ul className="ml-4 list-disc space-y-0.5">
+										{subMarkErrors.map(msg => (
+											<li key={msg}>{msg}</li>
+										))}
+									</ul>
+								</div>
+							)}
 							<div className="sticky bottom-0 flex flex-wrap justify-end gap-2 border-t bg-background py-3">
 							<Button variant="outline" onClick={() => downloadPdf(paper)}>
 								<FileDown className="mr-2 h-4 w-4" /> PDF
@@ -1830,7 +2043,11 @@ export default function QuestionPapersPage() {
 									</Button>
 								)}
 								{(paper.status !== 'locked' || canEditAnyStatus) && (
-									<Button variant="outline" onClick={() => saveQuestions()} disabled={savingPaper}>
+									<Button
+										variant="outline"
+										onClick={() => saveQuestions()}
+										disabled={savingPaper || (editable && subMarkErrors.length > 0)}
+									>
 										{savingPaper ? (
 											<Loader2 className="mr-2 h-4 w-4 animate-spin" />
 										) : (
@@ -1840,7 +2057,10 @@ export default function QuestionPapersPage() {
 									</Button>
 								)}
 								{paper.status === 'draft' && (
-									<Button onClick={() => saveQuestions('submitted')} disabled={savingPaper}>
+									<Button
+										onClick={() => saveQuestions('submitted')}
+										disabled={savingPaper || (editable && subMarkErrors.length > 0)}
+									>
 										<Send className="mr-2 h-4 w-4" /> Submit
 									</Button>
 								)}

@@ -22,6 +22,7 @@
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js'
+import { flattenEntryQuestions } from '@/lib/ia/sub-questions'
 
 /**
  * Paper statuses a round may have marks entered against.
@@ -72,7 +73,13 @@ export interface QuestionMeta {
 	part: string
 	/** Choice group: part + question number, so 6a and 6b share one group. */
 	group: string
-	/** Display label ("6a") used in error messages. */
+	/**
+	 * The OR branch inside that group (the paper question's id). A question split
+	 * into sub-divisions yields several entries sharing one branch — all
+	 * answerable together, unlike the two branches of an OR pair.
+	 */
+	branch: string
+	/** Display label ("6a", or "6a i" for a sub-division) used in error messages. */
 	label: string
 	/** The question's own max marks; 0 means "not capped". */
 	marks: number
@@ -150,13 +157,16 @@ export async function buildPaperIndex(
 
 	for (const paper of (papers || [])) {
 		const questions = new Map<string, QuestionMeta>()
-		for (const q of (Array.isArray(paper.questions) ? paper.questions : [])) {
-			const part = q?.part_label ?? ''
-			questions.set(String(q?.id ?? ''), {
+		// Sub-divisions ("12 a) i. / ii.") are marked individually, so the index keys
+		// them, not the parent question they were split from.
+		for (const q of flattenEntryQuestions(paper.questions)) {
+			const part = q.part_label ?? ''
+			questions.set(q.id, {
 				part,
-				group: `${part}|${q?.question_number ?? ''}`,
-				label: `${q?.question_number ?? ''}${q?.sub_label || ''}`,
-				marks: Number(q?.marks) || 0,
+				group: q.choice_group,
+				branch: q.branch_id,
+				label: q.label,
+				marks: q.marks,
 				limit: answerLimits.get(`${paper.template_id}|${part}`) ?? null,
 			})
 		}
@@ -189,7 +199,8 @@ export function validateQuestionMarks(
 		const questions = entry?.paper_id ? index.get(String(entry.paper_id)) : undefined
 		if (!questions) continue
 
-		const answeredByGroup = new Map<string, string[]>()
+		// group → branch id → labels answered on that branch.
+		const answeredByGroup = new Map<string, Map<string, string[]>>()
 		const groupsByPart = new Map<string, Set<string>>()
 
 		for (const [questionId, value] of Object.entries(entry.marks || {})) {
@@ -199,14 +210,19 @@ export function validateQuestionMarks(
 			if (meta.marks > 0 && Number(value) > meta.marks) {
 				errors.push(`${subject}: Q${meta.label} mark (${value}) exceeds question max (${meta.marks})`)
 			}
-			answeredByGroup.set(meta.group, [...(answeredByGroup.get(meta.group) || []), meta.label])
+			if (!answeredByGroup.has(meta.group)) answeredByGroup.set(meta.group, new Map())
+			const branches = answeredByGroup.get(meta.group)!
+			branches.set(meta.branch, [...(branches.get(meta.branch) || []), meta.label])
 			if (!groupsByPart.has(meta.part)) groupsByPart.set(meta.part, new Set())
 			groupsByPart.get(meta.part)!.add(meta.group)
 		}
 
-		for (const labels of answeredByGroup.values()) {
-			if (labels.length > 1) {
-				errors.push(`${subject}: only one of Q${labels.join(' / Q')} may be answered (OR choice)`)
+		for (const branches of answeredByGroup.values()) {
+			// Two branches answered = both sides of an OR pair. Several columns on ONE
+			// branch are just that question's sub-divisions, which is allowed.
+			if (branches.size > 1) {
+				const names = [...branches.values()].map(labels => labels[0])
+				errors.push(`${subject}: only one of Q${names.join(' / Q')} may be answered (OR choice)`)
 			}
 		}
 

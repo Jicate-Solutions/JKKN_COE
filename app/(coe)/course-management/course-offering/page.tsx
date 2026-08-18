@@ -704,6 +704,8 @@ export default function CourseOfferingPage() {
 				return [
 					course?.course_code,
 					course?.course_title,
+					i.course_code,
+					(i as any).course_title,
 					session?.session_code,
 					session?.session_name,
 					programData?.program_code,
@@ -1599,6 +1601,12 @@ export default function CourseOfferingPage() {
 												<span className="ml-1">{getSortIcon("course_code")}</span>
 											</Button>
 										</TableHead>
+										<TableHead className="text-xs font-semibold min-w-[240px]">
+											<Button variant="ghost" size="sm" onClick={() => handleSort("course_title")} className="px-2 h-auto">
+												Course Name
+												<span className="ml-1">{getSortIcon("course_title")}</span>
+											</Button>
+										</TableHead>
 										<TableHead className="text-xs font-semibold">
 											<Button variant="ghost" size="sm" onClick={() => handleSort("program_code")} className="px-2 h-auto">
 												Program
@@ -1623,7 +1631,7 @@ export default function CourseOfferingPage() {
 								<TableBody>
 									{loading ? (
 										<TableRow>
-											<TableCell colSpan={mustSelectInstitution ? 6 : 5} className="h-32 text-center">
+											<TableCell colSpan={mustSelectInstitution ? 7 : 6} className="h-32 text-center">
 												<div className="flex flex-col items-center gap-2 text-muted-foreground">
 													<RefreshCw className="h-5 w-5 animate-spin" />
 													<span className="text-sm">Loading course offerings...</span>
@@ -1644,6 +1652,7 @@ export default function CourseOfferingPage() {
 															<TableCell>{row.institution_code || '-'}</TableCell>
 														)}
 														<TableCell className="font-medium">{row.course_code || 'N/A'}</TableCell>
+														<TableCell className="max-w-[320px] whitespace-normal break-words">{row.course_title || '-'}</TableCell>
 														<TableCell>{programDisplay}</TableCell>
 														<TableCell className="font-medium">{row.semester}</TableCell>
 														<TableCell>
@@ -1684,7 +1693,7 @@ export default function CourseOfferingPage() {
 										</>
 									) : (
 										<TableRow>
-											<TableCell colSpan={mustSelectInstitution ? 6 : 5} className="h-32 text-center">
+											<TableCell colSpan={mustSelectInstitution ? 7 : 6} className="h-32 text-center">
 												<div className="flex flex-col items-center gap-2 text-muted-foreground">
 													<BookOpen className="h-8 w-8 opacity-20" />
 													<p className="text-sm font-medium">No course offerings found</p>

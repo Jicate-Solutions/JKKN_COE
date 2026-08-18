@@ -15,7 +15,6 @@ import { Badge } from "@/components/ui/badge"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog"
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
-import { Checkbox } from "@/components/ui/checkbox"
 import { useToast } from "@/hooks/common/use-toast"
 import { useAuth } from "@/lib/auth/auth-context-parent"
 import { useInstitutionFilter } from "@/hooks/use-institution-filter"
@@ -23,7 +22,7 @@ import { useMyJKKNInstitutionFilter } from "@/hooks/use-myjkkn-institution-filte
 import { useSessionSync } from "@/hooks/use-session-sync"
 import { cn } from "@/lib/utils"
 import Link from "next/link"
-import { Save, Loader2, Search, RefreshCw, AlertTriangle, Check, ChevronsUpDown, Download, Maximize2, Minimize2 } from "lucide-react"
+import { Save, Loader2, Search, RefreshCw, AlertTriangle, Check, ChevronsUpDown, Download } from "lucide-react"
 import { numberToWords } from "@/services/post-exam/external-mark-entry-service"
 
 // Types
@@ -97,10 +96,6 @@ const FROZEN_W = { sno: 48, register: 130, name: 190 }
 const FROZEN = { sno: 0, register: FROZEN_W.sno, name: FROZEN_W.sno + FROZEN_W.register }
 const frozenSize = (w: number) => ({ width: w, minWidth: w, maxWidth: w })
 
-// Absence is recorded in the existing grade column, matching bulk-internal-marks
-// and the grading module — never a separate boolean or a marks_status value.
-const ABSENT_GRADE = 'AAA'
-
 // ─── Question-wise entry (mark_entry_type = 'question_wise' on the CIA round) ───
 // Columns come from the round's question paper, not from the CIA setting.
 interface PaperQuestion {
@@ -109,6 +104,12 @@ interface PaperQuestion {
 	part_label: string | null
 	/** Questions sharing this key are OR alternatives — only one may be answered */
 	choice_group: string
+	/**
+	 * The OR branch this column belongs to (the paper question's id). A question
+	 * split into sub-divisions ("12 a) i. / ii.") yields several columns sharing
+	 * one branch — all answerable together, while the other branch stays locked.
+	 */
+	branch_id: string
 	marks: number
 	is_choice_alternative: boolean
 	/** Course outcome tagged on the paper (e.g. "CO2") */
@@ -206,7 +207,6 @@ export default function InternalMarkEntryPage() {
 		saved_at: string
 		learner_marks: Record<string, Record<string, number>>
 		question_marks: Record<string, Record<string, number>>
-		absent_learners?: Record<string, boolean>
 		question_component: string
 		count: number
 	} | null>(null)
@@ -237,11 +237,6 @@ export default function InternalMarkEntryPage() {
 	// examRegId → questionId → mark
 	const [questionMarks, setQuestionMarks] = useState<Record<string, Record<string, number>>>({})
 
-	// examRegId → learner sat no part of this assessment. Stored as grade 'AAA'
-	// on cia_marks, the convention the rest of COE already uses for absence —
-	// distinct from a saved zero, and from "not yet entered".
-	const [absentLearners, setAbsentLearners] = useState<Record<string, boolean>>({})
-
 	const activePaper = useMemo(
 		() => papers.find(p => p.id === selectedPaperId) || null,
 		[papers, selectedPaperId]
@@ -260,13 +255,11 @@ export default function InternalMarkEntryPage() {
 		if (draftTimer.current) clearTimeout(draftTimer.current)
 		draftTimer.current = setTimeout(() => {
 			try {
-				const marked = Object.values(absentLearners).filter(Boolean).length
-				const entered = Object.values(learnerMarks).filter(m => m && Object.keys(m).length > 0).length + marked
+				const entered = Object.values(learnerMarks).filter(m => m && Object.keys(m).length > 0).length
 				window.localStorage.setItem(draftKey, JSON.stringify({
 					saved_at: new Date().toISOString(),
 					learner_marks: learnerMarks,
 					question_marks: questionMarks,
-					absent_learners: absentLearners,
 					question_component: questionComponent,
 					count: entered,
 				}))
@@ -275,7 +268,7 @@ export default function InternalMarkEntryPage() {
 			}
 		}, 600)
 		return () => { if (draftTimer.current) clearTimeout(draftTimer.current) }
-	}, [learnerMarks, questionMarks, absentLearners, questionComponent, isDirty, draftKey])
+	}, [learnerMarks, questionMarks, questionComponent, isDirty, draftKey])
 
 	// Warn before losing unsaved marks to a tab close or reload
 	useEffect(() => {
@@ -309,22 +302,6 @@ export default function InternalMarkEntryPage() {
 	const [learnersLoading, setLearnersLoading] = useState(false)
 	const [programOpen, setProgramOpen] = useState(false)
 	const [courseOpen, setCourseOpen] = useState(false)
-	// Full-screen entry grid — 50+ learners against a wide question paper needs the
-	// whole viewport, so the table card can take over the screen and come back.
-	const [isTableMaximized, setIsTableMaximized] = useState(false)
-
-	useEffect(() => {
-		if (!isTableMaximized) return
-		const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setIsTableMaximized(false) }
-		window.addEventListener('keydown', onKey)
-		// Stop the page behind the overlay from scrolling too
-		const previousOverflow = document.body.style.overflow
-		document.body.style.overflow = 'hidden'
-		return () => {
-			window.removeEventListener('keydown', onKey)
-			document.body.style.overflow = previousOverflow
-		}
-	}, [isTableMaximized])
 
 	// Derived: selected course info
 	const selectedCourse = useMemo(() => {
@@ -376,7 +353,9 @@ export default function InternalMarkEntryPage() {
 				hints.push(`Part ${p.part_label}: answer any ${p.num_to_answer} of ${p.group_count}`)
 			}
 		}
-		const hasChoicePairs = [...paperRules.groups.values()].some(g => g.length > 1)
+		const hasChoicePairs = [...paperRules.groups.values()].some(
+			g => new Set(g.map(q => q.branch_id)).size > 1
+		)
 		if (hasChoicePairs) hints.push('OR pairs: only one answer each')
 		return hints
 	}, [activePaper, paperRules])
@@ -387,8 +366,10 @@ export default function InternalMarkEntryPage() {
 		const marks = questionMarks[examRegId] || {}
 		if (marks[q.id] !== undefined) return null
 
+		// Only the OTHER branch of the pair locks this one — sibling sub-divisions of
+		// the same branch (12a i. / ii.) are answered together.
 		const siblings = paperRules.groups.get(q.choice_group) || []
-		const answeredSibling = siblings.find(s => s.id !== q.id && marks[s.id] !== undefined)
+		const answeredSibling = siblings.find(s => s.branch_id !== q.branch_id && marks[s.id] !== undefined)
 		if (answeredSibling) return `Q${answeredSibling.label} is answered — only one of the OR pair`
 
 		const part = q.part_label || ''
@@ -748,10 +729,8 @@ export default function InternalMarkEntryPage() {
 				// Per-question breakdown for question-wise rounds, keyed by question id.
 				// Question ids are unique per paper, so flattening across components is safe.
 				const qMarks: Record<string, Record<string, number>> = {}
-				const absent: Record<string, boolean> = {}
 				data.forEach((l: any) => {
 					marks[l.id] = {}
-					if (l.saved_marks?.grade === ABSENT_GRADE) absent[l.id] = true
 					const savedQuestions = l.saved_marks?.question_marks
 					if (savedQuestions && typeof savedQuestions === 'object') {
 						const flat: Record<string, number> = {}
@@ -785,7 +764,6 @@ export default function InternalMarkEntryPage() {
 				})
 				setLearnerMarks(marks)
 				setQuestionMarks(qMarks)
-				setAbsentLearners(absent)
 				setErrors({})
 				setIsDirty(false)
 
@@ -946,21 +924,6 @@ export default function InternalMarkEntryPage() {
 		}
 	}
 
-	// Marking a learner absent clears everything keyed in for them — leaving stale
-	// marks behind an "AB" would save numbers the row is not supposed to carry.
-	// Un-marking restores an empty row, not the old marks; they were discarded.
-	const handleAbsentToggle = (examRegId: string, absent: boolean) => {
-		setAbsentLearners(prev => ({ ...prev, [examRegId]: absent }))
-		if (!absent) return
-		setLearnerMarks(prev => ({ ...prev, [examRegId]: {} }))
-		setQuestionMarks(prev => ({ ...prev, [examRegId]: {} }))
-		setErrors(prev => {
-			const next = { ...prev }
-			delete next[examRegId]
-			return next
-		})
-	}
-
 	// Question-wise: the component mark is always the sum of its question marks, so
 	// keeping learnerMarks in lockstep means totals, validation, save and the PDF
 	// all keep working on the component level with no special-casing.
@@ -1069,19 +1032,13 @@ export default function InternalMarkEntryPage() {
 		return Object.values(marks).some(v => v !== undefined && v !== null && !isNaN(Number(v)))
 	}
 
-	// A learner marked absent is a complete entry with no marks in it, so the
-	// "have we got anything to save?" checks below must count them.
-	const learnerIsEntered = (examRegId: string): boolean =>
-		absentLearners[examRegId] === true || learnerHasAnyComponent(learnerMarks[examRegId])
-
 	const hasAnyMarks = useMemo(() => {
-		if (Object.values(absentLearners).some(Boolean)) return true
 		return Object.values(learnerMarks).some(learnerHasAnyComponent)
-	}, [learnerMarks, absentLearners])
+	}, [learnerMarks])
 
 	const marksToSaveCount = useMemo(() => {
-		return learners.filter(l => learnerIsEntered(l.id)).length
-	}, [learners, learnerMarks, absentLearners])
+		return Object.values(learnerMarks).filter(learnerHasAnyComponent).length
+	}, [learnerMarks])
 
 	// Strict check: every learner must have a mark for every active component.
 	// Used to gate the Save button AND the Confirm dialog — empty marks are blocked.
@@ -1090,8 +1047,6 @@ export default function InternalMarkEntryPage() {
 		const activeComponents = components.filter(c => (maxMarks[c.component_code] || 0) > 0)
 		if (activeComponents.length === 0) return false
 		for (const learner of learners) {
-			// An absent learner is complete by definition — there is nothing to key in.
-			if (absentLearners[learner.id]) continue
 			const marks = learnerMarks[learner.id] || {}
 			for (const comp of activeComponents) {
 				const v = marks[comp.component_code]
@@ -1099,7 +1054,7 @@ export default function InternalMarkEntryPage() {
 			}
 		}
 		return true
-	}, [learners, learnerMarks, absentLearners, components, maxMarks])
+	}, [learners, learnerMarks, components, maxMarks])
 
 	const missingMarkCount = useMemo(() => learners.length - marksToSaveCount, [learners.length, marksToSaveCount])
 
@@ -1168,9 +1123,8 @@ export default function InternalMarkEntryPage() {
 		// component touched, even if the value is 0. Zero is a valid mark and
 		// must round-trip through save → fetch → display.
 		const marksToSave = learners
-			.filter(l => learnerIsEntered(l.id))
+			.filter(l => learnerHasAnyComponent(learnerMarks[l.id]))
 			.map(l => ({
-				is_absent: absentLearners[l.id] === true,
 				exam_registration_id: l.id,
 				student_id: l.student_id,
 				register_no: l.stu_register_no,
@@ -1328,7 +1282,6 @@ export default function InternalMarkEntryPage() {
 			student_name: l.student_name,
 			component_marks: learnerMarks[l.id] || {},
 			total: getLearnerTotal(l.id),
-			is_absent: absentLearners[l.id] === true,
 		}))
 
 		const pdfComponents = components
@@ -1403,7 +1356,6 @@ export default function InternalMarkEntryPage() {
 		setSelectedPaperId("")
 		setQuestionComponent("")
 		setQuestionMarks({})
-		setAbsentLearners({})
 		setPendingDraft(null)
 		setIsDirty(false)
 	}
@@ -1795,7 +1747,6 @@ export default function InternalMarkEntryPage() {
 											onClick={() => {
 												setLearnerMarks(pendingDraft.learner_marks || {})
 												setQuestionMarks(pendingDraft.question_marks || {})
-												setAbsentLearners(pendingDraft.absent_learners || {})
 												if (pendingDraft.question_component) setQuestionComponent(pendingDraft.question_component)
 												setErrors({})
 												setIsDirty(true)
@@ -1854,9 +1805,7 @@ export default function InternalMarkEntryPage() {
 							"border-l-4",
 							viewMode === 'entry' && "border-l-emerald-500",
 							viewMode === 'view' && "border-l-blue-500",
-							viewMode === 'edit' && "border-l-amber-500",
-							// Maximized: take over the viewport, above the app header and sidebar
-							isTableMaximized && "fixed inset-0 z-50 m-0 rounded-none border-l-0 flex flex-col overflow-hidden bg-background"
+							viewMode === 'edit' && "border-l-amber-500"
 						)}>
 							<CardHeader className={cn(
 								"pb-3 bg-gradient-to-r to-transparent",
@@ -1895,20 +1844,10 @@ export default function InternalMarkEntryPage() {
 												className="pl-8 h-8 w-64"
 											/>
 										</div>
-										<Button
-											variant="outline"
-											size="sm"
-											className="h-8 px-2"
-											onClick={() => setIsTableMaximized(v => !v)}
-											title={isTableMaximized ? 'Exit full screen (Esc)' : 'Full screen entry'}
-										>
-											{isTableMaximized ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
-											<span className="ml-1.5 hidden sm:inline text-xs">{isTableMaximized ? 'Exit' : 'Full screen'}</span>
-										</Button>
 									</div>
 								</div>
 							</CardHeader>
-							<CardContent className={cn("pt-4", isTableMaximized && "flex-1 overflow-auto")}>
+							<CardContent className="pt-4">
 								{learnersLoading ? (
 									<div className="flex items-center justify-center py-12">
 										<Loader2 className="h-6 w-6 animate-spin mr-2" />
@@ -1920,10 +1859,7 @@ export default function InternalMarkEntryPage() {
 										<p>{learners.length === 0 ? 'No regular learners found for this course, or all marks have already been entered.' : 'No matching learners found.'}</p>
 									</div>
 								) : (
-									<div className={cn(
-										"relative isolate overflow-auto rounded-lg border",
-										isTableMaximized ? "max-h-[calc(100vh-230px)]" : "max-h-[65vh]"
-									)}>
+									<div className="relative isolate overflow-auto rounded-lg border max-h-[65vh]">
 										{/* isolate: keeps the sticky header/column z-indexes inside this
 										    box so they can never paint over the app header or sidebar */}
 										<table className="w-full caption-bottom text-sm">
@@ -1946,9 +1882,6 @@ export default function InternalMarkEntryPage() {
 														style={{ left: FROZEN.name, ...frozenSize(FROZEN_W.name) }}
 													>
 														Name of the Learner
-													</TableHead>
-													<TableHead className="sticky top-0 z-30 w-12 text-center text-xs font-semibold bg-slate-800 text-white" title="Absent — learner did not sit this assessment">
-														AB
 													</TableHead>
 													{entryColumns.map((col, colIdx) => {
 														if (col.kind === 'question') {
@@ -2006,7 +1939,6 @@ export default function InternalMarkEntryPage() {
 											<TableBody>
 												{filteredLearners.map((learner, idx) => {
 													const total = getLearnerTotal(learner.id)
-													const isAbsent = absentLearners[learner.id] === true
 													// Frozen cells need their own opaque background — the row's own
 													// background does not paint under a sticky cell.
 													const rowBg = idx % 2 === 0 ? 'bg-white dark:bg-slate-950' : 'bg-slate-50 dark:bg-slate-900'
@@ -2020,18 +1952,6 @@ export default function InternalMarkEntryPage() {
 																title={learner.student_name}
 															>
 																{learner.student_name}
-															</TableCell>
-															<TableCell className="text-center p-1.5">
-																{viewMode === 'view' ? (
-																	isAbsent ? <span className="text-xs font-bold text-red-600 dark:text-red-400">AB</span> : <span className="text-xs text-muted-foreground">—</span>
-																) : (
-																	<Checkbox
-																		checked={isAbsent}
-																		onCheckedChange={c => handleAbsentToggle(learner.id, c === true)}
-																		aria-label={`Mark ${learner.student_name} absent`}
-																		className="mx-auto data-[state=checked]:bg-red-600 data-[state=checked]:border-red-600"
-																	/>
-																)}
 															</TableCell>
 															{entryColumns.map((col, colIdx) => {
 																// Read-only sum of the question columns to its left
@@ -2057,11 +1977,8 @@ export default function InternalMarkEntryPage() {
 																const value = isQuestion
 																	? questionMarks[learner.id]?.[col.question.id]
 																	: learnerMarks[learner.id]?.[col.code]
-																// OR pairs and "answer any N" close the cells a learner can't use;
-																// an absent learner has no cells to use at all.
-																const lockReason = isAbsent
-																	? 'Marked absent'
-																	: (isQuestion ? questionLockReason(learner.id, col.question) : null)
+																// OR pairs and "answer any N" close the cells a learner can't use
+																const lockReason = isQuestion ? questionLockReason(learner.id, col.question) : null
 																const style = isQuestion ? partStyle(col.question.part_label) : null
 																const prev = entryColumns[colIdx - 1]
 																const partStart = isQuestion && (!prev || prev.kind !== 'question' || (prev.question.part_label || '') !== (col.question.part_label || ''))
@@ -2125,15 +2042,6 @@ export default function InternalMarkEntryPage() {
 															})}
 															<TableCell className="text-center border-l-4 border-l-slate-200 dark:border-l-slate-700">
 																{(() => {
-																	// An absent learner has no total — "AB" is the fact, and a 0
-																	// here would read as "sat the assessment and scored nothing".
-																	if (isAbsent) {
-																		return (
-																			<span className="inline-flex items-center justify-center h-9 w-16 rounded-md text-sm font-bold bg-red-50 text-red-700 border border-red-200 dark:bg-red-950/30 dark:text-red-400 dark:border-red-900">
-																				AB
-																			</span>
-																		)
-																	}
 																	// View mode: always show total (matches Option B for component cells).
 																	// Entry/Edit mode: only show once the user has touched something.
 																	const showTotal = viewMode === 'view' || learnerHasEntries(learner.id)
@@ -2148,9 +2056,7 @@ export default function InternalMarkEntryPage() {
 																})()}
 															</TableCell>
 															<TableCell className="text-sm font-medium text-purple-700 whitespace-nowrap">
-																{isAbsent
-																	? <span className="text-red-700 dark:text-red-400">ABSENT</span>
-																	: (viewMode === 'view' || learnerHasEntries(learner.id)) ? numberToWords(total) : ''}
+																{(viewMode === 'view' || learnerHasEntries(learner.id)) ? numberToWords(total) : ''}
 															</TableCell>
 														</TableRow>
 													)

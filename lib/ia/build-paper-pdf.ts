@@ -3,6 +3,7 @@
 
 import { jsPDF } from 'jspdf'
 import autoTable from 'jspdf-autotable'
+import { readSubQuestions } from './sub-questions'
 
 function formatDuration(mins?: number | null): string {
 	if (!mins || mins <= 0) return '1 Hour'
@@ -230,6 +231,22 @@ export async function buildPaperPdf(
 				let text = stripHtmlToText(q.question_text)
 				const opts = optionLine(q.options)
 				if (opts) text += `\n${opts}`
+				// A split question prints its (optional) stem with no marks/CO/K of its
+				// own, then one row per sub-division carrying its own marks and tags.
+				const subs = readSubQuestions(q)
+				if (subs.length > 0) {
+					// With no stem, the question number rides the first sub-division's row
+					// instead of taking an empty row of its own.
+					const hasStem = text.trim() !== ''
+					if (hasStem) rows.push([{ content: prefix, styles: { fontStyle: 'bold' } }, text, '', ''])
+					subs.forEach((sb, i) => {
+						const subText = `${sb.label}. ${stripHtmlToText(sb.question_text)}`.trim()
+						const marks = sb.marks == null ? '' : ` (${sb.marks})`
+						const qno = !hasStem && i === 0 ? { content: prefix, styles: { fontStyle: 'bold' } } : ''
+						rows.push([qno, `${subText}${marks}`, sb.co_code || '', sb.k_level || ''])
+					})
+					continue
+				}
 				rows.push([{ content: prefix, styles: { fontStyle: 'bold' } }, text, q.co_code || '', q.k_level || ''])
 			}
 
