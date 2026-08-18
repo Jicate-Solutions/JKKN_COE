@@ -20,7 +20,8 @@ import ExcelJS from 'exceljs'
  *                                       suffix dropped when grade is null.
  *   - YR_COMP                           consolidated_results.last_appearance_month
  *                                       (expanded to the full month name) + _year
- *   - ENG_NAME                          learners_profiles.first_name
+ *   - ENG_NAME                          learners_profiles.first_name +
+ *                                       last_name (space-joined, uppercased)
  *   - T_INITIAL                         learners_profiles.last_name
  *   - GENDER                            learners_profiles.gender
  *   - E_DEGNAME                         MyJKKN programs.program_name

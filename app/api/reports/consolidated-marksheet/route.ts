@@ -2200,7 +2200,7 @@ export async function GET(req: NextRequest) {
 		//   NEW_CODE  <- institutions.code
 		//   REG_NO / MAJ_PER (cgpa) / MAJ_CLSS_E (part_a_classification + grade) /
 		//     YR_COMP (last_appearance_month + year)  <- consolidated_results
-		//   ENG_NAME (first_name) / T_INITIAL (last_name) / GENDER
+		//   ENG_NAME (first_name + last_name) / T_INITIAL (last_name) / GENDER
 		//                                     <- learners_profiles / MyJKKN profiles
 		//   E_DEGNAME / E_BRANCHNA / DEGREE  <- MyJKKN programs
 		//   TAMIL_NAME  <- no source, emitted blank; MEDIUM <- derived from program name
@@ -2503,10 +2503,15 @@ export async function GET(req: NextRequest) {
 			// --- Build rows ---
 			const excelRows: UniversityDataRow[] = consolidatedRows.map((r: any) => {
 				const ext = extInfoMap[r.register_number] || {}
-				// ENG_NAME = learners_profile.first_name (given name only)
-				// T_INITIAL = learners_profile.last_name (the initial, kept in its
-				// own column — do NOT append it to ENG_NAME)
-				const engName = (ext.firstName || '').toUpperCase()
+				// ENG_NAME = first_name + last_name, space-joined and uppercased.
+				// Either half can be missing, so blanks are filtered out rather than
+				// emitted as a leading/trailing space.
+				// T_INITIAL still carries last_name on its own — unchanged.
+				const engName = [ext.firstName, ext.lastName]
+					.map(v => (v || '').trim())
+					.filter(Boolean)
+					.join(' ')
+					.toUpperCase()
 				const tInitial = (ext.lastName || '').toUpperCase()
 				// YR_COMP = full month name + year, e.g. "APRIL 2025".
 				// last_appearance_month is stored short ("APR") by the generator, so
