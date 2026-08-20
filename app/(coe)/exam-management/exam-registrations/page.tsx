@@ -1659,7 +1659,8 @@ t				</div>
 											</SelectTrigger>
 											<SelectContent>
 												<SelectItem value="all">All Status</SelectItem>
-												<SelectItem value="Pending">Pending</SelectItem>
+												<SelectItem value="Applied">Applied</SelectItem>
+<SelectItem value="Pending">Pending</SelectItem>
 												<SelectItem value="Approved">Approved</SelectItem>
 												<SelectItem value="Rejected">Rejected</SelectItem>
 												<SelectItem value="Cancelled">Cancelled</SelectItem>
@@ -1783,6 +1784,7 @@ t				</div>
 																<Badge variant={row.registration_status === 'Approved' ? 'default' : 'secondary'} className={`text-xs ${
 																	row.registration_status === 'Approved' ? 'bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800' :
 																	row.registration_status === 'Pending' ? 'bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 border-amber-200 dark:border-amber-800' :
+																row.registration_status === 'Applied' ? 'bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 border-blue-200 dark:border-blue-800' :
 																	row.registration_status === 'Rejected' ? 'bg-red-100 dark:bg-red-900/40 text-red-700 dark:text-red-300 border-red-200 dark:border-red-800' :
 																	'bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-600'
 																}`}>
@@ -2106,7 +2108,8 @@ t				</div>
 											<SelectValue placeholder="Select Status" />
 										</SelectTrigger>
 										<SelectContent>
-											<SelectItem value="Pending">Pending</SelectItem>
+											<SelectItem value="Applied">Applied</SelectItem>
+<SelectItem value="Pending">Pending</SelectItem>
 											<SelectItem value="Approved">Approved</SelectItem>
 											<SelectItem value="Rejected">Rejected</SelectItem>
 											<SelectItem value="Cancelled">Cancelled</SelectItem>

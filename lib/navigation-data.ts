@@ -225,6 +225,7 @@ export const navMain: NavItem[] = [
 			{ title: 'Exam Types', url: '/exam-management/exam-types', icon: Tags, permission: 'page.exam_management.exam_types.view' },
 			{ title: 'Examination Sessions', url: '/exam-management/examination-sessions', icon: CalendarDays, permission: 'page.exam_management.examination_sessions.view' },
 			{ title: 'Exam Registrations', url: '/exam-management/exam-registrations', icon: UserPlus, permission: 'page.exam_management.exam_registrations.view' },
+			{ title: 'Exam Applications', url: '/exam-management/exam-applications', icon: ClipboardCheck, permission: 'page.exam_management.exam_applications.view' },
 			{ title: 'Registration Lookup', url: '/exam-management/exam-registrations/lookup', icon: Search, permission: 'page.exam_management.exam_registrations.lookup.view' },
 			{ title: 'Exam Timetable', url: '/exam-management/exam-timetables', icon: Calendar, permission: 'page.exam_management.exam_timetables.view' },
 			{ title: 'Schedule Exams', url: '/exam-management/exam-timetables/schedule', icon: CalendarPlus, permission: 'page.exam_management.exam_timetables.view' },

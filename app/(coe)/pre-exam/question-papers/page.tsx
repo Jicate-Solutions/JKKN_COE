@@ -65,7 +65,12 @@ interface BoardOpt {
 	board_order?: number
 }
 
-const CIA_ROUNDS = [1, 2, 3]
+// A CIA round offered by the institution's CIA Setting for the chosen exam session.
+interface CiaRoundOpt {
+	round: number
+	round_name: string
+}
+
 type FilterMode = 'program' | 'board'
 
 // Searchable single-select combobox (matches exam-registrations/bulk-create)
@@ -245,13 +250,17 @@ export default function QuestionPapersPage() {
 	const [semesters, setSemesters] = useState<number[]>([])
 
 	const [templates, setTemplates] = useState<TemplateOpt[]>([])
+	// CIA rounds come from the CIA Setting (Internal Mark Entry Setting) configured for
+	// this institution + exam session — never a hardcoded 1/2/3 list.
+	const [ciaRounds, setCiaRounds] = useState<CiaRoundOpt[]>([])
+	const [loadingCiaRounds, setLoadingCiaRounds] = useState(false)
 
 	const [filterMode, setFilterMode] = useState<FilterMode>('program')
 	const [sessionId, setSessionId] = useState('')
 	const [selectedPrograms, setSelectedPrograms] = useState<string[]>([])
 	const [selectedBoard, setSelectedBoard] = useState('')
 	const [semester, setSemester] = useState('')
-	const [ciaRound, setCiaRound] = useState('1')
+	const [ciaRound, setCiaRound] = useState('')
 	const [templateId, setTemplateId] = useState('')
 
 	// Every filter is mandatory before generating — Generate stays disabled until
@@ -276,6 +285,19 @@ export default function QuestionPapersPage() {
 		() => templates.find(t => t.id === templateId) || null,
 		[templates, templateId]
 	)
+
+	const selectedCiaRound = useMemo(
+		() => ciaRounds.find(r => String(r.round) === ciaRound) || null,
+		[ciaRounds, ciaRound]
+	)
+
+	const ciaRoundPlaceholder = !sessionId
+		? 'Select session'
+		: loadingCiaRounds
+			? 'Loading...'
+			: ciaRounds.length === 0
+				? 'No rounds'
+				: 'Round'
 
 	const [papers, setPapers] = useState<IaQuestionPaper[]>([])
 	const [loading, setLoading] = useState(false)
@@ -317,6 +339,27 @@ export default function QuestionPapersPage() {
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [effectiveInstitutionId, sessionId])
 
+	// CIA rounds are defined per institution + exam session in the CIA Setting, and the
+	// program-wise tab narrows them further to the settings covering the chosen programs.
+	useEffect(() => {
+		if (effectiveInstitutionId && sessionId) fetchCiaRounds()
+		else setCiaRounds([])
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [effectiveInstitutionId, sessionId, filterMode, selectedPrograms.join(',')])
+
+	// Keep the selection valid: drop a round the current setting no longer offers, and
+	// preselect when there is only one round to choose.
+	useEffect(() => {
+		if (ciaRounds.length === 0) {
+			setCiaRound('')
+			return
+		}
+		if (!ciaRounds.some(r => String(r.round) === ciaRound)) {
+			setCiaRound(String(ciaRounds[0].round))
+		}
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [ciaRounds])
+
 	useEffect(() => {
 		setSelectedBoard('')
 		setBoards([])
@@ -338,7 +381,9 @@ export default function QuestionPapersPage() {
 
 	useEffect(() => {
 		setSelected(new Set())
-		if (!effectiveInstitutionId || !sessionId) {
+		// Without a round the API would list every round's papers — wait for the CIA
+		// Setting to resolve one first.
+		if (!effectiveInstitutionId || !sessionId || !ciaRound) {
 			setPapers([])
 			return
 		}
@@ -422,6 +467,49 @@ export default function QuestionPapersPage() {
 			if (list.length === 1) setTemplateId(list[0].id)
 		} catch (e) {
 			console.error(e)
+		}
+	}
+
+	// Rounds authored in the CIA Setting (cia_entry_settings.cia_rounds) for this
+	// institution + session. Several settings can cover different programs, so rounds are
+	// merged and de-duplicated by round number, keeping the first name seen.
+	const fetchCiaRounds = async () => {
+		try {
+			setLoadingCiaRounds(true)
+			const res = await fetch(
+				`/api/pre-exam/cia-entry-settings?institutions_id=${effectiveInstitutionId}&examination_session_id=${sessionId}`
+			)
+			if (!res.ok) {
+				setCiaRounds([])
+				return
+			}
+			const settings = await res.json()
+			const list: any[] = Array.isArray(settings) ? settings : []
+
+			// Program-wise: only settings that apply to a selected program. A setting with no
+			// program_codes applies to all of them.
+			const scoped =
+				filterMode === 'program' && selectedPrograms.length > 0
+					? list.filter(sset => {
+							const codes = Array.isArray(sset.program_codes) ? sset.program_codes : []
+							return codes.length === 0 || codes.some((c: string) => selectedPrograms.includes(c))
+						})
+					: list
+
+			const byRound = new Map<number, CiaRoundOpt>()
+			for (const sset of scoped) {
+				for (const r of (sset.cia_rounds || [])) {
+					const round = Number(r?.round)
+					if (!Number.isFinite(round) || round <= 0 || byRound.has(round)) continue
+					byRound.set(round, { round, round_name: r?.round_name || `CIA ${round}` })
+				}
+			}
+			setCiaRounds([...byRound.values()].sort((a, b) => a.round - b.round))
+		} catch (e) {
+			console.error(e)
+			setCiaRounds([])
+		} finally {
+			setLoadingCiaRounds(false)
 		}
 	}
 
@@ -574,7 +662,7 @@ export default function QuestionPapersPage() {
 						program_code: pc,
 						semester: Number(semester),
 						cia_round: Number(ciaRound),
-						cia_round_name: `CIA ${ciaRound}`,
+						cia_round_name: selectedCiaRound?.round_name || `CIA ${ciaRound}`,
 						template_id: templateId,
 					}),
 				})
@@ -1195,8 +1283,10 @@ export default function QuestionPapersPage() {
 										<SearchableSelect
 											value={ciaRound}
 											onValueChange={setCiaRound}
-											placeholder="Round"
-											options={CIA_ROUNDS.map(r => ({ value: String(r), label: `CIA ${r}` }))}
+											placeholder={ciaRoundPlaceholder}
+											searchPlaceholder="Search round..."
+											disabled={ciaRounds.length === 0}
+											options={ciaRounds.map(r => ({ value: String(r.round), label: r.round_name }))}
 										/>
 									</div>
 									<div>
@@ -1229,6 +1319,12 @@ export default function QuestionPapersPage() {
 										</Button>
 									</div>
 
+									{sessionId && !loadingCiaRounds && ciaRounds.length === 0 && (
+										<p className="col-span-full text-xs text-amber-600">
+											No CIA rounds configured for this exam session — add them in Internal Mark Entry Setting
+											for this institution and session.
+										</p>
+									)}
 									{templates.length === 0 ? (
 										<p className="col-span-full text-xs text-amber-600">
 											No active CIA template for this institution — create one in Question Paper Templates and
@@ -1313,10 +1409,18 @@ export default function QuestionPapersPage() {
 										<SearchableSelect
 											value={ciaRound}
 											onValueChange={setCiaRound}
-											placeholder="Round"
-											options={CIA_ROUNDS.map(r => ({ value: String(r), label: `CIA ${r}` }))}
+											placeholder={ciaRoundPlaceholder}
+											searchPlaceholder="Search round..."
+											disabled={ciaRounds.length === 0}
+											options={ciaRounds.map(r => ({ value: String(r.round), label: r.round_name }))}
 										/>
 									</div>
+									{sessionId && !loadingCiaRounds && ciaRounds.length === 0 && (
+										<p className="col-span-full text-xs text-amber-600">
+											No CIA rounds configured for this exam session — add them in Internal Mark Entry Setting
+											for this institution and session.
+										</p>
+									)}
 									<p className="col-span-full text-xs text-muted-foreground">
 										Select filters, then use Download / 2-up ZIP below. If nothing is checked, all authored
 										papers for this board are downloaded.

@@ -185,7 +185,7 @@ export function useExamRegistrations(programId?: string, sessionId?: string) {
 					return
 				}
 				const errorData = await response.json().catch(() => ({}))
-				throw new Error(errorData.error || `HTTP ${response.status}: Failed to fetch exam registrations`)
+				throw new Error([errorData.error, errorData.details].filter(Boolean).join(' — ') || `HTTP ${response.status}: Failed to fetch exam registrations`)
 			}
 			const result = await response.json()
 			let data = Array.isArray(result) ? result : result.data || []
@@ -228,7 +228,7 @@ export function useExamRegistrations(programId?: string, sessionId?: string) {
 					return
 				}
 				const errorData = await response.json().catch(() => ({}))
-				throw new Error(errorData.error || `HTTP ${response.status}: Failed to fetch exam registrations`)
+				throw new Error([errorData.error, errorData.details].filter(Boolean).join(' — ') || `HTTP ${response.status}: Failed to fetch exam registrations`)
 			}
 			const result = await response.json()
 			let data = Array.isArray(result) ? result : result.data || []

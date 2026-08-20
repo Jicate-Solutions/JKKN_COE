@@ -43,9 +43,9 @@ export function validateExamRegistrationData(data: Partial<ExamRegistrationFormD
 		errors.registration_status = 'Registration status is required'
 	} else {
 		// Validate status values
-		const validStatuses = ['Pending', 'Approved', 'Rejected', 'Cancelled', 'Completed']
+		const validStatuses = ['Applied', 'Pending', 'Approved', 'Rejected', 'Cancelled', 'Completed']
 		if (!validStatuses.includes(data.registration_status)) {
-			errors.registration_status = 'Invalid status. Must be one of: Pending, Approved, Rejected, Cancelled, Completed'
+			errors.registration_status = 'Invalid status. Must be one of: Applied, Pending, Approved, Rejected, Cancelled, Completed'
 		}
 	}
 
@@ -199,9 +199,9 @@ export function validateExamRegistrationImport(data: any, rowIndex: number): str
 	if (!data.registration_status || data.registration_status.toString().trim() === '') {
 		errors.push('Registration status is required')
 	} else {
-		const validStatuses = ['Pending', 'Approved', 'Rejected', 'Cancelled', 'Completed']
+		const validStatuses = ['Applied', 'Pending', 'Approved', 'Rejected', 'Cancelled', 'Completed']
 		if (!validStatuses.includes(data.registration_status.toString().trim())) {
-			errors.push('Invalid status. Must be one of: Pending, Approved, Rejected, Cancelled, Completed')
+			errors.push('Invalid status. Must be one of: Applied, Pending, Approved, Rejected, Cancelled, Completed')
 		}
 	}
 

@@ -18,15 +18,17 @@ export async function GET(request: Request) {
 		// Check if client wants all records (for bulk operations)
 		const fetchAll = searchParams.get('fetchAll') === 'true'
 		const requestedPageSize = parseInt(searchParams.get('pageSize') || '50000')
-
-		// Paginate to bypass Supabase 1000 row limit - fetch up to 1,000,000 records
-		let allRegistrations: any[] = []
+		// Fetch in 1000-row pages (Supabase caps a single response at 1000 rows).
+		// Pages run in small parallel batches, each with retries, so the request
+		// finishes in seconds and survives a transient Supabase/network blip
+		// instead of failing the whole page load.
 		const pageSize = 1000 // Internal page size for fetching
-		let page = 0
-		let hasMore = true
+		const CONCURRENCY = 6
+		const MAX_ROWS = 1000000
+		let allRegistrations: any[] = []
 		let totalCount = 0
 
-		while (hasMore) {
+		const buildQuery = (from: number, to: number, withCount: boolean) => {
 			let query = supabase
 				.from('exam_registrations')
 				.select(`
@@ -34,9 +36,12 @@ export async function GET(request: Request) {
 					institution:institutions(id, institution_code, name),
 					examination_session:examination_sessions(id, session_name, session_code, exam_start_date, exam_end_date),
 					course_offering:course_offerings(id, course_code, program_code)
-				`, { count: page === 0 ? 'exact' : undefined })
+				`, withCount ? { count: 'exact' } : undefined)
+				// created_at is not unique — id is the tiebreaker so rows are not
+				// duplicated or skipped across .range() pages
 				.order('created_at', { ascending: false })
-				.range(page * pageSize, (page + 1) * pageSize - 1)
+				.order('id', { ascending: true })
+				.range(from, to)
 
 			if (institutions_id) {
 				query = query.eq('institutions_id', institutions_id)
@@ -62,35 +67,51 @@ export async function GET(request: Request) {
 				query = query.or(`stu_register_no.ilike.%${search}%,student_name.ilike.%${search}%,course_code.ilike.%${search}%`)
 			}
 
-			const { data, error, count } = await query
+			return query
+		}
 
-			if (error) {
-				console.error('Exam registrations table error (page ' + page + '):', error)
-				return NextResponse.json({ error: 'Failed to fetch exam registrations' }, { status: 500 })
+		const fetchPage = async (pageNo: number, withCount = false) => {
+			let lastError: any = null
+			for (let attempt = 1; attempt <= 3; attempt++) {
+				const { data, error, count } = await buildQuery(pageNo * pageSize, (pageNo + 1) * pageSize - 1, withCount)
+				if (!error) return { rows: data || [], count: count ?? null }
+				lastError = error
+				console.warn(`Exam registrations page ${pageNo} attempt ${attempt} failed:`, error.message)
+				if (attempt < 3) await new Promise(resolve => setTimeout(resolve, 300 * attempt))
 			}
+			throw new Error(`page ${pageNo}: ${lastError?.message || 'unknown error'}`)
+		}
 
-			// Store total count from first page
-			if (page === 0 && count !== null) {
-				totalCount = count
-			}
+		try {
+			const firstPage = await fetchPage(0, true)
+			allRegistrations = firstPage.rows
+			totalCount = firstPage.count ?? firstPage.rows.length
 
-			if (data && data.length > 0) {
-				allRegistrations = allRegistrations.concat(data)
-				page++
-				// Continue if we got a full page AND haven't exceeded 1,000,000 records AND haven't reached requested pageSize
-				hasMore = data.length === pageSize &&
-					allRegistrations.length < 1000000 &&
-					(fetchAll || allRegistrations.length < requestedPageSize)
-			} else {
-				hasMore = false
+			const limit = Math.min(fetchAll ? totalCount : requestedPageSize || totalCount, totalCount, MAX_ROWS)
+			const pageCount = Math.ceil(limit / pageSize)
+
+			for (let start = 1; start < pageCount; start += CONCURRENCY) {
+				const batch = []
+				for (let p = start; p < Math.min(start + CONCURRENCY, pageCount); p++) {
+					batch.push(fetchPage(p))
+				}
+				const results = await Promise.all(batch)
+				for (const result of results) {
+					allRegistrations = allRegistrations.concat(result.rows)
+				}
 			}
+		} catch (pageError: any) {
+			console.error('Exam registrations table error:', pageError)
+			return NextResponse.json({
+				error: 'Failed to fetch exam registrations',
+				details: pageError?.message || String(pageError)
+			}, { status: 500 })
 		}
 
 		// Debug logging
 		console.log('📊 Query result:', {
 			rowsFetched: allRegistrations.length,
-			totalCount: totalCount,
-			pages: page
+			totalCount: totalCount
 		})
 
 		// Fetch course names from courses table to enrich course_offering data
