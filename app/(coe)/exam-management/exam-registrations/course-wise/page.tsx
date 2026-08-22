@@ -202,6 +202,7 @@ export default function CourseWiseExamRegistrationPage() {
 
 			const allLearners: Learner[] = []
 			const seenIds = new Set<string>()
+			const allowedInstitutions = new Set(myjkknIds)
 
 			for (const myjkknInstId of myjkknIds) {
 				const params = new URLSearchParams({
@@ -212,10 +213,16 @@ export default function CourseWiseExamRegistrationPage() {
 				if (!res.ok) continue
 				const raw = await res.json()
 				const list: any[] = raw?.data || raw || []
+				// // MyJKKN ignores the institution_id query filter and returns every learner on
+				// the platform, so the response must be scoped here. Only trust the field
+				// when the response actually carries it - some MyJKKN record shapes strip
+				// institution_id, and filtering on a missing field would empty the list.
+				const responseCarriesInstitution = list.some((s: any) => s?.institution_id)
 
 				list.forEach((s: any) => {
 					const id = s.id
 					if (!id || seenIds.has(id)) return
+					if (responseCarriesInstitution && allowedInstitutions.size > 0 && !allowedInstitutions.has(s.institution_id)) return
 					if (s.program_code !== programCode) return
 					if (s.current_semester !== semester) return
 					seenIds.add(id)

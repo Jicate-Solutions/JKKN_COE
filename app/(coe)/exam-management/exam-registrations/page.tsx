@@ -873,6 +873,7 @@ export default function ExamRegistrationsPage() {
 					}
 				}
 				const uniqueMyjkknInstIds = [...new Set(allMyjkknInstIds)]
+				const allowedMyjkknInstIds = new Set(uniqueMyjkknInstIds)
 				console.log('[handleImport] All unique MyJKKN institution IDs:', uniqueMyjkknInstIds)
 
 				// Fetch learners from MyJKKN API using myjkkn_institution_ids (includes Aided + Self-financing)
@@ -888,8 +889,16 @@ export default function ExamRegistrationsPage() {
 								if (res.ok) {
 									const result = await res.json()
 									const data = Array.isArray(result) ? result : result.data || []
-									console.log(`[handleImport] Loaded ${data.length} learners for MyJKKN institution ${myjkknInstId}`)
-									allMyjkknLearners.push(...data)
+									// MyJKKN ignores the institution_id query filter and returns every learner
+									// on the platform, so the response must be scoped here. Only trust the
+									// field when the response actually carries it - some MyJKKN record shapes
+									// strip institution_id, and filtering on it would then match nobody.
+									const carriesInstitution = data.some((s: any) => s?.institution_id)
+									const scoped = carriesInstitution
+										? data.filter((s: any) => allowedMyjkknInstIds.has(s.institution_id))
+										: data
+									console.log(`[handleImport] Loaded ${data.length} learners for MyJKKN institution ${myjkknInstId}, ${scoped.length} in scope`)
+									allMyjkknLearners.push(...scoped)
 								}
 							} catch (error) {
 								console.error(`[handleImport] Failed to fetch learners for MyJKKN institution ${myjkknInstId}:`, error)

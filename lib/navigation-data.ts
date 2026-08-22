@@ -194,6 +194,7 @@ export const navMain: NavItem[] = [
 		coe_roles: ['super_admin', 'coe'],
 		items: [
 			{ title: 'Learner Directory', url: '/users/learners-myjkkn', icon: GraduationCap, permission: 'page.users.learners_myjkkn.view' },
+			{ title: 'Generate Register Number', url: '/users/generate-register-number', icon: Hash, permission: 'page.users.generate_register_number.view' },
 			{ title: 'Learner Promotion', url: '#' },
 		],
 	},
@@ -226,6 +227,7 @@ export const navMain: NavItem[] = [
 			{ title: 'Examination Sessions', url: '/exam-management/examination-sessions', icon: CalendarDays, permission: 'page.exam_management.examination_sessions.view' },
 			{ title: 'Exam Registrations', url: '/exam-management/exam-registrations', icon: UserPlus, permission: 'page.exam_management.exam_registrations.view' },
 			{ title: 'Exam Applications', url: '/exam-management/exam-applications', icon: ClipboardCheck, permission: 'page.exam_management.exam_applications.view' },
+			{ title: 'Bulk Exam Application', url: '/exam-management/exam-applications/bulk', icon: ClipboardList, permission: 'page.exam_management.exam_applications.bulk.view' },
 			{ title: 'Registration Lookup', url: '/exam-management/exam-registrations/lookup', icon: Search, permission: 'page.exam_management.exam_registrations.lookup.view' },
 			{ title: 'Exam Timetable', url: '/exam-management/exam-timetables', icon: Calendar, permission: 'page.exam_management.exam_timetables.view' },
 			{ title: 'Schedule Exams', url: '/exam-management/exam-timetables/schedule', icon: CalendarPlus, permission: 'page.exam_management.exam_timetables.view' },

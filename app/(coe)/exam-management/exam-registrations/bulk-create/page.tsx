@@ -422,6 +422,7 @@ export default function BulkCreateExamRegistrationPage() {
 		let programMismatch = 0
 		let semesterMismatch = 0
 		const sampleSemesterMismatches: Array<{ reg: string; raw: string; parsed: number }> = []
+		const allowedInstitutions = new Set(myjkknInstitutionIds)
 
 		for (const myjkknInstId of myjkknInstitutionIds) {
 			// MyJKKN server-side program_code/current_semester filtering is unreliable
@@ -432,9 +433,15 @@ export default function BulkCreateExamRegistrationPage() {
 			if (!res.ok) continue
 			const raw = await parseJsonResponse(res)
 			const list: any[] = raw?.data || raw || []
+			// MyJKKN ignores the institution_id query filter and returns every learner
+			// on the platform, so the response must be scoped here. Only trust the field
+			// when the response actually carries it - some MyJKKN record shapes strip
+			// institution_id, and filtering on a missing field would empty the list.
+			const responseCarriesInstitution = list.some((s: any) => s?.institution_id)
 			for (const s of list) {
 				const id = s.id
 				if (!id || seen.has(id)) continue
+				if (responseCarriesInstitution && allowedInstitutions.size > 0 && !allowedInstitutions.has(s.institution_id)) continue
 				seen.add(id)
 				total++
 				const learnerProg = s.program_code || s.program_id

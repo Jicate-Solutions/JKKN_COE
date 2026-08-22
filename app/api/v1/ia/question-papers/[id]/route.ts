@@ -4,7 +4,7 @@ import { withExternalAuth } from '@/lib/api-auth/middleware'
 import type { ExternalApiContext } from '@/types/api-management'
 import { institutionAllowed } from '@/lib/ia/v1-helpers'
 import { scaffoldQuestions, mergeAuthored } from '@/lib/ia/paper-scaffold'
-import { readSubQuestions, validateSubMarks, canSplit } from '@/lib/ia/sub-questions'
+import { readSubQuestions, validateSubMarks, canSplit, readQuestionImage } from '@/lib/ia/sub-questions'
 
 /** /api/v1/ia/question-papers/{id} — detail / save / rebuild / delete (questions JSONB). */
 
@@ -100,6 +100,7 @@ export const PUT = withExternalAuth(async (request: Request, context: ExternalAp
 				question_text: q.question_text ?? null,
 				marks: q.marks ?? base.marks ?? null,
 				options: q.options ?? null,
+				image: readQuestionImage(q.image),
 				correct_option: q.correct_option ?? null,
 				// A split question's CO / K-level live on its sub-divisions.
 				co_code: subs.length > 0 ? null : q.co_code ?? null,

@@ -15,6 +15,16 @@
 // Pure helpers only — no node imports — so both the client page and the API
 // routes can use them.
 
+/** Figure attached to a question / sub-division (see types/ia-question-paper.ts). */
+export interface IaQuestionImageRef {
+	url: string
+	path?: string | null
+	width_pct?: number | null
+	px_w?: number | null
+	px_h?: number | null
+	bytes?: number | null
+}
+
 export interface IaSubQuestion {
 	id: string
 	/** Roman numeral, recomputed on every add/remove ("i", "ii", "iii"). */
@@ -23,7 +33,28 @@ export interface IaSubQuestion {
 	marks: number | null
 	co_code: string | null
 	k_level: string | null
+	/** Optional figure, printed centred under this sub-division. */
+	image?: IaQuestionImageRef | null
 	display_order: number
+}
+
+/**
+ * Normalize an unknown value into a figure ref (null when absent / unusable).
+ * Only http(s) URLs survive — the value is written into an <img src> when the
+ * PDF is built, so `javascript:` and oversized `data:` payloads are dropped here.
+ */
+export function readQuestionImage(raw: any): IaQuestionImageRef | null {
+	const url = typeof raw?.url === 'string' ? raw.url.trim() : ''
+	if (!url || !/^https?:\/\//i.test(url)) return null
+	const num = (v: any) => (v == null || v === '' ? null : Number(v) || null)
+	return {
+		url,
+		path: raw?.path ? String(raw.path) : null,
+		width_pct: num(raw?.width_pct),
+		px_w: num(raw?.px_w),
+		px_h: num(raw?.px_h),
+		bytes: num(raw?.bytes),
+	}
 }
 
 const ROMANS = ['i', 'ii', 'iii', 'iv', 'v', 'vi', 'vii', 'viii', 'ix', 'x']
@@ -54,6 +85,7 @@ export function readSubQuestions(q: any): IaSubQuestion[] {
 			marks: s?.marks == null || s.marks === '' ? null : Number(s.marks),
 			co_code: s?.co_code || null,
 			k_level: s?.k_level || null,
+			image: readQuestionImage(s?.image),
 			display_order: i + 1,
 		}))
 }

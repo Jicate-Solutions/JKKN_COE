@@ -144,6 +144,8 @@ export default function ExamApplicationsPage() {
 			const seenIds = new Set<string>()
 			const lower = q.toLowerCase()
 
+			const allowedInstitutions = new Set(myjkknInstitutionIds)
+
 			for (const myjkknInstId of myjkknInstitutionIds) {
 				const params = new URLSearchParams({ institution_id: myjkknInstId, fetchAll: 'true' })
 				const res = await fetch(`/api/myjkkn/learner-profiles?${params}`)
@@ -151,9 +153,16 @@ export default function ExamApplicationsPage() {
 				const raw = await res.json()
 				const list: any[] = raw?.data || raw || []
 
+				// MyJKKN ignores the institution_id query filter and returns every learner
+				// on the platform, so the response must be scoped here. Only trust the
+				// field when the response actually carries it - some MyJKKN record shapes
+				// strip institution_id, and filtering on a missing field would find nobody.
+				const responseCarriesInstitution = list.some((s: any) => s?.institution_id)
+
 				list.forEach((s: any) => {
 					const id = s.id
 					if (!id || seenIds.has(id)) return
+					if (responseCarriesInstitution && allowedInstitutions.size > 0 && !allowedInstitutions.has(s.institution_id)) return
 					const regNo = (s.register_number || '').toLowerCase()
 					const fullName = `${s.first_name || ''} ${s.last_name || ''}`.trim().toLowerCase()
 					if (!regNo.includes(lower) && !fullName.includes(lower)) return
@@ -440,11 +449,18 @@ export default function ExamApplicationsPage() {
 											Select a session and a learner — courses are merged from exam registrations, backlogs and the offer list
 										</p>
 									</div>
-									<Link href="/exam-management/exam-registrations">
-										<Button variant="outline" size="sm" className="h-8 text-sm px-3 gap-1.5">
-											<ArrowLeft className="h-3.5 w-3.5" />Registrations
-										</Button>
-									</Link>
+									<div className="flex items-center gap-2">
+										<Link href="/exam-management/exam-applications/bulk">
+											<Button variant="outline" size="sm" className="h-8 text-sm px-3 gap-1.5">
+												<ListChecks className="h-3.5 w-3.5" />Bulk Application
+											</Button>
+										</Link>
+										<Link href="/exam-management/exam-registrations">
+											<Button variant="outline" size="sm" className="h-8 text-sm px-3 gap-1.5">
+												<ArrowLeft className="h-3.5 w-3.5" />Registrations
+											</Button>
+										</Link>
+									</div>
 								</div>
 							</CardHeader>
 							<CardContent className="p-4 space-y-4">

@@ -32,7 +32,7 @@ import {
 	Check, ChevronsUpDown, RefreshCw, Plus, X, Download, GraduationCap, Layers, Split, AlertTriangle,
 } from 'lucide-react'
 import { K_LEVELS } from '@/types/ia-question-paper'
-import type { IaQuestionPaper, IaPaperQuestion, IaPaperSubQuestion } from '@/types/ia-question-paper'
+import type { IaQuestionPaper, IaPaperQuestion, IaPaperSubQuestion, IaPaperQuestionOption } from '@/types/ia-question-paper'
 import {
 	readSubQuestions, relabelSubs, subTotal, canSplit, validateSubMarks, newId, romanLabel,
 	MAX_SUB_QUESTIONS,
@@ -40,6 +40,9 @@ import {
 import { QuestionRichEditor } from '@/components/ia/question-rich-editor'
 import { formatApplicability } from '@/lib/ia/course-type-applicability'
 import { TAMIL_FONT_FAMILIES } from '@/lib/ia/tamil-font-meta'
+import { QuestionImageField } from '@/components/ia/question-image-field'
+import { optionEditorValue, richTextToPlain } from '@/lib/ia/rich-text'
+import { paperPdfFilename } from '@/lib/ia/paper-filename'
 
 interface Institution {
 	id: string
@@ -742,12 +745,12 @@ export default function QuestionPapersPage() {
 		setQuestions(prev => prev.map(q => (q.id === qid ? { ...q, ...patch } : q)))
 	}
 
-	const updateOption = (qid: string, key: string, text: string) => {
+	const updateOption = (qid: string, key: string, patch: Partial<IaPaperQuestionOption>) => {
 		setDirty(true)
 		setQuestions(prev =>
 			prev.map(q =>
 				q.id === qid
-					? { ...q, options: (q.options || []).map(o => (o.key === key ? { ...o, text } : o)) }
+					? { ...q, options: (q.options || []).map(o => (o.key === key ? { ...o, ...patch } : o)) }
 					: q
 			)
 		)
@@ -902,8 +905,9 @@ export default function QuestionPapersPage() {
 				const res = await fetch(apiUrl)
 				if (!res.ok) continue
 				const blob = await res.blob()
-				const suffix = layout === '2up' ? '_2up' : ''
-				const name = `${String(i + 1).padStart(3, '0')}_${p.course_code || 'paper'}_${p.set_label || 'A'}${suffix}.pdf`
+				// Same name as a single download, with an index prefix so the ZIP keeps
+				// the on-screen order and two papers can never collide inside it.
+				const name = `${String(i + 1).padStart(3, '0')}_${paperPdfFilename(p, { variant: layout })}`
 				zip.file(name, blob)
 				ok++
 			}
@@ -1041,7 +1045,7 @@ export default function QuestionPapersPage() {
 	}
 
 	const downloadPdf = async (
-		p: { id: string; course_code?: string; cia_round?: number; set_label?: string },
+		p: { id: string; course_code?: string; subject_title?: string; cia_round?: number; cia_round_name?: string; set_label?: string },
 		layout: 'single' | '2up' = 'single'
 	) => {
 		try {
@@ -1056,8 +1060,8 @@ export default function QuestionPapersPage() {
 			const objectUrl = URL.createObjectURL(blob)
 			const a = document.createElement('a')
 			a.href = objectUrl
-			const suffix = layout === '2up' ? '_2up' : ''
-			a.download = `QP_${p.course_code || 'paper'}_CIA${p.cia_round || 1}${p.set_label ? '_' + p.set_label : ''}${suffix}.pdf`
+			// "<course code> - <course name> - <assessment>.pdf"
+			a.download = paperPdfFilename(p, { variant: layout })
 			document.body.appendChild(a)
 			a.click()
 			a.remove()
@@ -1647,6 +1651,37 @@ export default function QuestionPapersPage() {
 								</span>
 							) : null}
 						</SheetTitle>
+						{/* Default language/font for the whole paper — asked once, here in
+						    the heading, and inherited by every question & option (new ones
+						    included). Persisted on Save. */}
+						{paper && !loadingPaper && (
+							<div className="flex flex-wrap items-center gap-2">
+								<Label className="whitespace-nowrap text-xs font-semibold">Default Language</Label>
+								<Select
+									value={paper.default_font || 'default'}
+									onValueChange={v => {
+										setDirty(true)
+										setPaper({ ...paper, default_font: v === 'default' ? null : v })
+									}}
+									disabled={!editable}
+								>
+									<SelectTrigger className="h-8 w-[170px] text-xs">
+										<SelectValue placeholder="Default" />
+									</SelectTrigger>
+									<SelectContent>
+										<SelectItem value="default" className="text-xs">Default (English)</SelectItem>
+										{TAMIL_FONT_FAMILIES.map(f => (
+											<SelectItem key={f.id} value={f.cssName} className="text-xs">
+												{f.label}
+											</SelectItem>
+										))}
+									</SelectContent>
+								</Select>
+								<span className="text-xs text-muted-foreground">
+									Applies to every question &amp; option in this paper · Save to keep.
+								</span>
+							</div>
+						)}
 					</SheetHeader>
 
 					{loadingPaper ? (
@@ -1667,36 +1702,6 @@ export default function QuestionPapersPage() {
 										(editing a {paper.status} paper — CoE override)
 									</span>
 								) : null}
-							</div>
-
-							{/* Common Font — one control that sets the default font for every
-							    question and option in this paper. Individual questions/options
-							    can still override below. Persisted on Save. */}
-							<div className="flex flex-wrap items-center gap-2 rounded-md border bg-muted/30 px-3 py-2">
-								<Label className="whitespace-nowrap text-xs font-semibold">Common Font</Label>
-								<Select
-									value={paper.default_font || 'default'}
-									onValueChange={v => {
-										setDirty(true)
-										setPaper({ ...paper, default_font: v === 'default' ? null : v })
-									}}
-									disabled={!editable}
-								>
-									<SelectTrigger className="h-8 w-[170px] text-xs">
-										<SelectValue placeholder="Default" />
-									</SelectTrigger>
-									<SelectContent>
-										<SelectItem value="default" className="text-xs">Default</SelectItem>
-										{TAMIL_FONT_FAMILIES.map(f => (
-											<SelectItem key={f.id} value={f.cssName} className="text-xs">
-												{f.label}
-											</SelectItem>
-										))}
-									</SelectContent>
-								</Select>
-								<span className="text-xs text-muted-foreground">
-									Applies to all questions &amp; options (including new ones). Override any single one below · Save to keep.
-								</span>
 							</div>
 
 							<div className="grid grid-cols-2 gap-3">
@@ -1892,56 +1897,36 @@ export default function QuestionPapersPage() {
 														onChange={html => updateQuestion(q.id, { question_text: html })}
 													/>
 
+													<QuestionImageField
+														paperId={paper.id}
+														value={q.image}
+														disabled={!editable}
+														onChange={image => updateQuestion(q.id, { image })}
+													/>
+
 													{Array.isArray(q.options) && q.options.length > 0 && (
-														<div className="mt-2 space-y-2">
-															<div className="flex items-center gap-2">
-																<Label className="text-xs whitespace-nowrap">Option font</Label>
-																<Select
-																	value={q.option_font || 'default'}
-																	onValueChange={v =>
-																		updateQuestion(q.id, {
-																			option_font: v === 'default' ? null : v,
-																		})
-																	}
-																	disabled={!editable}
-																>
-																	<SelectTrigger className="h-7 w-[170px] text-xs">
-																		<SelectValue placeholder="Default" />
-																	</SelectTrigger>
-																	<SelectContent>
-																		<SelectItem value="default" className="text-xs">
-																			{paper.default_font
-																				? `Common (${TAMIL_FONT_FAMILIES.find(f => f.cssName === paper.default_font)?.label || paper.default_font})`
-																				: 'Default'}
-																		</SelectItem>
-																		{TAMIL_FONT_FAMILIES.map(f => (
-																			<SelectItem key={f.id} value={f.cssName} className="text-xs">
-																				{f.label}
-																			</SelectItem>
-																		))}
-																	</SelectContent>
-																</Select>
-															</div>
-															<div className="grid grid-cols-2 gap-2">
-																{q.options.map(o => (
-																	<div key={o.key} className="flex items-center gap-1">
-																		<span className="w-5 text-xs text-muted-foreground">{o.key})</span>
-																		<Input
-																			className="h-8"
-																			placeholder={`Option ${o.key}`}
-																			value={o.text}
-																			disabled={!editable}
-																			style={
-																				// Per-option override wins; otherwise inherit the paper-wide common font.
-																				(q.option_font || paper.default_font)
-																					? { fontFamily: `'${q.option_font || paper.default_font}'` }
-																					: undefined
-																			}
-																			onChange={e => updateOption(q.id, o.key, e.target.value)}
-																		/>
-																	</div>
-																))}
-															</div>
+														<div className="mt-2 grid grid-cols-2 gap-2">
+															{q.options.map(o => (
+																<div key={o.key} className="flex items-start gap-1">
+																	<span className="mt-2 w-5 text-xs text-muted-foreground">{o.key})</span>
+																	{/* Choices author exactly like questions do — equations,
+																	    sub/superscript — and inherit the paper's language. */}
+																	<QuestionRichEditor
+																		variant="compact"
+																		className="flex-1"
+																		value={optionEditorValue(o)}
+																		disabled={!editable}
+																		placeholder={`Option ${o.key}`}
+																		defaultFontFamily={q.option_font || paper.default_font}
+																		onChange={html =>
+																			updateOption(q.id, o.key, {
+																				text_html: html || null,
+																				text: richTextToPlain(html),
+																			})
+																		}
+																	/>
+																</div>
+															))}
 														</div>
 													)}
 
@@ -2107,6 +2092,13 @@ export default function QuestionPapersPage() {
 																		placeholder={`Sub-division ${sb.label}…`}
 																		defaultFontFamily={paper.default_font}
 																		onChange={html => updateSubQuestion(q.id, sb.id, { question_text: html })}
+																	/>
+																	<QuestionImageField
+																		paperId={paper.id}
+																		value={sb.image}
+																		disabled={!editable}
+																		onChange={image => updateSubQuestion(q.id, sb.id, { image })}
+																		label={`Add image to ${sb.label}.`}
 																	/>
 																</div>
 															))}

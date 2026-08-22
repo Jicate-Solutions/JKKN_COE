@@ -120,6 +120,87 @@ interface BacklogStatistics {
 	}
 }
 
+// ── Overall arrears (live, across ALL examination sessions) ──
+// A paper is dropped from this list as soon as the learner passes it
+// in ANY session, so what remains is the learner's arrear status today.
+
+interface CurrentArrearAttempt {
+	session_code: string
+	session_name: string
+	internal_marks: number | null
+	external_marks: number | null
+	total_marks: number | null
+	letter_grade: string | null
+	is_absent: boolean
+}
+
+interface CurrentArrearItem {
+	student_id: string
+	register_number: string
+	student_name: string
+	program_code: string
+	semester: number
+	course_id: string
+	course_code: string
+	course_name: string
+	course_credits: number
+	evaluation_type: string
+	first_session_code: string
+	first_session_name: string
+	latest_session_code: string
+	latest_session_name: string
+	latest_internal_marks: number | null
+	latest_internal_maximum: number | null
+	latest_external_marks: number | null
+	latest_external_maximum: number | null
+	latest_total_marks: number | null
+	latest_total_maximum: number | null
+	latest_percentage: number | null
+	latest_letter_grade: string | null
+	internal_pass_mark: number
+	external_pass_mark: number
+	total_pass_mark: number
+	attempt_count: number
+	sessions_pending: number
+	failure_reason: string
+	is_absent: boolean
+	priority_level: 'Critical' | 'High' | 'Normal' | 'Low'
+	attempt_history: CurrentArrearAttempt[]
+}
+
+interface CurrentArrearLearner {
+	student_id: string
+	register_no: string
+	student_name: string
+	program_code: string
+	pending_arrears: number
+	total_credits_pending: number
+	critical_count: number
+	high_priority_count: number
+	absent_count: number
+	arrears_by_semester: Record<number, number>
+	latest_semester: number
+}
+
+interface CurrentArrearStatistics {
+	total_arrears: number
+	learners_with_arrears: number
+	critical_count: number
+	high_priority_count: number
+	total_credits_pending: number
+	cleared_papers: number
+	recovered_papers: number
+	sessions_covered: number
+	attempts_scanned: number
+	failure_reasons: {
+		Internal: number
+		External: number
+		Both: number
+		Absent: number
+		Overall: number
+	}
+}
+
 interface DropdownOption {
 	id: string
 	code: string
@@ -546,6 +627,15 @@ export default function LearnerArrearsPage() {
 	const [expandedLearners, setExpandedLearners] = useState<Set<string>>(new Set())
 	const [activeTab, setActiveTab] = useState<'overview' | 'learners' | 'courses'>('overview')
 
+	// Top-level view: session-scoped backlogs vs live all-session overall arrears
+	const [viewMode, setViewMode] = useState<'session' | 'current'>('session')
+	const [currentLoading, setCurrentLoading] = useState(false)
+	const [currentArrears, setCurrentArrears] = useState<CurrentArrearItem[]>([])
+	const [currentLearners, setCurrentLearners] = useState<CurrentArrearLearner[]>([])
+	const [currentStats, setCurrentStats] = useState<CurrentArrearStatistics | null>(null)
+	const [currentSearch, setCurrentSearch] = useState("")
+	const [currentSubTab, setCurrentSubTab] = useState<'papers' | 'learners'>('papers')
+
 	// Helper function to infer UG/PG grade system from program code/name
 	const inferGradeSystemFromProgram = useCallback((programCode?: string, programName?: string): ProgramType => {
 		const code = (programCode || '').toUpperCase()
@@ -730,6 +820,9 @@ export default function LearnerArrearsPage() {
 		setBacklogs([])
 		setLearnerSummaries([])
 		setStatistics(null)
+		setCurrentArrears([])
+		setCurrentLearners([])
+		setCurrentStats(null)
 		setProgramType(null)
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [selectedInstitution, fetchSessions, fetchPrograms])
@@ -748,6 +841,9 @@ export default function LearnerArrearsPage() {
 		setBacklogs([])
 		setLearnerSummaries([])
 		setStatistics(null)
+		setCurrentArrears([])
+		setCurrentLearners([])
+		setCurrentStats(null)
 	}, [selectedPrograms, selectedSession, selectedInstitution, fetchSemesters, programs])
 
 	// Update program type when programs selection changes
@@ -975,7 +1071,224 @@ export default function LearnerArrearsPage() {
 		})
 	}
 
+	// =====================================================
+	// OVERALL ARREARS (ALL SESSIONS)
+	// =====================================================
+
+	const fetchCurrentArrears = async () => {
+		if (!selectedInstitution || selectedPrograms.length === 0) {
+			toast({
+				title: 'Missing Selection',
+				description: 'Please select institution and at least one program',
+				variant: 'destructive'
+			})
+			return
+		}
+
+		setCurrentLoading(true)
+		setCurrentArrears([])
+		setCurrentLearners([])
+		setCurrentStats(null)
+
+		try {
+			const allArrears: CurrentArrearItem[] = []
+			const learnerMap: Record<string, CurrentArrearLearner> = {}
+			let clearedPapers = 0
+			let recoveredPapers = 0
+			let sessionsCovered = 0
+			let attemptsScanned = 0
+
+			// One request per programme (mirrors the session-scoped fetch above)
+			for (const programId of selectedPrograms) {
+				const programData = programs.find(p => p.id === programId)
+				const programCode = programData?.code || ''
+
+				const params = new URLSearchParams({ institutionId: selectedInstitution })
+				if (programCode) {
+					params.append('programCode', programCode)
+				} else {
+					params.append('programId', programId)
+				}
+				if (selectedSemesters.length > 0) {
+					params.append('semesters', selectedSemesters.join(','))
+				}
+
+				const res = await fetch(`/api/grading/current-arrears?${params.toString()}`)
+				if (!res.ok) {
+					const errorData = await res.json()
+					throw new Error(errorData.error || 'Failed to fetch overall arrear status')
+				}
+
+				const data = await res.json()
+
+				if (data.arrears?.length > 0) {
+					allArrears.push(...data.arrears)
+				}
+
+				data.learners?.forEach((l: CurrentArrearLearner) => {
+					if (!learnerMap[l.student_id]) {
+						learnerMap[l.student_id] = { ...l, arrears_by_semester: { ...l.arrears_by_semester } }
+					} else {
+						const existing = learnerMap[l.student_id]
+						existing.pending_arrears += l.pending_arrears
+						existing.total_credits_pending += l.total_credits_pending
+						existing.critical_count += l.critical_count
+						existing.high_priority_count += l.high_priority_count
+						existing.absent_count += l.absent_count
+						existing.latest_semester = Math.max(existing.latest_semester, l.latest_semester)
+						Object.entries(l.arrears_by_semester).forEach(([sem, count]) => {
+							const semNum = parseInt(sem)
+							existing.arrears_by_semester[semNum] = (existing.arrears_by_semester[semNum] || 0) + (count as number)
+						})
+					}
+				})
+
+				if (data.statistics) {
+					clearedPapers += data.statistics.cleared_papers || 0
+					recoveredPapers += data.statistics.recovered_papers || 0
+					attemptsScanned += data.statistics.attempts_scanned || 0
+					sessionsCovered = Math.max(sessionsCovered, data.statistics.sessions_covered || 0)
+				}
+			}
+
+			allArrears.sort((a, b) => {
+				const reg = (a.register_number || '').localeCompare(b.register_number || '')
+				if (reg !== 0) return reg
+				if (a.semester !== b.semester) return a.semester - b.semester
+				return (a.course_code || '').localeCompare(b.course_code || '')
+			})
+
+			const combinedStats: CurrentArrearStatistics = {
+				total_arrears: allArrears.length,
+				learners_with_arrears: Object.keys(learnerMap).length,
+				critical_count: allArrears.filter(a => a.priority_level === 'Critical').length,
+				high_priority_count: allArrears.filter(a => a.priority_level === 'High').length,
+				total_credits_pending: allArrears.reduce((sum, a) => sum + (a.course_credits || 0), 0),
+				cleared_papers: clearedPapers,
+				recovered_papers: recoveredPapers,
+				sessions_covered: sessionsCovered,
+				attempts_scanned: attemptsScanned,
+				failure_reasons: {
+					Internal: allArrears.filter(a => a.failure_reason === 'Internal').length,
+					External: allArrears.filter(a => a.failure_reason === 'External').length,
+					Both: allArrears.filter(a => a.failure_reason === 'Both').length,
+					Absent: allArrears.filter(a => a.is_absent).length,
+					Overall: allArrears.filter(a => a.failure_reason === 'Overall').length
+				}
+			}
+
+			setCurrentArrears(allArrears)
+			setCurrentLearners(Object.values(learnerMap).sort((a, b) =>
+				(a.register_no || '').localeCompare(b.register_no || '')
+			))
+			setCurrentStats(combinedStats)
+
+			toast({
+				title: 'Overall Arrears Loaded',
+				description: `${allArrears.length} pending arrear paper(s) across ${sessionsCovered} session(s). ${recoveredPapers} paper(s) already cleared in a later exam were skipped.`,
+				className: 'bg-green-50 border-green-200 text-green-800'
+			})
+		} catch (e) {
+			console.error('Overall arrears fetch error:', e)
+			toast({
+				title: 'Fetch Failed',
+				description: e instanceof Error ? e.message : 'Failed to fetch overall arrear status',
+				variant: 'destructive'
+			})
+		} finally {
+			setCurrentLoading(false)
+		}
+	}
+
+	const filteredCurrentArrears = useMemo(() => {
+		if (!currentSearch) return currentArrears
+		const search = currentSearch.toLowerCase()
+		return currentArrears.filter(a =>
+			a.register_number?.toLowerCase().includes(search) ||
+			a.student_name?.toLowerCase().includes(search) ||
+			a.course_code?.toLowerCase().includes(search) ||
+			a.course_name?.toLowerCase().includes(search)
+		)
+	}, [currentArrears, currentSearch])
+
+	const filteredCurrentLearners = useMemo(() => {
+		if (!currentSearch) return currentLearners
+		const search = currentSearch.toLowerCase()
+		return currentLearners.filter(l =>
+			l.register_no?.toLowerCase().includes(search) ||
+			l.student_name?.toLowerCase().includes(search)
+		)
+	}, [currentLearners, currentSearch])
+
+	const handleExportCurrent = () => {
+		if (currentArrears.length === 0) {
+			toast({
+				title: 'No Data',
+				description: 'No pending arrears to export.',
+				variant: 'destructive'
+			})
+			return
+		}
+
+		const paperRows = currentArrears.map(a => ({
+			'Register No': a.register_number,
+			'Learner Name': a.student_name,
+			'Program': a.program_code,
+			'Semester': a.semester,
+			'Course Code': a.course_code,
+			'Course Name': a.course_name,
+			'Credits': a.course_credits,
+			'First Failed In': a.first_session_code,
+			'Attempts': a.attempt_count,
+			'Latest Attempt Session': a.latest_session_code,
+			'Latest Internal': a.latest_internal_marks ?? '',
+			'Latest External': a.latest_external_marks ?? '',
+			'Latest Total': a.latest_total_marks ?? '',
+			'Latest %': a.latest_percentage != null ? Number(a.latest_percentage).toFixed(2) : '',
+			'Latest Grade': a.latest_letter_grade || '',
+			'Internal Pass Mark': a.internal_pass_mark,
+			'External Pass Mark': a.external_pass_mark,
+			'Failure Reason': a.failure_reason,
+			'Sessions Pending': a.sessions_pending,
+			'Priority': a.priority_level,
+			'Overall Status': 'Arrear Pending',
+			'Attempt History': a.attempt_history
+				.map(h => `${h.session_code}: ${h.is_absent ? 'AB' : (h.total_marks ?? '-')}`)
+				.join(' | ')
+		}))
+
+		const learnerRows = currentLearners.map(l => ({
+			'Register No': l.register_no,
+			'Learner Name': l.student_name,
+			'Program': l.program_code,
+			'Highest Arrear Semester': l.latest_semester,
+			'Pending Arrears': l.pending_arrears,
+			'Credits Pending': l.total_credits_pending,
+			'Critical': l.critical_count,
+			'High Priority': l.high_priority_count,
+			'Absent Papers': l.absent_count,
+			'Semester Breakdown': Object.entries(l.arrears_by_semester)
+				.sort((a, b) => parseInt(a[0]) - parseInt(b[0]))
+				.map(([sem, count]) => `Sem ${sem}: ${count}`)
+				.join(', ')
+		}))
+
+		const wb = XLSX.utils.book_new()
+		XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(paperRows), 'Overall Arrears')
+		XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(learnerRows), 'Learner Summary')
+
+		const fileName = `overall_arrear_status_${new Date().toISOString().split('T')[0]}.xlsx`
+		XLSX.writeFile(wb, fileName)
+
+		toast({
+			title: 'Export Successful',
+			description: `Exported ${currentArrears.length} pending arrear paper(s) for ${currentLearners.length} learner(s).`,
+			className: 'bg-green-50 border-green-200 text-green-800'
+		})
+	}
+
 	const canFetch = selectedInstitution && selectedSession && selectedPrograms.length > 0
+	const canFetchCurrent = Boolean(selectedInstitution) && selectedPrograms.length > 0
 
 	// Determine UG/PG badge for display
 	const programTypeBadge = programType ? (
@@ -1042,7 +1355,11 @@ export default function LearnerArrearsPage() {
 								</div>
 								<div>
 									<CardTitle className="text-lg">Select Parameters</CardTitle>
-									<CardDescription>Choose institution, session, program and semester</CardDescription>
+									<CardDescription>
+										{viewMode === 'current'
+											? 'Choose institution and program — Overall scans every examination session'
+											: 'Choose institution, session, program and semester'}
+									</CardDescription>
 								</div>
 							</div>
 						</CardHeader>
@@ -1063,7 +1380,9 @@ export default function LearnerArrearsPage() {
 								)}
 								{mustSelectSession && (
 								<div className="space-y-2">
-									<Label>Examination Session *</Label>
+									<Label>
+										Examination Session {viewMode === 'current' ? <span className="text-xs font-normal text-muted-foreground">(all sessions scanned)</span> : '*'}
+									</Label>
 									<SearchableSelect
 										options={sessions}
 										value={selectedSession}
@@ -1080,7 +1399,7 @@ export default function LearnerArrearsPage() {
 										selectedIds={selectedPrograms}
 										onSelectionChange={setSelectedPrograms}
 										placeholder="Select program(s)"
-										disabled={(mustSelectInstitution && !selectedInstitution) || !selectedSession}
+										disabled={(mustSelectInstitution && !selectedInstitution) || (viewMode === 'session' && !selectedSession)}
 										loading={programsLoading}
 									/>
 								</div>
@@ -1097,16 +1416,41 @@ export default function LearnerArrearsPage() {
 
 							{/* Fetch Button */}
 							<div className="flex items-center justify-end pt-2 border-t">
-								<Button onClick={fetchBacklogs} disabled={!canFetch || loading}>
-									{loading ? (
-										<><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Loading...</>
-									) : (
-										<><RefreshCw className="h-4 w-4 mr-2" /> Fetch Backlogs</>
-									)}
-								</Button>
+								{viewMode === 'current' ? (
+									<Button onClick={fetchCurrentArrears} disabled={!canFetchCurrent || currentLoading}>
+										{currentLoading ? (
+											<><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Scanning all sessions...</>
+										) : (
+											<><RefreshCw className="h-4 w-4 mr-2" /> Fetch Overall Arrears</>
+										)}
+									</Button>
+								) : (
+									<Button onClick={fetchBacklogs} disabled={!canFetch || loading}>
+										{loading ? (
+											<><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Loading...</>
+										) : (
+											<><RefreshCw className="h-4 w-4 mr-2" /> Fetch Backlogs</>
+										)}
+									</Button>
+								)}
 							</div>
 						</CardContent>
 					</Card>
+
+					{/* Top-level view switch: session-scoped vs live all-session status */}
+					<Tabs value={viewMode} onValueChange={(v) => setViewMode(v as 'session' | 'current')}>
+						<TabsList>
+							<TabsTrigger value="session" className="gap-2">
+								<FileWarning className="h-4 w-4" />
+								Session Backlogs
+							</TabsTrigger>
+							<TabsTrigger value="current" className="gap-2">
+								<TrendingUp className="h-4 w-4" />
+								Overall (All Sessions)
+							</TabsTrigger>
+						</TabsList>
+
+						<TabsContent value="session" className="mt-4 space-y-4">
 
 					{/* Results Section */}
 					{statistics && (
@@ -1510,6 +1854,309 @@ export default function LearnerArrearsPage() {
 							</CardContent>
 						</Card>
 					)}
+						</TabsContent>
+
+						{/* ================= OVERALL ARREARS (ALL SESSIONS) ================= */}
+						<TabsContent value="current" className="mt-4 space-y-4">
+							{currentStats && (
+								<>
+									{/* How this list is built */}
+									<Card className="border-emerald-200 dark:border-emerald-800 bg-emerald-50/60 dark:bg-emerald-900/10">
+										<CardContent className="p-3 flex items-start gap-3">
+											<CheckCircle2 className="h-5 w-5 text-emerald-600 mt-0.5 shrink-0" />
+											<div className="text-sm">
+												<span className="font-medium">Overall arrear position across all {currentStats.sessions_covered} examination session(s).</span>{' '}
+												A paper is dropped as soon as the learner passes it in any later exam — {currentStats.recovered_papers} paper(s)
+												that were once an arrear and have since been cleared are excluded from this list and from the download.
+											</div>
+										</CardContent>
+									</Card>
+
+									{/* Summary Cards */}
+									<div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+										<Card>
+											<CardContent className="p-3">
+												<div className="flex items-center justify-between">
+													<div>
+														<p className="text-xs font-medium text-muted-foreground">Pending Arrears</p>
+														<p className="text-xl font-bold text-orange-600">{currentStats.total_arrears}</p>
+													</div>
+													<BookOpen className="h-5 w-5 text-orange-500" />
+												</div>
+											</CardContent>
+										</Card>
+										<Card>
+											<CardContent className="p-3">
+												<div className="flex items-center justify-between">
+													<div>
+														<p className="text-xs font-medium text-muted-foreground">Learners</p>
+														<p className="text-xl font-bold">{currentStats.learners_with_arrears}</p>
+													</div>
+													<Users className="h-5 w-5 text-purple-500" />
+												</div>
+											</CardContent>
+										</Card>
+										<Card className="bg-red-50 dark:bg-red-900/10 border-red-200 dark:border-red-800">
+											<CardContent className="p-3">
+												<div className="flex items-center justify-between">
+													<div>
+														<p className="text-xs font-medium text-red-600 dark:text-red-400">Critical</p>
+														<p className="text-xl font-bold text-red-600">{currentStats.critical_count}</p>
+													</div>
+													<AlertTriangle className="h-5 w-5 text-red-500" />
+												</div>
+											</CardContent>
+										</Card>
+										<Card className="bg-orange-50 dark:bg-orange-900/10 border-orange-200 dark:border-orange-800">
+											<CardContent className="p-3">
+												<div className="flex items-center justify-between">
+													<div>
+														<p className="text-xs font-medium text-orange-600 dark:text-orange-400">High Priority</p>
+														<p className="text-xl font-bold text-orange-600">{currentStats.high_priority_count}</p>
+													</div>
+													<AlertCircle className="h-5 w-5 text-orange-500" />
+												</div>
+											</CardContent>
+										</Card>
+										<Card>
+											<CardContent className="p-3">
+												<div className="flex items-center justify-between">
+													<div>
+														<p className="text-xs font-medium text-muted-foreground">Credits Pending</p>
+														<p className="text-xl font-bold">{currentStats.total_credits_pending}</p>
+													</div>
+													<BarChart3 className="h-5 w-5 text-blue-500" />
+												</div>
+											</CardContent>
+										</Card>
+										<Card className="bg-green-50 dark:bg-green-900/10 border-green-200 dark:border-green-800">
+											<CardContent className="p-3">
+												<div className="flex items-center justify-between">
+													<div>
+														<p className="text-xs font-medium text-green-700 dark:text-green-400">Cleared Later (Skipped)</p>
+														<p className="text-xl font-bold text-green-600">{currentStats.recovered_papers}</p>
+													</div>
+													<CheckCircle2 className="h-5 w-5 text-green-500" />
+												</div>
+											</CardContent>
+										</Card>
+									</div>
+
+									{/* Sub tabs: paper-wise / learner-wise */}
+									<Tabs value={currentSubTab} onValueChange={(v) => setCurrentSubTab(v as 'papers' | 'learners')}>
+										<div className="flex items-center justify-between">
+											<TabsList>
+												<TabsTrigger value="papers" className="gap-2">
+													<BookOpen className="h-4 w-4" />
+													Paper-wise
+												</TabsTrigger>
+												<TabsTrigger value="learners" className="gap-2">
+													<Users className="h-4 w-4" />
+													Learner-wise
+												</TabsTrigger>
+											</TabsList>
+											<div className="flex items-center gap-2">
+												<div className="relative">
+													<Search className="absolute left-2 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+													<Input
+														value={currentSearch}
+														onChange={(e) => setCurrentSearch(e.target.value)}
+														placeholder="Search learner or course..."
+														className="pl-8 h-9 w-56"
+													/>
+												</div>
+												<Button variant="outline" size="sm" onClick={handleExportCurrent}>
+													<Download className="h-4 w-4 mr-1" />
+													Download
+												</Button>
+											</div>
+										</div>
+
+										{/* Paper-wise */}
+										<TabsContent value="papers" className="mt-4">
+											<Card>
+												<CardHeader className="py-3">
+													<CardTitle className="text-lg">Pending Arrear Papers</CardTitle>
+													<CardDescription>
+														Showing {filteredCurrentArrears.length} of {currentArrears.length} paper(s) still not cleared — latest attempt shown
+													</CardDescription>
+												</CardHeader>
+												<CardContent className="overflow-x-auto">
+													<Table>
+														<TableHeader>
+															<TableRow>
+																<TableHead>#</TableHead>
+																<TableHead>Register No</TableHead>
+																<TableHead>Learner</TableHead>
+																<TableHead className="text-center">Sem</TableHead>
+																<TableHead>Course</TableHead>
+																<TableHead className="text-center">Cr</TableHead>
+																<TableHead className="text-center">First Failed</TableHead>
+																<TableHead className="text-center">Attempts</TableHead>
+																<TableHead className="text-center">Latest Attempt</TableHead>
+																<TableHead className="text-center">Int</TableHead>
+																<TableHead className="text-center">Ext</TableHead>
+																<TableHead className="text-center">Total</TableHead>
+																<TableHead className="text-center">Grade</TableHead>
+																<TableHead className="text-center">Reason</TableHead>
+																<TableHead className="text-center">Priority</TableHead>
+															</TableRow>
+														</TableHeader>
+														<TableBody>
+															{filteredCurrentArrears.map((a, i) => (
+																<TableRow key={`${a.student_id}-${a.course_id}`}>
+																	<TableCell className="text-xs text-muted-foreground">{i + 1}</TableCell>
+																	<TableCell className="font-medium whitespace-nowrap">{a.register_number}</TableCell>
+																	<TableCell className="whitespace-nowrap">{a.student_name}</TableCell>
+																	<TableCell className="text-center">{a.semester}</TableCell>
+																	<TableCell>
+																		<div className="font-medium">{a.course_code}</div>
+																		<div className="text-xs text-muted-foreground">{a.course_name}</div>
+																	</TableCell>
+																	<TableCell className="text-center">{a.course_credits}</TableCell>
+																	<TableCell className="text-center text-xs whitespace-nowrap">{a.first_session_code}</TableCell>
+																	<TableCell className="text-center">
+																		<Badge variant="outline">{a.attempt_count}</Badge>
+																	</TableCell>
+																	<TableCell className="text-center text-xs whitespace-nowrap">{a.latest_session_code}</TableCell>
+																	<TableCell className={cn(
+																		"text-center",
+																		a.internal_pass_mark > 0 && (a.latest_internal_marks ?? 0) < a.internal_pass_mark && "text-red-600 font-medium"
+																	)}>
+																		{a.is_absent && a.latest_internal_marks == null ? 'AB' : (a.latest_internal_marks ?? '-')}
+																	</TableCell>
+																	<TableCell className={cn(
+																		"text-center",
+																		a.external_pass_mark > 0 && (a.latest_external_marks ?? 0) < a.external_pass_mark && "text-red-600 font-medium"
+																	)}>
+																		{a.is_absent && a.latest_external_marks == null ? 'AB' : (a.latest_external_marks ?? '-')}
+																	</TableCell>
+																	<TableCell className="text-center font-medium">{a.latest_total_marks ?? '-'}</TableCell>
+																	<TableCell className="text-center">
+																		<Badge variant="outline" className="text-xs">{a.latest_letter_grade || '-'}</Badge>
+																	</TableCell>
+																	<TableCell className="text-center">
+																		<Badge
+																			variant={a.is_absent ? 'destructive' : 'secondary'}
+																			className="text-xs"
+																		>
+																			{a.failure_reason}
+																		</Badge>
+																	</TableCell>
+																	<TableCell className="text-center">
+																		<Badge className={cn("text-xs", PRIORITY_COLORS[a.priority_level])}>
+																			{a.priority_level}
+																		</Badge>
+																	</TableCell>
+																</TableRow>
+															))}
+														</TableBody>
+													</Table>
+
+													{filteredCurrentArrears.length === 0 && (
+														<div className="text-center py-8 text-muted-foreground">
+															<CheckCircle2 className="h-12 w-12 mx-auto mb-3 opacity-50 text-green-500" />
+															<p>No pending arrears — every paper has been cleared</p>
+														</div>
+													)}
+												</CardContent>
+											</Card>
+										</TabsContent>
+
+										{/* Learner-wise */}
+										<TabsContent value="learners" className="mt-4">
+											<Card>
+												<CardHeader className="py-3">
+													<CardTitle className="text-lg">Learners with Pending Arrears</CardTitle>
+													<CardDescription>
+														Showing {filteredCurrentLearners.length} of {currentLearners.length} learner(s)
+													</CardDescription>
+												</CardHeader>
+												<CardContent className="overflow-x-auto">
+													<Table>
+														<TableHeader>
+															<TableRow>
+																<TableHead>#</TableHead>
+																<TableHead>Register No</TableHead>
+																<TableHead>Learner</TableHead>
+																<TableHead>Program</TableHead>
+																<TableHead className="text-center">Pending</TableHead>
+																<TableHead className="text-center">Credits</TableHead>
+																<TableHead className="text-center">Critical</TableHead>
+																<TableHead className="text-center">Absent</TableHead>
+																<TableHead>Semester Breakdown</TableHead>
+															</TableRow>
+														</TableHeader>
+														<TableBody>
+															{filteredCurrentLearners.map((l, i) => (
+																<TableRow key={l.student_id} className={cn(
+																	"border-l-4",
+																	l.critical_count > 0 ? PRIORITY_BORDER_COLORS['Critical'] :
+																		l.high_priority_count > 0 ? PRIORITY_BORDER_COLORS['High'] :
+																			PRIORITY_BORDER_COLORS['Normal']
+																)}>
+																	<TableCell className="text-xs text-muted-foreground">{i + 1}</TableCell>
+																	<TableCell className="font-medium whitespace-nowrap">{l.register_no}</TableCell>
+																	<TableCell className="whitespace-nowrap">{l.student_name}</TableCell>
+																	<TableCell>{l.program_code}</TableCell>
+																	<TableCell className="text-center">
+																		<Badge variant="destructive">{l.pending_arrears}</Badge>
+																	</TableCell>
+																	<TableCell className="text-center">{l.total_credits_pending}</TableCell>
+																	<TableCell className="text-center">
+																		{l.critical_count > 0
+																			? <Badge className={cn("text-xs", PRIORITY_COLORS['Critical'])}>{l.critical_count}</Badge>
+																			: <span className="text-muted-foreground">-</span>}
+																	</TableCell>
+																	<TableCell className="text-center">
+																		{l.absent_count > 0 ? l.absent_count : <span className="text-muted-foreground">-</span>}
+																	</TableCell>
+																	<TableCell>
+																		<div className="flex flex-wrap gap-1">
+																			{Object.entries(l.arrears_by_semester)
+																				.sort((a, b) => parseInt(a[0]) - parseInt(b[0]))
+																				.map(([sem, count]) => (
+																					<Badge key={sem} variant="outline" className="text-xs">
+																						Sem {sem}: {count}
+																					</Badge>
+																				))}
+																		</div>
+																	</TableCell>
+																</TableRow>
+															))}
+														</TableBody>
+													</Table>
+
+													{filteredCurrentLearners.length === 0 && (
+														<div className="text-center py-8 text-muted-foreground">
+															<CheckCircle2 className="h-12 w-12 mx-auto mb-3 opacity-50 text-green-500" />
+															<p>No learner has a pending arrear</p>
+														</div>
+													)}
+												</CardContent>
+											</Card>
+										</TabsContent>
+									</Tabs>
+								</>
+							)}
+
+							{/* Empty State */}
+							{!currentLoading && !currentStats && (
+								<Card className="py-12">
+									<CardContent className="text-center">
+										<div className="h-16 w-16 rounded-full bg-muted flex items-center justify-center mx-auto mb-4">
+											<TrendingUp className="h-8 w-8 text-muted-foreground" />
+										</div>
+										<h3 className="text-lg font-semibold mb-2">No Overall Data Loaded</h3>
+										<p className="text-muted-foreground mb-4">
+											Select an institution and program, then click "Fetch Overall Arrears" to scan every examination
+											session. Papers a learner has already passed in a later exam are skipped automatically.
+										</p>
+									</CardContent>
+								</Card>
+							)}
+						</TabsContent>
+					</Tabs>
 				</div>
 				<AppFooter />
 			</SidebarInset>

@@ -12,8 +12,11 @@
 // @font-face (see lib/ia/tamil-fonts.ts). Chromium shapes Tamil far more reliably
 // than jsPDF ever did.
 
+import fs from 'fs'
+import path from 'path'
 import katex from 'katex'
-import { readSubQuestions } from './sub-questions'
+import { readSubQuestions, readQuestionImage } from './sub-questions'
+import { paperPdfFilename } from './paper-filename'
 import {
 	buildLatinSerifFontFaceCss,
 	buildTamilFontFaceCss,
@@ -83,12 +86,76 @@ export interface BuildPaperPdfResult {
 	filename: string
 }
 
+/** One printed line of a boxed letterhead; `cls` picks its colour/size. */
+interface LetterheadLine {
+	text: string
+	cls: 'lh-name' | 'lh-trust' | 'lh-approve' | 'lh-naac' | 'lh-addr' | 'lh-web'
+}
+
+interface Letterhead {
+	name: string
+	address: string
+	/**
+	 * 'plain'  — centred name + address (the arts & science paper).
+	 * 'boxed'  — the engineering-college letterhead: framed block with the logo at
+	 *            the left and the coloured name/affiliation lines centred beside it,
+	 *            under a Register Number grid.
+	 */
+	style?: 'plain' | 'boxed'
+	/** File under public/ — embedded as base64 (Chromium can't fetch a relative URL). */
+	logoFile?: string
+	lines?: LetterheadLine[]
+	/** Cells in the Register Number grid; 0 / absent = don't print one. */
+	registerCells?: number
+}
+
 /** Printed letterhead per COE institution_code (mirrors build-paper-pdf.ts). */
-const LETTERHEAD: Record<string, { name: string; address: string }> = {
+const LETTERHEAD: Record<string, Letterhead> = {
 	CAS: {
 		name: 'J.K.K.NATARAJA COLLEGE OF ARTS & SCIENCE (AUTONOMOUS)',
 		address: 'Komarapalayam - 638 183, Namakkal District, Tamil Nadu',
 	},
+	// Engineering college. Its printed papers carry the Register Number grid at the
+	// top right; the "Question Paper Code" box next to it belongs to the SEMESTER-END
+	// paper only — an internal (CIA) paper has no code, so none is printed here.
+	CET: {
+		name: 'J.K.K.NATTRAJA COLLEGE OF ENGINEERING AND TECHNOLOGY',
+		address: 'Natarajapuram, NH-544, Kumarapalayam - 638 183, Namakkal Dt., Tamil Nadu.',
+		style: 'boxed',
+		logoFile: 'jkkncet_logo.png',
+		registerCells: 12,
+		lines: [
+			{ text: 'J.K.K.NATTRAJA COLLEGE OF ENGINEERING AND TECHNOLOGY', cls: 'lh-name' },
+			{ text: '(AUTONOMOUS)', cls: 'lh-name' },
+			{ text: '(MANAGED BY J.K.K.RANGAMMAL CHARITABLE TRUST)', cls: 'lh-trust' },
+			{ text: '(Approved by AICTE - New Delhi and Affiliated to Anna University - Chennai)', cls: 'lh-approve' },
+			{ text: 'Recognized by UGC under Section 2(f) & Accredited by NAAC', cls: 'lh-naac' },
+			{ text: 'Natarajapuram, NH-544, Kumarapalayam - 638 183, Namakkal Dt., Tamil Nadu.', cls: 'lh-addr' },
+			{ text: 'Website: www.engg.jkkn.in', cls: 'lh-web' },
+		],
+	},
+}
+
+/** public/<file> → data URI, so the logo survives into headless Chromium. */
+const logoCache = new Map<string, string | null>()
+function loadLogoDataUri(file?: string | null): string | null {
+	if (!file) return null
+	if (logoCache.has(file)) return logoCache.get(file) || null
+	let uri: string | null = null
+	try {
+		const full = path.join(process.cwd(), 'public', file)
+		if (fs.existsSync(full)) {
+			const ext = path.extname(full).toLowerCase()
+			const mime = ext === '.jpg' || ext === '.jpeg' ? 'image/jpeg' : ext === '.svg' ? 'image/svg+xml' : 'image/png'
+			uri = `data:${mime};base64,${fs.readFileSync(full).toString('base64')}`
+		} else {
+			console.warn('[QP PDF] letterhead logo not found:', full)
+		}
+	} catch (e: any) {
+		console.warn('[QP PDF] letterhead logo failed:', e?.message)
+	}
+	logoCache.set(file, uri)
+	return uri
 }
 
 function formatDuration(mins?: number | null): string {
@@ -167,8 +234,11 @@ function renderQuestionHtml(raw: string): string {
 }
 
 /**
- * MCQ options are plain-text Inputs (not TipTap). Values like "<html>" / "<head>"
- * must be escaped — running them through sanitizeHtml drops the tag and prints blank.
+ * MCQ options. `text_html` is rich content authored in the same editor as the
+ * questions (bold, sub/superscript, inline equations) and renders through the
+ * same sanitize+MathML path. Options without it are LEGACY PLAIN TEXT and must be
+ * escaped — values like "<html>" / "<head>" would otherwise be dropped as tags
+ * and print blank.
  */
 function optionLineHtml(opts: any, optionFont?: string | null): string {
 	if (!Array.isArray(opts) || opts.length === 0) return ''
@@ -176,12 +246,26 @@ function optionLineHtml(opts: any, optionFont?: string | null): string {
 	const style = font ? ` style="font-family:'${font}'"` : ''
 	const items = opts
 		.map((o: any) => {
-			const raw = String(o.text ?? '').trim()
-			const text = raw ? escapeHtml(raw) : '____'
-			return `<span class="opt"${style}>${escapeHtml(String(o.key))}) ${text}</span>`
+			const rich = typeof o.text_html === 'string' ? o.text_html.trim() : ''
+			const plain = String(o.text ?? '').trim()
+			const body = rich ? renderQuestionHtml(rich) : plain ? escapeHtml(plain) : '____'
+			return `<span class="opt"${style}>${escapeHtml(String(o.key))}) ${body}</span>`
 		})
 		.join('')
 	return `<div class="options">${items}</div>`
+}
+
+/**
+ * Figure attached to a question / sub-division: printed CENTRED under that
+ * question's text at the author's chosen share of the text column. The URL is
+ * already restricted to http(s) by readQuestionImage.
+ */
+function questionImageHtml(image: any): string {
+	const img = readQuestionImage(image)
+	if (!img) return ''
+	const pct = Math.min(100, Math.max(10, Number(img.width_pct) || 60))
+	const src = escapeHtml(img.url).replace(/"/g, '&quot;')
+	return `<div class="q-img"><img src="${src}" style="width:${pct}%"/></div>`
 }
 
 /**
@@ -213,8 +297,12 @@ function buildHtml(ctx: {
 	tamilFontCss: string
 	/** Paper-wide common font (already canonicalized), or null. */
 	defaultFont: string | null
+	/** Printed letterhead for this institution (plain, or the boxed engineering one). */
+	letterhead: Letterhead | null
+	/** Base64 logo for a boxed letterhead, or null when the file is missing. */
+	logoDataUri: string | null
 }): string {
-	const { variant, institutionName, address, examHeading, roman, semesterText, paper, grouped, partByLabel, tamilFontCss, defaultFont } = ctx
+	const { variant, institutionName, address, examHeading, roman, semesterText, paper, grouped, partByLabel, tamilFontCss, defaultFont, letterhead, logoDataUri } = ctx
 	const isTwoUp = variant === '2up'
 
 	// One table for the WHOLE paper (part headings are full-width rows) so every
@@ -244,7 +332,11 @@ function buildHtml(ctx: {
 						: ''
 					const prefix = q.sub_label ? `${q.question_number} ${q.sub_label})` : `${q.question_number}.`
 					// Per-question option font wins; otherwise fall back to the paper-wide common font.
-					const body = renderQuestionHtml(q.question_text || '') + optionLineHtml(q.options, q.option_font ?? defaultFont)
+					// Order: question text → centred figure → options.
+					const body =
+						renderQuestionHtml(q.question_text || '') +
+						questionImageHtml(q.image) +
+						optionLineHtml(q.options, q.option_font ?? defaultFont)
 
 					// Author-defined sub-divisions ("12 a) i. (8) / ii. (7)"): the parent
 					// row keeps only its optional stem — marks and CO/K move to the subs.
@@ -259,7 +351,7 @@ function buildHtml(ctx: {
 								const qno = !hasStem && i === 0 ? escapeHtml(prefix) : ''
 								return `<tr>
 									<td class="qno">${qno}</td>
-									<td class="qbody sub"><span class="sub-lbl">${escapeHtml(sb.label)}.</span> ${renderQuestionHtml(sb.question_text || '')}${marks}</td>
+									<td class="qbody sub"><span class="sub-lbl">${escapeHtml(sb.label)}.</span> ${renderQuestionHtml(sb.question_text || '')}${marks}${questionImageHtml(sb.image)}</td>
 									<td class="co">${escapeHtml(sb.co_code || '')}</td>
 									<td class="kl">${escapeHtml(sb.k_level || '')}</td>
 								</tr>`
@@ -294,9 +386,29 @@ function buildHtml(ctx: {
 		<tbody>${partsRows}</tbody>
 	</table>`
 
+	// Register Number grid — printed above the letterhead, at the right, exactly as
+	// on the college's own papers. The semester-end paper also carries a "Question
+	// Paper Code" box beside it; internal papers have no code, so it is omitted.
+	const registerCells = Number(letterhead?.registerCells) || 0
+	const registerHtml =
+		registerCells > 0
+			? `<div class="rn"><span class="rn-lbl">Register Number</span><span class="rn-grid">${'<i></i>'.repeat(registerCells)}</span></div>`
+			: ''
+
+	const isBoxed = letterhead?.style === 'boxed' && (letterhead?.lines?.length || 0) > 0
+	const letterheadHtml = isBoxed
+		? `<div class="lh">
+			${logoDataUri ? `<div class="lh-logo"><img src="${logoDataUri}"/></div>` : ''}
+			<div class="lh-text">
+				${letterhead!.lines!.map(l => `<div class="${l.cls}">${escapeHtml(l.text)}</div>`).join('')}
+			</div>
+		</div>`
+		: `<div class="head-name">${escapeHtml(institutionName.toUpperCase())}</div>
+		${address ? `<div class="head-addr">${escapeHtml(address)}</div>` : ''}`
+
 	const sheetInner = `
-		<div class="head-name">${escapeHtml(institutionName.toUpperCase())}</div>
-		${address ? `<div class="head-addr">${escapeHtml(address)}</div>` : ''}
+		${registerHtml}
+		${letterheadHtml}
 		<div class="head-exam">${escapeHtml(examHeading)}</div>
 		<div class="head-cia">CONTINUOUS INTERNAL ASSESSMENT-${escapeHtml(roman)} - JULY-AUG-2026
 		</div>
@@ -340,6 +452,30 @@ function buildHtml(ctx: {
 	#sheet.twoup .copy { flex: 1; min-width: 0; }
 	#sheet.twoup .copy:first-child { border-right: 1px dashed #999; padding-right: 6mm; margin-right: 6mm; }
 	${isTwoUp ? '.head-name{font-size:11pt}.head-exam{font-size:10pt}.head-cia,.head-sem{font-size:9pt}' : ''}
+	/* Register Number grid (engineering-college papers): label + empty digit cells,
+	   right-aligned above the letterhead. */
+	.rn { display: flex; align-items: center; justify-content: flex-end; gap: 3mm; margin-bottom: 2mm; }
+	.rn-lbl { font-weight: bold; font-size: ${isTwoUp ? '8.5pt' : '10.5pt'}; }
+	.rn-grid { display: flex; }
+	.rn-grid i {
+		display: block;
+		width: ${isTwoUp ? '4.5mm' : '6.5mm'};
+		height: ${isTwoUp ? '4.5mm' : '6.5mm'};
+		border: 0.7pt solid #000;
+		border-left: none;
+	}
+	.rn-grid i:first-child { border-left: 0.7pt solid #000; }
+	/* Boxed letterhead: logo at the left, the college's coloured name block centred. */
+	.lh { display: flex; align-items: center; gap: 3mm; border: 0.8pt solid #000; padding: 1.5mm 2mm; }
+	.lh-logo img { height: ${isTwoUp ? '11mm' : '16mm'}; width: auto; }
+	.lh-text { flex: 1; text-align: center; }
+	.lh-name { color: #1a7a3c; font-weight: bold; font-size: ${isTwoUp ? '9.5pt' : '12.5pt'}; line-height: 1.15; }
+	.lh-trust { color: #e6007e; font-weight: bold; font-size: ${isTwoUp ? '7.5pt' : '9.5pt'}; }
+	.lh-approve { font-weight: bold; font-size: ${isTwoUp ? '7pt' : '8.5pt'}; }
+	.lh-naac { color: #e6007e; font-weight: bold; font-size: ${isTwoUp ? '7pt' : '8.5pt'}; }
+	.lh-addr { font-weight: bold; font-size: ${isTwoUp ? '7pt' : '8.5pt'}; }
+	.lh-web { font-size: ${isTwoUp ? '6.5pt' : '8pt'}; color: #1a4fd6; text-decoration: underline; }
+	.lh + .head-exam { margin-top: 3mm; }
 	.head-name { text-align: center; font-weight: bold; font-size: 13pt; }
 	.head-addr { text-align: center; font-size: 9pt; margin-top: 2px; }
 	.head-exam { text-align: center; font-weight: bold; font-size: 12pt; margin-top: 4px; }
@@ -384,6 +520,19 @@ function buildHtml(ctx: {
 	${defaultFont ? `.qbody { font-family: '${defaultFont}'; }` : ''}
 	.options { margin-top: 2px; }
 	.options .opt { display: inline-block; margin-right: 12px; }
+	/* Rich options are authored as paragraphs; keep them on the option's own line. */
+	.options .opt p { display: inline; margin: 0; }
+	/* Attached figure: centred under the question, never wide/tall enough to
+	   push the row past a page break. object-fit keeps the aspect ratio when the
+	   max-height clamps a tall image. */
+	.q-img { text-align: center; margin: 3px 0; break-inside: avoid; page-break-inside: avoid; }
+	.q-img img {
+		display: inline-block;
+		max-width: 100%;
+		max-height: ${isTwoUp ? '55mm' : '85mm'};
+		height: auto;
+		object-fit: contain;
+	}
 	/* CO / K values sit at the top of the row, aligned with the question's first line. */
 	.co, .kl { vertical-align: top; }
 	/* Author-drawn tables inside a question */
@@ -432,7 +581,8 @@ export async function buildPaperPdfHtml(
 	])
 
 	const institution: any = instRes.data
-	const letterhead = LETTERHEAD[institution?.institution_code || '']
+	const letterhead: Letterhead | undefined = LETTERHEAD[(institution?.institution_code || '').toUpperCase()]
+	const logoDataUri = letterhead?.style === 'boxed' ? loadLogoDataUri(letterhead.logoFile) : null
 	const institutionName = letterhead?.name || institution?.name || 'Institution'
 	const address =
 		letterhead?.address ||
@@ -480,6 +630,8 @@ export async function buildPaperPdfHtml(
 		partByLabel,
 		tamilFontCss,
 		defaultFont,
+		letterhead: letterhead || null,
+		logoDataUri,
 	})
 	const isTwoUp = variant === '2up'
 
@@ -515,6 +667,23 @@ export async function buildPaperPdfHtml(
 			} catch {
 				// ignore font-ready failures
 			}
+			// Attached figures load over the network — print only once they have
+			// settled, or after 8s so one bad URL can't hang the whole PDF.
+			const pending = Array.from(document.images).filter((img) => !img.complete)
+			if (pending.length > 0) {
+				await Promise.race([
+					Promise.all(
+						pending.map(
+							(img) =>
+								new Promise((resolve) => {
+									img.addEventListener('load', resolve, { once: true })
+									img.addEventListener('error', resolve, { once: true })
+								})
+						)
+					),
+					new Promise((resolve) => setTimeout(resolve, 8000)),
+				])
+			}
 		})
 		const marginMm = isTwoUp ? '5mm' : '8mm'
 		const pdf = await page.pdf({
@@ -524,7 +693,7 @@ export async function buildPaperPdfHtml(
 			scale: printScale,
 			margin: { top: marginMm, bottom: marginMm, left: marginMm, right: marginMm },
 		})
-		const filename = `QP_${paper.course_code || 'paper'}_CIA${paper.cia_round || 1}${paper.set_label ? '_' + paper.set_label : ''}${isTwoUp ? '_2up' : ''}.pdf`
+		const filename = paperPdfFilename(paper, { variant })
 		return { buffer: Buffer.from(pdf), filename }
 	} finally {
 		await browser.close()

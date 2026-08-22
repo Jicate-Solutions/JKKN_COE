@@ -4,6 +4,7 @@ import {
 	findCategory,
 	findSubCategory,
 	CALC_BASIS_LABELS,
+	PROGRAM_LEVELS,
 	type CalcBasis,
 } from '@/lib/exam-fee-catalog'
 
@@ -16,7 +17,7 @@ import {
 
 const FEE_TYPES = ['CREDIT', 'DEBIT']
 const VALID_BASES = Object.keys(CALC_BASIS_LABELS) as CalcBasis[]
-const VALID_LEVELS = ['UG', 'PG']
+const VALID_LEVELS: string[] = [...PROGRAM_LEVELS]
 
 // Validate a single fee line against the catalog. Returns an error string or null.
 function validateFeeLine(line: any): string | null {
@@ -35,7 +36,7 @@ function validateFeeLine(line: any): string | null {
 	if (!VALID_BASES.includes(line.calc_basis)) return `Invalid charge basis: ${line.calc_basis}`
 
 	if (line.program_level != null && !VALID_LEVELS.includes(line.program_level))
-		return 'program_level must be UG, PG or empty'
+		return `program_level must be one of ${VALID_LEVELS.join(', ')} or empty`
 
 	const amount = Number(line.amount)
 	if (!Number.isFinite(amount) || amount < 0) return 'amount must be a non-negative number'

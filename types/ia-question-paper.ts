@@ -166,7 +166,33 @@ export interface IaCourseOutcome {
 
 export interface IaPaperQuestionOption {
 	key: string
+	/** Plain-text mirror of the option — kept for legacy readers and search. */
 	text: string
+	/**
+	 * Rich option content authored in the same editor as the question (bold,
+	 * sub/superscript, inline math). Present = render this; absent = the option
+	 * is legacy plain text and `text` must be escaped, never parsed as HTML.
+	 */
+	text_html?: string | null
+}
+
+/**
+ * An image attached to a question or sub-division. Stored in the public
+ * `question-images` Supabase Storage bucket and printed CENTRED under that
+ * question's text. Bytes are squeezed on the client before upload — see
+ * lib/ia/question-image.ts.
+ */
+export interface IaQuestionImage {
+	/** Public URL — what the editor previews and the PDF renderer loads. */
+	url: string
+	/** Storage object path (`<paperId>/<uuid>.<ext>`); lets a replace/remove delete it. */
+	path?: string | null
+	/** Printed width as a percentage of the paper's text column. */
+	width_pct?: number | null
+	/** Stored pixel size + byte size — shown in the UI as the print-resolution check. */
+	px_w?: number | null
+	px_h?: number | null
+	bytes?: number | null
 }
 
 /**
@@ -181,6 +207,8 @@ export interface IaPaperSubQuestion {
 	marks?: number | null
 	co_code?: string | null
 	k_level?: string | null
+	/** Optional figure, printed centred under this sub-division. */
+	image?: IaQuestionImage | null
 	display_order: number
 }
 
@@ -198,6 +226,8 @@ export interface IaPaperQuestion {
 	options?: IaPaperQuestionOption[]
 	/** CSS font-family for MCQ option inputs (Bamini / Suntommy / Noto Sans Tamil). */
 	option_font?: string | null
+	/** Optional figure, printed centred under this question's text. */
+	image?: IaQuestionImage | null
 	correct_option?: string
 	co_code?: string
 	k_level?: string

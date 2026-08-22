@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
 import { buildPaperPdfHtml } from '@/lib/ia/build-paper-pdf-html'
+import { contentDisposition } from '@/lib/ia/paper-filename'
 
 export const dynamic = 'force-dynamic'
 // Headless Chromium needs the Node runtime and room for a cold-start render.
@@ -39,7 +40,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
 			status: 200,
 			headers: {
 				'Content-Type': 'application/pdf',
-				'Content-Disposition': `attachment; filename="${result.filename}"`,
+				'Content-Disposition': contentDisposition(result.filename),
 				'Cache-Control': 'no-store, max-age=0',
 			},
 		})

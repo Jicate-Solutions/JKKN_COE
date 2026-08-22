@@ -1,8 +1,9 @@
 'use client'
 
 // Rich question editor: typeable box (bold/italic/underline, sub/superscript,
-// inline math via KaTeX, tables, Tamil fonts) that emits sanitized HTML. Shares
-// the storage contract with the PDF renderer (math = <span data-latex="…">;
+// inline math via KaTeX, tables) that emits sanitized HTML. The Tamil font is a
+// paper-level default (set once in the paper header), not a per-question choice.
+// Shares the storage contract with the PDF renderer (math = <span data-latex="…">;
 // Tamil = style="font-family:…").
 
 import { useEffect, useState, useCallback } from 'react'
@@ -17,19 +18,11 @@ import { TextStyle, FontFamily } from '@tiptap/extension-text-style'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import {
-	Select,
-	SelectContent,
-	SelectItem,
-	SelectTrigger,
-	SelectValue,
-} from '@/components/ui/select'
-import {
 	Bold, Italic, Underline as UnderlineIcon, Subscript as SubIcon, Superscript as SupIcon,
 	Sigma, Table as TableIcon, Rows3, Columns3, Trash2,
 } from 'lucide-react'
 import { MathInline } from './math-node'
 import { EquationEditorDialog } from './equation-editor-dialog'
-import { TAMIL_FONT_FAMILIES } from '@/lib/ia/tamil-font-meta'
 
 interface Props {
 	value: string
@@ -39,29 +32,28 @@ interface Props {
 	placeholder?: string
 	className?: string
 	/**
-	 * Paper-wide common font. Applied as the editor body's base font so unstyled
-	 * text renders in it live; an explicit per-selection font (toolbar) still
-	 * overrides via inline marks. Keeps the on-screen look in step with the PDF,
-	 * which reads the same default from the paper.
+	 * Paper-wide default language/font, chosen once in the paper header. Applied
+	 * as the editor body's base font so every question renders in it live —
+	 * there is no per-question font picker. Font marks stored on older papers
+	 * still render (the FontFamily extension stays loaded) and keep the
+	 * on-screen look in step with the PDF, which reads the same paper default.
 	 */
 	defaultFontFamily?: string | null
+	/**
+	 * 'compact' is the MCQ-option flavour: same authoring contract as a question
+	 * (bold/italic/underline, sub/superscript, inline equations) minus the table
+	 * tools, on a single-line-height box.
+	 */
+	variant?: 'full' | 'compact'
 }
 
 // Empty-document HTML Tiptap emits — normalise to '' so an untouched question stays blank.
 const EMPTY_HTML = new Set(['', '<p></p>', '<p><br></p>'])
 
-const FONT_OPTIONS = [
-	{ value: 'default', label: 'Default', cssName: '' },
-	...TAMIL_FONT_FAMILIES.map((f) => ({
-		value: f.id,
-		label: f.label,
-		cssName: f.cssName,
-	})),
-]
-
-export function QuestionRichEditor({ value, onChange, onBlur, disabled, placeholder, className, defaultFontFamily }: Props) {
+export function QuestionRichEditor({ value, onChange, onBlur, disabled, placeholder, className, defaultFontFamily, variant = 'full' }: Props) {
 	const [eqOpen, setEqOpen] = useState(false)
 	const [eqInitial, setEqInitial] = useState('')
+	const compact = variant === 'compact'
 
 	const editor = useEditor({
 		editable: !disabled,
@@ -80,7 +72,10 @@ export function QuestionRichEditor({ value, onChange, onBlur, disabled, placehol
 		content: value || '',
 		editorProps: {
 			attributes: {
-				class: 'prose prose-sm max-w-none min-h-[70px] px-3 py-2 focus:outline-none qp-rich-editor-body',
+				class: cn(
+					'prose prose-sm max-w-none focus:outline-none qp-rich-editor-body',
+					compact ? 'min-h-[34px] px-2 py-1' : 'min-h-[70px] px-3 py-2'
+				),
 			},
 		},
 		onUpdate: ({ editor }) => {
@@ -143,49 +138,11 @@ export function QuestionRichEditor({ value, onChange, onBlur, disabled, placehol
 	)
 
 	const inTable = editor.isActive('table')
-	const currentFontFamily = String(editor.getAttributes('textStyle').fontFamily || '')
-	// The value the toolbar dropdown shows: an explicit mark on the caret wins;
-	// otherwise fall back to the paper-wide common font so the control reflects
-	// what's actually rendering.
-	const explicitFont = FONT_OPTIONS.find(
-		(o) => o.cssName && currentFontFamily.toLowerCase().includes(o.cssName.toLowerCase())
-	)?.value
-	const inheritedFont = defaultFontFamily
-		? FONT_OPTIONS.find((o) => o.cssName && o.cssName.toLowerCase() === defaultFontFamily.toLowerCase())?.value
-		: undefined
-	const selectedFont = explicitFont || inheritedFont || 'default'
-
-	const handleFontChange = (id: string) => {
-		const opt = FONT_OPTIONS.find((o) => o.value === id)
-		if (!opt) return
-		if (!opt.cssName) {
-			editor.chain().focus().unsetFontFamily().run()
-		} else {
-			editor.chain().focus().setFontFamily(opt.cssName).run()
-		}
-	}
 
 	return (
 		<div className={cn('rounded-md border bg-background qp-rich-editor-root', className)}>
 			{!disabled && (
 				<div className="flex flex-wrap items-center gap-0.5 border-b px-1 py-1">
-					<Select value={selectedFont} onValueChange={handleFontChange}>
-						<SelectTrigger
-							className="h-7 w-[140px] text-xs"
-							title="Font — Unicode Tamil / Bamini / Suntommy"
-							onMouseDown={e => e.preventDefault()}
-						>
-							<SelectValue placeholder="Font" />
-						</SelectTrigger>
-						<SelectContent>
-							{FONT_OPTIONS.map((o) => (
-								<SelectItem key={o.value} value={o.value} className="text-xs">
-									{o.label}
-								</SelectItem>
-							))}
-						</SelectContent>
-					</Select>
-					<span className="mx-1 h-5 w-px bg-border" />
 					<Btn title="Bold" active={editor.isActive('bold')} on={() => editor.chain().focus().toggleBold().run()}>
 						<Bold className="h-4 w-4" />
 					</Btn>
@@ -213,33 +170,37 @@ export function QuestionRichEditor({ value, onChange, onBlur, disabled, placehol
 					>
 						<Sigma className="h-4 w-4" /> Equation
 					</Button>
-					<span className="mx-1 h-5 w-px bg-border" />
-					<Btn
-						title="Insert 2×2 table"
-						on={() => editor.chain().focus().insertTable({ rows: 2, cols: 2, withHeaderRow: false }).run()}
-					>
-						<TableIcon className="h-4 w-4" />
-					</Btn>
-					<Btn title="Add row" disabled={!inTable} on={() => editor.chain().focus().addRowAfter().run()}>
-						<Rows3 className="h-4 w-4" />
-					</Btn>
-					<Btn title="Add column" disabled={!inTable} on={() => editor.chain().focus().addColumnAfter().run()}>
-						<Columns3 className="h-4 w-4" />
-					</Btn>
-					<Btn title="Delete row" disabled={!inTable} on={() => editor.chain().focus().deleteRow().run()}>
-						<Rows3 className="h-4 w-4 text-destructive" />
-					</Btn>
-					<Btn title="Delete column" disabled={!inTable} on={() => editor.chain().focus().deleteColumn().run()}>
-						<Columns3 className="h-4 w-4 text-destructive" />
-					</Btn>
-					<Btn title="Delete table" disabled={!inTable} on={() => editor.chain().focus().deleteTable().run()}>
-						<Trash2 className="h-4 w-4 text-destructive" />
-					</Btn>
+					{!compact && (
+						<>
+							<span className="mx-1 h-5 w-px bg-border" />
+							<Btn
+								title="Insert 2×2 table"
+								on={() => editor.chain().focus().insertTable({ rows: 2, cols: 2, withHeaderRow: false }).run()}
+							>
+								<TableIcon className="h-4 w-4" />
+							</Btn>
+							<Btn title="Add row" disabled={!inTable} on={() => editor.chain().focus().addRowAfter().run()}>
+								<Rows3 className="h-4 w-4" />
+							</Btn>
+							<Btn title="Add column" disabled={!inTable} on={() => editor.chain().focus().addColumnAfter().run()}>
+								<Columns3 className="h-4 w-4" />
+							</Btn>
+							<Btn title="Delete row" disabled={!inTable} on={() => editor.chain().focus().deleteRow().run()}>
+								<Rows3 className="h-4 w-4 text-destructive" />
+							</Btn>
+							<Btn title="Delete column" disabled={!inTable} on={() => editor.chain().focus().deleteColumn().run()}>
+								<Columns3 className="h-4 w-4 text-destructive" />
+							</Btn>
+							<Btn title="Delete table" disabled={!inTable} on={() => editor.chain().focus().deleteTable().run()}>
+								<Trash2 className="h-4 w-4 text-destructive" />
+							</Btn>
+						</>
+					)}
 				</div>
 			)}
 
-			{/* Common font cascades onto the content via --qp-editor-font; explicit
-			    per-selection marks (inline spans) still override it. */}
+			{/* Paper default cascades onto the content via --qp-editor-font; font
+			    marks saved on older papers (inline spans) still override it. */}
 			<div
 				style={
 					defaultFontFamily

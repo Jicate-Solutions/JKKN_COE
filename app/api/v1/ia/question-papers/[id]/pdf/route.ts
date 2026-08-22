@@ -4,6 +4,7 @@ import { withExternalAuth } from '@/lib/api-auth/middleware'
 import type { ExternalApiContext } from '@/types/api-management'
 import { institutionAllowed } from '@/lib/ia/v1-helpers'
 import { buildPaperPdfHtml } from '@/lib/ia/build-paper-pdf-html'
+import { contentDisposition } from '@/lib/ia/paper-filename'
 
 /** /api/v1/ia/question-papers/{id}/pdf — A4 question-paper PDF. */
 
@@ -33,7 +34,7 @@ export const GET = withExternalAuth(async (request: Request, context: ExternalAp
 		status: 200,
 		headers: {
 			'Content-Type': 'application/pdf',
-			'Content-Disposition': `attachment; filename="${result.filename}"`,
+			'Content-Disposition': contentDisposition(result.filename),
 			'Cache-Control': 'no-store, max-age=0',
 		},
 	})

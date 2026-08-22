@@ -117,6 +117,7 @@ export default function LearnerWiseExamRegistrationPage() {
 			const allResults: LearnerSearchResult[] = []
 			const seenIds = new Set<string>()
 			const lower = q.toLowerCase()
+			const allowedInstitutions = new Set(myjkknIds)
 
 			for (const myjkknInstId of myjkknIds) {
 				// Use search param + fetchAll so we can filter client-side
@@ -128,10 +129,16 @@ export default function LearnerWiseExamRegistrationPage() {
 				if (!res.ok) continue
 				const raw = await res.json()
 				const list: any[] = raw?.data || raw || []
+				// // MyJKKN ignores the institution_id query filter and returns every learner on
+				// the platform, so the response must be scoped here. Only trust the field
+				// when the response actually carries it - some MyJKKN record shapes strip
+				// institution_id, and filtering on a missing field would empty the list.
+				const responseCarriesInstitution = list.some((s: any) => s?.institution_id)
 
 				list.forEach((s: any) => {
 					const id = s.id
 					if (!id || seenIds.has(id)) return
+					if (responseCarriesInstitution && allowedInstitutions.size > 0 && !allowedInstitutions.has(s.institution_id)) return
 					const regNo = (s.register_number || '').toLowerCase()
 					const fullName = `${s.first_name || ''} ${s.last_name || ''}`.trim().toLowerCase()
 					if (!regNo.includes(lower) && !fullName.includes(lower)) return

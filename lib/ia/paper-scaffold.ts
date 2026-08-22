@@ -2,7 +2,8 @@
 // question objects (incl. "(OR)" choice alternatives and MCQ option slots) from
 // template parts. Stored as ia_question_papers.questions (JSONB).
 import { randomUUID } from 'crypto'
-import type { IaSubQuestion } from './sub-questions'
+import type { IaSubQuestion, IaQuestionImageRef } from './sub-questions'
+import { readQuestionImage } from './sub-questions'
 
 const LETTERS = 'abcdefghij'
 
@@ -15,9 +16,11 @@ export interface IaQuestionObject {
 	question_type_code: string
 	question_text: string | null
 	marks: number | null
-	options: { key: string; text: string }[] | null
+	options: { key: string; text: string; text_html?: string | null }[] | null
 	/** CSS font-family for MCQ options (Bamini / Suntommy / Noto Sans Tamil). */
 	option_font?: string | null
+	/** Optional figure, printed centred under the question. Never scaffolded. */
+	image?: IaQuestionImageRef | null
 	correct_option: string | null
 	co_code: string | null
 	k_level: string | null
@@ -95,8 +98,11 @@ export function mergeAuthored(scaffold: IaQuestionObject[], existing: any[]): Ia
 		if (!e) return s
 		let options = s.options
 		if (Array.isArray(s.options) && Array.isArray(e.options)) {
-			const textByKey = new Map(e.options.map((o: any) => [o.key, o.text]))
-			options = s.options.map(o => ({ ...o, text: (textByKey.get(o.key) as string) ?? o.text }))
+			const byKey = new Map(e.options.map((o: any) => [o.key, o]))
+			options = s.options.map(o => {
+				const prev: any = byKey.get(o.key)
+				return prev ? { ...o, text: prev.text ?? o.text, text_html: prev.text_html ?? null } : o
+			})
 		} else if (Array.isArray(e.options)) {
 			options = e.options
 		}
@@ -105,6 +111,8 @@ export function mergeAuthored(scaffold: IaQuestionObject[], existing: any[]): Ia
 			question_text: e.question_text ?? s.question_text,
 			options,
 			option_font: e.option_font ?? null,
+			// An attached figure survives a Rebuild, like authored text does.
+			image: readQuestionImage(e.image),
 			correct_option: e.correct_option ?? null,
 			co_code: e.co_code ?? null,
 			k_level: e.k_level ?? null,

@@ -19,7 +19,7 @@ export type CalcBasis =
 	| 'PER_SESSION'
 	| 'PER_KM'
 
-export type ProgramLevel = 'UG' | 'PG'
+export type ProgramLevel = 'UG' | 'PG' | 'MCA'
 
 export interface FeeSubCategory {
 	code: string
@@ -40,13 +40,13 @@ export interface FeeCategory {
 export const CALC_BASIS_LABELS: Record<CalcBasis, string> = {
 	FLAT: 'Flat / fixed',
 	PER_PAPER: 'Per paper',
-	PER_STUDENT: 'Per student present',
+	PER_STUDENT: 'Per student',
 	PER_DAY: 'Per day',
 	PER_SESSION: 'Per session (FN/AN)',
 	PER_KM: 'Per km (travel)',
 }
 
-export const PROGRAM_LEVELS: ProgramLevel[] = ['UG', 'PG']
+export const PROGRAM_LEVELS: ProgramLevel[] = ['UG', 'PG', 'MCA']
 
 // -----------------------------------------------------
 // CREDIT — collected from learners
@@ -58,8 +58,11 @@ const CREDIT_CATEGORIES: FeeCategory[] = [
 		feeType: 'CREDIT',
 		subCategories: [
 			{ code: 'THEORY', label: 'Theory Paper', bases: ['PER_PAPER'], levelApplies: true },
-			{ code: 'PRACTICAL', label: 'Practical', bases: ['PER_PAPER', 'PER_STUDENT'], levelApplies: true },
-			{ code: 'PROJECT', label: 'Project', bases: ['FLAT', 'PER_STUDENT'], levelApplies: true },
+			{ code: 'PRACTICAL', label: 'Practical - up to 3 Hrs', bases: ['PER_PAPER', 'PER_STUDENT'], levelApplies: true },
+			{ code: 'PRACTICAL_ABOVE_3H', label: 'Practical - above 3 Hrs', bases: ['PER_PAPER', 'PER_STUDENT'], levelApplies: true },
+			{ code: 'PROJECT', label: 'Internship / Project / Viva-Voce', bases: ['PER_PAPER', 'FLAT', 'PER_STUDENT'], levelApplies: true },
+			{ code: 'MARK_STATEMENT', label: 'Mark Statement', bases: ['PER_STUDENT', 'FLAT'], levelApplies: true },
+			{ code: 'APPLICATION', label: 'Application Fee', bases: ['PER_STUDENT', 'FLAT'], levelApplies: true },
 		],
 	},
 	{
@@ -82,6 +85,12 @@ const CREDIT_CATEGORIES: FeeCategory[] = [
 		label: 'Fine',
 		feeType: 'CREDIT',
 		subCategories: [
+			{
+				code: 'LATE_FEE',
+				label: 'Late Exam Fee Fine',
+				bases: ['FLAT'],
+				levelApplies: false,
+			},
 			{
 				code: 'HALL_TICKET_MISSING',
 				label: 'Hall Ticket Missing Fine',

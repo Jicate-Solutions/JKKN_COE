@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
 import { scaffoldQuestions, mergeAuthored } from '@/lib/ia/paper-scaffold'
-import { readSubQuestions, validateSubMarks, canSplit } from '@/lib/ia/sub-questions'
+import { readSubQuestions, validateSubMarks, canSplit, readQuestionImage } from '@/lib/ia/sub-questions'
 import { hasAnyCoeRole } from '@/lib/auth/check-user-permission'
 
 const EDITABLE_STATUSES = ['draft', 'submitted']
@@ -135,6 +135,9 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
 					question_text: q.question_text ?? null,
 					marks: q.marks ?? base.marks ?? null,
 					options: q.options ?? null,
+					// Attached figure (uploaded via the sibling image route). Normalized
+					// so only a usable http(s) URL is ever stored.
+					image: readQuestionImage(q.image),
 					correct_option: q.correct_option ?? null,
 					// A split question's CO / K-level live on its sub-divisions.
 					co_code: subs.length > 0 ? null : q.co_code ?? null,

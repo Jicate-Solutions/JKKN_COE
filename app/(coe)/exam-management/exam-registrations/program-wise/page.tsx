@@ -289,6 +289,7 @@ export default function ProgramWiseExamRegistrationPage() {
 			const allLearners: Learner[] = []
 			const seenIds = new Set<string>()
 			const targetSemester = parseInt(semester, 10)
+			const allowedInstitutions = new Set(myjkknIds)
 
 			for (const myjkknInstId of myjkknIds) {
 				// Use fetchAll=true so the server paginates through all records server-side.
@@ -302,10 +303,16 @@ export default function ProgramWiseExamRegistrationPage() {
 				if (!res.ok) continue
 				const raw = await res.json()
 				const list: any[] = raw?.data || raw || []
+				// // MyJKKN ignores the institution_id query filter and returns every learner on
+				// the platform, so the response must be scoped here. Only trust the field
+				// when the response actually carries it - some MyJKKN record shapes strip
+				// institution_id, and filtering on a missing field would empty the list.
+				const responseCarriesInstitution = list.some((s: any) => s?.institution_id)
 
 				list.forEach((s: any) => {
 					const id = s.id
 					if (!id || seenIds.has(id)) return
+					if (responseCarriesInstitution && allowedInstitutions.size > 0 && !allowedInstitutions.has(s.institution_id)) return
 					// Client-side filter: only include learners matching program and semester
 					if (s.program_code !== programCode) return
 					if (s.current_semester !== targetSemester) return
