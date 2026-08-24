@@ -107,6 +107,72 @@ export interface LookupMaps {
 	localInstitutions: Map<string, { institution_name: string; institution_code: string }>
 }
 
+/**
+ * Normalise a MyJKKN date_of_birth to `YYYY-MM-DD`, or '' when it can't be trusted.
+ *
+ * MyJKKN's DoB column is not clean. Alongside proper ISO dates it carries:
+ *
+ *  - Expanded-year dates like `+038823-01-01`. That is an Excel serial (38823)
+ *    that was handed to a date constructor upstream and stored as the YEAR.
+ *    Read back naively it renders as "01/01/38823". Serials in the 20000-60000
+ *    band convert back cleanly: 358 such rows recover to birth years 2000-2010
+ *    for the colleges and 2016-2021 for the school, which is exactly the right
+ *    age band for each, so the reading is not a guess.
+ *  - Day-first dotted dates: `19.02.2005`, `14.3.2007`.
+ *  - Outright junk — year 9, year 2027.
+ *
+ * Anything that doesn't land in a plausible birth window is returned empty
+ * rather than printed, so a report shows a blank instead of a wrong date.
+ */
+const EXCEL_EPOCH_MS = Date.UTC(1899, 11, 30)
+const MS_PER_DAY = 86_400_000
+
+function fromExcelSerial(serial: number): Date | null {
+	// Below ~20000 (1954) or above ~60000 (2064) it isn't a birth date serial.
+	if (!Number.isFinite(serial) || serial < 20_000 || serial > 60_000) return null
+	return new Date(EXCEL_EPOCH_MS + serial * MS_PER_DAY)
+}
+
+function isPlausibleBirthDate(date: Date): boolean {
+	if (isNaN(date.getTime())) return false
+	const year = date.getUTCFullYear()
+	return year >= 1900 && year <= new Date().getUTCFullYear()
+}
+
+export function normalizeDateOfBirth(value: unknown): string {
+	if (value == null) return ''
+	const raw = String(value).trim()
+	if (!raw) return ''
+
+	const toIso = (date: Date | null): string => {
+		if (!date || !isPlausibleBirthDate(date)) return ''
+		return date.toISOString().slice(0, 10)
+	}
+
+	// Bare Excel serial, e.g. "38823"
+	if (/^\d{4,6}$/.test(raw)) return toIso(fromExcelSerial(Number(raw)))
+
+	// Expanded-year ISO, e.g. "+038823-01-01" — the year IS the serial.
+	const expanded = raw.match(/^[+-]?0*(\d{5,6})-\d{2}-\d{2}/)
+	if (expanded) return toIso(fromExcelSerial(Number(expanded[1])))
+
+	// Day-first dotted/slashed, e.g. "19.02.2005", "14/3/2007"
+	const dayFirst = raw.match(/^(\d{1,2})[./-](\d{1,2})[./-](\d{4})$/)
+	if (dayFirst) {
+		const [, d, m, y] = dayFirst
+		return toIso(new Date(Date.UTC(Number(y), Number(m) - 1, Number(d))))
+	}
+
+	// Plain ISO date or datetime
+	const iso = raw.match(/^(\d{4})-(\d{2})-(\d{2})/)
+	if (iso) {
+		const [, y, m, d] = iso
+		return toIso(new Date(Date.UTC(Number(y), Number(m) - 1, Number(d))))
+	}
+
+	return toIso(new Date(raw))
+}
+
 // Helper: parse semester value from number, string code, or raw format
 export function parseSemesterValue(val: unknown): number {
 	if (val == null) return 0
@@ -389,6 +455,9 @@ export function enrichLearnerData(learners: unknown[], lookups: LookupMaps): unk
 			batch_name: batchInfo?.batch_name || '',
 			// Normalize other fields
 			learner_name: learnerName,
+			// Normalised to YYYY-MM-DD; the untouched value stays available.
+			date_of_birth: normalizeDateOfBirth(l.date_of_birth),
+			date_of_birth_raw: l.date_of_birth ?? null,
 			email: l.college_email || l.student_email || l.email || '',
 			phone: l.student_mobile || l.phone || '',
 			lifecycle_status: lifecycleStatus,

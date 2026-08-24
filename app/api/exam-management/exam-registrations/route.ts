@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
+import { buildRegistrationPricer } from '@/lib/exam-fee/calculate'
 import { handleDeleteWithDependencyCheck } from '@/lib/delete-helpers'
 
 // GET: list exam registrations
@@ -242,6 +243,28 @@ export async function POST(request: Request) {
 			co_code = co?.course_code || null
 		}
 
+		// Fall back to the configured exam fee when the caller did not supply one.
+		// An explicit fee_amount in the body still wins, so a manual override stands.
+		// A blank string from a form or import is "not supplied", not zero.
+		const rawFee = body.fee_amount
+		let fee_amount: number | null =
+			rawFee === null || rawFee === undefined || rawFee === '' ? null : Number(rawFee)
+		if (fee_amount !== null && !Number.isFinite(fee_amount)) fee_amount = null
+
+		if (fee_amount == null && body.institutions_id && co_code) {
+			try {
+				const pricer = await buildRegistrationPricer(supabase, {
+					institutions_id: body.institutions_id,
+					examination_session_id: body.examination_session_id,
+					course_codes: [co_code],
+				})
+				fee_amount = pricer.priceFor(body.program_code, co_code)
+			} catch (feeError) {
+				// Pricing is a convenience - never block a registration on it
+				console.error('Exam fee lookup failed for registration:', feeError)
+			}
+		}
+
 		const insertPayload: any = {
 			institutions_id: body.institutions_id,
 			student_id: body.student_id || null, // Can be null for bulk import
@@ -254,7 +277,7 @@ export async function POST(request: Request) {
 			is_regular: body.is_regular ?? true,
 			attempt_number: body.attempt_number || 1,
 			fee_paid: body.fee_paid ?? false,
-			fee_amount: body.fee_amount ?? null,
+			fee_amount,
 			payment_date: body.payment_date ?? null,
 			payment_transaction_id: body.payment_transaction_id ?? null,
 			remarks: body.remarks ?? null,

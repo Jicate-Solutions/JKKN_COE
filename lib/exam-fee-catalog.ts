@@ -182,19 +182,23 @@ export function findSubCategory(categoryCode: string, subCode: string): FeeSubCa
 	return findCategory(categoryCode)?.subCategories.find((s) => s.code === subCode)
 }
 
-// Build a default human-readable label for a fee item
+// Build a default human-readable label for a fee item.
+// A programme-scoped rate is named after the programme rather than the tier —
+// the tier it would otherwise sit in is not what prices it.
 export function buildFeeLabel(
 	categoryCode: string,
 	subCode: string,
-	level: ProgramLevel | null
+	level: ProgramLevel | null,
+	programCode?: string | null
 ): string {
 	const cat = findCategory(categoryCode)
 	const sub = findSubCategory(categoryCode, subCode)
-	const parts = [level || '', sub?.label || subCode]
+	const scope = (programCode || '').trim().toUpperCase() || level || ''
+	const parts = [scope, sub?.label || subCode]
 	const base = parts.filter(Boolean).join(' ')
 	// Avoid duplicating the category when the sub-category already implies it
 	if (cat && sub && cat.subCategories.length === 1) {
-		return [level || '', cat.label].filter(Boolean).join(' ')
+		return [scope, cat.label].filter(Boolean).join(' ')
 	}
 	return base
 }

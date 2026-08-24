@@ -358,6 +358,20 @@ function MultiSelectProgram({ options, selectedIds, onSelectionChange, placehold
 		onSelectionChange([])
 	}
 
+	// UG and PG cannot be mixed, so "select all" only ever means all of ONE type
+	const ugOptions = useMemo(() => options.filter(opt => opt.type === 'UG'), [options])
+	const pgOptions = useMemo(() => options.filter(opt => opt.type === 'PG'), [options])
+
+	const selectAllOfType = (type: ProgramType) => {
+		const ids = options.filter(opt => opt.type === type).map(opt => opt.id)
+		onSelectionChange(ids)
+	}
+
+	const allUGSelected = ugOptions.length > 0 && selectedIds.length === ugOptions.length &&
+		ugOptions.every(opt => selectedIds.includes(opt.id))
+	const allPGSelected = pgOptions.length > 0 && selectedIds.length === pgOptions.length &&
+		pgOptions.every(opt => selectedIds.includes(opt.id))
+
 	const selectedOptions = options.filter(opt => selectedIds.includes(opt.id))
 
 	return (
@@ -411,6 +425,41 @@ function MultiSelectProgram({ options, selectedIds, onSelectionChange, placehold
 							</Button>
 						)}
 					</div>
+					{(ugOptions.length > 0 || pgOptions.length > 0) && (
+						<div className="flex items-center justify-between px-3 py-2 border-b">
+							<span className="text-xs text-muted-foreground">
+								{selectedIds.length === 0
+									? `${options.length} program(s)`
+									: `${selectedIds.length} of ${options.length} selected`}
+							</span>
+							<div className="flex gap-1">
+								{ugOptions.length > 0 && (
+									<Button
+										variant="ghost"
+										size="sm"
+										onClick={() => selectAllOfType('UG')}
+										className="h-7 text-xs"
+										disabled={allUGSelected}
+									>
+										<Check className="h-3 w-3 mr-1" />
+										All UG ({ugOptions.length})
+									</Button>
+								)}
+								{pgOptions.length > 0 && (
+									<Button
+										variant="ghost"
+										size="sm"
+										onClick={() => selectAllOfType('PG')}
+										className="h-7 text-xs"
+										disabled={allPGSelected}
+									>
+										<Check className="h-3 w-3 mr-1" />
+										All PG ({pgOptions.length})
+									</Button>
+								)}
+							</div>
+						</div>
+					)}
 					{selectedType && (
 						<div className="px-3 py-2 border-b bg-muted/50">
 							<Badge variant="outline" className={cn(
@@ -466,6 +515,123 @@ function MultiSelectProgram({ options, selectedIds, onSelectionChange, placehold
 									)
 								})}
 							</div>
+						)}
+					</div>
+				</div>
+			</PopoverContent>
+		</Popover>
+	)
+}
+
+// =====================================================
+// MULTI-SELECT SESSION COMPONENT
+// =====================================================
+// Used by the "Overall" view, where the report spans every examination
+// session. Selecting nothing means ALL sessions.
+
+interface MultiSelectSessionProps {
+	options: DropdownOption[]
+	selectedIds: string[]
+	onSelectionChange: (ids: string[]) => void
+	disabled?: boolean
+}
+
+function MultiSelectSession({ options, selectedIds, onSelectionChange, disabled }: MultiSelectSessionProps) {
+	const [open, setOpen] = useState(false)
+	const [searchQuery, setSearchQuery] = useState("")
+
+	const filteredOptions = useMemo(() => {
+		if (!searchQuery) return options
+		const query = searchQuery.toLowerCase()
+		return options.filter(opt =>
+			opt.code.toLowerCase().includes(query) ||
+			opt.name.toLowerCase().includes(query)
+		)
+	}, [options, searchQuery])
+
+	const toggleSession = (id: string) => {
+		if (selectedIds.includes(id)) {
+			onSelectionChange(selectedIds.filter(s => s !== id))
+		} else {
+			onSelectionChange([...selectedIds, id])
+		}
+	}
+
+	const selectAll = () => onSelectionChange(options.map(opt => opt.id))
+	const clearAll = () => onSelectionChange([])
+
+	const selectedOptions = options.filter(opt => selectedIds.includes(opt.id))
+	const isAll = options.length > 0 && selectedIds.length === options.length
+
+	return (
+		<Popover open={open} onOpenChange={setOpen}>
+			<PopoverTrigger asChild>
+				<Button
+					variant="outline"
+					role="combobox"
+					aria-expanded={open}
+					disabled={disabled}
+					className="w-full justify-between font-normal min-h-[40px] h-auto"
+				>
+					<div className="flex flex-wrap gap-1 flex-1 text-left">
+						{isAll ? (
+							<Badge variant="secondary" className="text-xs">All Sessions</Badge>
+						) : selectedOptions.length === 0 ? (
+							<span className="text-muted-foreground">Select session(s)</span>
+						) : selectedOptions.length <= 2 ? (
+							selectedOptions.map(opt => (
+								<Badge key={opt.id} variant="secondary" className="text-xs">{opt.code}</Badge>
+							))
+						) : (
+							<Badge variant="secondary" className="text-xs">{selectedOptions.length} sessions selected</Badge>
+						)}
+					</div>
+					<ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+				</Button>
+			</PopoverTrigger>
+			<PopoverContent className="w-[400px] p-0" align="start">
+				<div className="flex flex-col">
+					<div className="flex items-center border-b px-3">
+						<Search className="mr-2 h-4 w-4 shrink-0 opacity-50" />
+						<input
+							placeholder="Search sessions..."
+							value={searchQuery}
+							onChange={(e) => setSearchQuery(e.target.value)}
+							className="flex h-10 w-full rounded-md bg-transparent py-3 text-sm outline-none placeholder:text-muted-foreground"
+						/>
+					</div>
+					<div className="flex items-center justify-between px-3 py-2 border-b bg-muted/50">
+						<span className="text-xs text-muted-foreground">
+							{isAll ? 'All sessions selected' : `${selectedIds.length} of ${options.length} selected`}
+						</span>
+						<div className="flex gap-1">
+							<Button variant="ghost" size="sm" onClick={selectAll} className="h-7 text-xs" disabled={isAll}>
+								<Check className="h-3 w-3 mr-1" />
+								Select All
+							</Button>
+							<Button variant="ghost" size="sm" onClick={clearAll} className="h-7 text-xs" disabled={selectedIds.length === 0}>
+								<X className="h-3 w-3 mr-1" />
+								Clear
+							</Button>
+						</div>
+					</div>
+					<div className="max-h-[300px] overflow-y-auto p-1">
+						{filteredOptions.length === 0 ? (
+							<div className="py-6 text-center text-sm text-muted-foreground">No results found.</div>
+						) : (
+							filteredOptions.map(option => (
+								<div
+									key={option.id}
+									onClick={() => toggleSession(option.id)}
+									className="flex items-center gap-2 px-2 py-2 rounded-md cursor-pointer hover:bg-muted"
+								>
+									<Checkbox checked={selectedIds.includes(option.id)} className="pointer-events-none" />
+									<div className="flex flex-col min-w-0 flex-1">
+										<span className="font-medium text-sm">{option.code}</span>
+										<span className="text-xs text-muted-foreground whitespace-normal break-words">{option.name}</span>
+									</div>
+								</div>
+							))
 						)}
 					</div>
 				</div>
@@ -635,6 +801,8 @@ export default function LearnerArrearsPage() {
 	const [currentStats, setCurrentStats] = useState<CurrentArrearStatistics | null>(null)
 	const [currentSearch, setCurrentSearch] = useState("")
 	const [currentSubTab, setCurrentSubTab] = useState<'papers' | 'learners'>('papers')
+	// Overall view uses a MULTI-select of sessions; empty = every session
+	const [selectedSessionIds, setSelectedSessionIds] = useState<string[]>([])
 
 	// Helper function to infer UG/PG grade system from program code/name
 	const inferGradeSystemFromProgram = useCallback((programCode?: string, programName?: string): ProgramType => {
@@ -814,6 +982,7 @@ export default function LearnerArrearsPage() {
 			setPrograms([])
 		}
 		setSelectedSession("")
+		setSelectedSessionIds([])
 		setSelectedPrograms([])
 		setSelectedSemesters([])
 		setSemesters([])
@@ -845,6 +1014,18 @@ export default function LearnerArrearsPage() {
 		setCurrentLearners([])
 		setCurrentStats(null)
 	}, [selectedPrograms, selectedSession, selectedInstitution, fetchSemesters, programs])
+
+	// Overall defaults to EVERY session — tick them all as soon as the list arrives
+	useEffect(() => {
+		setSelectedSessionIds(sessions.map(s => s.id))
+	}, [sessions])
+
+	// Loaded Overall results go stale as soon as the session subset changes
+	useEffect(() => {
+		setCurrentArrears([])
+		setCurrentLearners([])
+		setCurrentStats(null)
+	}, [selectedSessionIds])
 
 	// Update program type when programs selection changes
 	useEffect(() => {
@@ -1057,9 +1238,51 @@ export default function LearnerArrearsPage() {
 			'Cleared Grade': b.cleared_letter_grade || ''
 		}))
 
+		// Course-code-wise count of the PENDING backlogs (cleared ones excluded,
+		// so the count matches the "By Course" tab on screen)
+		const courseCount: Record<string, {
+			code: string
+			name: string
+			credits: number
+			program: string
+			semester: number
+			learners: Set<string>
+		}> = {}
+		backlogs.filter(b => !b.is_cleared).forEach(b => {
+			const key = `${b.program_code}|${b.original_semester}|${b.course_code}`
+			if (!courseCount[key]) {
+				courseCount[key] = {
+					code: b.course_code,
+					name: b.course_name,
+					credits: b.course_credits,
+					program: b.program_code,
+					semester: b.original_semester,
+					learners: new Set<string>()
+				}
+			}
+			courseCount[key].learners.add(b.student_id)
+		})
+
+		const pendingTotal = backlogs.filter(b => !b.is_cleared).length
+		const courseCountRows = Object.values(courseCount)
+			.sort((a, b) => b.learners.size - a.learners.size || a.code.localeCompare(b.code))
+			.map((c, i) => ({
+				'#': i + 1,
+				'Course Code': c.code,
+				'Course Name': c.name,
+				'Program': c.program,
+				'Semester': c.semester,
+				'Credits': c.credits,
+				'Pending Learners': c.learners.size,
+				'% of Pending': pendingTotal > 0
+					? `${((c.learners.size / pendingTotal) * 100).toFixed(1)}%`
+					: '0%'
+			}))
+
 		const ws = XLSX.utils.json_to_sheet(exportData)
 		const wb = XLSX.utils.book_new()
 		XLSX.utils.book_append_sheet(wb, ws, 'Learner Arrears')
+		XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(courseCountRows), 'Course-wise Count')
 
 		const fileName = `learner_arrears_${new Date().toISOString().split('T')[0]}.xlsx`
 		XLSX.writeFile(wb, fileName)
@@ -1076,10 +1299,10 @@ export default function LearnerArrearsPage() {
 	// =====================================================
 
 	const fetchCurrentArrears = async () => {
-		if (!selectedInstitution || selectedPrograms.length === 0) {
+		if (!selectedInstitution) {
 			toast({
 				title: 'Missing Selection',
-				description: 'Please select institution and at least one program',
+				description: 'Please select an institution',
 				variant: 'destructive'
 			})
 			return
@@ -1098,19 +1321,28 @@ export default function LearnerArrearsPage() {
 			let sessionsCovered = 0
 			let attemptsScanned = 0
 
-			// One request per programme (mirrors the session-scoped fetch above)
-			for (const programId of selectedPrograms) {
-				const programData = programs.find(p => p.id === programId)
-				const programCode = programData?.code || ''
+			// One request per selected programme. Selecting NONE means every
+			// programme in the institution — a single unfiltered request rather
+			// than 25 of them.
+			const targets: Array<{ id: string; code: string } | null> = selectedPrograms.length > 0
+				? selectedPrograms.map(id => ({ id, code: programs.find(p => p.id === id)?.code || '' }))
+				: [null]
 
+			for (const target of targets) {
 				const params = new URLSearchParams({ institutionId: selectedInstitution })
-				if (programCode) {
-					params.append('programCode', programCode)
-				} else {
-					params.append('programId', programId)
+				if (target) {
+					if (target.code) {
+						params.append('programCode', target.code)
+					} else {
+						params.append('programId', target.id)
+					}
 				}
 				if (selectedSemesters.length > 0) {
 					params.append('semesters', selectedSemesters.join(','))
+				}
+				// Empty selection = every session, so only narrow when it is a real subset
+				if (selectedSessionIds.length > 0 && selectedSessionIds.length < sessions.length) {
+					params.append('sessionIds', selectedSessionIds.join(','))
 				}
 
 				const res = await fetch(`/api/grading/current-arrears?${params.toString()}`)
@@ -1273,22 +1505,71 @@ export default function LearnerArrearsPage() {
 				.join(', ')
 		}))
 
+		// Course-code-wise count: how many learners are still carrying each paper
+		const courseMap: Record<string, {
+			program: string
+			semester: number
+			code: string
+			name: string
+			credits: number
+			learners: Set<string>
+			absent: number
+			critical: number
+		}> = {}
+		currentArrears.forEach(a => {
+			const key = `${a.program_code}|${a.semester}|${a.course_code}`
+			if (!courseMap[key]) {
+				courseMap[key] = {
+					program: a.program_code,
+					semester: a.semester,
+					code: a.course_code,
+					name: a.course_name,
+					credits: a.course_credits,
+					learners: new Set<string>(),
+					absent: 0,
+					critical: 0
+				}
+			}
+			const row = courseMap[key]
+			row.learners.add(a.student_id)
+			if (a.is_absent) row.absent++
+			if (a.priority_level === 'Critical') row.critical++
+		})
+
+		const courseRows = Object.values(courseMap)
+			.sort((a, b) => b.learners.size - a.learners.size || a.code.localeCompare(b.code))
+			.map((c, i) => ({
+				'#': i + 1,
+				'Course Code': c.code,
+				'Course Name': c.name,
+				'Program': c.program,
+				'Semester': c.semester,
+				'Credits': c.credits,
+				'Pending Learners': c.learners.size,
+				'Absent': c.absent,
+				'Critical': c.critical,
+				'% of Pending': currentArrears.length > 0
+					? `${((c.learners.size / currentArrears.length) * 100).toFixed(1)}%`
+					: '0%'
+			}))
+
 		const wb = XLSX.utils.book_new()
 		XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(paperRows), 'Overall Arrears')
 		XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(learnerRows), 'Learner Summary')
+		XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(courseRows), 'Course-wise Count')
 
 		const fileName = `overall_arrear_status_${new Date().toISOString().split('T')[0]}.xlsx`
 		XLSX.writeFile(wb, fileName)
 
 		toast({
 			title: 'Export Successful',
-			description: `Exported ${currentArrears.length} pending arrear paper(s) for ${currentLearners.length} learner(s).`,
+			description: `Exported ${currentArrears.length} pending arrear paper(s) for ${currentLearners.length} learner(s) across ${Object.keys(courseMap).length} course(s).`,
 			className: 'bg-green-50 border-green-200 text-green-800'
 		})
 	}
 
 	const canFetch = selectedInstitution && selectedSession && selectedPrograms.length > 0
-	const canFetchCurrent = Boolean(selectedInstitution) && selectedPrograms.length > 0
+	const canFetchCurrent = Boolean(selectedInstitution) && selectedSessionIds.length > 0
 
 	// Determine UG/PG badge for display
 	const programTypeBadge = programType ? (
@@ -1346,6 +1627,20 @@ export default function LearnerArrearsPage() {
 						{programTypeBadge}
 					</div>
 
+					{/* Top-level view switch — sits ABOVE the filters because it
+					    changes what the filters mean (single session vs all sessions) */}
+					<Tabs value={viewMode} onValueChange={(v) => setViewMode(v as 'session' | 'current')} className="space-y-4">
+						<TabsList>
+							<TabsTrigger value="session" className="gap-2">
+								<FileWarning className="h-4 w-4" />
+								Session Backlogs
+							</TabsTrigger>
+							<TabsTrigger value="current" className="gap-2">
+								<TrendingUp className="h-4 w-4" />
+								Overall (All Sessions)
+							</TabsTrigger>
+						</TabsList>
+
 					{/* Selection Card */}
 					<Card>
 						<CardHeader className="pb-3">
@@ -1357,7 +1652,7 @@ export default function LearnerArrearsPage() {
 									<CardTitle className="text-lg">Select Parameters</CardTitle>
 									<CardDescription>
 										{viewMode === 'current'
-											? 'Choose institution and program — Overall scans every examination session'
+											? 'Choose institution — Overall scans every session, and every program unless you pick some'
 											: 'Choose institution, session, program and semester'}
 									</CardDescription>
 								</div>
@@ -1381,24 +1676,39 @@ export default function LearnerArrearsPage() {
 								{mustSelectSession && (
 								<div className="space-y-2">
 									<Label>
-										Examination Session {viewMode === 'current' ? <span className="text-xs font-normal text-muted-foreground">(all sessions scanned)</span> : '*'}
+										Examination Session {viewMode === 'current'
+											? <span className="text-xs font-normal text-muted-foreground">(choose any, or leave as All)</span>
+											: '*'}
 									</Label>
-									<SearchableSelect
-										options={sessions}
-										value={selectedSession}
-										onValueChange={setSelectedSession}
-										placeholder="Select session"
-										disabled={mustSelectInstitution && !selectedInstitution}
-									/>
+									{viewMode === 'current' ? (
+										<MultiSelectSession
+											options={sessions}
+											selectedIds={selectedSessionIds}
+											onSelectionChange={setSelectedSessionIds}
+											disabled={(mustSelectInstitution && !selectedInstitution) || sessions.length === 0}
+										/>
+									) : (
+										<SearchableSelect
+											options={sessions}
+											value={selectedSession}
+											onValueChange={setSelectedSession}
+											placeholder="Select session"
+											disabled={mustSelectInstitution && !selectedInstitution}
+										/>
+									)}
 								</div>
 								)}
 								<div className="space-y-2">
-									<Label>Program(s) *</Label>
+									<Label>
+										Program(s) {viewMode === 'current'
+											? <span className="text-xs font-normal text-muted-foreground">(leave empty for all)</span>
+											: '*'}
+									</Label>
 									<MultiSelectProgram
 										options={programs}
 										selectedIds={selectedPrograms}
 										onSelectionChange={setSelectedPrograms}
-										placeholder="Select program(s)"
+										placeholder={viewMode === 'current' ? 'All Programs' : 'Select program(s)'}
 										disabled={(mustSelectInstitution && !selectedInstitution) || (viewMode === 'session' && !selectedSession)}
 										loading={programsLoading}
 									/>
@@ -1437,20 +1747,7 @@ export default function LearnerArrearsPage() {
 						</CardContent>
 					</Card>
 
-					{/* Top-level view switch: session-scoped vs live all-session status */}
-					<Tabs value={viewMode} onValueChange={(v) => setViewMode(v as 'session' | 'current')}>
-						<TabsList>
-							<TabsTrigger value="session" className="gap-2">
-								<FileWarning className="h-4 w-4" />
-								Session Backlogs
-							</TabsTrigger>
-							<TabsTrigger value="current" className="gap-2">
-								<TrendingUp className="h-4 w-4" />
-								Overall (All Sessions)
-							</TabsTrigger>
-						</TabsList>
-
-						<TabsContent value="session" className="mt-4 space-y-4">
+						<TabsContent value="session" className="space-y-4">
 
 					{/* Results Section */}
 					{statistics && (
@@ -1857,7 +2154,7 @@ export default function LearnerArrearsPage() {
 						</TabsContent>
 
 						{/* ================= OVERALL ARREARS (ALL SESSIONS) ================= */}
-						<TabsContent value="current" className="mt-4 space-y-4">
+						<TabsContent value="current" className="space-y-4">
 							{currentStats && (
 								<>
 									{/* How this list is built */}
@@ -1865,7 +2162,11 @@ export default function LearnerArrearsPage() {
 										<CardContent className="p-3 flex items-start gap-3">
 											<CheckCircle2 className="h-5 w-5 text-emerald-600 mt-0.5 shrink-0" />
 											<div className="text-sm">
-												<span className="font-medium">Overall arrear position across all {currentStats.sessions_covered} examination session(s).</span>{' '}
+												<span className="font-medium">
+													Overall arrear position across {selectedSessionIds.length > 0 && selectedSessionIds.length < sessions.length
+														? `${currentStats.sessions_covered} selected`
+														: `all ${currentStats.sessions_covered}`} examination session(s).
+												</span>{' '}
 												A paper is dropped as soon as the learner passes it in any later exam — {currentStats.recovered_papers} paper(s)
 												that were once an arrear and have since been cleared are excluded from this list and from the download.
 											</div>

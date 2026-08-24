@@ -57,6 +57,14 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { useToast } from '@/hooks/common/use-toast'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import {
+	DropdownMenu,
+	DropdownMenuContent,
+	DropdownMenuItem,
+	DropdownMenuLabel,
+	DropdownMenuSeparator,
+	DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
+import {
 	Download,
 	FileText,
 	Search,
@@ -76,6 +84,8 @@ import {
 } from 'lucide-react'
 import { useInstitutionFilter } from '@/hooks/use-institution-filter'
 import { generateLearnerDirectoryPDF } from '@/lib/utils/generate-learner-directory-pdf'
+import { generateLearnerProfilePDF } from '@/lib/utils/generate-learner-profile-pdf'
+import { getInstitutionHeader } from '@/lib/utils/institution-header'
 import type { LearnerDirectoryRow } from '@/types/learner-directory'
 
 // Items per page options for client-side pagination
@@ -96,12 +106,6 @@ function formatLifecycleLabel(status: string): string {
 		.join(' ')
 }
 
-/** Right-hand logo shipped in /public for institutions that have one. */
-const INSTITUTION_LOGOS: Record<string, string> = {
-	CAS: '/jkkncas_logo.png',
-	CET: '/jkkncet_logo.png',
-}
-
 function blobToBase64(blob: Blob): Promise<string> {
 	return new Promise((resolve, reject) => {
 		const reader = new FileReader()
@@ -109,6 +113,27 @@ function blobToBase64(blob: Blob): Promise<string> {
 		reader.onerror = reject
 		reader.readAsDataURL(blob)
 	})
+}
+
+/**
+ * Resolve learner photos to base64 so jsPDF can embed them. MyJKKN serves
+ * photos from a remote host and jsPDF cannot pull a URL itself, so each one is
+ * fetched here — PHOTO_CONCURRENCY at a time, and a failure just leaves the
+ * card with an empty "Affix Photo" box.
+ */
+const PHOTO_CONCURRENCY = 20
+
+async function withPhotos<T extends { student_photo_url?: string }>(rows: T[]): Promise<T[]> {
+	const resolved = [...rows]
+	for (let i = 0; i < resolved.length; i += PHOTO_CONCURRENCY) {
+		const slice = resolved.slice(i, i + PHOTO_CONCURRENCY)
+		await Promise.all(slice.map(async (row, offset) => {
+			if (!row.student_photo_url) return
+			const base64 = await loadLogo(row.student_photo_url)
+			resolved[i + offset] = { ...row, student_photo_url: base64 || undefined }
+		}))
+	}
+	return resolved
 }
 
 async function loadLogo(url: string): Promise<string | null> {
@@ -149,7 +174,7 @@ export default function LearnersMyJKKNPage() {
 	const [error, setError] = useState<string | null>(null)
 	const [fetchedAt, setFetchedAt] = useState<number | null>(null)
 	const [sweepComplete, setSweepComplete] = useState(true)
-	const [pdfBusy, setPdfBusy] = useState(false)
+	const [pdfBusy, setPdfBusy] = useState<string | null>(null)
 
 	// Filters, sorting and pagination (all local)
 	const [searchTerm, setSearchTerm] = useState('')
@@ -520,27 +545,34 @@ export default function LearnersMyJKKNPage() {
 		search: debouncedSearch.trim() || undefined,
 	}), [statusFilter, programFilter, semesterFilter, debouncedSearch, lifecycleOptions])
 
-	// Download every filtered row as a PDF, in the exam attendance sheet style
-	const handleDownloadPdf = async () => {
+	/** Logos for a PDF letterhead: JKKN brand left, the institution's own right. */
+	const loadLetterheadLogos = useCallback(async (institutionCode: string) => {
+		const header = getInstitutionHeader(institutionCode)
+		const [logoImage, rightLogoImage] = await Promise.all([
+			loadLogo('/jkkn_logo.png'),
+			loadLogo(header.logo_path),
+		])
+		return { logoImage, rightLogoImage }
+	}, [])
+
+	// Download every filtered row as a directory PDF, in the attendance sheet style
+	const handleDownloadDirectoryPdf = async () => {
 		if (totalFiltered === 0 || pdfBusy) return
 
-		setPdfBusy(true)
+		setPdfBusy('directory')
 		try {
 			// All rows share an institution whenever one is selected; otherwise the
-			// roster spans the group.
-			const institutionCode = filteredLearners[0]?.institution_code || ''
-			const institutionName = shouldFilter && filteredLearners[0]?.institution_name
-				? filteredLearners[0].institution_name
+			// roster spans the group and the letterhead falls back to the group name.
+			const institutionCode = shouldFilter ? (filteredLearners[0]?.institution_code || '') : ''
+			const institutionName = institutionCode
+				? filteredLearners[0]?.institution_name || undefined
 				: 'JKKN Educational Institutions'
 
-			const rightLogoUrl = INSTITUTION_LOGOS[institutionCode]
-			const [logoImage, rightLogoImage] = await Promise.all([
-				loadLogo('/jkkn_logo.png'),
-				rightLogoUrl ? loadLogo(rightLogoUrl) : Promise.resolve(null),
-			])
+			const { logoImage, rightLogoImage } = await loadLetterheadLogos(institutionCode)
 
 			generateLearnerDirectoryPDF({
 				learners: filteredLearners,
+				institutionCode,
 				institutionName,
 				filters: filterSummary,
 				logoImage,
@@ -559,7 +591,49 @@ export default function LearnersMyJKKNPage() {
 				variant: 'destructive',
 			})
 		} finally {
-			setPdfBusy(false)
+			setPdfBusy(null)
+		}
+	}
+
+	// Student Profile forms — two per landscape sheet, photos embedded
+	const handleDownloadProfilePdf = async () => {
+		if (totalFiltered === 0 || pdfBusy) return
+
+		setPdfBusy('profile')
+		try {
+			// Every institution present needs its own letterhead logo, since a
+			// group-wide export can mix colleges across cards.
+			const codes = [...new Set(filteredLearners.map(l => l.institution_code).filter(Boolean))]
+			const logoEntries = await Promise.all(
+				codes.map(async code => [code, await loadLogo(getInstitutionHeader(code).logo_path)] as const)
+			)
+			const institutionLogos: Record<string, string> = {}
+			for (const [code, logo] of logoEntries) {
+				if (logo) institutionLogos[code] = logo
+			}
+
+			const logoImage = await loadLogo('/jkkn_logo.png')
+
+			// jsPDF can only embed data URLs, so each photo has to be fetched and
+			// converted first. Bounded concurrency keeps a large class set from
+			// opening hundreds of simultaneous requests.
+			const learners = await withPhotos(filteredLearners)
+
+			generateLearnerProfilePDF({ learners, logoImage, institutionLogos })
+
+			toast({
+				title: 'Student Profile Downloaded',
+				description: `${totalFiltered.toLocaleString()} profiles across ${Math.ceil(totalFiltered / 2)} sheets.`,
+				className: 'bg-green-50 border-green-200 text-green-800 dark:bg-green-900/20 dark:border-green-800 dark:text-green-200',
+			})
+		} catch (err) {
+			toast({
+				title: 'PDF Failed',
+				description: err instanceof Error ? err.message : 'Could not generate the PDF.',
+				variant: 'destructive',
+			})
+		} finally {
+			setPdfBusy(null)
 		}
 	}
 
@@ -817,18 +891,43 @@ export default function LearnersMyJKKNPage() {
 											<Download className="h-3 w-3 mr-1" />
 											Excel
 										</Button>
-										<Button
-											variant="outline"
-											size="sm"
-											className="text-xs px-2 h-8"
-											onClick={handleDownloadPdf}
-											disabled={totalFiltered === 0 || pdfBusy}
-										>
-											{pdfBusy
-												? <RefreshCw className="h-3 w-3 mr-1 animate-spin" />
-												: <FileText className="h-3 w-3 mr-1" />}
-											PDF
-										</Button>
+										<DropdownMenu>
+											<DropdownMenuTrigger asChild>
+												<Button
+													variant="outline"
+													size="sm"
+													className="text-xs px-2 h-8"
+													disabled={totalFiltered === 0 || pdfBusy !== null}
+												>
+													{pdfBusy
+														? <RefreshCw className="h-3 w-3 mr-1 animate-spin" />
+														: <FileText className="h-3 w-3 mr-1" />}
+													PDF
+												</Button>
+											</DropdownMenuTrigger>
+											<DropdownMenuContent align="end" className="w-64">
+												<DropdownMenuLabel className="text-xs font-normal text-muted-foreground">
+													{totalFiltered.toLocaleString()} learners in the current filter
+												</DropdownMenuLabel>
+												<DropdownMenuSeparator />
+												<DropdownMenuItem onSelect={handleDownloadDirectoryPdf}>
+													<div>
+														<div className="text-xs font-medium">Learner Directory</div>
+														<div className="text-[11px] text-muted-foreground">
+															Landscape list, grouped by program
+														</div>
+													</div>
+												</DropdownMenuItem>
+												<DropdownMenuItem onSelect={handleDownloadProfilePdf}>
+													<div>
+														<div className="text-xs font-medium">Student Profile</div>
+														<div className="text-[11px] text-muted-foreground">
+															Verification form, 2 per sheet ({Math.ceil(totalFiltered / 2).toLocaleString()} sheets)
+														</div>
+													</div>
+												</DropdownMenuItem>
+											</DropdownMenuContent>
+										</DropdownMenu>
 									</div>
 								</div>
 							</CardHeader>

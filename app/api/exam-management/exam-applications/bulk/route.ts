@@ -1,6 +1,12 @@
 import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
 import { buildBulkExamApplicationCourses, learnerKey } from '@/lib/exam-applications/bulk-course-list'
+import { buildRegistrationPricer } from '@/lib/exam-fee/calculate'
+import {
+	chargeKey,
+	loadAlreadyChargedKeys,
+	sessionChargeFor,
+} from '@/lib/exam-applications/session-charges'
 import type { BulkApplicationResult, BulkLearnerRef } from '@/types/exam-applications'
 
 /**
@@ -153,11 +159,23 @@ export async function POST(request: Request) {
 			learnerLists.map(l => [l.key, new Map(l.courses.map(c => [c.key, c]))])
 		)
 
+		// One rate-book load prices every learner on the screen. The amount stamped
+		// is the paper's own fee; mark statement / application / late fine are
+		// once-per-session charges and never land on a paper row.
+		const allCourses = learnerLists.flatMap(l => l.courses)
+		const pricer = await buildRegistrationPricer(supabase, {
+			institutions_id,
+			examination_session_id,
+			course_codes: allCourses.map(c => c.course_code),
+			courses: allCourses,
+		})
+
 		// ── 5. Validate each pair and build the insert rows ──
 		const results: BulkApplicationResult[] = []
 		const payloads: any[] = []
 		const backlogIdByRow: (string | null)[] = []
 		const now = new Date().toISOString()
+		const today = now.slice(0, 10)
 
 		for (const item of items) {
 			const key = learnerKey(item)
@@ -205,12 +223,55 @@ export async function POST(request: Request) {
 				course_code: course.course_code,
 				program_code: course.program_code || item.program_code,
 				registration_date: now,
+				applied_date: today,
 				registration_status: APPLICATION_STATUS,
 				is_regular: !course.is_backlog,
 				attempt_number: course.attempt_number,
 				fee_paid: false,
+				fee_amount: pricer.priceFor(course.program_code || item.program_code, course.course_code),
+				// Stamped below on one anchor row per learner - see the charge pass.
+				application_fee: 0,
+				mark_statement_fee: 0,
+				late_fine: 0,
 			})
 			backlogIdByRow.push(course.is_backlog ? course.backlog_id : null)
+		}
+
+		// ── 5b. Once-per-session charges, on one anchor row per learner ──
+		//
+		// The application fee, mark statement fee and late fine are charged once per
+		// learner per session, not per paper. Each is stamped on a single row - the
+		// learner's first row in this batch - and left at 0 on the rest, so summing a
+		// learner's registrations gives the true amount owed. A learner who was
+		// already charged in this session (their current papers, or an earlier arrear
+		// batch) is skipped entirely.
+		{
+			const alreadyCharged = await loadAlreadyChargedKeys(supabase, {
+				institutions_id,
+				examination_session_id,
+				registerNumbers: payloads.map(p => String(p.stu_register_no || '')).filter(Boolean),
+			})
+
+			const anchorByLearner = new Map<string, any>()
+			for (const row of payloads) {
+				const key = chargeKey({ student_id: row.student_id, register_number: row.stu_register_no })
+				if (anchorByLearner.has(key)) continue
+				if (alreadyCharged.has(key) || (row.student_id && alreadyCharged.has(`sid:${row.student_id}`))) {
+					// Mark as handled so a later row of the same learner is not charged.
+					anchorByLearner.set(key, null)
+					continue
+				}
+				anchorByLearner.set(key, row)
+
+				const charge = sessionChargeFor(
+					pricer.book,
+					pricer.levelFor(row.program_code),
+					today
+				)
+				row.application_fee = charge.application_fee
+				row.mark_statement_fee = charge.mark_statement_fee
+				row.late_fine = charge.late_fine
+			}
 		}
 
 		// ── 6. Batched insert, falling back to per-row so a partial success survives ──

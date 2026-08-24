@@ -1061,6 +1061,10 @@ All `/api/v1/ia/*` endpoints are governed by the **`ia`** module — `ia:read`, 
 
 Every endpoint resolves the institution from `institution_code` (query param on GET, body field on POST), falling back to the API key's own institution.
 
+> **End-semester papers are out of scope.** A paper built from a template whose `exam_scope` is `ese` is invisible here: it is filtered out of the list and every single-paper route answers `404`. ESE papers are authored by the appointed examiner in COE's question-paper setter portal.
+
+> Building your own authoring UI on these endpoints? [`docs/ia-question-paper-entry-spec.md`](../ia-question-paper-entry-spec.md) is the full screen-by-screen spec — question shape, validation messages, merge semantics and the rich-text/image contracts.
+
 #### `GET /api/v1/ia/question-papers`
 
 List papers. **Permission:** `ia:read`
@@ -1107,7 +1111,9 @@ Generate papers for a program + semester, scaffolded from a matching template. *
 
 **Other fields:** `institution_code`, `cia_setting_id`, `cia_round` (default `1`), `cia_round_name`, `template_id`, `author_id`.
 
-Without `template_id`, COE picks the active CIA-scoped template whose Course Type applicability covers each course's `course_category` — courses no template applies to get no paper. Courses with `multiple_qp_set` produce one paper per set (A/B).
+Without `template_id`, COE picks the active CIA-scoped template whose Course Type applicability covers each course's `course_category` — courses no template applies to get no paper, and are named in `not_applicable_courses`. That match runs even when `template_id` **is** given, so a Theory-only template still skips Practical courses. Courses with `multiple_qp_set` produce one paper per set (A/B). Courses whose `evaluation_type` is neither `CIA` nor `CIA + ESE` are skipped.
+
+**Response (201):** `{ data: { created, skipped, not_applicable, not_applicable_courses, templates_cover? } }`
 
 Returns `404` when the selection matches no course offerings, `400` when the institution has no active CIA template.
 
@@ -1117,28 +1123,41 @@ Full paper, including the two joins needed to build and validate an entry grid. 
 
 Questions arrive pre-sorted by `display_order`.
 
-```json
+```jsonc
 { "data": {
   "…all paper columns…": "…",
+  "default_font": null,              // paper-wide CSS family: null | Noto Sans Tamil | Bamini | Suntommy
   "questions": [
     {
-      "id": "uuid",
-      "part_label": "A",
-      "question_number": 6,
-      "sub_label": "a",
-      "is_choice_alternative": false,
-      "question_type_code": "short",
-      "question_text": "…",
-      "marks": 5,
-      "options": null,
+      "id": "uuid",                  // stable — key marks by this, never by index
+      "part_label": "B",
+      "question_number": 12,
+      "sub_label": "a",              // "a" / "b" on a choice part, else null
+      "is_choice_alternative": false,// true = the "(OR)" branch
+      "question_type_code": "essay",
+      "question_text": "<p>…</p>",   // sanitized HTML; a formula is <span data-latex="…">
+      "marks": 15,
+      "options": null,               // [{ key, text, text_html }] for MCQ
+      "option_font": null,
+      "image": {                     // optional figure, printed centred under the question
+        "url": "https://…/question-images/<paperId>/<uuid>.webp",
+        "path": "<paperId>/<uuid>.webp",
+        "width_pct": 60, "px_w": 1200, "px_h": 480, "bytes": 84213
+      },
       "correct_option": null,
-      "co_code": "CO2",
-      "k_level": "K3",
-      "display_order": 11
+      "co_code": null,               // null when the question is split
+      "k_level": null,               // null when the question is split
+      "sub_questions": [             // author-defined split; null / [] = not split
+        { "id": "uuid", "label": "i", "question_text": "<p>…</p>", "marks": 8,
+          "co_code": "CO2", "k_level": "K3", "image": null, "display_order": 1 }
+      ],
+      "display_order": 21
     }
   ],
   "template_parts": [
-    { "part_label": "B", "num_questions": 5, "num_to_answer": 3, "…": "…" }
+    { "part_label": "B", "num_questions": 5, "num_to_answer": 3,
+      "marks_per_question": 15, "has_choice": true,
+      "capture_co": true, "capture_klevel": true, "…": "…" }
   ],
   "course_outcomes": [ { "co_code": "CO2", "co_description": "…" } ]
 } }
@@ -1146,29 +1165,77 @@ Questions arrive pre-sorted by `display_order`.
 
 `questions[].id` is stable across renumbering and reordering. **Always key saved marks by it, never by index or question number.**
 
+A **split** question is one with `sub_questions`: its own `co_code` / `k_level` are unused (each sub-division carries its own), its `question_text` is an optional shared stem, and the sub-division marks must sum exactly to the parent's `marks`. Only descriptive questions can be split — never one with `options`.
+
 #### `PUT /api/v1/ia/question-papers/{id}`
 
 Save authored content, change status, or rebuild from the template. **Permission:** `ia:update`
 
 | Body | Effect |
 |---|---|
-| `questions[]` | Merges `question_text`, `marks`, `options`, `correct_option`, `co_code`, `k_level` onto existing questions by `id`. Unknown ids are ignored; questions cannot be added or removed this way. |
+| `questions[]` | Merged onto the stored questions **by `id`** — see the merge rule below. Unknown ids are ignored; questions can be neither added nor removed this way. |
 | `status` | One of the four statuses; stamps `submitted_at` / `approved_at` / `locked_at`. `approved` also records `approved_by` from `author_id`. |
-| `regenerate: true` | Re-scaffolds from the template. **Draft only.** Returns `409 AUTHORED` if any question already has text — pass `force: true` to overwrite. |
-| `subject_title`, `exam_date`, `duration_minutes`, `paper_setter_id` | Set directly. |
-| `base_updated_at` | Optimistic lock. A mismatch returns `409 CONFLICT` — *"Paper changed elsewhere. Reload before saving."* |
+| `regenerate: true` | Re-scaffolds from the template, merging authored content back in. **Draft only.** Returns `409 AUTHORED` if any question already has text — pass `force: true` to overwrite. |
+| `subject_title`, `exam_date`, `duration_minutes`, `paper_setter_id`, `default_font` | Set directly. `default_font` is the paper-wide font (`null` = English default). |
+| `allow_clear: true` | Consent to a save that blanks 3+ already-authored questions (see `WOULD_CLEAR`). |
+| `base_updated_at` | Optimistic lock. A mismatch returns `409 CONFLICT`. |
 
-Questions are editable only while the paper is `draft` or `submitted`. Otherwise: `400 Cannot edit questions while <status>`.
+**The merge rule.** *A field the payload does not mention is preserved; only an explicit value — including `null` or `""` — changes it.* This applies to `question_text`, `marks`, `options`, `option_font`, `image`, `correct_option`, `co_code`, `k_level` and `sub_questions`. Sending a question object with only `{ id, question_text }` therefore leaves its figure and sub-divisions untouched — and a payload that omits fields can never silently erase them.
 
-Response includes `saved_count` (number of questions written).
+`image.url` must be an `http(s)` URL; anything else (including `data:`) is dropped on the way in, because the value is written into an `<img src>` by the PDF renderer.
+
+Questions are editable only while the paper is `draft` or `submitted` — there is no CoE override on an API key. Response includes `saved_count` (number of questions written).
+
+**Errors:**
+
+| Status | Body | Meaning |
+|---|---|---|
+| `400` | `Cannot edit questions while <status>` | paper is `approved` or `locked` |
+| `400` | `{ error: "SUB_MARKS", message }` | a split question's sub-divisions don't total the parent's marks, or one has no marks |
+| `400` | `{ error: "INCOMPLETE", message }` | submit/approve on a paper missing question text, CO, K-level or an MCQ option |
+| `409` | `{ error: "WOULD_CLEAR", message }` | the save would blank 3+ authored questions — retry with `allow_clear: true` |
+| `409` | `{ error: "CONFLICT", message }` | *"Paper changed elsewhere. Reload before saving."* |
+| `409` | `{ error: "AUTHORED", message }` | rebuild over authored content — retry with `force: true` |
+
+Coded errors carry the readable text in `message`, not `error` — surface `message ?? error`.
+
+**Completeness rules** (enforced on `submitted` and `approved`, never on a plain save, so an author can stop half-way):
+
+| Case | Required |
+|---|---|
+| Unsplit question | question text, plus CO and K-level when the part's `capture_co` / `capture_klevel` are true |
+| Split question | text + CO + K-level on **every sub-division**; the parent stem stays optional |
+| MCQ | every option non-empty |
 
 #### `DELETE /api/v1/ia/question-papers/{id}`
 
-**Permission:** `ia:delete`
+**Permission:** `ia:delete`. Blocked on a `locked` paper.
+
+#### `POST /api/v1/ia/question-papers/{id}/image`
+
+Attach a figure to a question or sub-division. **Permission:** `ia:create`
+
+`multipart/form-data` with a single `file` field. PNG / JPEG / WebP / GIF, **5 MB max**. The object lands in the public `question-images` bucket at `<paperId>/<uuid>.<ext>`.
+
+**Response (201):** `{ data: { url, path, size, type } }`
+
+Put that `url` and `path` into the question's `image` object and `PUT` the paper — the upload is not referenced until the paper is saved. Keep `path`: it is what lets a later replace or remove delete the object instead of orphaning it.
+
+Compress before uploading. COE's own authoring screen caps the long edge at 1600 px and re-encodes to WebP under ~180 KB, which is still ≥ 200 dpi across the full A4 text column; `width_pct` (40 / 60 / 85) then decides the printed width.
+
+Allowed only while the paper is `draft` or `submitted`; otherwise `400 Cannot edit images while paper is <status>`.
+
+#### `DELETE /api/v1/ia/question-papers/{id}/image?path=…`
+
+Remove a stored object. **Permission:** `ia:delete`
+
+`path` must sit inside that paper's own folder (`<paperId>/…`); anything else returns `400 Invalid image path`.
 
 #### `GET /api/v1/ia/question-papers/{id}/pdf`
 
 Rendered question paper PDF. **Permission:** `ia:read`
+
+A4 portrait, institution letterhead, inline math and Tamil rendered faithfully. The filename is `QP_<course code>_<course name>_<CIAn>[_Set<X>].pdf`, sent with both an ASCII fallback and the RFC 5987 UTF-8 `Content-Disposition` parameter (course titles may be Tamil).
 
 ---
 

@@ -42,6 +42,8 @@ export interface CourseFeeInput {
 export interface FeeRate {
 	head: string
 	program_level: ProgramLevel | null
+	/** Programme this rate is scoped to; null = the tier rate */
+	program_code: string | null
 	calc_basis: string
 	amount: number
 	label: string
@@ -55,7 +57,11 @@ export interface FeeSchedule {
 }
 
 export interface FeeRateBook {
-	/** `${head}|${level}` -> rate; `${head}|` for level-independent rates */
+	/**
+	 * `${head}|${level}|${program}` -> rate. An empty level segment is a
+	 * level-independent rate; an empty programme segment is the tier rate that
+	 * every programme in the tier falls back to.
+	 */
 	rates: Map<string, FeeRate>
 	/** program_code (UPPER) -> explicit fee tier */
 	levelByProgram: Map<string, ProgramLevel>
@@ -161,7 +167,7 @@ export async function loadFeeRateBook(
 	// ── Rates: newest effective_from on or before asOf wins ──
 	const { data: rateRows, error: rateError } = await supabase
 		.from('exam_fee_master')
-		.select('category, sub_category, program_level, calc_basis, amount, label, effective_from')
+		.select('category, sub_category, program_level, program_code, calc_basis, amount, label, effective_from')
 		.eq('institutions_id', institutions_id)
 		.eq('fee_type', 'CREDIT')
 		.eq('is_active', true)
@@ -175,10 +181,12 @@ export async function loadFeeRateBook(
 		// Ascending order means a later row overwrites an earlier one, leaving the
 		// newest effective_from in the map.
 		for (const row of rateRows || []) {
-			const key = `${row.sub_category}|${row.program_level || ''}`
+			const programCode = String(row.program_code || '').trim().toUpperCase()
+			const key = `${row.sub_category}|${row.program_level || ''}|${programCode}`
 			rates.set(key, {
 				head: row.sub_category,
 				program_level: (row.program_level as ProgramLevel) || null,
+				program_code: programCode || null,
 				calc_basis: row.calc_basis,
 				amount: Number(row.amount) || 0,
 				label: row.label || row.sub_category,
@@ -232,9 +240,25 @@ export async function loadFeeRateBook(
 	return { rates, levelByProgram, schedule, isEmpty }
 }
 
-/** Rate lookup: exact tier first, then a level-independent row */
-function findRate(book: FeeRateBook, head: string, level: ProgramLevel): FeeRate | null {
-	return book.rates.get(`${head}|${level}`) || book.rates.get(`${head}|`) || null
+/**
+ * Rate lookup, most specific first:
+ *   1. this programme's own rate at its tier
+ *   2. this programme's own level-independent rate
+ *   3. the tier rate every programme in the tier shares
+ *   4. a level-independent rate
+ */
+function findRate(
+	book: FeeRateBook,
+	head: string,
+	level: ProgramLevel,
+	programCode?: string | null
+): FeeRate | null {
+	const code = String(programCode || '').trim().toUpperCase()
+	if (code) {
+		const scoped = book.rates.get(`${head}|${level}|${code}`) || book.rates.get(`${head}||${code}`)
+		if (scoped) return scoped
+	}
+	return book.rates.get(`${head}|${level}|`) || book.rates.get(`${head}||`) || null
 }
 
 /** Whether the late fine applies on the given date */
@@ -263,6 +287,7 @@ export interface QuoteParams {
 export function quoteLearnerFee(book: FeeRateBook, params: QuoteParams): LearnerFeeQuote {
 	const onDate = params.onDate || new Date().toISOString().slice(0, 10)
 	const level = resolveProgramLevel(params.program_code, book.levelByProgram)
+	const programCode = params.program_code
 
 	const paper_lines: FeeLineItem[] = []
 	const unpriced_courses: string[] = []
@@ -271,7 +296,7 @@ export function quoteLearnerFee(book: FeeRateBook, params: QuoteParams): Learner
 		const head = resolvePaperFeeHead(course)
 		if (!head) continue
 
-		const rate = findRate(book, head, level)
+		const rate = findRate(book, head, level, programCode)
 		if (!rate) {
 			unpriced_courses.push(course.course_code)
 			continue
@@ -287,7 +312,7 @@ export function quoteLearnerFee(book: FeeRateBook, params: QuoteParams): Learner
 	const learner_lines: FeeLineItem[] = []
 	if (params.includeLearnerCharges !== false) {
 		for (const head of ['MARK_STATEMENT', 'APPLICATION'] as LearnerFeeHead[]) {
-			const rate = findRate(book, head, level)
+			const rate = findRate(book, head, level, programCode)
 			if (rate) learner_lines.push({ head, label: rate.label, amount: rate.amount })
 		}
 	}
@@ -318,24 +343,149 @@ export function quoteLearnerFee(book: FeeRateBook, params: QuoteParams): Learner
 export function priceCourseList(
 	book: FeeRateBook,
 	level: ProgramLevel,
-	courses: CourseFeeInput[]
+	courses: CourseFeeInput[],
+	programCode?: string | null
 ): Map<string, { head: PaperFeeHead | null; amount: number | null }> {
 	const priced = new Map<string, { head: PaperFeeHead | null; amount: number | null }>()
 	for (const course of courses) {
 		const key = String(course.course_code || '').trim().toUpperCase()
 		if (!key || priced.has(key)) continue
 		const head = resolvePaperFeeHead(course)
-		const rate = head ? findRate(book, head, level) : null
+		const rate = head ? findRate(book, head, level, programCode) : null
 		priced.set(key, { head, amount: rate ? rate.amount : null })
 	}
 	return priced
 }
 
+/**
+ * Per-paper pricing for the registration insert paths.
+ * -----------------------------------------------------
+ * The application screens quote a fee from a course list they already hold. The
+ * routes that WRITE exam_registrations often hold only a course code, so this
+ * loads the rate book once, fills in the course master rows it is missing, and
+ * hands back a lookup keyed by (programme, course code).
+ *
+ * The amount returned is the paper's own fee only. Mark statement, application
+ * fee and the late fine are charged once per session, not per paper, so they are
+ * deliberately NOT folded in here - summing exam_registrations.fee_amount across
+ * a learner's rows must never double-count them.
+ */
+export interface RegistrationPricer {
+	book: FeeRateBook
+	/** Per-paper fee at the learner's tier; null when the course has no rate configured */
+	priceFor(programCode: string | null | undefined, courseCode: string): number | null
+	/** The fee head a course falls under; null when it carries no exam fee */
+	headFor(courseCode: string): PaperFeeHead | null
+	/** Fee tier resolved for a programme */
+	levelFor(programCode: string | null | undefined): ProgramLevel
+}
+
+export async function buildRegistrationPricer(
+	supabase: SupabaseClient,
+	params: {
+		institutions_id: string
+		examination_session_id?: string | null
+		asOf?: string
+		/** Course codes to price */
+		course_codes: string[]
+		/** Course master rows already in hand - saves the lookup for those codes */
+		courses?: CourseFeeInput[]
+	}
+): Promise<RegistrationPricer> {
+	const asOf = params.asOf || new Date().toISOString().slice(0, 10)
+	const book = await loadFeeRateBook(supabase, {
+		institutions_id: params.institutions_id,
+		examination_session_id: params.examination_session_id,
+		asOf,
+	})
+
+	const courseByCode = new Map<string, CourseFeeInput>()
+	for (const course of params.courses || []) {
+		const key = String(course.course_code || '').trim().toUpperCase()
+		if (key) courseByCode.set(key, course)
+	}
+
+	// Fetch only the codes the caller did not supply
+	const missingCodes = () => [...new Set(
+		params.course_codes
+			.map(c => String(c || '').trim().toUpperCase())
+			.filter(c => c && !courseByCode.has(c))
+	)]
+
+	const loadCourses = async (codes: string[], scopeToInstitution: boolean) => {
+		for (let i = 0; i < codes.length; i += 500) {
+			const batch = codes.slice(i, i + 500)
+			let query = supabase
+				.from('courses')
+				.select('course_code, course_category, exam_duration')
+				.in('course_code', batch)
+
+			if (scopeToInstitution) query = query.eq('institutions_id', params.institutions_id)
+
+			const { data, error } = await query
+
+			if (error) {
+				// A missing master row leaves the paper unpriced rather than mispriced.
+				console.error('[exam-fee] courses lookup error:', error)
+				continue
+			}
+			for (const row of data || []) {
+				const key = String(row.course_code || '').trim().toUpperCase()
+				if (key) courseByCode.set(key, row as CourseFeeInput)
+			}
+		}
+	}
+
+	// The institution's own rows first, so a code shared across institutions
+	// resolves to this one's course category. Legacy rows carrying no
+	// institutions_id are then picked up by an unscoped pass.
+	await loadCourses(missingCodes(), true)
+	await loadCourses(missingCodes(), false)
+
+	const allCourses = [...courseByCode.values()]
+	// Cached per (tier, programme): a programme carrying its own rate prices the
+	// same course list differently from the tier it sits in.
+	const pricedByScope = new Map<string, Map<string, { head: PaperFeeHead | null; amount: number | null }>>()
+
+	const pricedFor = (level: ProgramLevel, programCode: string) => {
+		const scope = `${level}|${programCode}`
+		let priced = pricedByScope.get(scope)
+		if (!priced) {
+			priced = priceCourseList(book, level, allCourses, programCode)
+			pricedByScope.set(scope, priced)
+		}
+		return priced
+	}
+
+	const levelFor = (programCode: string | null | undefined) =>
+		resolveProgramLevel(programCode, book.levelByProgram)
+
+	return {
+		book,
+		levelFor,
+		priceFor(programCode, courseCode) {
+			const key = String(courseCode || '').trim().toUpperCase()
+			if (!key) return null
+			const code = String(programCode || '').trim().toUpperCase()
+			return pricedFor(levelFor(programCode), code).get(key)?.amount ?? null
+		},
+		headFor(courseCode) {
+			const key = String(courseCode || '').trim().toUpperCase()
+			const course = key ? courseByCode.get(key) : undefined
+			return course ? resolvePaperFeeHead(course) : null
+		},
+	}
+}
+
 /** The once-per-session learner charges at a given tier (mark statement + application) */
-export function learnerChargeLines(book: FeeRateBook, level: ProgramLevel): FeeLineItem[] {
+export function learnerChargeLines(
+	book: FeeRateBook,
+	level: ProgramLevel,
+	programCode?: string | null
+): FeeLineItem[] {
 	const lines: FeeLineItem[] = []
 	for (const head of ['MARK_STATEMENT', 'APPLICATION'] as LearnerFeeHead[]) {
-		const rate = findRate(book, head, level)
+		const rate = findRate(book, head, level, programCode)
 		if (rate) lines.push({ head, label: rate.label, amount: rate.amount })
 	}
 	return lines

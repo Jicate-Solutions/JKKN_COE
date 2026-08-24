@@ -43,6 +43,7 @@ import { TAMIL_FONT_FAMILIES } from '@/lib/ia/tamil-font-meta'
 import { QuestionImageField } from '@/components/ia/question-image-field'
 import { optionEditorValue, richTextToPlain } from '@/lib/ia/rich-text'
 import { paperPdfFilename } from '@/lib/ia/paper-filename'
+import { validatePaperComplete, requiresCompletion } from '@/lib/ia/validate-paper'
 
 interface Institution {
 	id: string
@@ -796,8 +797,29 @@ export default function QuestionPapersPage() {
 	// Blocks Save/Submit while any split question's marks don't add up to its parent.
 	const subMarkErrors = useMemo(() => validateSubMarks(questions), [questions])
 
-	const saveQuestions = async (nextStatus?: string) => {
+	// Everything still missing before the paper may leave the author's hands.
+	// Save is NEVER blocked by these — only Submit and Approve are.
+	const completionErrors = useMemo(
+		() => validatePaperComplete(questions, paper?.template_parts),
+		[questions, paper?.template_parts]
+	)
+	// The list only appears once a Submit/Approve has actually been blocked —
+	// showing it while the author is still typing would just be noise.
+	const [showCompletionErrors, setShowCompletionErrors] = useState(false)
+
+	const saveQuestions = async (nextStatus?: string, allowClear = false) => {
 		if (!paper) return
+		// Submit / Approve need a complete paper: every question entered, CO and
+		// K-level chosen, every option filled. Save stays free-form.
+		if (requiresCompletion(nextStatus) && completionErrors.length > 0) {
+			setShowCompletionErrors(true)
+			toast({
+				title: `Cannot ${nextStatus === 'approved' ? 'approve' : 'submit'} — ${completionErrors.length} item(s) incomplete`,
+				description: completionErrors.slice(0, 3).join(' · ') + (completionErrors.length > 3 ? ' …' : ''),
+				variant: 'destructive',
+			})
+			return
+		}
 		if (editable && subMarkErrors.length > 0) {
 			toast({
 				title: 'Sub-division marks don’t add up',
@@ -817,10 +839,21 @@ export default function QuestionPapersPage() {
 					exam_date: paper.exam_date,
 					default_font: paper.default_font ?? null, // paper-wide common font
 					base_updated_at: paper.updated_at, // optimistic-concurrency token
+					...(allowClear ? { allow_clear: true } : {}),
 					...(nextStatus ? { status: nextStatus } : {}),
 				}),
 			})
 			const data = await res.json()
+			// The save would blank several already-entered questions — almost always a
+			// stale tab rather than an intention. Make the author say so explicitly.
+			if (res.status === 409 && data.error === 'WOULD_CLEAR') {
+				if (confirm(`${data.message}
+
+Clear them anyway?`)) {
+					await saveQuestions(nextStatus, true)
+				}
+				return
+			}
 			if (res.status === 409) {
 				toast({
 					title: 'Not saved — paper changed elsewhere',
@@ -829,7 +862,8 @@ export default function QuestionPapersPage() {
 				})
 				return
 			}
-			if (!res.ok) throw new Error(data.error || 'Save failed')
+			// Coded errors (INCOMPLETE / SUB_MARKS) carry the readable text in `message`.
+			if (!res.ok) throw new Error(data.message || data.error || 'Save failed')
 			const savedN = typeof data.saved_count === 'number' ? data.saved_count : null
 			toast({
 				title: nextStatus ? `Paper ${nextStatus}` : 'Saved ✓',
@@ -1637,7 +1671,8 @@ export default function QuestionPapersPage() {
 					setSheetOpen(open)
 				}}
 			>
-				<SheetContent className="w-full overflow-y-auto sm:max-w-3xl">
+				<SheetContent className="w-full overflow-y-auto p-4 sm:max-w-none sm:p-6">
+					<div className="mx-auto w-full max-w-7xl">
 					<SheetHeader>
 						<SheetTitle className="flex items-center gap-2">
 							{paper ? `${paper.course_code} — ${paper.subject_title || ''}` : 'Question Paper'}
@@ -1905,7 +1940,7 @@ export default function QuestionPapersPage() {
 													/>
 
 													{Array.isArray(q.options) && q.options.length > 0 && (
-														<div className="mt-2 grid grid-cols-2 gap-2">
+														<div className="mt-2 grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-3">
 															{q.options.map(o => (
 																<div key={o.key} className="flex items-start gap-1">
 																	<span className="mt-2 w-5 text-xs text-muted-foreground">{o.key})</span>
@@ -1954,13 +1989,13 @@ export default function QuestionPapersPage() {
 														)}
 														{(part?.capture_co ?? true) && !split && (
 															<div className="flex items-center gap-1">
-																<Label className="text-xs">CO</Label>
+																<Label className="text-xs">CO <span className="text-red-500">*</span></Label>
 																<Select
 																	value={q.co_code || ''}
 																	onValueChange={v => updateQuestion(q.id, { co_code: v })}
 																	disabled={!editable}
 																>
-																	<SelectTrigger className="h-8 w-24">
+																	<SelectTrigger className={cn('h-8 w-24', editable && !q.co_code && 'border-red-300 text-red-600')}>
 																		<SelectValue placeholder="CO" />
 																	</SelectTrigger>
 																	<SelectContent>
@@ -1975,13 +2010,13 @@ export default function QuestionPapersPage() {
 														)}
 														{(part?.capture_klevel ?? true) && !split && (
 															<div className="flex items-center gap-1">
-																<Label className="text-xs">K</Label>
+																<Label className="text-xs">K <span className="text-red-500">*</span></Label>
 																<Select
 																	value={q.k_level || ''}
 																	onValueChange={v => updateQuestion(q.id, { k_level: v })}
 																	disabled={!editable}
 																>
-																	<SelectTrigger className="h-8 w-20">
+																	<SelectTrigger className={cn('h-8 w-20', editable && !q.k_level && 'border-red-300 text-red-600')}>
 																		<SelectValue placeholder="K" />
 																	</SelectTrigger>
 																	<SelectContent>
@@ -2034,13 +2069,13 @@ export default function QuestionPapersPage() {
 																		</div>
 																		{(part?.capture_co ?? true) && (
 																			<div className="flex items-center gap-1">
-																				<Label className="text-xs">CO</Label>
+																				<Label className="text-xs">CO <span className="text-red-500">*</span></Label>
 																				<Select
 																					value={sb.co_code || ''}
 																					onValueChange={v => updateSubQuestion(q.id, sb.id, { co_code: v })}
 																					disabled={!editable}
 																				>
-																					<SelectTrigger className="h-7 w-24">
+																					<SelectTrigger className={cn('h-7 w-24', editable && !sb.co_code && 'border-red-300 text-red-600')}>
 																						<SelectValue placeholder="CO" />
 																					</SelectTrigger>
 																					<SelectContent>
@@ -2055,13 +2090,13 @@ export default function QuestionPapersPage() {
 																		)}
 																		{(part?.capture_klevel ?? true) && (
 																			<div className="flex items-center gap-1">
-																				<Label className="text-xs">K</Label>
+																				<Label className="text-xs">K <span className="text-red-500">*</span></Label>
 																				<Select
 																					value={sb.k_level || ''}
 																					onValueChange={v => updateSubQuestion(q.id, sb.id, { k_level: v })}
 																					disabled={!editable}
 																				>
-																					<SelectTrigger className="h-7 w-20">
+																					<SelectTrigger className={cn('h-7 w-20', editable && !sb.k_level && 'border-red-300 text-red-600')}>
 																						<SelectValue placeholder="K" />
 																					</SelectTrigger>
 																					<SelectContent>
@@ -2126,6 +2161,22 @@ export default function QuestionPapersPage() {
 									</ul>
 								</div>
 							)}
+							{showCompletionErrors && completionErrors.length > 0 && (
+								<div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+									<div className="mb-1 flex items-center gap-1 font-medium">
+										<AlertTriangle className="h-3.5 w-3.5" />
+										{completionErrors.length} item(s) to complete before submitting
+									</div>
+									<ul className="ml-4 list-disc space-y-0.5">
+										{completionErrors.slice(0, 8).map(msg => (
+											<li key={msg}>{msg}</li>
+										))}
+									</ul>
+									{completionErrors.length > 8 && (
+										<div className="mt-1 pl-4">…and {completionErrors.length - 8} more</div>
+									)}
+								</div>
+							)}
 							<div className="sticky bottom-0 flex flex-wrap justify-end gap-2 border-t bg-background py-3">
 							<Button variant="outline" onClick={() => downloadPdf(paper)}>
 								<FileDown className="mr-2 h-4 w-4" /> PDF
@@ -2175,6 +2226,7 @@ export default function QuestionPapersPage() {
 					) : (
 						<div className="py-16 text-center text-muted-foreground">Failed to load paper.</div>
 					)}
+					</div>
 				</SheetContent>
 			</Sheet>
 		</SidebarProvider>

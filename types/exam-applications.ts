@@ -251,3 +251,143 @@ export interface BulkApplicationResponse {
 	results: BulkApplicationResult[]
 	message: string
 }
+
+// ---------------------------------------------------------------------------
+// Current Papers (Exam Application)
+// ---------------------------------------------------------------------------
+// Learners in this tab are ALREADY registered for their current-semester papers.
+// Applying does not create rows - it moves the rows they already hold to
+// registration_status = 'Applied' and stamps the fees. Selection is therefore at
+// LEARNER level: ticking 9 of 10 learners updates 9 x (their registered papers).
+// ---------------------------------------------------------------------------
+
+export type CurrentPaperStatus = 'Applied' | 'Partial' | 'Not Applied'
+
+/** One already-registered paper held by a learner */
+export interface CurrentPaperSubject {
+	registration_id: string
+	course_code: string
+	course_name: string
+	course_offering_id: string | null
+	registration_status: string | null
+	/** registration_status is already 'Applied' */
+	is_applied: boolean
+	/** Applied / Cancelled / Rejected / Withdrawn - never re-applied */
+	is_locked: boolean
+	attempt_number: number
+	/** Amount currently stored on the row */
+	fee_amount: number | null
+	/** Amount the rate book would charge if this paper is applied for now */
+	quoted_fee?: number | null
+	semester: number | null
+}
+
+export interface CurrentPaperLearner {
+	/** reg:<UPPER register number>, or sid:<student id> when unknown */
+	key: string
+	student_id: string | null
+	register_number: string
+	student_name: string
+	program_code: string | null
+	semester: number | null
+	subjects: CurrentPaperSubject[]
+	total_subjects: number
+	applied_subjects: number
+	/** Papers that can still be applied for */
+	pending_subjects: number
+	status: CurrentPaperStatus
+	fee_level: string | null
+	/** Sum of the quoted per-paper fees for the papers still pending */
+	paper_fee_total: number
+	/** Once-per-session charges owed - all 0 when the learner has already been charged */
+	application_fee: number
+	mark_statement_fee: number
+	late_fine: number
+	fee_total: number
+	/** Already carries a once-per-session charge in this session */
+	already_charged: boolean
+}
+
+/** One distinct paper across the filtered cohort (right-hand panel) */
+export interface CurrentPaperRow {
+	course_code: string
+	course_name: string
+	semester: number | null
+	fee_amount: number | null
+	learner_count: number
+	applied_count: number
+}
+
+export interface CurrentPaperCohortResponse {
+	data: CurrentPaperLearner[]
+	papers: CurrentPaperRow[]
+	/** Option lists for the programme / semester cascade, derived from the cohort itself */
+	filters: {
+		programs: string[]
+		semesters: number[]
+	}
+	summary: {
+		learners: number
+		papers: number
+		registrations: number
+		applied: number
+		partial: number
+		not_applied: number
+	}
+	fee: BulkFeeContext
+}
+
+export interface CurrentPaperApplyResult {
+	register_number: string
+	course_code: string
+	status: 'updated' | 'skipped' | 'failed'
+	reason?: string
+}
+
+export interface CurrentPaperApplyResponse {
+	success: boolean
+	summary: {
+		total: number
+		updated: number
+		skipped: number
+		failed: number
+		learners: number
+		learners_charged?: number
+		fee_total: number
+	}
+	results: CurrentPaperApplyResult[]
+	message: string
+}
+
+// ---------------------------------------------------------------------------
+// Arrear learners (Exam Application - Arrear tab)
+// ---------------------------------------------------------------------------
+
+/** A learner holding at least one uncleared backlog, listed straight from the
+ *  backlog view so the picker needs no MyJKKN sweep. */
+export interface ArrearLearner {
+	key: string
+	student_id: string | null
+	register_number: string
+	student_name: string
+	program_code: string | null
+	/** Highest original_semester across their backlogs - what the semester filter matches */
+	semester: number | null
+	semesters: number[]
+	arrear_count: number
+	/** Arrears already registered in the selected session */
+	registered_count: number
+}
+
+export interface ArrearLearnersResponse {
+	data: ArrearLearner[]
+	filters: {
+		programs: string[]
+		semesters: number[]
+	}
+	summary: {
+		learners: number
+		arrears: number
+		registered: number
+	}
+}

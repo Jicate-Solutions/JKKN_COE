@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
 import { scaffoldQuestions, mergeAuthored } from '@/lib/ia/paper-scaffold'
-import { readSubQuestions, validateSubMarks, canSplit, readQuestionImage } from '@/lib/ia/sub-questions'
+import { validateSubMarks } from '@/lib/ia/sub-questions'
+import { validatePaperComplete, requiresCompletion } from '@/lib/ia/validate-paper'
+import { applyQuestionEdits, MASS_CLEAR_THRESHOLD, massClearError } from '@/lib/ia/apply-question-edits'
 import { hasAnyCoeRole } from '@/lib/auth/check-user-permission'
 
 const EDITABLE_STATUSES = ['draft', 'submitted']
@@ -121,31 +123,17 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
 					{ status: 400 }
 				)
 			}
-			// Only accept known question ids; preserve order and any fields not sent.
+			// Only accept known question ids; preserve order and any field the payload
+			// does not mention — omitting a key must never erase authored work.
 			const current = readQuestions(paper)
-			const byId = new Map(current.map((q: any) => [q.id, q]))
-			for (const q of questions) {
-				const base = byId.get(q.id)
-				if (!base) continue
-				// Sub-divisions are author-defined; normalize (relabel i/ii, drop junk)
-				// and refuse them on objective questions, which have nothing to split.
-				const subs = canSplit(base) ? readSubQuestions(q) : []
-				byId.set(q.id, {
-					...base,
-					question_text: q.question_text ?? null,
-					marks: q.marks ?? base.marks ?? null,
-					options: q.options ?? null,
-					// Attached figure (uploaded via the sibling image route). Normalized
-					// so only a usable http(s) URL is ever stored.
-					image: readQuestionImage(q.image),
-					correct_option: q.correct_option ?? null,
-					// A split question's CO / K-level live on its sub-divisions.
-					co_code: subs.length > 0 ? null : q.co_code ?? null,
-					k_level: subs.length > 0 ? null : q.k_level ?? null,
-					sub_questions: subs.length > 0 ? subs : null,
-				})
+			const { questions: nextQuestions, cleared } = applyQuestionEdits(current, questions)
+
+			// A payload that blanks several authored questions at once is a stale or
+			// partial client state, not an edit. Refuse it unless the caller insists.
+			if (cleared.length >= MASS_CLEAR_THRESHOLD && body.allow_clear !== true) {
+				return NextResponse.json(massClearError(cleared), { status: 409 })
 			}
-			patch.questions = current.map((q: any) => byId.get(q.id))
+			patch.questions = nextQuestions
 
 			// Sub-division marks must add up to the parent question's marks. The UI
 			// blocks Save, but a stale tab or a direct API call must not slip past.
@@ -161,6 +149,31 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
 
 		if (status) {
 			if (!VALID_STATUSES.includes(status)) return NextResponse.json({ error: 'Invalid status' }, { status: 400 })
+		// A paper may only be submitted or approved when it is complete: every
+		// question entered, CO / K-level chosen, every option filled. The UI blocks
+		// the button; a stale tab or a direct API call must not slip past.
+		if (requiresCompletion(status)) {
+			const finalQuestions = Array.isArray(patch.questions) ? patch.questions : readQuestions(paper)
+			let parts: any[] = []
+			if (paper.template_id) {
+				const { data } = await supabase
+					.from('ia_template_parts')
+					.select('part_label, capture_co, capture_klevel')
+					.eq('template_id', paper.template_id)
+				parts = data || []
+			}
+			const incomplete = validatePaperComplete(finalQuestions, parts)
+			if (incomplete.length > 0) {
+				return NextResponse.json(
+					{
+						error: 'INCOMPLETE',
+						message: `${incomplete.length} item(s) incomplete — ${incomplete.slice(0, 5).join(' · ')}${incomplete.length > 5 ? ' …' : ''}`,
+					},
+					{ status: 400 }
+				)
+			}
+		}
+
 			patch.status = status
 			if (status === 'submitted') patch.submitted_at = new Date().toISOString()
 			if (status === 'approved') patch.approved_at = new Date().toISOString()

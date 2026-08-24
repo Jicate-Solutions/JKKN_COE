@@ -45,3 +45,53 @@ export function institutionAllowed(context: ExternalApiContext, institutionsId?:
 	if (!context.allowedInstitutionIds || context.allowedInstitutionIds.length === 0) return true
 	return !!institutionsId && context.allowedInstitutionIds.includes(institutionsId)
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// End-semester papers are OUT OF SCOPE for /api/v1.
+//
+// /api/v1/ia/* exists so MyJKKN staff can author their own INTERNAL (CIA) papers.
+// An end-semester paper is written by an appointed question-paper setter inside
+// the examiner portal and is confidential until the exam — it must never be
+// listed, read, edited or rendered through an external API key.
+//
+// The marker is ia_paper_templates.exam_scope ('cia' | 'ese' | 'all'); a paper
+// inherits it from the template it was built from.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Template scopes an external API key may see. */
+export const V1_ALLOWED_SCOPES = ['cia', 'all'] as const
+
+export const ESE_NOT_AVAILABLE =
+	'End-semester question papers are not available on this API — they are authored by the appointed examiner in the question-paper setter portal.'
+
+/** Ids of this institution's ESE-only templates (empty array = nothing to hide). */
+export async function eseTemplateIds(supabase: any, institutionsId: string): Promise<string[]> {
+	const { data } = await supabase
+		.from('ia_paper_templates')
+		.select('id')
+		.eq('institutions_id', institutionsId)
+		.eq('exam_scope', 'ese')
+	return (data || []).map((t: any) => t.id)
+}
+
+/**
+ * Drop ESE papers from a question-papers query.
+ * NOTE: a plain `not.in` would also drop rows whose template_id is NULL (SQL
+ * three-valued logic), so NULL is allowed back explicitly — those are legacy CIA
+ * papers with no template.
+ */
+export function excludeEsePapers(query: any, eseIds: string[]) {
+	if (eseIds.length === 0) return query
+	return query.or(`template_id.is.null,template_id.not.in.(${eseIds.join(',')})`)
+}
+
+/** Is this paper built from an ESE template? Used to 404 single-paper routes. */
+export async function paperIsEse(supabase: any, paper: any): Promise<boolean> {
+	if (!paper?.template_id) return false
+	const { data } = await supabase
+		.from('ia_paper_templates')
+		.select('exam_scope')
+		.eq('id', paper.template_id)
+		.maybeSingle()
+	return data?.exam_scope === 'ese'
+}

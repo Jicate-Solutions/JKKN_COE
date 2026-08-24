@@ -345,10 +345,20 @@ export default function CreateCourseOfferingPage() {
 		}
 	}, [])
 
+	// ── MyJKKN institution ids of the selected institution ──
+	// Kept as a stable string key so program fetching only re-runs when the ids
+	// really change — not every time the institutions arrays get a new reference.
+	const myjkknIdsKey = useMemo(() => {
+		if (!institutionsId) return ''
+		const inst = institutions.find(i => i.id === institutionsId)
+			|| (availableInstitutions as any[] | undefined)?.find((i: any) => i.id === institutionsId)
+		const ids = (inst?.myjkkn_institution_ids || []) as string[]
+		return ids.join(',')
+	}, [institutionsId, institutions, availableInstitutions])
+
 	// ── Fetch programs from MyJKKN ──
-	const fetchPrograms = useCallback(async (instId: string) => {
-		const inst = institutions.find(i => i.id === instId) || availableInstitutions?.find((i: any) => i.id === instId)
-		const myjkknIds = inst?.myjkkn_institution_ids || []
+	const fetchPrograms = useCallback(async (idsKey: string) => {
+		const myjkknIds = idsKey ? idsKey.split(',').filter(Boolean) : []
 		if (myjkknIds.length === 0) {
 			setPrograms([])
 			return
@@ -365,7 +375,7 @@ export default function CreateCourseOfferingPage() {
 			console.error('Failed to load programs:', e)
 			setPrograms([])
 		}
-	}, [institutions, availableInstitutions, fetchMyJKKNPrograms])
+	}, [fetchMyJKKNPrograms])
 
 	// ── Fetch regulations from course_mapping ──
 	const fetchRegulations = useCallback(async (instCode: string, progCode: string) => {
@@ -485,22 +495,43 @@ export default function CreateCourseOfferingPage() {
 		}
 	}, [contextInstitutionId, shouldFilter, mustSelectInstitution, institutions])
 
-	// Auto-set exam session from context
+	// Auto-set exam session from context — only while the user has not picked one,
+	// otherwise a refreshed session list would silently overwrite their choice.
 	useEffect(() => {
-		if (currentSession && examSessions.length > 0) {
-			const match = examSessions.find(s => s.id === currentSession.id)
-			if (match) {
-				setExamSessionId(match.id)
-				setSessionCode(match.session_code)
-			}
+		if (examSessionId) return
+		if (!currentSession || examSessions.length === 0) return
+		const match = examSessions.find(s => s.id === currentSession.id)
+		if (match) {
+			setExamSessionId(match.id)
+			setSessionCode(match.session_code)
 		}
-	}, [currentSession, examSessions])
+	}, [currentSession, examSessions, examSessionId])
 
-	// Fetch exam sessions + programs when institution changes
+	// ── Cascade resets ──
+	// These fire ONLY when the watched value actually changes. They must never be
+	// tied to callback identities: fetch callbacks get a new reference whenever the
+	// institutions/programs arrays are refetched in the background, and that would
+	// wipe the semesters and courses the user is working on — which looks exactly
+	// like the page reloading itself.
+	const prevInstitutionIdRef = useRef<string | null>(null)
+	const prevProgramKeyRef = useRef<string | null>(null)
+	const prevRegulationKeyRef = useRef<string | null>(null)
+
+	const clearSelections = useCallback(() => {
+		setSelectedSemesters(new Set())
+		setSelectedCourses({})
+		setCoursesBySemester({})
+		setExpandedSemesters(new Set())
+		setExistingOfferingsMap(new Map())
+		setInitialChecked({})
+	}, [])
+
+	// Institution changed → clear everything downstream
 	useEffect(() => {
-		if (!institutionsId) return
-		fetchExamSessions(institutionsId)
-		fetchPrograms(institutionsId)
+		const prev = prevInstitutionIdRef.current
+		if (prev === institutionsId) return
+		prevInstitutionIdRef.current = institutionsId
+		if (!prev) return // first resolution — nothing selected yet
 		setExamSessionId('')
 		setSessionCode('')
 		setProgramId('')
@@ -508,35 +539,50 @@ export default function CreateCourseOfferingPage() {
 		setRegulationCode('')
 		setRegulations([])
 		setSemesters([])
-		setSelectedSemesters(new Set())
-		setSelectedCourses({})
-		setCoursesBySemester({})
-		setExistingOfferingsMap(new Map())
-		setInitialChecked({})
-	}, [institutionsId, fetchExamSessions, fetchPrograms])
+		clearSelections()
+	}, [institutionsId, clearSelections])
 
-	// Fetch regulations when program changes
+	// Program changed → clear regulation and everything below it
+	useEffect(() => {
+		const key = `${institutionCode}|${programCode}`
+		const prev = prevProgramKeyRef.current
+		if (prev === key) return
+		prevProgramKeyRef.current = key
+		if (prev === null) return
+		setRegulationCode('')
+		setSemesters([])
+		clearSelections()
+	}, [institutionCode, programCode, clearSelections])
+
+	// Regulation changed → clear semester/course selections
+	useEffect(() => {
+		const key = `${institutionCode}|${programCode}|${regulationCode}`
+		const prev = prevRegulationKeyRef.current
+		if (prev === key) return
+		prevRegulationKeyRef.current = key
+		if (prev === null) return
+		clearSelections()
+	}, [institutionCode, programCode, regulationCode, clearSelections])
+
+	// ── Cascade fetches (never reset user state from here) ──
+	useEffect(() => {
+		if (!institutionsId) return
+		fetchExamSessions(institutionsId)
+	}, [institutionsId, fetchExamSessions])
+
+	useEffect(() => {
+		if (!institutionsId) return
+		fetchPrograms(myjkknIdsKey)
+	}, [institutionsId, myjkknIdsKey, fetchPrograms])
+
 	useEffect(() => {
 		if (!institutionCode || !programCode) return
 		fetchRegulations(institutionCode, programCode)
-		setRegulationCode('')
-		setSemesters([])
-		setSelectedSemesters(new Set())
-		setSelectedCourses({})
-		setCoursesBySemester({})
-		setExistingOfferingsMap(new Map())
-		setInitialChecked({})
 	}, [institutionCode, programCode, fetchRegulations])
 
-	// Fetch semesters when regulation changes
 	useEffect(() => {
 		if (!institutionCode || !programCode || !regulationCode) return
 		fetchSemesters(institutionCode, programCode, regulationCode)
-		setSelectedSemesters(new Set())
-		setSelectedCourses({})
-		setCoursesBySemester({})
-		setExistingOfferingsMap(new Map())
-		setInitialChecked({})
 	}, [institutionCode, programCode, regulationCode, fetchSemesters])
 
 	// ── Handlers ──

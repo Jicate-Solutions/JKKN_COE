@@ -77,24 +77,28 @@ export async function POST(request: Request) {
 			// The paper is the same for everyone, but the rate depends on each
 			// learner's own fee tier - a backlog holder can sit in a different
 			// programme than the one the offering belongs to.
-			const rateByLevel = new Map<string, number | null>()
+			// Keyed by tier AND programme - a programme carrying its own rate is
+			// priced differently from the rest of its tier.
+			const rateByScope = new Map<string, number | null>()
 
 			for (const candidate of candidates) {
-				const level = resolveProgramLevel(candidate.program_code || offering.program_code, book.levelByProgram)
+				const programCode = candidate.program_code || offering.program_code
+				const level = resolveProgramLevel(programCode, book.levelByProgram)
+				const scope = `${level}|${String(programCode || '').trim().toUpperCase()}`
 
-				if (!rateByLevel.has(level)) {
+				if (!rateByScope.has(scope)) {
 					const priced = priceCourseList(book, level, [{
 						course_code: offering.course_code,
 						course_category: offeringCourse?.course_category ?? null,
 						exam_duration: offeringCourse?.exam_duration ?? null,
-					}])
-					rateByLevel.set(level, priced.get(offering.course_code.trim().toUpperCase())?.amount ?? null)
+					}], programCode)
+					rateByScope.set(scope, priced.get(offering.course_code.trim().toUpperCase())?.amount ?? null)
 				}
 
-				const paperFee = rateByLevel.get(level) ?? null
+				const paperFee = rateByScope.get(scope) ?? null
 				const learnerCharge = candidate.has_session_registration
 					? 0
-					: learnerChargeLines(book, level).reduce((sum, l) => sum + l.amount, 0)
+					: learnerChargeLines(book, level, programCode).reduce((sum, l) => sum + l.amount, 0)
 				const rowFine = candidate.is_eligible ? fine : 0
 
 				candidate.fee_level = level

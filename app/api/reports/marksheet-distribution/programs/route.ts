@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
+import { fetchAllMyJKKNPrograms } from '@/services/myjkkn-service'
 
 export async function GET(request: NextRequest) {
 	try {
@@ -25,13 +26,6 @@ export async function GET(request: NextRequest) {
 			return NextResponse.json({ error: 'Institution not found' }, { status: 404 })
 		}
 
-		console.log('[Marksheet Distribution Programs API] Institution found:', {
-			id: institution.id,
-			code: institution.institution_code,
-			myjkkn_ids: institution.myjkkn_institution_ids,
-			myjkkn_ids_type: typeof institution.myjkkn_institution_ids
-		})
-
 		// Use myjkkn_institution_ids to fetch programs from MyJKKN API
 		// For CAS, this includes both Aided and Self-financed institution IDs
 		const myjkknInstitutionIds: string[] = institution.myjkkn_institution_ids || []
@@ -41,64 +35,53 @@ export async function GET(request: NextRequest) {
 			return NextResponse.json({ programs: [] })
 		}
 
-		console.log('[Marksheet Distribution Programs API] Using MyJKKN institution IDs:', myjkknInstitutionIds, 'count:', myjkknInstitutionIds.length)
+		console.log('[Marksheet Distribution Programs API] Using MyJKKN institution IDs:', myjkknInstitutionIds)
 
-		// Fetch programs from MyJKKN API for each institution ID
-		const allPrograms: any[] = []
+		// Call the MyJKKN service directly — going back out over HTTP to our own
+		// /api/myjkkn/programs made this dropdown depend on NEXT_PUBLIC_APP_URL being
+		// correct AND on the self-request surviving the middleware rate limiter (all
+		// server-side self-calls share one IP bucket). Either failing silently emptied
+		// the list and the page fell back to the sparse local `programs` table.
+		const results = await Promise.all(
+			myjkknInstitutionIds.map(async (myjkknInstId) => {
+				try {
+					// all: true paginates — a single page would truncate larger institutions
+					const programs = await fetchAllMyJKKNPrograms({
+						all: true,
+						limit: 200,
+						is_active: true,
+						institution_id: myjkknInstId,
+					})
 
-		for (const myjkknInstId of myjkknInstitutionIds) {
-			try {
-				console.log(`[Marksheet Distribution Programs API] Fetching programs for MyJKKN inst: ${myjkknInstId}`)
+					// Client-side filter by institution_id (MyJKKN API may not filter server-side)
+					const filtered = programs.filter(
+						(p: any) => p.institution_id === myjkknInstId && p.is_active !== false
+					)
 
-				// Use the internal proxy endpoint (same pattern as exam-attendance dropdowns)
-				const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'
-				const params = new URLSearchParams({
-					limit: '100',
-					is_active: 'true',
-					institution_id: myjkknInstId
-				})
-
-				const res = await fetch(`${baseUrl}/api/myjkkn/programs?${params.toString()}`)
-
-				if (!res.ok) {
-					console.error(`[Marksheet Distribution Programs API] HTTP error ${res.status} for inst ${myjkknInstId}`)
-					continue
+					console.log(`[Marksheet Distribution Programs API] Programs found for ${myjkknInstId}: ${filtered.length}`)
+					return filtered
+				} catch (error) {
+					console.error(`[Marksheet Distribution Programs API] Error fetching programs for inst ${myjkknInstId}:`, error)
+					return []
 				}
+			})
+		)
 
-				const response = await res.json()
-				console.log(`[Marksheet Distribution Programs API] Response for ${myjkknInstId}:`, {
-					hasData: !!response?.data,
-					dataLength: response?.data?.length,
-					responseType: typeof response
-				})
-
-				const programs = response.data || response || []
-
-				// Client-side filter by institution_id (MyJKKN API may not filter server-side)
-				const filteredPrograms = Array.isArray(programs)
-					? programs.filter((p: any) => p.institution_id === myjkknInstId && p.is_active !== false)
-					: []
-
-				console.log(`[Marksheet Distribution Programs API] Programs found for ${myjkknInstId}:`, filteredPrograms.length)
-				allPrograms.push(...filteredPrograms)
-			} catch (error) {
-				console.error(`[Marksheet Distribution Programs API] Error fetching programs for inst ${myjkknInstId}:`, error)
-			}
-		}
+		const allPrograms = results.flat()
 
 		// Deduplicate by program_code (MyJKKN uses program_id as the CODE field, not UUID!)
 		// Programs with same code exist in both Aided and Self institutions
 		const programMap = new Map<string, any>()
 		for (const prog of allPrograms) {
 			// MyJKKN returns program_id as the CODE (e.g., "UEN"), not as a UUID
-			const code = prog.program_id || prog.program_code
+			const code = (prog as any).program_id || (prog as any).program_code
 			if (code && !programMap.has(code)) {
 				programMap.set(code, {
 					id: prog.id,
 					program_code: code,
-					program_name: prog.program_name || prog.name || code,
-					program_order: prog.program_order ?? 999,
-					total_semesters: prog.total_semesters || 6
+					program_name: prog.program_name || (prog as any).name || code,
+					program_order: (prog as any).program_order ?? 999,
+					total_semesters: (prog as any).total_semesters || 6,
 				})
 			}
 		}

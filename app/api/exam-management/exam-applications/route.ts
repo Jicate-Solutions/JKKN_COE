@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
 import { buildExamApplicationCourses } from '@/lib/exam-applications/course-list'
+import { buildRegistrationPricer } from '@/lib/exam-fee/calculate'
 import type { ExamApplicationSubmitResult } from '@/types/exam-applications'
 
 /**
@@ -111,6 +112,16 @@ export async function POST(request: Request) {
 
 		const byCode = new Map(courses.map(c => [c.key, c]))
 
+		// Per-paper exam fee at the learner's programme tier, from exam_fee_master.
+		// Mark statement / application / late fine are once-per-session charges and
+		// are deliberately not stamped on a paper row.
+		const pricer = await buildRegistrationPricer(supabase, {
+			institutions_id,
+			examination_session_id,
+			course_codes: courses.map(c => c.course_code),
+			courses,
+		})
+
 		// ---------------------------------------------------------
 		// 2. Resolve denormalized code columns once
 		// ---------------------------------------------------------
@@ -189,6 +200,7 @@ export async function POST(request: Request) {
 				is_regular: !course.is_backlog,
 				attempt_number: course.attempt_number,
 				fee_paid: false,
+				fee_amount: pricer.priceFor(course.program_code || program_code, course.course_code),
 			}
 
 			const { data: inserted, error: insertError } = await supabase

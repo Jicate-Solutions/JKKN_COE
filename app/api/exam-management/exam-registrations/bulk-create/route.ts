@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
+import { buildRegistrationPricer } from '@/lib/exam-fee/calculate'
 
 interface BulkLearner {
 	student_id: string
@@ -117,6 +118,15 @@ export async function POST(request: Request) {
 		const isRegular = body.is_regular ?? true
 		const attempt = body.attempt_number ?? 1
 
+		// Per-paper exam fee from exam_fee_master, resolved at the programme's tier.
+		// The course master (category + exam duration) is fetched inside the pricer,
+		// since the bulk payload carries only course codes.
+		const pricer = await buildRegistrationPricer(supabase, {
+			institutions_id: body.institutions_id,
+			examination_session_id: body.examination_session_id,
+			course_codes: body.courses.map(c => c.course_code),
+		})
+
 		const payloads: any[] = []
 		let skipped = 0
 		const skippedSamples: Array<{ register_no: string; course_code: string }> = []
@@ -155,6 +165,7 @@ export async function POST(request: Request) {
 				is_regular: isRegular,
 				attempt_number: attempt,
 				fee_paid: false,
+				fee_amount: pricer.priceFor(body.program_code, course.course_code),
 			})
 		}
 

@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
 import { withExternalAuth } from '@/lib/api-auth/middleware'
 import type { ExternalApiContext } from '@/types/api-management'
-import { resolveInstitutionForKey } from '@/lib/ia/v1-helpers'
+import { resolveInstitutionForKey, eseTemplateIds, excludeEsePapers, ESE_NOT_AVAILABLE } from '@/lib/ia/v1-helpers'
 import { scaffoldQuestions } from '@/lib/ia/paper-scaffold'
 import { formatApplicability, pickTemplateForCourse } from '@/lib/ia/course-type-applicability'
 
@@ -40,6 +40,9 @@ export const GET = withExternalAuth(async (request: Request, context: ExternalAp
 	}
 	// author_id filter — papers stamped to a specific MyJKKN staff profile
 	if (searchParams.get('author_id')) query = query.eq('author_id', searchParams.get('author_id'))
+
+	// End-semester papers belong to the examiner portal, never to an API key.
+	query = excludeEsePapers(query, await eseTemplateIds(supabase, inst.id))
 
 	const { data, error } = await query.range(0, 9999)
 	if (error) return NextResponse.json({ error: error.message }, { status: 500 })
@@ -89,6 +92,10 @@ export const POST = withExternalAuth(async (request: Request, context: ExternalA
 	let templates: any[] = []
 	if (template_id) {
 		const { data } = await supabase.from('ia_paper_templates').select('*, ia_template_parts(*)').eq('id', template_id).limit(1)
+		// An explicit id must not smuggle an ESE template past the scope filter below.
+		if (data?.[0]?.exam_scope === 'ese') {
+			return NextResponse.json({ error: ESE_NOT_AVAILABLE }, { status: 400 })
+		}
 		templates = data || []
 	} else {
 		const { data } = await supabase

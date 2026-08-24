@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
 import { withExternalAuth } from '@/lib/api-auth/middleware'
 import type { ExternalApiContext } from '@/types/api-management'
-import { resolveInstitutionForKey } from '@/lib/ia/v1-helpers'
+import { resolveInstitutionForKey, V1_ALLOWED_SCOPES, ESE_NOT_AVAILABLE } from '@/lib/ia/v1-helpers'
 
 /** /api/v1/ia/paper-templates — configurable CIA paper templates + parts. */
 
@@ -42,8 +42,13 @@ export const GET = withExternalAuth(async (request: Request, context: ExternalAp
 		.select('*, ia_template_parts(*)')
 		.eq('institutions_id', inst.id)
 		.order('created_at', { ascending: false })
+	// This API serves internal (CIA) authoring only — ESE formats stay hidden.
+	query = query.in('exam_scope', V1_ALLOWED_SCOPES as unknown as string[])
 	const scope = searchParams.get('exam_scope')
-	if (scope && scope !== 'all') query = query.or(`exam_scope.eq.${scope},exam_scope.eq.all`)
+	if (scope && scope !== 'all') {
+		if (scope === 'ese') return NextResponse.json({ error: ESE_NOT_AVAILABLE }, { status: 400 })
+		query = query.or(`exam_scope.eq.${scope},exam_scope.eq.all`)
+	}
 	if (searchParams.get('status')) query = query.eq('status', searchParams.get('status'))
 
 	const { data, error } = await query
@@ -83,6 +88,11 @@ export const POST = withExternalAuth(async (request: Request, context: ExternalA
 		.limit(1)
 		.maybeSingle()
 	const versionNumber = existing ? existing.version_number + 1 : 1
+
+	// Creating an end-semester format is a CoE decision, not an API one.
+	if (body.exam_scope === 'ese') {
+		return NextResponse.json({ error: ESE_NOT_AVAILABLE }, { status: 400 })
+	}
 
 	const { data: template, error: tErr } = await supabase
 		.from('ia_paper_templates')

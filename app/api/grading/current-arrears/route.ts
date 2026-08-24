@@ -1,7 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
 
-const BATCH_SIZE = 1000
+// PostgREST caps a single page at its own db-max-rows (1000 on this project)
+// no matter how wide a range we ask for, so pages are fetched in PARALLEL
+// rather than trying to pull more rows per request.
+const PAGE_SIZE = 1000
+const PAGE_CONCURRENCY = 6
 
 const MONTH_TOKENS: Record<string, number> = {
 	JAN: 0, JANUARY: 0, FEB: 1, FEBRUARY: 1, MAR: 2, MARCH: 2,
@@ -84,18 +88,23 @@ export async function GET(request: NextRequest) {
 	const programCode = searchParams.get('programCode')
 	const programId = searchParams.get('programId')
 	const semestersParam = searchParams.get('semesters') // CSV of semester numbers
+	const sessionIdsParam = searchParams.get('sessionIds') // CSV of session UUIDs; empty = ALL sessions
 	const upToSessionId = searchParams.get('upToSessionId') // optional "as of" cutoff
 
 	if (!institutionId) {
 		return NextResponse.json({ error: 'institutionId is required' }, { status: 400 })
 	}
-	if (!programCode && !programId) {
-		return NextResponse.json({ error: 'Either programCode or programId is required' }, { status: 400 })
-	}
 
 	const semesterFilter = semestersParam
 		? semestersParam.split(',').map(s => parseInt(s.trim())).filter(n => !isNaN(n))
 		: []
+
+	// Which sessions count. An empty set means every session — the default for
+	// the Overall view. Narrowing it restricts BOTH the pass check and the
+	// arrear detection to the chosen sessions.
+	const sessionFilter = new Set(
+		(sessionIdsParam || '').split(',').map(v => v.trim()).filter(Boolean)
+	)
 
 	try {
 		// ── Session catalogue: ordering decides "first" vs "latest" attempt ──
@@ -113,8 +122,13 @@ export async function GET(request: NextRequest) {
 			return (a.session_code || '').localeCompare(b.session_code || '')
 		})
 
+		// Sessions actually in scope for this run (used for ranking and stats)
+		const scopedSessions = sessionFilter.size > 0
+			? orderedSessions.filter((s: any) => sessionFilter.has(s.id))
+			: orderedSessions
+
 		const sessionMeta: Record<string, { code: string; name: string; rank: number }> = {}
-		orderedSessions.forEach((s: any, idx: number) => {
+		scopedSessions.forEach((s: any, idx: number) => {
 			sessionMeta[s.id] = {
 				code: s.session_code || '',
 				name: s.session_name || '',
@@ -147,7 +161,6 @@ export async function GET(request: NextRequest) {
 			courses:course_id (
 				course_code,
 				course_name,
-				course_title,
 				credit,
 				evaluation_type,
 				internal_pass_mark,
@@ -163,27 +176,60 @@ export async function GET(request: NextRequest) {
 			)
 		`
 
-		const allAttempts: AttemptRow[] = []
-		for (let offset = 0; ; offset += BATCH_SIZE) {
-			let query = supabase
+		// No programCode/programId = EVERY programme in the institution.
+		// Ordering by the unique `id` keeps pages disjoint and stable, so they
+		// can be fetched concurrently once we know how many rows there are.
+		const withProgramFilter = (q: any) => {
+			if (programCode) return q.eq('program_code', programCode)
+			if (programId) return q.eq('program_id', programId)
+			return q
+		}
+
+		const buildPageQuery = () => withProgramFilter(
+			supabase
 				.from('final_marks')
 				.select(selectClause)
 				.eq('institutions_id', institutionId)
 				.eq('is_active', true)
 				.order('id', { ascending: true })
-				.range(offset, offset + BATCH_SIZE - 1)
+		)
 
-			if (programCode) {
-				query = query.eq('program_code', programCode)
-			} else if (programId) {
-				query = query.eq('program_id', programId)
+		const { count: totalRows } = await withProgramFilter(
+			supabase
+				.from('final_marks')
+				.select('id', { count: 'exact', head: true })
+				.eq('institutions_id', institutionId)
+				.eq('is_active', true)
+		)
+
+		const allAttempts: AttemptRow[] = []
+
+		if (typeof totalRows === 'number' && totalRows > 0) {
+			const offsets: number[] = []
+			for (let o = 0; o < totalRows; o += PAGE_SIZE) offsets.push(o)
+
+			for (let i = 0; i < offsets.length; i += PAGE_CONCURRENCY) {
+				const wave = offsets.slice(i, i + PAGE_CONCURRENCY)
+				const results = await Promise.all(
+					wave.map(o => buildPageQuery().range(o, o + PAGE_SIZE - 1))
+				)
+				for (const { data, error } of results) {
+					if (error) throw error
+					if (data?.length) allAttempts.push(...(data as unknown as AttemptRow[]))
+				}
 			}
+		}
 
-			const { data, error } = await query
+		// Drain anything the count missed (null count, or rows added mid-scan).
+		// Stop only on an EMPTY page — a short page does not mean the end of the
+		// data, since the server decides the page size, not us.
+		let offset = allAttempts.length
+		for (;;) {
+			const { data, error } = await buildPageQuery().range(offset, offset + PAGE_SIZE - 1)
 			if (error) throw error
 			if (!data || data.length === 0) break
 			allAttempts.push(...(data as unknown as AttemptRow[]))
-			if (data.length < BATCH_SIZE) break
+			offset += data.length
 		}
 
 		// ── Absent detection (same rules as pass % / galley / all-clear reports) ──
@@ -201,7 +247,10 @@ export async function GET(request: NextRequest) {
 		const attemptGroups: Record<string, AttemptRow[]> = {}
 		allAttempts.forEach(m => {
 			if (!m.student_id || !m.course_id) return
-			const rank = sessionMeta[m.examination_session_id]?.rank ?? Number.MAX_SAFE_INTEGER - 1
+			const meta = sessionMeta[m.examination_session_id]
+			// No meta = session outside the selected subset (or another institution)
+			if (!meta) return
+			const rank = meta.rank
 			if (rank > cutoffRank) return // attempt is after the "as of" session
 			// Group by course CODE (not id) so a re-registered paper under a
 			// newer regulation still counts as the same paper — a pass there
@@ -212,8 +261,8 @@ export async function GET(request: NextRequest) {
 			attemptGroups[key].push({ ...m, __rank: rank })
 		})
 
-		const latestRank = orderedSessions.length > 0
-			? Math.min(orderedSessions.length - 1, cutoffRank === Number.MAX_SAFE_INTEGER ? orderedSessions.length - 1 : cutoffRank)
+		const latestRank = scopedSessions.length > 0
+			? Math.min(scopedSessions.length - 1, cutoffRank === Number.MAX_SAFE_INTEGER ? scopedSessions.length - 1 : cutoffRank)
 			: 0
 
 		const arrears: any[] = []
@@ -276,7 +325,7 @@ export async function GET(request: NextRequest) {
 				semester,
 				course_id: latest.course_id,
 				course_code: course.course_code || '',
-				course_name: course.course_name || course.course_title || '',
+				course_name: course.course_name || '',
 				course_credits: credits,
 				evaluation_type: course.evaluation_type || 'CIA + ESE',
 
@@ -360,7 +409,7 @@ export async function GET(request: NextRequest) {
 			total_credits_pending: arrears.reduce((sum, a) => sum + (a.course_credits || 0), 0),
 			cleared_papers: clearedPapers,
 			recovered_papers: recoveredPapers,
-			sessions_covered: orderedSessions.length,
+			sessions_covered: scopedSessions.length,
 			attempts_scanned: allAttempts.length,
 			failure_reasons: {
 				Internal: arrears.filter(a => a.failure_reason === 'Internal').length,
@@ -375,16 +424,19 @@ export async function GET(request: NextRequest) {
 			arrears,
 			learners,
 			statistics,
-			sessions: orderedSessions.map((s: any) => ({
+			sessions: scopedSessions.map((s: any) => ({
 				id: s.id,
 				code: s.session_code,
 				name: s.session_name
 			}))
 		})
-	} catch (error) {
+	} catch (error: any) {
 		console.error('[current-arrears] error:', error)
+		const message = error?.message || error?.error_description || 'Failed to compute overall arrears'
 		return NextResponse.json({
-			error: error instanceof Error ? error.message : 'Failed to compute overall arrears'
+			error: message,
+			code: error?.code,
+			details: error?.details || error?.hint
 		}, { status: 500 })
 	}
 }

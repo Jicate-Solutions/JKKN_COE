@@ -19,6 +19,13 @@ const FEE_TYPES = ['CREDIT', 'DEBIT']
 const VALID_BASES = Object.keys(CALC_BASIS_LABELS) as CalcBasis[]
 const VALID_LEVELS: string[] = [...PROGRAM_LEVELS]
 
+// A rate can be scoped to one programme. Empty means the tier rate, which every
+// programme at that level falls back to.
+function normaliseProgramCode(value: unknown): string | null {
+	const code = String(value ?? '').trim().toUpperCase()
+	return code || null
+}
+
 // Validate a single fee line against the catalog. Returns an error string or null.
 function validateFeeLine(line: any): string | null {
 	if (!line || typeof line !== 'object') return 'Invalid fee line'
@@ -37,6 +44,9 @@ function validateFeeLine(line: any): string | null {
 
 	if (line.program_level != null && !VALID_LEVELS.includes(line.program_level))
 		return `program_level must be one of ${VALID_LEVELS.join(', ')} or empty`
+
+	const programCode = normaliseProgramCode(line.program_code)
+	if (programCode && programCode.length > 50) return 'program_code must be 50 characters or fewer'
 
 	const amount = Number(line.amount)
 	if (!Number.isFinite(amount) || amount < 0) return 'amount must be a non-negative number'
@@ -57,6 +67,7 @@ export async function GET(request: Request) {
 	const institutionsId = searchParams.get('institutions_id')
 	const feeType = searchParams.get('fee_type')
 	const category = searchParams.get('category')
+	const programCode = searchParams.get('program_code')
 	const isActive = searchParams.get('is_active')
 
 	try {
@@ -70,6 +81,7 @@ export async function GET(request: Request) {
 		if (institutionsId) query = query.eq('institutions_id', institutionsId)
 		if (feeType) query = query.eq('fee_type', feeType)
 		if (category) query = query.eq('category', category)
+		if (programCode) query = query.eq('program_code', programCode.trim().toUpperCase())
 		if (isActive !== null && isActive !== undefined) query = query.eq('is_active', isActive === 'true')
 
 		const { data, error } = await query
@@ -90,6 +102,7 @@ export async function GET(request: Request) {
 // POST — create one or many fee rows
 //   Accepts a single object or { items: [...] }.
 //   Re-using the same (institution, fee key, effective_from) upserts the amount.
+//   A line naming a programme is stored as its own rate, overriding the tier.
 // =====================================================
 export async function POST(request: Request) {
 	const supabase = getSupabaseServer()
@@ -123,6 +136,7 @@ export async function POST(request: Request) {
 			const category = findCategory(line.category)!
 			const sub = findSubCategory(line.category, line.sub_category)!
 			const level = line.program_level || null
+			const programCode = normaliseProgramCode(line.program_code)
 
 			rows.push({
 				institutions_id: line.institutions_id,
@@ -131,9 +145,10 @@ export async function POST(request: Request) {
 				category: line.category,
 				sub_category: line.sub_category,
 				program_level: level,
+				program_code: programCode,
 				label:
 					line.label ||
-					[level || '', category.label, sub.label].filter(Boolean).join(' — '),
+					[programCode || level || '', category.label, sub.label].filter(Boolean).join(' — '),
 				calc_basis: line.calc_basis,
 				amount: Number(line.amount),
 				currency: line.currency || 'INR',
@@ -148,7 +163,7 @@ export async function POST(request: Request) {
 			.from('exam_fee_master')
 			.upsert(rows, {
 				onConflict:
-					'institutions_id,fee_type,category,sub_category,program_level,calc_basis,effective_from',
+					'institutions_id,fee_type,category,sub_category,program_level,program_code,calc_basis,effective_from',
 			})
 			.select()
 

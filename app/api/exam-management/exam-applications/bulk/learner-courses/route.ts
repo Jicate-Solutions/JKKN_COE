@@ -74,7 +74,7 @@ export async function POST(request: Request) {
 
 		for (const learner of data) {
 			const level = resolveProgramLevel(learner.program_code, book.levelByProgram)
-			const priced = priceCourseList(book, level, learner.courses)
+			const priced = priceCourseList(book, level, learner.courses, learner.program_code)
 
 			const paper_lines: FeeLineItem[] = []
 			const unpriced_courses: string[] = []
@@ -100,7 +100,8 @@ export async function POST(request: Request) {
 
 			// Mark statement + application are charged once per session, so a learner
 			// who already holds registrations this session has paid them already.
-			const learner_lines = learner.registered_count > 0 ? [] : learnerChargeLines(book, level)
+			const learner_lines =
+				learner.registered_count > 0 ? [] : learnerChargeLines(book, level, learner.program_code)
 
 			const paper_total = paper_lines.reduce((sum, l) => sum + l.amount, 0)
 			const learner_total = learner_lines.reduce((sum, l) => sum + l.amount, 0)
