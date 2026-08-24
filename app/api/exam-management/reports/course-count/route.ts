@@ -99,7 +99,8 @@ export async function GET(request: NextRequest) {
 				`)
 				.eq('institutions_id', institutionId)
 				.eq('examination_session_id', sessionId)
-				.eq('fee_paid', true)
+				// fee_paid is not filtered on - the flag is unreliable here, and gating on
+				// it undercounted the registrations this report exists to total.
 				.range(page * pageSize, (page + 1) * pageSize - 1)
 
 			if (pageError) {

@@ -4,6 +4,7 @@ import { buildBulkExamApplicationCourses, learnerKey } from '@/lib/exam-applicat
 import { buildRegistrationPricer } from '@/lib/exam-fee/calculate'
 import {
 	chargeKey,
+	hasSessionChargeColumns,
 	loadAlreadyChargedKeys,
 	sessionChargeFor,
 } from '@/lib/exam-applications/session-charges'
@@ -173,6 +174,8 @@ export async function POST(request: Request) {
 		// ── 5. Validate each pair and build the insert rows ──
 		const results: BulkApplicationResult[] = []
 		const payloads: any[] = []
+		/** Existing registrations that only need moving to 'Applied' */
+		const updatePayloads: any[] = []
 		const backlogIdByRow: (string | null)[] = []
 		const now = new Date().toISOString()
 		const today = now.slice(0, 10)
@@ -197,17 +200,37 @@ export async function POST(request: Request) {
 				fail('Course is not part of this learner application list')
 				continue
 			}
-			if (course.is_registered) {
+			if (!course.is_eligible || !course.course_offering_id) {
+				// Covers 'Already Applied' and the blocked registration states - the merge
+				// engine owns that decision, so nothing is re-applied here by accident.
+				const alreadyDone = course.eligibility_status === 'Already Applied'
 				results.push({
 					register_number: item.register_number,
 					course_code: item.course_code,
-					status: 'skipped',
-					reason: 'Already registered in this session',
+					status: alreadyDone ? 'skipped' : 'failed',
+					reason: course.eligibility_reason || `Not eligible (${course.eligibility_status})`,
 				})
 				continue
 			}
-			if (!course.is_eligible || !course.course_offering_id) {
-				fail(course.eligibility_reason || `Not eligible (${course.eligibility_status})`)
+
+			// The learner is already registered for this paper but has never applied for
+			// it, so the existing row is moved to 'Applied' instead of inserting a second
+			// registration for the same (learner, paper) - which the unique constraint
+			// would reject anyway, losing the application entirely.
+			if (course.requires_update && course.registration_id) {
+				updatePayloads.push({
+					id: course.registration_id,
+					register_number: item.register_number,
+					course_code: course.course_code,
+					program_code: course.program_code || item.program_code,
+					student_id: item.student_id,
+					backlog_id: course.is_backlog ? course.backlog_id : null,
+					patch: {
+						registration_status: APPLICATION_STATUS,
+						fee_amount: pricer.priceFor(course.program_code || item.program_code, course.course_code),
+						updated_at: now,
+					},
+				})
 				continue
 			}
 
@@ -223,16 +246,11 @@ export async function POST(request: Request) {
 				course_code: course.course_code,
 				program_code: course.program_code || item.program_code,
 				registration_date: now,
-				applied_date: today,
 				registration_status: APPLICATION_STATUS,
 				is_regular: !course.is_backlog,
 				attempt_number: course.attempt_number,
 				fee_paid: false,
 				fee_amount: pricer.priceFor(course.program_code || item.program_code, course.course_code),
-				// Stamped below on one anchor row per learner - see the charge pass.
-				application_fee: 0,
-				mark_statement_fee: 0,
-				late_fine: 0,
 			})
 			backlogIdByRow.push(course.is_backlog ? course.backlog_id : null)
 		}
@@ -245,32 +263,69 @@ export async function POST(request: Request) {
 		// learner's registrations gives the true amount owed. A learner who was
 		// already charged in this session (their current papers, or an earlier arrear
 		// batch) is skipped entirely.
-		{
+		//
+		// Skipped wholesale while the columns are missing: naming a column PostgREST
+		// has never seen rejects the entire insert, which would fail every arrear for
+		// a reason unrelated to the learner.
+		if (await hasSessionChargeColumns(supabase)) {
+			for (const row of payloads) {
+				row.applied_date = today
+				row.application_fee = 0
+				row.mark_statement_fee = 0
+				row.late_fine = 0
+			}
+			for (const row of updatePayloads) {
+				row.patch.applied_date = today
+				row.patch.application_fee = 0
+				row.patch.mark_statement_fee = 0
+				row.patch.late_fine = 0
+			}
+
+			// One learner can be all inserts, all updates, or a mix, so the anchor is
+			// chosen across the union of both buckets - otherwise a learner whose papers
+			// are all updates would never be charged, or one with both would be twice.
+			const chargeable: Array<{ student_id: any; register_number: any; program_code: any; apply: (c: { application_fee: number; mark_statement_fee: number; late_fine: number }) => void }> = [
+				...payloads.map(row => ({
+					student_id: row.student_id,
+					register_number: row.stu_register_no,
+					program_code: row.program_code,
+					apply: (c: any) => {
+						row.application_fee = c.application_fee
+						row.mark_statement_fee = c.mark_statement_fee
+						row.late_fine = c.late_fine
+					},
+				})),
+				...updatePayloads.map(row => ({
+					student_id: row.student_id,
+					register_number: row.register_number,
+					program_code: row.program_code,
+					apply: (c: any) => {
+						row.patch.application_fee = c.application_fee
+						row.patch.mark_statement_fee = c.mark_statement_fee
+						row.patch.late_fine = c.late_fine
+					},
+				})),
+			]
+
 			const alreadyCharged = await loadAlreadyChargedKeys(supabase, {
 				institutions_id,
 				examination_session_id,
-				registerNumbers: payloads.map(p => String(p.stu_register_no || '')).filter(Boolean),
+				registerNumbers: chargeable.map(r => String(r.register_number || '')).filter(Boolean),
 			})
 
-			const anchorByLearner = new Map<string, any>()
-			for (const row of payloads) {
-				const key = chargeKey({ student_id: row.student_id, register_number: row.stu_register_no })
-				if (anchorByLearner.has(key)) continue
-				if (alreadyCharged.has(key) || (row.student_id && alreadyCharged.has(`sid:${row.student_id}`))) {
-					// Mark as handled so a later row of the same learner is not charged.
-					anchorByLearner.set(key, null)
-					continue
-				}
-				anchorByLearner.set(key, row)
+			const anchoredLearners = new Set<string>()
+			for (const row of chargeable) {
+				const key = chargeKey({ student_id: row.student_id, register_number: row.register_number })
+				if (anchoredLearners.has(key)) continue
+				anchoredLearners.add(key)
+				if (alreadyCharged.has(key) || (row.student_id && alreadyCharged.has(`sid:${row.student_id}`))) continue
 
-				const charge = sessionChargeFor(
+				row.apply(sessionChargeFor(
 					pricer.book,
 					pricer.levelFor(row.program_code),
-					today
-				)
-				row.application_fee = charge.application_fee
-				row.mark_statement_fee = charge.mark_statement_fee
-				row.late_fine = charge.late_fine
+					today,
+					row.program_code
+				))
 			}
 		}
 
@@ -322,6 +377,47 @@ export async function POST(request: Request) {
 			}
 		}
 
+		// ── 6b. Move the already-registered papers to 'Applied' ──
+		// Rows sharing an identical patch are collapsed into one UPDATE; the anchor
+		// rows carrying the once-per-session charges each get their own.
+		{
+			const groups = new Map<string, { patch: Record<string, any>; rows: any[] }>()
+			for (const row of updatePayloads) {
+				const signature = JSON.stringify(row.patch)
+				const group = groups.get(signature)
+				if (group) group.rows.push(row)
+				else groups.set(signature, { patch: row.patch, rows: [row] })
+			}
+
+			for (const group of groups.values()) {
+				for (let i = 0; i < group.rows.length; i += INSERT_BATCH) {
+					const batch = group.rows.slice(i, i + INSERT_BATCH)
+					const { error } = await supabase
+						.from('exam_registrations')
+						.update(group.patch)
+						.in('id', batch.map(r => r.id))
+
+					if (error) {
+						console.error('[exam-applications:bulk] batch update error:', error)
+						for (const row of batch) {
+							results.push({
+								register_number: row.register_number,
+								course_code: row.course_code,
+								status: 'failed',
+								reason: error.message || 'Failed to apply the existing registration',
+							})
+						}
+						continue
+					}
+
+					for (const row of batch) {
+						results.push({ register_number: row.register_number, course_code: row.course_code, status: 'created' })
+						if (row.backlog_id) backlogIdsToFlag.push(row.backlog_id)
+					}
+				}
+			}
+		}
+
 		// ── 7. Flag the backlogs that were applied for as arrear-registered ──
 		if (backlogIdsToFlag.length > 0) {
 			const uniqueBacklogIds = [...new Set(backlogIdsToFlag)]
@@ -350,13 +446,21 @@ export async function POST(request: Request) {
 
 		const parts: string[] = []
 		if (created > 0) parts.push(`${created} applied`)
-		if (skipped > 0) parts.push(`${skipped} already registered (skipped)`)
+		if (skipped > 0) parts.push(`${skipped} already applied (skipped)`)
 		if (failed > 0) parts.push(`${failed} rejected`)
 
 		return NextResponse.json(
 			{
 				success: failed === 0,
-				summary: { total: results.length, created, skipped, failed },
+				summary: {
+					total: results.length,
+					created,
+					skipped,
+					failed,
+					// How many of the applied papers reused an existing registration
+					// rather than creating one.
+					updated_existing: updatePayloads.length,
+				},
 				// Only the rejected rows are worth sending back in full - a 5,000 row
 				// success list would dwarf the response for no benefit.
 				results: results.filter(r => r.status !== 'created').slice(0, 200),

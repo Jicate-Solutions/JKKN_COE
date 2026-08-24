@@ -1,5 +1,14 @@
 import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
+import {
+	learnerChargeLines,
+	loadFeeRateBook,
+	priceCourseList,
+	resolveProgramLevel,
+	type CourseFeeInput,
+	type PaperFeeHead,
+} from '@/lib/exam-fee/calculate'
+import type { ProgramLevel } from '@/lib/exam-fee-catalog'
 
 // Helper: fetch all pages from Supabase in parallel batches
 async function fetchAllPaginated(
@@ -245,7 +254,7 @@ export async function GET(request: Request) {
 			fetchBatchedIn(courseOfferingIds, (batch) =>
 				supabase
 					.from('course_offerings')
-					.select('id, course_code, program_code, semester, course_id, courses:course_id(course_name, board_id, board_code, course_category)')
+					.select('id, course_code, program_code, semester, course_id, courses:course_id(course_name, board_id, board_code, course_category, exam_duration)')
 					.in('id', batch)
 			),
 			// All boards
@@ -397,6 +406,7 @@ export async function GET(request: Request) {
 					semester: o.semester,
 					course_name: (o.courses as any)?.course_name || null,
 					course_category: (o.courses as any)?.course_category || null,
+					exam_duration: (o.courses as any)?.exam_duration ?? null,
 					board_code: boardInfo?.board_code || null,
 					board_name: boardNameMap.get(boardInfo?.board_code || '') || null,
 					board_order: boardInfo?.board_order ?? 999,
@@ -422,7 +432,7 @@ export async function GET(request: Request) {
 		)]
 		const directCourses = unmatchedCodes.length > 0
 			? await fetchBatchedIn(unmatchedCodes, (batch) =>
-				supabase.from('courses').select('course_code, course_name, board_id, board_code, course_category').in('course_code', batch)
+				supabase.from('courses').select('course_code, course_name, board_id, board_code, course_category, exam_duration').in('course_code', batch)
 			)
 			: []
 		const directCourseMap = new Map(directCourses.map((c: any) => [c.course_code, c]))
@@ -456,6 +466,7 @@ export async function GET(request: Request) {
 						semester: null,
 						course_name: directCourse?.course_name || null,
 						course_category: directCourse?.course_category || null,
+						exam_duration: directCourse?.exam_duration ?? null,
 						board_code: boardInfo?.board_code || null,
 						board_name: boardNameMap.get(boardInfo?.board_code || '') || null,
 						board_order: boardInfo?.board_order ?? 999,
@@ -473,6 +484,133 @@ export async function GET(request: Request) {
 				...(regNo && genderMap.has(regNo) ? { gender: genderMap.get(regNo) } : {}),
 			}
 		})
+
+		// ── Phase 4b: Exam application fees (Student Exam Application report) ──
+		// The printed form carries a per-paper fee column plus the application and
+		// mark statement fees, which the circular charges once per learner per
+		// session. exam_registrations holds all four, but only the Exam Application
+		// screens stamp the once-per-session heads - a learner registered from any
+		// other screen still carries 0 there, so those are priced from the rate book
+		// instead, leaving the form payable either way.
+		//
+		// Late fine is NOT inferred: it depends on when the learner actually applied,
+		// so only a fine already stamped on a registration is printed.
+		if (report_type === 'student-fee-details') {
+			// The three charge columns are added by
+			// 20260824_add_application_fees_to_exam_registrations. Until that migration
+			// runs they do not exist, so they are fetched separately and a missing
+			// column degrades to "nothing stamped" instead of failing the base
+			// registrations query - which would empty the whole report.
+			const chargeProbe = await supabase
+				.from('exam_registrations')
+				.select('id, application_fee, mark_statement_fee, late_fine')
+				.limit(1)
+			const chargeColumnsExist = !chargeProbe.error
+			if (!chargeColumnsExist) {
+				console.warn(`[ExamReports] exam_registrations has no application_fee / mark_statement_fee / late_fine columns (${chargeProbe.error?.message}). Run supabase/migrations/20260824_add_application_fees_to_exam_registrations.sql; the once-per-session heads are priced from exam_fee_master meanwhile.`)
+			}
+
+			const [book, chargeRows] = await Promise.all([
+				loadFeeRateBook(supabase, {
+					institutions_id,
+					examination_session_id,
+				}),
+				chargeColumnsExist
+					? fetchAllPaginated((from, to) =>
+						supabase
+							.from('exam_registrations')
+							.select('id, application_fee, mark_statement_fee, late_fine')
+							.eq('institutions_id', institutions_id)
+							.eq('examination_session_id', examination_session_id)
+							.order('id', { ascending: true })
+							.range(from, to)
+					)
+					: Promise.resolve([] as any[]),
+			])
+
+			const chargeById = new Map<string, { application_fee: any; mark_statement_fee: any; late_fine: any }>(
+				chargeRows.map((c: any) => [c.id, c])
+			)
+
+			// ── Per-paper fee: the stored amount wins, an unpriced row falls back to
+			// the rate in force for its course category at the programme's fee tier.
+			const courseInputs: CourseFeeInput[] = []
+			const seenCourseCodes = new Set<string>()
+			const collectCourse = (code: any, category: any, duration: any) => {
+				const key = String(code || '').trim().toUpperCase()
+				if (!key || seenCourseCodes.has(key)) return
+				seenCourseCodes.add(key)
+				courseInputs.push({ course_code: key, course_category: category ?? null, exam_duration: duration ?? null })
+			}
+			for (const [, o] of offeringMap) collectCourse(o.course_code, o.course_category, (o as any).exam_duration)
+			for (const [, c] of directCourseMap) collectCourse((c as any).course_code, (c as any).course_category, (c as any).exam_duration)
+
+			const pricedByScope = new Map<string, Map<string, { head: PaperFeeHead | null; amount: number | null }>>()
+			const pricedFor = (level: ProgramLevel, programCode: string) => {
+				const scope = `${level}|${programCode}`
+				let priced = pricedByScope.get(scope)
+				if (!priced) {
+					priced = priceCourseList(book, level, courseInputs, programCode)
+					pricedByScope.set(scope, priced)
+				}
+				return priced
+			}
+
+			const num = (v: any) => {
+				const n = Number(v)
+				return Number.isFinite(n) ? n : 0
+			}
+
+			for (const row of enriched as any[]) {
+				const programCode = String(row.course_offering?.program_code || row.program_code || '').trim().toUpperCase()
+				const level = resolveProgramLevel(programCode, book.levelByProgram)
+				const stored = row.fee_amount == null ? null : Number(row.fee_amount)
+				if (stored != null && Number.isFinite(stored)) {
+					row.paper_fee = stored
+				} else {
+					const code = String(row.course_offering?.course_code || row.course_code || '').trim().toUpperCase()
+					row.paper_fee = code ? (pricedFor(level, programCode).get(code)?.amount ?? null) : null
+				}
+				const charge = chargeById.get(row.id)
+				row.application_fee = num(charge?.application_fee)
+				row.mark_statement_fee = num(charge?.mark_statement_fee)
+				row.late_fine = num(charge?.late_fine)
+			}
+
+			// ── Once-per-session heads: keep what is stamped, otherwise price the
+			// learner's tier and stamp it on a single anchor row so any report that
+			// sums a learner's rows never double-counts.
+			const rowsByLearner = new Map<string, any[]>()
+			for (const row of enriched as any[]) {
+				const key = String(row.stu_register_no || '').trim().toUpperCase() || `id:${row.id}`
+				if (!rowsByLearner.has(key)) rowsByLearner.set(key, [])
+				rowsByLearner.get(key)!.push(row)
+			}
+
+			let pricedLearners = 0
+			for (const [, rows] of rowsByLearner) {
+				const alreadyCharged = rows.reduce((sum, r) => sum + r.application_fee + r.mark_statement_fee + r.late_fine, 0)
+				if (alreadyCharged > 0) continue
+
+				const anchor = rows[0]
+				const programCode = String(anchor.course_offering?.program_code || anchor.program_code || '').trim().toUpperCase()
+				const lines = learnerChargeLines(book, resolveProgramLevel(programCode, book.levelByProgram), programCode)
+				const application_fee = lines.find(l => l.head === 'APPLICATION')?.amount || 0
+				const mark_statement_fee = lines.find(l => l.head === 'MARK_STATEMENT')?.amount || 0
+				if (application_fee === 0 && mark_statement_fee === 0) continue
+
+				anchor.application_fee = application_fee
+				anchor.mark_statement_fee = mark_statement_fee
+				pricedLearners++
+			}
+
+			const unpriced = (enriched as any[]).filter(r => r.paper_fee == null).length
+			const stamped = chargeById.size > 0
+			console.log(`[ExamReports] Fees: ${rowsByLearner.size} learner(s), ${stamped ? 'stamped charges read from exam_registrations, ' : ''}once-per-session priced from rate book for ${pricedLearners}, ${unpriced} paper row(s) with no rate`)
+			if (book.isEmpty) {
+				console.warn(`[ExamReports] exam_fee_master has no active CREDIT rates for this institution - the Theory / Application / Mark Statement columns print blank until they are configured (Master > Exam Fee).`)
+			}
+		}
 
 		// ── Phase 5: Date-wise report enrichment (timetable + attendance) ──
 		const isDateWiseReport = report_type === 'exam-date-wise-registration' || report_type === 'exam-date-wise-attendance' || report_type === 'board-wise-exam-timetable' || report_type === 'exam-date-wise-summary' || report_type === 'qp-packing-list'

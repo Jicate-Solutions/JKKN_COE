@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
+import { ACTIVE_REGISTRATION_STATUSES } from '@/lib/exam-registration-status'
 
 // GET: Fetch students for attendance based on exam parameters
 export async function GET(request: Request) {
@@ -36,7 +37,7 @@ export async function GET(request: Request) {
 				)
 			`)
 			.eq('institutions_id', institutions_id)
-			.eq('registration_status', 'Approved')
+			.in('registration_status', ACTIVE_REGISTRATION_STATUSES)
 			.order('students(register_number)', { ascending: true })
 
 		if (error) {

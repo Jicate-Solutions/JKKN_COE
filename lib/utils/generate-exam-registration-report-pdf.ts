@@ -45,6 +45,80 @@ function buildStudentYearMap(data: any[]): Map<string, string> {
 	return result
 }
 
+/**
+ * Exam application fee accumulator (Student Exam Application report)
+ * -----------------------------------------------------
+ * Four printed columns, two different sources:
+ *
+ *   Theory              sum of the PER-PAPER fee over the subjects on the form
+ *   Application Fee     charged once per learner per session
+ *   Mark Statement Fee  charged once per learner per session
+ *   Total Amount        the three above plus any late fine
+ *
+ * The once-per-session heads are stamped on a single anchor row per (learner,
+ * session) and left at 0 on the learner's other paper rows, so they are summed
+ * over EVERY row of the learner. The per-paper fee is added once per printed
+ * subject instead, so it tracks the deduplicated course list.
+ *
+ * Late fine has no column of its own on the form but is real money owed, so it
+ * is folded into Total Amount - a fined learner's total therefore exceeds the
+ * three columns above it.
+ */
+interface StudentFees {
+	paper: number
+	application: number
+	markStatement: number
+	lateFine: number
+	/** true once any amount at all has been seen - keeps unpriced forms blank rather than printing 0.00 */
+	priced: boolean
+}
+
+function newStudentFees(): StudentFees {
+	return { paper: 0, application: 0, markStatement: 0, lateFine: 0, priced: false }
+}
+
+function feeNum(value: any): number {
+	const n = Number(value)
+	return Number.isFinite(n) ? n : 0
+}
+
+/** Add a row's once-per-session charges. Call for every row of the learner. */
+function addSessionCharges(fees: StudentFees, row: any) {
+	const application = feeNum(row?.application_fee)
+	const markStatement = feeNum(row?.mark_statement_fee)
+	const lateFine = feeNum(row?.late_fine)
+	fees.application += application
+	fees.markStatement += markStatement
+	fees.lateFine += lateFine
+	if (application || markStatement || lateFine) fees.priced = true
+}
+
+/** Add a row's per-paper fee. Call once per printed subject. */
+function addPaperFee(fees: StudentFees, row: any) {
+	const raw = row?.paper_fee ?? row?.fee_amount
+	if (raw == null) return
+	const amount = feeNum(raw)
+	fees.paper += amount
+	if (amount) fees.priced = true
+}
+
+/** Amount formatted for the form: whole rupees, or 2 decimals when the rate is not whole */
+function formatFee(amount: number): string {
+	return Number.isInteger(amount) ? String(amount) : amount.toFixed(2)
+}
+
+/** The four fee cells: Theory | Application | Mark Statement | Total. Blank when nothing is priced. */
+function feeCellTexts(fees: StudentFees): [string, string, string, string] {
+	if (!fees.priced) return ['', '', '', '']
+	const total = fees.paper + fees.application + fees.markStatement + fees.lateFine
+	return [
+		fees.paper ? formatFee(fees.paper) : '',
+		fees.application ? formatFee(fees.application) : '',
+		fees.markStatement ? formatFee(fees.markStatement) : '',
+		total ? formatFee(total) : '',
+	]
+}
+
 /** Line height factor: fontSize (pt) × factor = line height (mm) */
 const LINE_HEIGHT_FACTOR = 0.4
 
@@ -471,15 +545,18 @@ function generateStudentFeeDetailsPdf(opts: ReportPdfOptions): string {
 		const { programCode, programName, year, rows: sectionRows } = section
 
 		// Build student map for this section
-		const studentMap = new Map<string, { name: string, dob: string, courses: any[] }>()
+		const studentMap = new Map<string, { name: string, dob: string, courses: any[], fees: StudentFees }>()
 		for (const row of sectionRows) {
 			const regNo = row.stu_register_no || 'Unknown'
 			if (!studentMap.has(regNo)) {
-				studentMap.set(regNo, { name: row.student_name || '', dob: row.date_of_birth || '', courses: [] })
+				studentMap.set(regNo, { name: row.student_name || '', dob: row.date_of_birth || '', courses: [], fees: newStudentFees() })
 			}
+			const student = studentMap.get(regNo)!
+			// Once-per-session heads live on one anchor row, so they are summed over
+			// every row of the learner - never over the deduplicated course list.
+			addSessionCharges(student.fees, row)
 			const co = row.course_offering
 			if (co) {
-				const student = studentMap.get(regNo)!
 				// Deduplicate by course_code (same course can exist under multiple offerings)
 				if (!student.courses.some((c: any) => c.course_code === co.course_code)) {
 					student.courses.push({
@@ -488,6 +565,8 @@ function generateStudentFeeDetailsPdf(opts: ReportPdfOptions): string {
 						course_code: co.course_code || '',
 						course_name: co.course_name || '',
 					})
+					// The per-paper fee tracks the printed subject list
+					addPaperFee(student.fees, row)
 				}
 			}
 		}
@@ -580,6 +659,15 @@ function generateStudentFeeDetailsPdf(opts: ReportPdfOptions): string {
 			}
 			// Total Subjects count
 			doc.text(String(student.courses.length), totalSubjectsX + colWidths[7] / 2, midY, { align: 'center' })
+
+			// Fee columns: Theory (per-paper total) | Application | Mark Statement | Total
+			const feeTexts = feeCellTexts(student.fees)
+			let feeX = totalSubjectsX + colWidths[7]
+			for (let fi = 0; fi < feeTexts.length; fi++) {
+				const col = 8 + fi
+				if (feeTexts[fi]) doc.text(feeTexts[fi], feeX + colWidths[col] / 2, midY, { align: 'center' })
+				feeX += colWidths[col]
+			}
 
 			// Draw individual rows for course-level columns (Semester, Code, Course Name)
 			let courseY = tableY

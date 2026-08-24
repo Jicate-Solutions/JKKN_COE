@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
 import { fetchAllMyJKKNPrograms } from '@/lib/myjkkn-api'
 import { fetchAllPaginated, fetchBatchedIn, detectLearnerClashes } from '@/lib/exam-clash'
+import { ACTIVE_REGISTRATION_STATUSES } from '@/lib/exam-registration-status'
 
 // DB constraint check_practical_batch_capacity: exam_type 'Theory' → batch_capacity must be NULL;
 // any other exam_type (Practical, Project, Field Work, Theory + Practical, …) → batch_capacity > 0.
@@ -39,7 +40,7 @@ export async function GET(request: Request) {
 				.select('course_offering_id, student_id, program_code')
 				.eq('institutions_id', institutions_id)
 				.eq('examination_session_id', examination_session_id)
-				.eq('registration_status', 'Approved')
+				.in('registration_status', ACTIVE_REGISTRATION_STATUSES)
 				.range(from, to)
 		)
 

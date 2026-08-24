@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
+import { ACTIVE_REGISTRATION_STATUSES } from '@/lib/exam-registration-status'
 
 export const dynamic = 'force-dynamic'
 
@@ -127,7 +128,7 @@ export async function GET(request: Request) {
 			.eq('institutions_id', institutionId)
 			.eq('examination_session_id', sessionId)
 			.eq('course_offering_id', courseOfferingId)
-			.eq('registration_status', 'Approved')
+			.in('registration_status', ACTIVE_REGISTRATION_STATUSES)
 			.order('stu_register_no')
 			.range(0, 9999)
 

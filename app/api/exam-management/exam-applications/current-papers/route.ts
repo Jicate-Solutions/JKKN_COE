@@ -10,12 +10,15 @@ import {
 } from '@/lib/exam-fee/calculate'
 import {
 	chargeKey,
+	hasSessionChargeColumns,
 	loadAlreadyChargedKeys,
 	sessionChargeFor,
 	NO_CHARGE,
 	type SessionCharge,
 } from '@/lib/exam-applications/session-charges'
 import type {
+	CohortFilterOption,
+	CohortFilterTotals,
 	CurrentPaperApplyResult,
 	CurrentPaperCohortResponse,
 	CurrentPaperLearner,
@@ -52,6 +55,8 @@ const TERMINAL_STATUSES = new Set(['APPLIED', 'CANCELLED', 'REJECTED', 'WITHDRAW
 
 const PAGE_SIZE = 1000
 const MAX_PAGES = 60
+/** Pages fetched at once - a large session was taking seconds page-by-page */
+const PAGE_CONCURRENCY = 6
 const UPDATE_CHUNK = 200
 const MAX_LEARNERS_PER_APPLY = 1000
 
@@ -92,18 +97,21 @@ type PricedCourses = Map<string, { head: PaperFeeHead | null; amount: number | n
  * Page through exam_registrations for one session.
  *
  * Ordered by id (unique) rather than created_at, so rows are never duplicated or
- * skipped across .range() pages.
+ * skipped across .range() pages. The first page carries an exact count so the
+ * remaining pages can be fetched in parallel batches - walking a large session
+ * one page at a time was what made this endpoint take seconds.
  */
 async function fetchSessionRegistrations(
 	supabase: Supabase,
 	params: { institutions_id: string; examination_session_id: string; program_code?: string | null }
 ): Promise<RegistrationRow[]> {
-	const rows: RegistrationRow[] = []
-
-	for (let page = 0; page < MAX_PAGES; page++) {
+	const buildQuery = (from: number, to: number, withCount: boolean) => {
 		let query = supabase
 			.from('exam_registrations')
-			.select('id, student_id, stu_register_no, student_name, course_offering_id, course_code, program_code, registration_status, is_regular, attempt_number, fee_amount')
+			.select(
+				'id, student_id, stu_register_no, student_name, course_offering_id, course_code, program_code, registration_status, is_regular, attempt_number, fee_amount',
+				withCount ? { count: 'exact' } : undefined
+			)
 			.eq('institutions_id', params.institutions_id)
 			.eq('examination_session_id', params.examination_session_id)
 			// Arrear rows are written by the Arrear tab with is_regular = false and are
@@ -111,18 +119,71 @@ async function fetchSessionRegistrations(
 			// treated as regular - that is what the Exam Registration module wrote.
 			.or('is_regular.is.null,is_regular.eq.true')
 			.order('id', { ascending: true })
-			.range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1)
+			.range(from, to)
 
 		if (params.program_code) query = query.eq('program_code', params.program_code)
+		return query
+	}
 
-		const { data, error } = await query
-		if (error) throw new Error(`Failed to fetch exam registrations: ${error.message}`)
+	const first = await buildQuery(0, PAGE_SIZE - 1, true)
+	if (first.error) throw new Error(`Failed to fetch exam registrations: ${first.error.message}`)
 
-		rows.push(...((data || []) as RegistrationRow[]))
-		if (!data || data.length < PAGE_SIZE) break
+	const rows: RegistrationRow[] = [...((first.data || []) as RegistrationRow[])]
+	const total = first.count ?? rows.length
+	const pageCount = Math.min(Math.ceil(total / PAGE_SIZE), MAX_PAGES)
+
+	for (let start = 1; start < pageCount; start += PAGE_CONCURRENCY) {
+		const batch = []
+		for (let page = start; page < Math.min(start + PAGE_CONCURRENCY, pageCount); page++) {
+			batch.push(buildQuery(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1, false))
+		}
+		const results = await Promise.all(batch)
+		for (const result of results) {
+			if (result.error) throw new Error(`Failed to fetch exam registrations: ${result.error.message}`)
+			rows.push(...((result.data || []) as RegistrationRow[]))
+		}
 	}
 
 	return rows
+}
+
+/**
+ * Distinct-learner and row counts per filter value.
+ *
+ * Shown in the dropdowns so a filter that legitimately changes nothing - a
+ * programme that runs only one semester - reads as "Semester I (17 learners)"
+ * next to "All semesters (17 learners)" rather than looking broken.
+ */
+function countBy<T>(rows: T[], valueOf: (row: T) => string | null, learnerOf: (row: T) => string): CohortFilterOption[] {
+	const byValue = new Map<string, { learners: Set<string>; rows: number }>()
+
+	for (const row of rows) {
+		const value = valueOf(row)
+		if (!value) continue
+		let entry = byValue.get(value)
+		if (!entry) {
+			entry = { learners: new Set<string>(), rows: 0 }
+			byValue.set(value, entry)
+		}
+		entry.learners.add(learnerOf(row))
+		entry.rows++
+	}
+
+	return [...byValue.entries()]
+		.map(([value, entry]) => ({ value, learners: entry.learners.size, rows: entry.rows }))
+		.sort((a, b) => {
+			const na = Number(a.value)
+			const nb = Number(b.value)
+			if (Number.isFinite(na) && Number.isFinite(nb)) return na - nb
+			return a.value.localeCompare(b.value)
+		})
+}
+
+/** Distinct learner + row totals for an "All ..." filter row */
+function totalsOf<T>(rows: T[], learnerOf: (row: T) => string): CohortFilterTotals {
+	const learners = new Set<string>()
+	for (const row of rows) learners.add(learnerOf(row))
+	return { learners: learners.size, rows: rows.length }
 }
 
 /** offering id -> programme / semester / course code for the session */
@@ -193,15 +254,24 @@ async function loadCourseMaster(
 	return byCode
 }
 
-/** Rate lookups are per fee tier, so memoize one priced map per tier */
+/**
+ * Memoized per-paper pricing.
+ *
+ * Keyed on tier AND programme code, not tier alone: exam_fee_master can carry a
+ * rate scoped to one programme, which priceCourseList prefers over the tier rate.
+ * Caching by tier only would let the first programme priced at a tier decide the
+ * amount for every other programme sharing it.
+ */
 function pricerByLevel(book: Awaited<ReturnType<typeof loadFeeRateBook>>, allCourses: CourseFeeInput[]) {
 	const cache = new Map<string, PricedCourses>()
 	return (programCode: string | null | undefined): { level: string; priced: PricedCourses } => {
 		const level = resolveProgramLevel(programCode, book.levelByProgram)
-		let priced = cache.get(level)
+		const code = String(programCode || '').trim().toUpperCase()
+		const scope = `${level}|${code}`
+		let priced = cache.get(scope)
 		if (!priced) {
-			priced = priceCourseList(book, level, allCourses)
-			cache.set(level, priced)
+			priced = priceCourseList(book, level, allCourses, code)
+			cache.set(scope, priced)
 		}
 		return { level, priced }
 	}
@@ -257,11 +327,15 @@ export async function GET(request: Request) {
 		// Programmes come from the whole session; semesters from the rows left after
 		// the programme filter. Picking a programme therefore narrows the semester
 		// list instead of leaving stale semesters that match nothing.
-		const programOptions = [...new Set(rows.map(r => r.program).filter(Boolean))].sort()
+		const learnerOf = (r: FlatRow) => chargeKey({ student_id: r.student_id, register_number: r.stu_register_no })
+
+		const programOptions = countBy(rows, r => r.program || null, learnerOf)
 		const semesterScope = programFilter ? rows.filter(r => r.program === programFilter) : rows
-		const semesterOptions = [...new Set(
-			semesterScope.map(r => r.semester).filter((s): s is number => typeof s === 'number' && s > 0)
-		)].sort((a, b) => a - b)
+		const semesterOptions = countBy(
+			semesterScope,
+			r => (typeof r.semester === 'number' && r.semester > 0 ? String(r.semester) : null),
+			learnerOf
+		)
 
 		const scoped = semesterScope.filter(r => semesterFilter == null || r.semester === semesterFilter)
 
@@ -330,9 +404,16 @@ export async function GET(request: Request) {
 		)
 
 		const asOf = new Date().toISOString().slice(0, 10)
-		const book = await loadFeeRateBook(supabase, { institutions_id, examination_session_id, asOf })
+		const [book, chargeColumnsReady] = await Promise.all([
+			loadFeeRateBook(supabase, { institutions_id, examination_session_id, asOf }),
+			hasSessionChargeColumns(supabase),
+		])
 		const fineApplicable = isFineApplicable(book.schedule, asOf)
-		const alreadyCharged = await loadAlreadyChargedKeys(supabase, { institutions_id, examination_session_id })
+		// Nobody can have been charged yet while the columns are missing, and the
+		// lookup would only error - so skip it entirely.
+		const alreadyCharged = chargeColumnsReady
+			? await loadAlreadyChargedKeys(supabase, { institutions_id, examination_session_id })
+			: new Set<string>()
 
 		const allCourses: CourseFeeInput[] = [...courseMaster.values()].map(c => ({
 			course_code: c.course_code,
@@ -378,7 +459,7 @@ export async function GET(request: Request) {
 				|| (learner.student_id ? alreadyCharged.has(`sid:${learner.student_id}`) : false)
 			learner.already_charged = charged
 
-			const charge: SessionCharge = charged ? NO_CHARGE : sessionChargeFor(book, level as any, asOf)
+			const charge: SessionCharge = charged ? NO_CHARGE : sessionChargeFor(book, level as any, asOf, learner.program_code)
 			learner.application_fee = charge.application_fee
 			learner.mark_statement_fee = charge.mark_statement_fee
 			learner.late_fine = charge.late_fine
@@ -415,7 +496,16 @@ export async function GET(request: Request) {
 		const response: CurrentPaperCohortResponse = {
 			data: learners,
 			papers,
-			filters: { programs: programOptions, semesters: semesterOptions },
+			filters: {
+				programs: programOptions,
+				semesters: semesterOptions,
+				// Summed learner counts would double-count anyone holding papers in two
+				// semesters, so the distinct totals are computed here.
+				totals: {
+					programs: totalsOf(rows, learnerOf),
+					semesters: totalsOf(semesterScope, learnerOf),
+				},
+			},
 			summary: {
 				learners: learners.length,
 				papers: papers.length,
@@ -433,6 +523,7 @@ export async function GET(request: Request) {
 				fine_applicable: fineApplicable,
 				as_of: asOf,
 			},
+			charge_columns_ready: chargeColumnsReady,
 		}
 
 		return NextResponse.json(response)
@@ -541,14 +632,19 @@ export async function POST(request: Request) {
 
 		const asOf = new Date().toISOString().slice(0, 10)
 		const nowIso = new Date().toISOString()
-		const book = await loadFeeRateBook(supabase, { institutions_id, examination_session_id, asOf })
+		const [book, chargeColumnsReady] = await Promise.all([
+			loadFeeRateBook(supabase, { institutions_id, examination_session_id, asOf }),
+			hasSessionChargeColumns(supabase),
+		])
 		const priceFor = pricerByLevel(book, allCourses)
 
-		const alreadyCharged = await loadAlreadyChargedKeys(supabase, {
-			institutions_id,
-			examination_session_id,
-			registerNumbers: allTargets.map(t => String(t.row.stu_register_no || '')).filter(Boolean),
-		})
+		const alreadyCharged = chargeColumnsReady
+			? await loadAlreadyChargedKeys(supabase, {
+				institutions_id,
+				examination_session_id,
+				registerNumbers: allTargets.map(t => String(t.row.stu_register_no || '')).filter(Boolean),
+			})
+			: new Set<string>()
 
 		// ── Build one patch per row ──
 		interface Update {
@@ -587,7 +683,7 @@ export async function POST(request: Request) {
 
 			const studentId = targets.find(t => t.row.student_id)?.row.student_id || null
 			const charged = alreadyCharged.has(key) || (studentId ? alreadyCharged.has(`sid:${studentId}`) : false)
-			const charge = charged ? NO_CHARGE : sessionChargeFor(book, level as any, asOf)
+			const charge = charged || !chargeColumnsReady ? NO_CHARGE : sessionChargeFor(book, level as any, asOf, program)
 
 			// The once-per-session heads land on ONE row - the alphabetically first
 			// pending paper, so a re-run picks the same anchor - and stay 0 on the
@@ -597,19 +693,27 @@ export async function POST(request: Request) {
 
 			pending.forEach((target, index) => {
 				const isAnchor = index === 0 && charge.total > 0
+				const patch: Record<string, any> = {
+					registration_status: APPLIED_STATUS,
+					fee_amount: priced.get(target.course_code.toUpperCase())?.amount ?? target.row.fee_amount ?? null,
+					updated_at: nowIso,
+				}
+
+				// Writing a column PostgREST has never seen rejects the whole
+				// statement, so while the migration is outstanding the status and the
+				// per-paper fee are applied on their own.
+				if (chargeColumnsReady) {
+					patch.applied_date = asOf
+					patch.application_fee = isAnchor ? charge.application_fee : 0
+					patch.mark_statement_fee = isAnchor ? charge.mark_statement_fee : 0
+					patch.late_fine = isAnchor ? charge.late_fine : 0
+				}
+
 				updates.push({
 					id: target.row.id,
 					register_number: String(target.row.stu_register_no || ''),
 					course_code: target.course_code,
-					patch: {
-						registration_status: APPLIED_STATUS,
-						applied_date: asOf,
-						fee_amount: priced.get(target.course_code.toUpperCase())?.amount ?? target.row.fee_amount ?? null,
-						application_fee: isAnchor ? charge.application_fee : 0,
-						mark_statement_fee: isAnchor ? charge.mark_statement_fee : 0,
-						late_fine: isAnchor ? charge.late_fine : 0,
-						updated_at: nowIso,
-					},
+					patch,
 				})
 			})
 

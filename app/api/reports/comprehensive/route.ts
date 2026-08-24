@@ -21,6 +21,7 @@ import type {
 	MissingDataReportRow,
 	MissingDataReportSummary
 } from '@/types/comprehensive-reports'
+import { ACTIVE_REGISTRATION_STATUSES } from '@/lib/exam-registration-status'
 
 export async function GET(request: NextRequest) {
 	const supabase = getSupabaseServer()
@@ -1336,7 +1337,7 @@ async function getMissingDataReport(
 		`)
 		.eq('institutions_id', institutionId)
 		.eq('examination_session_id', sessionId)
-		.eq('registration_status', 'Approved')
+		.in('registration_status', ACTIVE_REGISTRATION_STATUSES)
 
 	// Server-side filter to reduce data transfer
 	if (programCode) regQuery = regQuery.eq('program_code', programCode)

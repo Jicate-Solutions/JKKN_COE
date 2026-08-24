@@ -45,18 +45,82 @@ function buildStudentYearMap(data: any[]): Map<string, string> {
 	return result
 }
 
+/**
+ * Exam application fee accumulator (Student Exam Application report)
+ * -----------------------------------------------------
+ * Application / mark statement / late fine are charged once per learner per
+ * session and stamped on a single anchor row, so they are summed over EVERY row
+ * of the learner. The per-paper fee is added once per printed subject instead,
+ * so it tracks the deduplicated course list.
+ *
+ * The sheet has no Late Fine column but the fine is real money owed, so it is
+ * folded into Total Amount - a fined learner's total exceeds the columns above.
+ */
+interface StudentFees {
+	paper: number
+	application: number
+	markStatement: number
+	lateFine: number
+	/** true once any amount at all has been seen - keeps unpriced rows blank rather than 0 */
+	priced: boolean
+}
+
+function newStudentFees(): StudentFees {
+	return { paper: 0, application: 0, markStatement: 0, lateFine: 0, priced: false }
+}
+
+function feeNum(value: any): number {
+	const n = Number(value)
+	return Number.isFinite(n) ? n : 0
+}
+
+/** Add a row's once-per-session charges. Call for every row of the learner. */
+function addSessionCharges(fees: StudentFees, row: any) {
+	const application = feeNum(row?.application_fee)
+	const markStatement = feeNum(row?.mark_statement_fee)
+	const lateFine = feeNum(row?.late_fine)
+	fees.application += application
+	fees.markStatement += markStatement
+	fees.lateFine += lateFine
+	if (application || markStatement || lateFine) fees.priced = true
+}
+
+/** Add a row's per-paper fee. Call once per printed subject. */
+function addPaperFee(fees: StudentFees, row: any) {
+	const raw = row?.paper_fee ?? row?.fee_amount
+	if (raw == null) return
+	const amount = feeNum(raw)
+	fees.paper += amount
+	if (amount) fees.priced = true
+}
+
+/** The four fee cells as numbers (blank when nothing is priced) so Excel can total them */
+function feeCells(fees: StudentFees): { theory: number | '', application: number | '', markStatement: number | '', total: number | '' } {
+	if (!fees.priced) return { theory: '', application: '', markStatement: '', total: '' }
+	const total = fees.paper + fees.application + fees.markStatement + fees.lateFine
+	return {
+		theory: fees.paper || '',
+		application: fees.application || '',
+		markStatement: fees.markStatement || '',
+		total: total || '',
+	}
+}
+
 // ── Report 1: Student Fee Details ──
 
 function exportStudentFeeDetailsExcel(opts: ExcelExportOptions): ExcelReportResult {
-	const studentMap = new Map<string, { name: string, dob: string, courses: any[] }>()
+	const studentMap = new Map<string, { name: string, dob: string, courses: any[], fees: StudentFees }>()
 	for (const row of opts.data) {
 		const regNo = row.stu_register_no || 'Unknown'
 		if (!studentMap.has(regNo)) {
-			studentMap.set(regNo, { name: row.student_name || '', dob: row.date_of_birth || '', courses: [] })
+			studentMap.set(regNo, { name: row.student_name || '', dob: row.date_of_birth || '', courses: [], fees: newStudentFees() })
 		}
+		const student = studentMap.get(regNo)!
+		// Once-per-session heads live on one anchor row, so they are summed over
+		// every row of the learner - never over the deduplicated course list.
+		addSessionCharges(student.fees, row)
 		const co = row.course_offering
 		if (co) {
-			const student = studentMap.get(regNo)!
 			// Deduplicate by course_code (same course can exist under multiple offerings)
 			if (!student.courses.some((c: any) => c.course_code === co.course_code)) {
 				student.courses.push({
@@ -65,6 +129,8 @@ function exportStudentFeeDetailsExcel(opts: ExcelExportOptions): ExcelReportResu
 					course_code: co.course_code || '',
 					course_name: co.course_name || '',
 				})
+				// The per-paper fee tracks the printed subject list
+				addPaperFee(student.fees, row)
 			}
 		}
 	}
@@ -81,6 +147,7 @@ function exportStudentFeeDetailsExcel(opts: ExcelExportOptions): ExcelReportResu
 		sno++
 		info.courses.sort((a: any, b: any) => (a.semester - b.semester) || (a.course_order - b.course_order) || a.course_code.localeCompare(b.course_code))
 
+		const fees = feeCells(info.fees)
 		const courseCount = Math.max(info.courses.length, 1)
 		const startRow = rowIdx + 1 // +1 because row 0 is header in sheet
 
@@ -103,10 +170,10 @@ function exportStudentFeeDetailsExcel(opts: ExcelExportOptions): ExcelReportResu
 				'Subject Code': course.course_code,
 				'Course Name': course.course_name,
 				'Total Subjects': ci === 0 ? info.courses.length : '',
-				'Theory': '',
-				'Application Fee': '',
-				'Mark Statement Fee': '',
-				'Total Amount': '',
+				'Theory': ci === 0 ? fees.theory : '',
+				'Application Fee': ci === 0 ? fees.application : '',
+				'Mark Statement Fee': ci === 0 ? fees.markStatement : '',
+				'Total Amount': ci === 0 ? fees.total : '',
 				'Signature of the Student': '',
 			})
 			rowIdx++
@@ -122,10 +189,10 @@ function exportStudentFeeDetailsExcel(opts: ExcelExportOptions): ExcelReportResu
 				'Subject Code': '',
 				'Course Name': '',
 				'Total Subjects': 0,
-				'Theory': '',
-				'Application Fee': '',
-				'Mark Statement Fee': '',
-				'Total Amount': '',
+				'Theory': fees.theory,
+				'Application Fee': fees.application,
+				'Mark Statement Fee': fees.markStatement,
+				'Total Amount': fees.total,
 				'Signature of the Student': '',
 			})
 			rowIdx++

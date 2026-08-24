@@ -34,6 +34,8 @@ import {
 } from 'lucide-react'
 import type {
 	ArrearLearner,
+	CohortFilterOption,
+	CohortFilterTotals,
 	ArrearLearnersResponse,
 	BulkFeeContext,
 	BulkLearnerCourses,
@@ -81,6 +83,7 @@ const STATUS_STYLES: Record<string, string> = {
 
 const ELIGIBILITY_STYLES: Record<string, string> = {
 	'Eligible': 'bg-green-100 text-green-700 border-green-200',
+	'Already Applied': 'bg-slate-100 text-slate-600 border-slate-200',
 	'Already Registered': 'bg-amber-100 text-amber-700 border-amber-200',
 	'Already Passed': 'bg-slate-100 text-slate-600 border-slate-200',
 	'Not Offered': 'bg-red-100 text-red-700 border-red-200',
@@ -89,9 +92,24 @@ const ELIGIBILITY_STYLES: Record<string, string> = {
 	'Seats Full': 'bg-orange-100 text-orange-700 border-orange-200',
 }
 
+interface CohortFilters {
+	programs: CohortFilterOption[]
+	semesters: CohortFilterOption[]
+	totals: { programs: CohortFilterTotals; semesters: CohortFilterTotals }
+}
+
+const EMPTY_FILTER_TOTALS: CohortFilters['totals'] = { programs: { learners: 0, rows: 0 }, semesters: { learners: 0, rows: 0 } }
+
 const rupees = new Intl.NumberFormat('en-IN', { maximumFractionDigits: 0 })
 const money = (value: number | null | undefined) =>
 	value == null ? '—' : `₹${rupees.format(Math.round(value))}`
+
+/**
+ * Filter option label. The learner count leads because this cascade exists to
+ * fetch the learners; the row count trails as scale.
+ */
+const countLabel = (counts: { learners: number; rows: number }, rowNoun: string) =>
+	`${counts.learners} learner${counts.learners === 1 ? '' : 's'}, ${counts.rows} ${rowNoun}`
 
 const romanSemester = (value: number | null | undefined) =>
 	value == null || value === 0 ? '—' : (ROMAN[value] || String(value))
@@ -333,9 +351,12 @@ const ArrearLearnerRow = memo(function ArrearLearnerRow({
 					<Badge variant="outline" className={cn('text-[10px] px-1.5 py-0 h-4', ARREAR_BADGE)}>
 						{pending > 0 ? `${pending} arrear` : 'all registered'}
 					</Badge>
+					{/* The learner's own semester is what the Semester filter matches, so it
+					    leads. Which semesters their arrears came from is secondary detail. */}
+					<Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4">Sem {romanSemester(learner.semester)}</Badge>
 					{learner.semesters.length > 0 && (
 						<span className="text-[10px] text-muted-foreground">
-							Sem {learner.semesters.map(s => romanSemester(s)).join(', ')}
+							arrears from Sem {learner.semesters.map(s => romanSemester(s)).join(', ')}
 						</span>
 					)}
 				</div>
@@ -388,13 +409,29 @@ const ArrearPaperRow = memo(function ArrearPaperRow({
 					<Badge variant="outline" className={cn('text-[10px] px-1.5 py-0 h-4', ARREAR_BADGE)}>
 						Attempt {course.attempt_number}
 					</Badge>
+					{course.requires_update && (
+						<Badge
+							variant="outline"
+							className="text-[10px] px-1.5 py-0 h-4 bg-sky-100 text-sky-700 border-sky-200 dark:bg-sky-950/40 dark:text-sky-300 dark:border-sky-900"
+							title="Already registered but not applied for - applying updates that row instead of creating a new one"
+						>
+							Apply existing
+						</Badge>
+					)}
 					<span className="hidden lg:inline text-[10px] text-muted-foreground">Sem {romanSemester(course.original_semester ?? course.semester)}</span>
 				</div>
 				<div className="text-sm truncate">{course.course_name || '—'}</div>
 			</div>
 			{showFee && (
-				<div className="w-16 shrink-0 text-right text-sm font-medium tabular-nums">
-					{course.is_eligible ? money(course.fee_amount) : '—'}
+				// The rate book prices every paper, applied for or not. Hiding the amount
+				// on an ineligible row (an arrear already registered this session) threw
+				// away information the operator wants, so it is shown and muted instead
+				// of blanked - muted meaning "priced, but not billed by this action".
+				<div className={cn(
+					'w-16 shrink-0 text-right text-sm tabular-nums',
+					disabled ? 'text-muted-foreground font-normal' : 'font-medium'
+				)}>
+					{money(course.fee_amount)}
 				</div>
 			)}
 			<Badge
@@ -441,7 +478,12 @@ const CandidateRow = memo(function CandidateRow({
 			</div>
 			{showFee && (
 				<div className="w-20 shrink-0 text-right">
-					<div className="text-sm font-medium tabular-nums">{candidate.is_eligible ? money(candidate.fee_total) : '—'}</div>
+					<div className={cn(
+						'text-sm tabular-nums',
+						disabled ? 'text-muted-foreground font-normal' : 'font-medium'
+					)}>
+						{money(candidate.fee_total)}
+					</div>
 					{candidate.is_eligible && candidate.learner_charge > 0 && (
 						<div className="text-[10px] text-muted-foreground leading-tight">incl. app + MS</div>
 					)}
@@ -495,24 +537,30 @@ export default function ExamApplicationsPage() {
 	const [failures, setFailures] = useState<{ register_number: string; course_code: string; reason?: string }[]>([])
 
 	// ── Current Papers state ──
-	const [cpProgram, setCpProgram] = useState('all')
+	// Shared across both tabs - see the Program filter note in the scope card.
+	const [program, setProgram] = useState('all')
 	const [cpSemester, setCpSemester] = useState('all')
 	const [cpStatus, setCpStatus] = useState('pending')
 	const [cpSearch, setCpSearch] = useState('')
 	const [cpLearners, setCpLearners] = useState<CurrentPaperLearner[]>([])
-	const [cpPapers, setCpPapers] = useState<CurrentPaperRow[]>([])
-	const [cpFilters, setCpFilters] = useState<{ programs: string[]; semesters: number[] }>({ programs: [], semesters: [] })
+	const [cpFilters, setCpFilters] = useState<CohortFilters>({ programs: [], semesters: [], totals: EMPTY_FILTER_TOTALS })
+	const [chargeColumnsReady, setChargeColumnsReady] = useState(true)
+	// The scope each tab already has on screen: `institution|session|program|semester`.
+	// Switching tabs must not re-run a multi-second query for data already loaded, so
+	// the effects fetch only when this no longer matches the current filters. The
+	// Refresh buttons call the loaders directly and so always re-fetch.
+	const [cpLoadedKey, setCpLoadedKey] = useState('')
+	const [arLoadedKey, setArLoadedKey] = useState('')
 	const [cpFee, setCpFee] = useState<BulkFeeContext | null>(null)
 	const [cpSelected, setCpSelected] = useState<Set<string>>(new Set())
 	const [loadingCp, setLoadingCp] = useState(false)
 
 	// ── Arrear state ──
 	const [arMode, setArMode] = useState<ArrearMode>('learner')
-	const [arProgram, setArProgram] = useState('all')
 	const [arSemester, setArSemester] = useState('all')
 	const [arSearch, setArSearch] = useState('')
 	const [arLearners, setArLearners] = useState<ArrearLearner[]>([])
-	const [arFilters, setArFilters] = useState<{ programs: string[]; semesters: number[] }>({ programs: [], semesters: [] })
+	const [arFilters, setArFilters] = useState<CohortFilters>({ programs: [], semesters: [], totals: EMPTY_FILTER_TOTALS })
 	const [loadingArLearners, setLoadingArLearners] = useState(false)
 	const [arPicked, setArPicked] = useState<Set<string>>(new Set())
 	const [arCourses, setArCourses] = useState<BulkLearnerCourses[]>([])
@@ -550,17 +598,15 @@ export default function ExamApplicationsPage() {
 
 	const resetAll = useCallback(() => {
 		setCpLearners([])
-		setCpPapers([])
-		setCpFilters({ programs: [], semesters: [] })
+		setCpFilters({ programs: [], semesters: [], totals: EMPTY_FILTER_TOTALS })
 		setCpSelected(new Set())
-		setCpProgram('all')
+		setProgram('all')
 		setCpSemester('all')
 		setArLearners([])
-		setArFilters({ programs: [], semesters: [] })
+		setArFilters({ programs: [], semesters: [], totals: EMPTY_FILTER_TOTALS })
 		setArPicked(new Set())
 		setArCourses([])
 		setArSelectedRows(new Set())
-		setArProgram('all')
 		setArSemester('all')
 		setOfferings([])
 		setOfferingId('')
@@ -568,6 +614,8 @@ export default function ExamApplicationsPage() {
 		setCandidates([])
 		setSelectedCandidates(new Set())
 		setFailures([])
+		setCpLoadedKey('')
+		setArLoadedKey('')
 	}, [])
 
 	useEffect(() => {
@@ -588,8 +636,7 @@ export default function ExamApplicationsPage() {
 	const loadCurrentPapers = useCallback(async () => {
 		if (!institutionsId || !sessionId) {
 			setCpLearners([])
-			setCpPapers([])
-			return
+				return
 		}
 
 		setLoadingCp(true)
@@ -598,7 +645,7 @@ export default function ExamApplicationsPage() {
 				institutions_id: institutionsId,
 				examination_session_id: sessionId,
 			})
-			if (cpProgram !== 'all') params.set('program_code', cpProgram)
+			if (program !== 'all') params.set('program_code', program)
 			if (cpSemester !== 'all') params.set('semester', cpSemester)
 
 			const res = await fetch(`/api/exam-management/exam-applications/current-papers?${params}`)
@@ -606,9 +653,10 @@ export default function ExamApplicationsPage() {
 			if (!res.ok) throw new Error(raw?.error || 'Failed to load the current-paper cohort')
 
 			setCpLearners(raw.data || [])
-			setCpPapers(raw.papers || [])
-			setCpFilters(raw.filters || { programs: [], semesters: [] })
+			setCpFilters(raw.filters || { programs: [], semesters: [], totals: EMPTY_FILTER_TOTALS })
 			setCpFee(raw.fee || null)
+			setChargeColumnsReady(raw.charge_columns_ready !== false)
+			setCpLoadedKey(`${institutionsId}|${sessionId}|${program}|${cpSemester}`)
 			setCpSelected(new Set())
 		} catch (err) {
 			console.error('[exam-applications] load current papers failed:', err)
@@ -618,24 +666,26 @@ export default function ExamApplicationsPage() {
 				variant: 'destructive',
 			})
 			setCpLearners([])
-			setCpPapers([])
-		} finally {
+			} finally {
 			setLoadingCp(false)
 		}
-	}, [institutionsId, sessionId, cpProgram, cpSemester, toast])
+	}, [institutionsId, sessionId, program, cpSemester, toast])
 
 	useEffect(() => {
 		if (tab !== 'current') return
+		if (!institutionsId || !sessionId) return
+		// Already showing exactly this scope - a tab switch alone must not refetch.
+		if (cpLoadedKey === `${institutionsId}|${sessionId}|${program}|${cpSemester}`) return
 		loadCurrentPapers()
 		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [tab, institutionsId, sessionId, cpProgram, cpSemester])
+	}, [tab, institutionsId, sessionId, program, cpSemester, cpLoadedKey])
 
 	// A semester that no longer exists under the newly chosen programme would
 	// filter the list down to nothing, so drop it back to "all".
 	useEffect(() => {
 		if (cpSemester === 'all') return
 		if (cpFilters.semesters.length === 0) return
-		if (!cpFilters.semesters.includes(Number(cpSemester))) setCpSemester('all')
+		if (!cpFilters.semesters.some(s => s.value === cpSemester)) setCpSemester('all')
 	}, [cpFilters.semesters, cpSemester])
 
 	// =====================================================
@@ -651,15 +701,26 @@ export default function ExamApplicationsPage() {
 		try {
 			const params = new URLSearchParams({ institutions_id: institutionsId })
 			if (sessionId) params.set('examination_session_id', sessionId)
-			if (arProgram !== 'all') params.set('program_code', arProgram)
+			if (program !== 'all') params.set('program_code', program)
 			if (arSemester !== 'all') params.set('semester', arSemester)
 
 			const res = await fetch(`/api/exam-management/exam-applications/arrear-learners?${params}`)
 			const raw: ArrearLearnersResponse & { error?: string } = await parseJsonResponse(res)
 			if (!res.ok) throw new Error(raw?.error || 'Failed to load learners with arrears')
 
-			setArLearners(raw.data || [])
-			setArFilters(raw.filters || { programs: [], semesters: [] })
+			const rows = raw.data || []
+			setArLearners(rows)
+			setArLoadedKey(`${institutionsId}|${sessionId}|${program}|${arSemester}`)
+			setArFilters(raw.filters || { programs: [], semesters: [], totals: EMPTY_FILTER_TOTALS })
+
+			// Changing the programme / semester filter changes who is on the list. A
+			// learner picked under the old filter is no longer visible, so keeping
+			// them selected would silently submit somebody the operator can't see.
+			const visible = new Set(rows.map(l => l.key))
+			setArPicked(prev => {
+				const next = new Set([...prev].filter(k => visible.has(k)))
+				return next.size === prev.size ? prev : next
+			})
 		} catch (err) {
 			console.error('[exam-applications] load arrear learners failed:', err)
 			toast({
@@ -671,18 +732,22 @@ export default function ExamApplicationsPage() {
 		} finally {
 			setLoadingArLearners(false)
 		}
-	}, [institutionsId, sessionId, arProgram, arSemester, toast])
+	}, [institutionsId, sessionId, program, arSemester, toast])
 
 	useEffect(() => {
 		if (tab !== 'arrear' || arMode !== 'learner') return
+		if (!institutionsId) return
+		// Already showing exactly this scope - switching tabs or flipping between
+		// Learner wise / Subject wise must not refetch.
+		if (arLoadedKey === `${institutionsId}|${sessionId}|${program}|${arSemester}`) return
 		loadArrearLearners()
 		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [tab, arMode, institutionsId, sessionId, arProgram, arSemester])
+	}, [tab, arMode, institutionsId, sessionId, program, arSemester, arLoadedKey])
 
 	useEffect(() => {
 		if (arSemester === 'all') return
 		if (arFilters.semesters.length === 0) return
-		if (!arFilters.semesters.includes(Number(arSemester))) setArSemester('all')
+		if (!arFilters.semesters.some(s => s.value === arSemester)) setArSemester('all')
 	}, [arFilters.semesters, arSemester])
 
 	// ── Arrear - load the papers for the picked learners ──
@@ -818,9 +883,15 @@ export default function ExamApplicationsPage() {
 	// =====================================================
 	// Derived - Current Papers
 	// =====================================================
+	// Every option states how much data sits behind it, so "Semester I (17 learners)"
+	// beside "All semesters (17 learners)" makes it obvious when a filter genuinely
+	// has nothing more to narrow rather than looking like it did nothing.
 	const cpProgramOptions = useMemo(
-		() => [{ value: 'all', label: 'All programs' }, ...cpFilters.programs.map(p => ({ value: p, label: p }))],
-		[cpFilters.programs]
+		() => [
+			{ value: 'all', label: `All programs — ${countLabel(cpFilters.totals.programs, 'papers')}` },
+			...cpFilters.programs.map(p => ({ value: p.value, label: `${p.value} — ${countLabel(p, 'papers')}` })),
+		],
+		[cpFilters.programs, cpFilters.totals.programs]
 	)
 
 	const filteredCpLearners = useMemo(() => {
@@ -859,6 +930,41 @@ export default function ExamApplicationsPage() {
 		})
 	}
 
+	/**
+	 * The distinct papers of the SELECTED learners.
+	 *
+	 * The flow is filter -> learners -> papers, so this panel follows the selection
+	 * rather than showing the whole cohort up front: what the operator is about to
+	 * apply for is exactly the papers of the learners they ticked. Derived from the
+	 * learners already in hand - no extra request.
+	 */
+	const cpSelectedPapers = useMemo(() => {
+		const byCode = new Map<string, CurrentPaperRow>()
+		for (const learner of cpLearners) {
+			if (!cpSelected.has(learner.key)) continue
+			for (const subject of learner.subjects) {
+				const key = subject.course_code.toUpperCase()
+				const existing = byCode.get(key)
+				if (existing) {
+					existing.learner_count++
+					if (subject.is_applied) existing.applied_count++
+					continue
+				}
+				byCode.set(key, {
+					course_code: subject.course_code,
+					course_name: subject.course_name,
+					semester: subject.semester,
+					fee_amount: subject.quoted_fee ?? null,
+					learner_count: 1,
+					applied_count: subject.is_applied ? 1 : 0,
+				})
+			}
+		}
+		return [...byCode.values()].sort(
+			(a, b) => (a.semester || 0) - (b.semester || 0) || a.course_code.localeCompare(b.course_code)
+		)
+	}, [cpLearners, cpSelected])
+
 	const cpSelection = useMemo(() => {
 		const picked = cpLearners.filter(l => cpSelected.has(l.key))
 		return {
@@ -876,8 +982,11 @@ export default function ExamApplicationsPage() {
 	// Derived - Arrear
 	// =====================================================
 	const arProgramOptions = useMemo(
-		() => [{ value: 'all', label: 'All programs' }, ...arFilters.programs.map(p => ({ value: p, label: p }))],
-		[arFilters.programs]
+		() => [
+			{ value: 'all', label: `All programs — ${countLabel(arFilters.totals.programs, 'arrears')}` },
+			...arFilters.programs.map(p => ({ value: p.value, label: `${p.value} — ${countLabel(p, 'arrears')}` })),
+		],
+		[arFilters.programs, arFilters.totals.programs]
 	)
 
 	const filteredArLearners = useMemo(() => {
@@ -1066,7 +1175,7 @@ export default function ExamApplicationsPage() {
 			body: JSON.stringify({
 				institutions_id: institutionsId,
 				examination_session_id: sessionId,
-				program_code: cpProgram === 'all' ? '' : cpProgram,
+				program_code: program === 'all' ? '' : program,
 				semester: cpSemester === 'all' ? null : Number(cpSemester),
 				learners,
 			}),
@@ -1185,6 +1294,10 @@ export default function ExamApplicationsPage() {
 	}, [tab, cpLearners, cpSelection.learners, selectableCpLearners.length, arMode, candidates, arLearners, selectableArRows.length, arSelection.rows])
 
 	const showInstitutionField = mustSelectInstitution
+	const showScopeFilters = !(tab === 'arrear' && arMode === 'subject')
+	const semesterFilterOptions = tab === 'current' ? cpFilters.semesters : arFilters.semesters
+	const rowNoun = tab === 'current' ? 'papers' : 'arrears'
+	const semesterTotals = tab === 'current' ? cpFilters.totals.semesters : arFilters.totals.semesters
 
 	return (
 		<SidebarProvider>
@@ -1284,38 +1397,87 @@ export default function ExamApplicationsPage() {
 										</div>
 									)}
 
-									<div className="space-y-1.5">
-										<Label className="text-xs font-medium">Program</Label>
-										<SearchableSelect
-											value={tab === 'current' ? cpProgram : arProgram}
-											onValueChange={val => (tab === 'current' ? setCpProgram(val) : setArProgram(val))}
-											placeholder="All programs"
-											searchPlaceholder="Search program..."
-											options={tab === 'current' ? cpProgramOptions : arProgramOptions}
-											disabled={!scopeReady}
-											loading={tab === 'current' ? loadingCp : loadingArLearners}
-										/>
-									</div>
+									{/* Subject-wise arrears carry their own programme picker and take the
+									    semester from the chosen offering, so these two would do nothing there. */}
+									{showScopeFilters && (
+										<>
+											<div className="space-y-1.5">
+												<Label className="text-xs font-medium">Program</Label>
+												<SearchableSelect
+													value={program}
+													onValueChange={setProgram}
+													placeholder="All programs"
+													searchPlaceholder="Search program..."
+													options={tab === 'current' ? cpProgramOptions : arProgramOptions}
+													disabled={!scopeReady}
+													loading={tab === 'current' ? loadingCp : loadingArLearners}
+												/>
+											</div>
 
-									<div className="space-y-1.5">
-										<Label className="text-xs font-medium">
-											Semester {tab === 'arrear' && <span className="text-muted-foreground font-normal">(optional)</span>}
-										</Label>
-										<Select
-											value={tab === 'current' ? cpSemester : arSemester}
-											onValueChange={val => (tab === 'current' ? setCpSemester(val) : setArSemester(val))}
-											disabled={!scopeReady}
-										>
-											<SelectTrigger className="h-9 text-sm"><SelectValue placeholder="All semesters" /></SelectTrigger>
-											<SelectContent>
-												<SelectItem value="all">All semesters</SelectItem>
-												{(tab === 'current' ? cpFilters.semesters : arFilters.semesters).map(s => (
-													<SelectItem key={s} value={String(s)}>Semester {romanSemester(s)}</SelectItem>
-												))}
-											</SelectContent>
-										</Select>
-									</div>
+											<div className="space-y-1.5">
+												<Label className="text-xs font-medium">
+													Semester {tab === 'arrear' && <span className="text-muted-foreground font-normal">(optional)</span>}
+												</Label>
+												<Select
+													value={tab === 'current' ? cpSemester : arSemester}
+													onValueChange={val => (tab === 'current' ? setCpSemester(val) : setArSemester(val))}
+													disabled={!scopeReady}
+												>
+													<SelectTrigger className="h-9 text-sm"><SelectValue placeholder="All semesters" /></SelectTrigger>
+													<SelectContent>
+														<SelectItem value="all">
+															{`All semesters — ${countLabel(semesterTotals, rowNoun)}`}
+														</SelectItem>
+														{semesterFilterOptions.map(o => (
+															<SelectItem key={o.value} value={o.value}>
+																{`Semester ${romanSemester(Number(o.value))} — ${countLabel(o, rowNoun)}`}
+															</SelectItem>
+														))}
+													</SelectContent>
+												</Select>
+											</div>
+										</>
+									)}
 								</div>
+
+								{/* Program is shared but Semester is not, which is worth stating outright. */}
+								{showScopeFilters && (
+									<p className="text-[11px] text-muted-foreground leading-relaxed">
+										<span className="font-medium text-foreground">Program carries across both tabs</span> — apply Current Papers,
+										then switch to Arrear Papers for the same programme without re-filtering. Semester means the learner&apos;s own
+										semester on both tabs, so Semester&nbsp;III lists the Sem&nbsp;III cohort together with every arrear they carry —
+										each arrear still shows the semester it came from on its own row.
+									</p>
+								)}
+
+								{/* The charge columns arrive with a hand-applied migration. Until it runs,
+								    applications still save but the two per-learner fees cannot be stored,
+								    so say so rather than showing amounts that will not be written. */}
+								{!chargeColumnsReady && (
+									<div className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
+										<Info className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+										<p>
+											<span className="font-medium">Application fee and mark statement fee cannot be stored yet.</span>{' '}
+											Run <code className="font-mono">supabase/migrations/20260824_add_application_fees_to_exam_registrations.sql</code>{' '}
+											in the Supabase SQL Editor. Applying still works — papers move to Applied and the per-paper fee is stamped —
+											but the two per-learner charges are skipped until those columns exist.
+										</p>
+									</div>
+								)}
+
+								{/* Two sessions can share a session_code with only one carrying a fee
+								    schedule. Without one there is no fine and no circular reference, and
+								    nothing else in the flow would ever mention it. */}
+								{feeContext?.configured && !feeContext.last_date_without_fine && !feeContext.circular_ref && (
+									<div className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
+										<Info className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+										<p>
+											Paper rates are configured, but this exam session has no fee schedule — no cut-off dates, no late fine and no
+											circular reference will be recorded. Check you picked the right session if two share a code.{' '}
+											<Link href="/fee-details" className="underline font-medium">Review fee schedule</Link>
+										</p>
+									</div>
+								)}
 
 								{/* Fee banner - only for the two states that need action */}
 								{feeContext && (!feeContext.configured || feeContext.fine_applicable) && (
@@ -1426,7 +1588,8 @@ export default function ExamApplicationsPage() {
 														<label className="flex items-center gap-2 cursor-pointer flex-1">
 															<Checkbox checked={allCpChecked} onCheckedChange={toggleAllCp} disabled={selectableCpLearners.length === 0} />
 															<span>
-																Select all applicable ({selectableCpLearners.length}) · showing {filteredCpLearners.length} of {cpLearners.length}
+																Select all applicable ({selectableCpLearners.length})
+																{filteredCpLearners.length !== cpLearners.length && ` · showing ${filteredCpLearners.length} of ${cpLearners.length}`}
 															</span>
 														</label>
 														{showFee && <span className="w-24 text-right text-muted-foreground">Fee</span>}
@@ -1461,24 +1624,27 @@ export default function ExamApplicationsPage() {
 									<div className="flex flex-col gap-3">
 										<Card className="flex flex-col min-h-[300px]">
 											<CardHeader className="px-4 py-3 border-b">
-												<h3 className="text-sm font-semibold">Papers in this cohort</h3>
+												<h3 className="text-sm font-semibold">Papers being applied for</h3>
 												<p className="text-xs text-muted-foreground">
-													{cpPapers.length} distinct paper{cpPapers.length === 1 ? '' : 's'} across the filtered learners
+													{cpSelection.learners === 0
+														? 'Select learners to see the papers'
+														: `${cpSelectedPapers.length} distinct paper${cpSelectedPapers.length === 1 ? '' : 's'} across ${cpSelection.learners} selected learner${cpSelection.learners === 1 ? '' : 's'}`}
 												</p>
 											</CardHeader>
 											<CardContent className="p-0 flex-1 flex flex-col min-h-0">
-												{cpPapers.length === 0 ? (
+												{cpSelectedPapers.length === 0 ? (
 													<div className="flex flex-col items-center justify-center flex-1 p-8 text-sm text-muted-foreground">
 														<BookOpen className="h-8 w-8 mb-2 opacity-40" />
-														<p>No papers to show yet</p>
+														<p>Select learners on the left</p>
+														<p className="text-xs mt-1 opacity-80">Their registered papers appear here</p>
 													</div>
 												) : (
 													<div className="flex-1 min-h-0" style={{ minHeight: 240 }}>
 														<AutoSizer>
 															{({ height, width }) => (
-																<VirtualList height={height} width={width} itemCount={cpPapers.length} itemSize={ROW_HEIGHT}>
+																<VirtualList height={height} width={width} itemCount={cpSelectedPapers.length} itemSize={ROW_HEIGHT}>
 																	{({ index, style }) => (
-																		<CohortPaperRow style={style} paper={cpPapers[index]} showFee={showFee} />
+																		<CohortPaperRow style={style} paper={cpSelectedPapers[index]} showFee={showFee} />
 																	)}
 																</VirtualList>
 															)}
@@ -1692,7 +1858,8 @@ export default function ExamApplicationsPage() {
 															<label className="flex items-center gap-2 cursor-pointer flex-1">
 																<Checkbox checked={allArRowsChecked} onCheckedChange={toggleAllArRows} disabled={selectableArRows.length === 0} />
 																<span>
-																	Select all eligible ({selectableArRows.length}) · showing {filteredArRows.length} of {arCourseRows.length}
+																	Select all eligible ({selectableArRows.length})
+																	{filteredArRows.length !== arCourseRows.length && ` · showing ${filteredArRows.length} of ${arCourseRows.length}`}
 																</span>
 															</label>
 															{showFee && <span className="w-16 text-right text-muted-foreground">Fee</span>}
@@ -1828,7 +1995,8 @@ export default function ExamApplicationsPage() {
 														<label className="flex items-center gap-2 cursor-pointer flex-1">
 															<Checkbox checked={allCandidatesChecked} onCheckedChange={toggleAllCandidates} disabled={selectableCandidates.length === 0} />
 															<span>
-																Select all eligible ({selectableCandidates.length}) · showing {filteredCandidates.length} of {candidates.length}
+																Select all eligible ({selectableCandidates.length})
+																{filteredCandidates.length !== candidates.length && ` · showing ${filteredCandidates.length} of ${candidates.length}`}
 															</span>
 														</label>
 														{showFee && <span className="w-20 text-right text-muted-foreground">Fee</span>}

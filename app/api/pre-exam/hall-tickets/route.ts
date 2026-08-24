@@ -18,6 +18,7 @@ import type {
 	HallTicketSubject,
 	HallTicketApiResponse
 } from '@/types/hall-ticket'
+import { ACTIVE_REGISTRATION_STATUSES } from '@/lib/exam-registration-status'
 
 export async function GET(request: NextRequest) {
 	try {
@@ -174,7 +175,7 @@ export async function GET(request: NextRequest) {
 			`)
 			.eq('examination_session_id', examination_session_id)
 			.eq('institutions_id', institution.id)
-			.eq('registration_status', 'Approved')
+			.in('registration_status', ACTIVE_REGISTRATION_STATUSES)
 
 		// ESE requires fee payment; supplementary includes regardless of fee_paid
 		if (!supplementary) {

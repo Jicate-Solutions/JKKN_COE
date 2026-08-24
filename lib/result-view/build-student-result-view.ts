@@ -17,6 +17,7 @@
  */
 
 import type { getSupabaseServer } from '@/lib/supabase-server'
+import { ACTIVE_REGISTRATION_STATUSES } from '@/lib/exam-registration-status'
 
 type SupabaseServer = ReturnType<typeof getSupabaseServer>
 
@@ -275,7 +276,7 @@ export async function buildStudentResultView(
 		`)
 		.eq('institutions_id', institutionId)
 		.eq('student_id', resolvedStudentId)
-		.eq('registration_status', 'Approved')
+		.in('registration_status', ACTIVE_REGISTRATION_STATUSES)
 
 	if (examinationSessionId) {
 		regQuery.eq('examination_session_id', examinationSessionId)

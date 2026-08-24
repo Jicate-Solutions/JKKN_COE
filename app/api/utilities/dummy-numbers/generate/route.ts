@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
+import { ACTIVE_REGISTRATION_STATUSES } from '@/lib/exam-registration-status'
 
 // Helper function to shuffle array
 function shuffleArray<T>(array: T[]): T[] {
@@ -327,7 +328,7 @@ export async function POST(request: Request) {
 					`)
 					.eq('institutions_id', institutions_id)
 					.eq('examination_session_id', examination_session_id)
-					.eq('registration_status', 'Approved')
+					.in('registration_status', ACTIVE_REGISTRATION_STATUSES)
 
 				// Pre-filter by allowed course_offering IDs (query-level, max 100 to avoid header overflow)
 				if (allowedOfferingIds && allowedOfferingIds.size <= 100) {

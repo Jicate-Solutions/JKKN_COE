@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
+import { ACTIVE_REGISTRATION_STATUSES } from '@/lib/exam-registration-status'
 
 // GET: Count exam_registrations matching the given filters
 export async function GET(request: Request) {
@@ -46,7 +47,7 @@ export async function GET(request: Request) {
 			.select('id', { count: 'exact', head: true })
 			.eq('institutions_id', institutions_id)
 			.eq('examination_session_id', examination_session_id)
-			.eq('registration_status', 'Approved')
+			.in('registration_status', ACTIVE_REGISTRATION_STATUSES)
 			.in('course_offering_id', offeringIds)
 
 		if (error) {

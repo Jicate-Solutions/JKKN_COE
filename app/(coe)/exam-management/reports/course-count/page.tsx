@@ -158,7 +158,7 @@ export default function CourseCountReportPage() {
 
 		try {
 			setLoadingCourses(true)
-			// Fetch courses from exam_registrations that have fee_paid = true
+			// Fetch courses from exam_registrations (every registration, paid or not)
 			const res = await fetch(
 				`/api/exam-management/reports/course-count?institution_id=${selectedInstitutionId}&session_id=${selectedSessionId}`
 			)

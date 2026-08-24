@@ -127,7 +127,9 @@ export async function GET(request: Request) {
 			.eq('institutions_id', institutionId)
 			.eq('examination_session_id', examinationSessionId)
 			.in('course_code', allCourseCodesFromTimetable)
-			.eq('fee_paid', true)
+			// fee_paid is not filtered on - the flag is unreliable here (many rows are
+			// true with no amount and no payment_date), and gating on it left genuinely
+			// registered learners off the printed sheet.
 			.order('stu_register_no', { ascending: true })
 			.range(0, 9999)
 

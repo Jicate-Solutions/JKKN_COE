@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
 import { fetchAllMyJKKNPrograms } from '@/services/myjkkn-service'
+import { ACTIVE_REGISTRATION_STATUSES } from '@/lib/exam-registration-status'
 
 export async function GET(request: Request) {
 	try {
@@ -63,7 +64,7 @@ export async function GET(request: Request) {
 			.eq('institutions_id', institutionId)
 			.eq('examination_session_id', examinationSessionId)
 			.in('course_code', courseCodes)
-			.eq('registration_status', 'Approved')
+			.in('registration_status', ACTIVE_REGISTRATION_STATUSES)
 			.order('stu_register_no', { ascending: true })
 			.range(0, 99999)
 

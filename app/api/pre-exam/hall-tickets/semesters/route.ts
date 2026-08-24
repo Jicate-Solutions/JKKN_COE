@@ -10,6 +10,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
+import { ACTIVE_REGISTRATION_STATUSES } from '@/lib/exam-registration-status'
 
 export async function GET(request: NextRequest) {
 	try {
@@ -58,7 +59,7 @@ export async function GET(request: NextRequest) {
 				.select('course_offering_id, is_regular, course_offerings(semester)')
 				.eq('institutions_id', institution.id)
 				.eq('examination_session_id', examination_session_id)
-				.eq('registration_status', 'Approved')
+				.in('registration_status', ACTIVE_REGISTRATION_STATUSES)
 				.eq('fee_paid', true)
 				.eq('is_regular', true)
 				.range(0, 49999)
@@ -77,7 +78,7 @@ export async function GET(request: NextRequest) {
 					.select('course_offering_id, is_regular, course_offerings(semester)')
 					.eq('institutions_id', institution.id)
 					.eq('examination_session_id', examination_session_id)
-					.eq('registration_status', 'Approved')
+					.in('registration_status', ACTIVE_REGISTRATION_STATUSES)
 					.eq('fee_paid', true)
 					.eq('is_regular', true)
 					.eq('program_code', program_code)

@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
+import { ACTIVE_REGISTRATION_STATUSES } from '@/lib/exam-registration-status'
 
 // Helper: generate dummy number from format string (matches /generate route logic)
 function generateDummyNumber(format: string, index: number, startFrom: number): string {
@@ -137,7 +138,7 @@ async function fetchMissingLearners(
 				`)
 				.eq('institutions_id', institutions_id)
 				.eq('examination_session_id', examination_session_id)
-				.eq('registration_status', 'Approved')
+				.in('registration_status', ACTIVE_REGISTRATION_STATUSES)
 
 			// Apply offering filter at query level when possible (.in() can't handle very large sets without HeadersOverflow)
 			if (allowedOfferingIds.size <= 100) {

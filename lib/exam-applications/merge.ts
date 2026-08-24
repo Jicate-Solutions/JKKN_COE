@@ -207,9 +207,22 @@ export function mergeExamApplicationCourses(input: MergeCourseInput): ExamApplic
 		let status: ExamApplicationEligibility = 'Eligible'
 		let reason: string | null = null
 
-		if (draft.is_registered) {
+		// A registration existing is NOT the same as it having been applied for.
+		// Registration and application happen on the same screen, so a paper the
+		// learner is registered for but has not applied for must stay actionable -
+		// applying then UPDATES that row instead of inserting a second one. Treating
+		// every registration as done left those rows reachable from neither tab.
+		const registrationStatus = String(draft.registration_status || '').trim().toUpperCase()
+		const applicationDone = registrationStatus === 'APPLIED'
+		const registrationBlocked = ['CANCELLED', 'REJECTED', 'WITHDRAWN'].includes(registrationStatus)
+		const registeredNotApplied = draft.is_registered && !applicationDone && !registrationBlocked
+
+		if (draft.is_registered && applicationDone) {
+			status = 'Already Applied'
+			reason = 'Already applied for in this session'
+		} else if (draft.is_registered && registrationBlocked) {
 			status = 'Already Registered'
-			reason = `Already registered in this session (${draft.registration_status || 'Pending'})`
+			reason = `Registration is ${draft.registration_status} - it cannot be applied for`
 		} else if (!draft.is_backlog && passedCourseCodes.has(draft.key)) {
 			status = 'Already Passed'
 			reason = 'Learner has already cleared this course'
@@ -227,6 +240,7 @@ export function mergeExamApplicationCourses(input: MergeCourseInput): ExamApplic
 			status = 'Attempts Exhausted'
 			reason = `All ${draft.max_attempts_allowed} permitted attempts have been used`
 		} else if (
+			!registeredNotApplied &&
 			offering.max_enrollment != null &&
 			(offering.enrolled_count ?? 0) >= offering.max_enrollment
 		) {
@@ -263,6 +277,7 @@ export function mergeExamApplicationCourses(input: MergeCourseInput): ExamApplic
 			is_registered: draft.is_registered,
 			registration_id: draft.registration_id,
 			registration_status: draft.registration_status,
+			requires_update: status === 'Eligible' && registeredNotApplied && Boolean(draft.registration_id),
 			is_backlog: draft.is_backlog,
 			backlog_id: draft.backlog_id,
 			attempt_number: draft.is_backlog ? (draft.attempt_count || 0) + 1 : 1,

@@ -61,6 +61,11 @@ const DEFAULT_SEMESTER_OPTIONS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
 // Sentinel for registrations whose course offering carries no semester
 const UNMAPPED_SEMESTER = 0
 
+// Reports that print one block PER LEARNER listing every paper applied for in the
+// session. A semester selection scopes the learner cohort on these, not the rows -
+// see the semester branch in filteredReportData.
+const STUDENT_REPORT_TYPES = ['student-fee-details', 'student-exam-registration', 'student-exam-registration-summary', 'student-wise-application', 'student-wise-registration']
+
 const ROMAN = ['', 'I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X']
 function toRoman(n: number): string { return ROMAN[n] || String(n) }
 function semesterLabel(n: number): string { return n === UNMAPPED_SEMESTER ? 'Not Mapped' : toRoman(n) }
@@ -399,11 +404,32 @@ export default function ExamRegistrationReportsPage() {
 
 	// ── Filtered report data (by course category + program + semester) ──
 
+	const isLearnerFormReport = STUDENT_REPORT_TYPES.includes(selectedReportType as string)
+
 	const filteredReportData = useMemo(() => {
 		const categoryActive = selectedCourseCategories.length > 0 && selectedCourseCategories.length < COURSE_CATEGORY_OPTIONS.length
 		const programActive = selectedPrograms.length > 0 && selectedPrograms.length < programOptions.length
 		const semesterActive = selectedSemesters.length > 0 && selectedSemesters.length < semesterOptions.length
 		if (!categoryActive && !programActive && !semesterActive) return reportData
+
+		const semesterOf = (r: any) => {
+			const sem = Number(r.course_offering?.semester)
+			return sem > 0 ? sem : UNMAPPED_SEMESTER
+		}
+
+		// On the learner forms a semester selection picks the learner COHORT, and every
+		// paper that learner applied for is then printed - including arrears carried
+		// from earlier semesters. Matching row-by-row would drop exactly those arrear
+		// papers, which is the fee the form exists to collect.
+		const semesterCohort = semesterActive && isLearnerFormReport
+			? new Set(
+				reportData
+					.filter(r => selectedSemesters.includes(semesterOf(r)))
+					.map(r => r.stu_register_no)
+					.filter(Boolean)
+			)
+			: null
+
 		return reportData.filter(r => {
 			if (categoryActive) {
 				const cat = r.course_offering?.course_category
@@ -415,17 +441,21 @@ export default function ExamRegistrationReportsPage() {
 				if (!code || !selectedPrograms.includes(code)) return false
 			}
 			if (semesterActive) {
-				const sem = Number(r.course_offering?.semester)
-				// Strict match: a row without a semester only shows under "Not Mapped"
-				if (!selectedSemesters.includes(sem > 0 ? sem : UNMAPPED_SEMESTER)) return false
+				if (semesterCohort) {
+					// Learner forms: keep every row of a learner in the selected semester(s)
+					if (!r.stu_register_no || !semesterCohort.has(r.stu_register_no)) return false
+				} else {
+					// Count / date-wise reports aggregate by course, so they match per row.
+					// Strict: a row without a semester only shows under "Not Mapped"
+					if (!selectedSemesters.includes(semesterOf(r))) return false
+				}
 			}
 			return true
 		})
-	}, [reportData, selectedCourseCategories, selectedPrograms, programOptions, selectedSemesters, semesterOptions])
+	}, [reportData, selectedCourseCategories, selectedPrograms, programOptions, selectedSemesters, semesterOptions, isLearnerFormReport])
 
 	// Student-type reports: count unique learners (by register no), not raw registration rows
-	const STUDENT_REPORT_TYPES = ['student-fee-details', 'student-exam-registration', 'student-exam-registration-summary', 'student-wise-application', 'student-wise-registration']
-	const isStudentReport = STUDENT_REPORT_TYPES.includes(selectedReportType as string)
+	const isStudentReport = isLearnerFormReport
 	const uniqueStudentCount = useMemo(
 		() => isStudentReport ? new Set(filteredReportData.map((r: any) => r.stu_register_no).filter(Boolean)).size : 0,
 		[filteredReportData, isStudentReport]

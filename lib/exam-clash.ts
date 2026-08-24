@@ -2,6 +2,8 @@
 // Used by both the schedule save guard and the live pre-check endpoint so the
 // two can never diverge.
 
+import { ACTIVE_REGISTRATION_STATUSES } from '@/lib/exam-registration-status'
+
 // Fetch all pages from a Supabase query (bypasses the default 1000-row cap).
 export async function fetchAllPaginated(
 	queryFn: (from: number, to: number) => Promise<{ data: any[] | null; error: any }>,
@@ -104,7 +106,7 @@ export async function detectLearnerClashes(
 			.select('student_id, stu_register_no, student_name, course_offering_id, course_code')
 			.eq('institutions_id', institutions_id)
 			.eq('examination_session_id', examination_session_id)
-			.eq('registration_status', 'Approved')
+			.in('registration_status', ACTIVE_REGISTRATION_STATUSES)
 			.in('course_offering_id', batch)
 	)
 

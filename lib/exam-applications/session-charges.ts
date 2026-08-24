@@ -41,9 +41,21 @@ export const NO_CHARGE: SessionCharge = {
 	total: 0,
 }
 
-/** The once-per-session heads owed by a learner at the given fee tier */
-export function sessionChargeFor(book: FeeRateBook, level: ProgramLevel, onDate: string): SessionCharge {
-	const lines = learnerChargeLines(book, level)
+/**
+ * The once-per-session heads owed by a learner at the given fee tier.
+ *
+ * programCode matters: exam_fee_master can carry a rate scoped to one programme,
+ * which findRate() prefers over the plain tier rate. Omitting it here would stamp
+ * the tier amount while the Student Exam Application report - which does pass it -
+ * prints the programme amount, so the two would silently disagree.
+ */
+export function sessionChargeFor(
+	book: FeeRateBook,
+	level: ProgramLevel,
+	onDate: string,
+	programCode?: string | null
+): SessionCharge {
+	const lines = learnerChargeLines(book, level, programCode)
 	const application_fee = lines.find(l => l.head === 'APPLICATION')?.amount || 0
 	const mark_statement_fee = lines.find(l => l.head === 'MARK_STATEMENT')?.amount || 0
 	const late_fine = isFineApplicable(book.schedule, onDate) ? (book.schedule?.fine_amount || 0) : 0
@@ -61,12 +73,50 @@ export function sessionChargeForProgram(
 	programCode: string | null | undefined,
 	onDate: string
 ): SessionCharge {
-	return sessionChargeFor(book, resolveProgramLevel(programCode, book.levelByProgram), onDate)
+	return sessionChargeFor(book, resolveProgramLevel(programCode, book.levelByProgram), onDate, programCode)
 }
 
 /** Rows per `.in()` filter - keeps the PostgREST GET URL well under any length limit */
 const IN_CHUNK = 60
 const MAX_ROWS = 9999
+
+/**
+ * Whether exam_registrations actually has the charge columns yet.
+ *
+ * They arrive with 20260824_add_application_fees_to_exam_registrations.sql, which
+ * is applied by hand in the Supabase SQL Editor. Until it runs, writing those
+ * columns makes PostgREST reject the whole statement ("Could not find the
+ * 'application_fee' column ... in the schema cache"), which would fail every
+ * application for a reason that has nothing to do with the learner. So the write
+ * paths probe first and simply omit the columns while they are missing - the
+ * status and per-paper fee still land, and the once-per-session heads start being
+ * stamped the moment the migration is applied.
+ *
+ * A positive result is cached for the life of the process; a negative one is
+ * re-probed every call, so the app picks the columns up without a restart.
+ */
+let chargeColumnsPresent = false
+
+export async function hasSessionChargeColumns(supabase: SupabaseClient): Promise<boolean> {
+	if (chargeColumnsPresent) return true
+
+	const { error } = await supabase
+		.from('exam_registrations')
+		.select('application_fee, mark_statement_fee, late_fine, applied_date')
+		.limit(1)
+
+	if (error) {
+		console.warn(
+			'[exam-applications] exam_registrations is missing the exam-application charge columns - '
+			+ 'run supabase/migrations/20260824_add_application_fees_to_exam_registrations.sql. '
+			+ 'Applications will still save; application / mark statement / late fine will not be stored.'
+		)
+		return false
+	}
+
+	chargeColumnsPresent = true
+	return true
+}
 
 /**
  * Learners who already carry a once-per-session charge in this session.

@@ -11,6 +11,9 @@ export type ExamApplicationSource = 'Exam Registration' | 'Backlog' | 'Offer Lis
 
 export type ExamApplicationEligibility =
 	| 'Eligible'
+	/** A registration exists and has already been applied for - nothing left to do */
+	| 'Already Applied'
+	/** A registration exists in a state that must not be re-applied (Cancelled / Rejected / Withdrawn) */
 	| 'Already Registered'
 	| 'Already Passed'
 	| 'Not Offered'
@@ -50,6 +53,14 @@ export interface ExamApplicationCourse {
 	is_registered: boolean
 	registration_id: string | null
 	registration_status: string | null
+	/**
+	 * The learner already holds a registration for this paper but has not applied
+	 * for it yet, so applying UPDATES that row rather than inserting a new one.
+	 * Registration and application happen on the same screen, so a paper that was
+	 * registered but never applied has to stay actionable - otherwise it is
+	 * reachable from neither tab.
+	 */
+	requires_update: boolean
 	/** Backlog metadata */
 	is_backlog: boolean
 	backlog_id: string | null
@@ -318,13 +329,48 @@ export interface CurrentPaperRow {
 	applied_count: number
 }
 
+/**
+ * One choice in a cascading filter, carrying how much data sits behind it.
+ *
+ * The counts are shown in the dropdown because without them a filter that
+ * genuinely changes nothing (a programme running a single semester, so "All
+ * semesters" and "Semester I" are the same 17 learners) is indistinguishable
+ * from a filter that is broken.
+ */
+export interface CohortFilterOption {
+	/** Programme code, or the semester number as a string */
+	value: string
+	learners: number
+	/** Registered papers (current tab) or uncleared arrears (arrear tab) */
+	rows: number
+}
+
+/**
+ * The "All ..." row of a cascading filter.
+ *
+ * Learner counts cannot be summed from the per-value options - a learner holding
+ * papers in two semesters would be counted twice - so the distinct total is
+ * computed server-side and sent alongside.
+ */
+export interface CohortFilterTotals {
+	learners: number
+	rows: number
+}
+
 export interface CurrentPaperCohortResponse {
 	data: CurrentPaperLearner[]
 	papers: CurrentPaperRow[]
 	/** Option lists for the programme / semester cascade, derived from the cohort itself */
 	filters: {
-		programs: string[]
-		semesters: number[]
+		programs: CohortFilterOption[]
+		semesters: CohortFilterOption[]
+		/** Distinct totals for the "All programs" / "All semesters" rows */
+		totals: {
+			/** Across the whole session */
+			programs: CohortFilterTotals
+			/** Across the rows left after the programme filter */
+			semesters: CohortFilterTotals
+		}
 	}
 	summary: {
 		learners: number
@@ -335,6 +381,12 @@ export interface CurrentPaperCohortResponse {
 		not_applied: number
 	}
 	fee: BulkFeeContext
+	/**
+	 * false until 20260824_add_application_fees_to_exam_registrations.sql is applied.
+	 * While false, applications still save but the application / mark statement /
+	 * late fine amounts cannot be stored, so the UI warns instead of promising them.
+	 */
+	charge_columns_ready: boolean
 }
 
 export interface CurrentPaperApplyResult {
@@ -382,8 +434,12 @@ export interface ArrearLearner {
 export interface ArrearLearnersResponse {
 	data: ArrearLearner[]
 	filters: {
-		programs: string[]
-		semesters: number[]
+		programs: CohortFilterOption[]
+		semesters: CohortFilterOption[]
+		totals: {
+			programs: CohortFilterTotals
+			semesters: CohortFilterTotals
+		}
 	}
 	summary: {
 		learners: number

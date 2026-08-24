@@ -188,14 +188,15 @@ export async function GET(request: Request) {
 
 				if (!course) return NextResponse.json({ error: 'Course not found' }, { status: 404 })
 
-				// Get ALL registrations for this course (fee paid)
+				// Get ALL registrations for this course.
+				// fee_paid is not filtered on - the flag is unreliable here, and gating on
+				// it left registered learners unallotted.
 				const { data: allRegistrations, error: regError } = await supabase
 					.from('exam_registrations')
 					.select('id, stu_register_no, student_name, is_regular, program_code')
 					.eq('institutions_id', institutionId)
 					.eq('examination_session_id', sessionId)
 					.eq('course_code', (course as any).course_code)
-					.eq('fee_paid', true)
 					.range(0, 9999)
 
 				if (regError) {

@@ -164,13 +164,18 @@ export async function GET(request: Request) {
 			}
 
 			// Step 4: Get registered students from exam_registrations
-			// Filter by: institution_id, examination_session_id, program_code, course_code, fee_paid = true
+			// Filter by: institution_id, examination_session_id, program_code, course_code
+			//
+			// fee_paid is deliberately NOT filtered on. The flag is unreliable in this
+			// database - tens of thousands of rows carry fee_paid = true with no amount
+			// and no payment_date - so gating on it silently dropped learners who had
+			// genuinely registered. Fee collection is tracked by the exam application
+			// flow, not by this flag. (Hall tickets still gate on it, by CoE policy.)
 			console.log('Fetching registered students from exam_registrations with filters:', {
 				institution_id,
 				examination_session_id,
 				program_code,
-				course_code,
-				fee_paid: true
+				course_code
 			})
 
 			const { data: registeredStudents, error: regError } = await supabase
@@ -180,7 +185,6 @@ export async function GET(request: Request) {
 				.eq('examination_session_id', examination_session_id)
 				.eq('program_code', program_code)
 				.eq('course_code', course_code)
-				.eq('fee_paid', true)
 				.order('stu_register_no', { ascending: true })
 
 			if (regError) {
@@ -195,38 +199,12 @@ export async function GET(request: Request) {
 			console.log('Registered students found:', registeredStudents?.length || 0)
 
 			if (!registeredStudents || registeredStudents.length === 0) {
-				// Diagnostic probe — find out WHY: are there registrations at all (any fee_paid),
-				// and what was excluded by the fee_paid=true filter?
-				const { data: anyRegs } = await supabase
-					.from('exam_registrations')
-					.select('stu_register_no, student_name, fee_paid, is_regular')
-					.eq('institutions_id', institution_id)
-					.eq('examination_session_id', examination_session_id)
-					.eq('program_code', program_code)
-					.eq('course_code', course_code)
-					.order('stu_register_no', { ascending: true })
-
-				const totalRegs = anyRegs?.length || 0
-				const unpaidCount = (anyRegs || []).filter((r: any) => !r.fee_paid).length
-
-				console.log(`Diagnostic: ${totalRegs} total registrations for this filter; ${unpaidCount} have fee_paid=false`)
-
-				let userMessage = 'No registered students found for this exam.'
-				if (totalRegs > 0 && unpaidCount === totalRegs) {
-					userMessage = `${totalRegs} student(s) registered for this course, but none have fee_paid = true. Update fee status to load them.`
-				} else if (totalRegs === 0) {
-					userMessage = `No exam_registrations rows exist for program ${program_code} + course ${course_code} in this session. Check that registrations were created.`
-				}
-
+				// Nothing is filtered out any more, so an empty result means the
+				// registrations genuinely do not exist - no probe needed to explain it.
 				return NextResponse.json({
-					error: userMessage,
+					error: `No exam_registrations rows exist for program ${program_code} + course ${course_code} in this session. Check that registrations were created.`,
 					step: 'exam_registrations_fetch',
-					filters: { institution_id, examination_session_id, program_code, course_code, fee_paid: true },
-					diagnostic: {
-						total_registrations_ignoring_fee_paid: totalRegs,
-						unpaid_count: unpaidCount,
-						sample: (anyRegs || []).slice(0, 5)
-					}
+					filters: { institution_id, examination_session_id, program_code, course_code }
 				}, { status: 404 })
 			}
 

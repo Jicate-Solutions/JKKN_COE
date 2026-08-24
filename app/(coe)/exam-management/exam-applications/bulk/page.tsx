@@ -1153,7 +1153,7 @@ export default function BulkExamApplicationPage() {
 									</div>
 									<Link href="/exam-management/exam-applications">
 										<Button variant="outline" size="sm" className="h-8 text-sm px-3 gap-1.5">
-											<ArrowLeft className="h-3.5 w-3.5" />Single Learner
+											<ArrowLeft className="h-3.5 w-3.5" />Exam Applications
 										</Button>
 									</Link>
 								</div>

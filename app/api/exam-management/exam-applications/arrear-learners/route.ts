@@ -1,7 +1,40 @@
 import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
 import { chargeKey } from '@/lib/exam-applications/session-charges'
-import type { ArrearLearner, ArrearLearnersResponse } from '@/types/exam-applications'
+import type { ArrearLearner, ArrearLearnersResponse, CohortFilterOption, CohortFilterTotals } from '@/types/exam-applications'
+
+/** Distinct-learner and row counts per filter value, sorted numerically when possible */
+function countBy<T>(rows: T[], valueOf: (row: T) => string | null, learnerOf: (row: T) => string): CohortFilterOption[] {
+	const byValue = new Map<string, { learners: Set<string>; rows: number }>()
+
+	for (const row of rows) {
+		const value = valueOf(row)
+		if (!value) continue
+		let entry = byValue.get(value)
+		if (!entry) {
+			entry = { learners: new Set<string>(), rows: 0 }
+			byValue.set(value, entry)
+		}
+		entry.learners.add(learnerOf(row))
+		entry.rows++
+	}
+
+	return [...byValue.entries()]
+		.map(([value, entry]) => ({ value, learners: entry.learners.size, rows: entry.rows }))
+		.sort((a, b) => {
+			const na = Number(a.value)
+			const nb = Number(b.value)
+			if (Number.isFinite(na) && Number.isFinite(nb)) return na - nb
+			return a.value.localeCompare(b.value)
+		})
+}
+
+/** Distinct learner + row totals for an "All ..." filter row */
+function totalsOf<T>(rows: T[], learnerOf: (row: T) => string): CohortFilterTotals {
+	const learners = new Set<string>()
+	for (const row of rows) learners.add(learnerOf(row))
+	return { learners: learners.size, rows: rows.length }
+}
 
 /**
  * Arrear tab - learner picker
@@ -11,12 +44,16 @@ import type { ArrearLearner, ArrearLearnersResponse } from '@/types/exam-applica
  *
  * The old picker swept every learner in the institution from MyJKKN and filtered
  * client-side, which is why its programme / semester filters behaved badly: the
- * list was the whole college, the semester came from MyJKKN's current_semester
- * (the semester the learner is studying now, not the semester the arrear belongs
- * to), and a learner with no backlog at all still appeared. Reading the backlog
- * view instead means the list IS the arrear population, the semester filter is
- * the backlog's original_semester, and the filter option lists are derived from
- * the same rows the table shows - so a filter can never select nothing.
+ * list was the whole college and a learner with no backlog at all still appeared.
+ * Reading the backlog view instead means the list IS the arrear population, and
+ * the filter option lists are derived from the same rows the table shows - so a
+ * filter can never select nothing.
+ *
+ * The Semester filter is the semester the LEARNER is in (resolved locally from
+ * their regular papers this session), not the semester the arrear came from: the
+ * CoE works cohort by cohort, so Semester III must list the Sem-III learners
+ * together with every arrear they carry. Each arrear's own semester is still
+ * shown on the row.
  */
 
 const MAX_ROWS = 9999
@@ -99,6 +136,65 @@ async function fetchSessionArrearRegistrations(
 	return keys
 }
 
+/**
+ * learner key -> the semester the learner is currently studying.
+ *
+ * The Semester filter on the Arrear tab means "which semester's learners", not
+ * "which semester did the backlog come from" - the CoE works cohort by cohort, and
+ * a Sem-III learner's Sem-I arrear must show up under Sem III.
+ *
+ * MyJKKN holds current_semester but sweeping it here is slow and the filters used
+ * to be unreliable because of it. The learner's regular (is_regular) registrations
+ * in THIS session give the same answer locally: their semester is the semester of
+ * the papers they are sitting.
+ */
+async function fetchLearnerCurrentSemesters(
+	supabase: Supabase,
+	params: { institutions_id: string; examination_session_id: string }
+): Promise<Map<string, number>> {
+	const byLearner = new Map<string, number>()
+
+	const [regs, offerings] = await Promise.all([
+		supabase
+			.from('exam_registrations')
+			.select('student_id, stu_register_no, course_offering_id')
+			.eq('institutions_id', params.institutions_id)
+			.eq('examination_session_id', params.examination_session_id)
+			.or('is_regular.is.null,is_regular.eq.true')
+			.range(0, MAX_ROWS),
+		supabase
+			.from('course_offerings')
+			.select('id, semester')
+			.eq('institutions_id', params.institutions_id)
+			.eq('examination_session_id', params.examination_session_id)
+			.range(0, MAX_ROWS),
+	])
+
+	if (regs.error || offerings.error) {
+		// Without this map the semester filter simply offers nothing - far better
+		// than failing the learner list outright.
+		console.error('[arrear-learners] current-semester lookup failed:', regs.error?.message || offerings.error?.message)
+		return byLearner
+	}
+
+	const semesterByOffering = new Map<string, number>()
+	for (const o of offerings.data || []) {
+		if (typeof o.semester === 'number' && o.semester > 0) semesterByOffering.set(o.id, o.semester)
+	}
+
+	for (const row of regs.data || []) {
+		const semester = row.course_offering_id ? semesterByOffering.get(row.course_offering_id) : undefined
+		if (!semester) continue
+		const key = chargeKey({ student_id: row.student_id, register_number: row.stu_register_no })
+		// A learner sitting papers from more than one semester is taken at the
+		// highest - that is the semester they have progressed to.
+		const existing = byLearner.get(key)
+		if (existing == null || semester > existing) byLearner.set(key, semester)
+	}
+
+	return byLearner
+}
+
 export async function GET(request: Request) {
 	try {
 		const supabase = getSupabaseServer()
@@ -117,29 +213,46 @@ export async function GET(request: Request) {
 
 		// The programme filter is applied in memory so the programme option list can
 		// still be built from every backlog in the institution.
-		const [backlogs, registeredKeys] = await Promise.all([
+		const [backlogs, registeredKeys, currentSemesterByLearner] = await Promise.all([
 			fetchBacklogs(supabase, { institutions_id }),
 			examination_session_id
 				? fetchSessionArrearRegistrations(supabase, { institutions_id, examination_session_id })
 				: Promise.resolve(new Set<string>()),
+			examination_session_id
+				? fetchLearnerCurrentSemesters(supabase, { institutions_id, examination_session_id })
+				: Promise.resolve(new Map<string, number>()),
 		])
 
-		const programOptions = [...new Set(backlogs.map(b => String(b.program_code || '').trim()).filter(Boolean))].sort()
+		/** The semester the backlog's OWNER is currently in - what the filter matches */
+		const currentSemesterOf = (b: BacklogRow): number | null =>
+			currentSemesterByLearner.get(chargeKey({ student_id: b.student_id, register_number: b.register_number })) ?? null
+
+		// Counts ride along in the dropdowns so a filter that legitimately changes
+		// nothing is distinguishable from one that is broken.
+		const learnerOf = (b: BacklogRow) =>
+			chargeKey({ student_id: b.student_id, register_number: b.register_number })
+
+		const programOptions = countBy(backlogs, b => String(b.program_code || '').trim() || null, learnerOf)
 
 		const programScoped = programFilter
 			? backlogs.filter(b => String(b.program_code || '').trim() === programFilter)
 			: backlogs
 
-		const semesterOptions = [...new Set(
-			programScoped.map(b => b.original_semester).filter((s): s is number => typeof s === 'number' && s > 0)
-		)].sort((a, b) => a - b)
+		const semesterOptions = countBy(
+			programScoped,
+			b => {
+				const semester = currentSemesterOf(b)
+				return semester != null ? String(semester) : null
+			},
+			learnerOf
+		)
 
-		// The semester filter matches the semester the ARREAR belongs to, not the
-		// semester the learner is currently in - a learner keeps a Sem-I arrear while
-		// studying Sem-V, and filtering on their current semester would hide it.
+		// The filter matches the semester the LEARNER is in, so picking Semester III
+		// lists the Sem-III cohort together with every arrear they carry, whichever
+		// semester it originally came from.
 		const scoped = semesterFilter == null
 			? programScoped
-			: programScoped.filter(b => b.original_semester === semesterFilter)
+			: programScoped.filter(b => currentSemesterOf(b) === semesterFilter)
 
 		const learnerByKey = new Map<string, ArrearLearner & { _semesters: Set<number> }>()
 
@@ -178,15 +291,25 @@ export async function GET(request: Request) {
 		}
 
 		const learners: ArrearLearner[] = [...learnerByKey.values()]
-			.map(({ _semesters, ...learner }) => {
-				const semesters = [..._semesters].sort((a, b) => a - b)
-				return { ...learner, semesters, semester: semesters.length > 0 ? semesters[semesters.length - 1] : null }
-			})
+			.map(({ _semesters, ...learner }) => ({
+				...learner,
+				// semester = where the learner is now (what the filter matches);
+				// semesters = which semesters their arrears came from (display only).
+				semester: currentSemesterByLearner.get(learner.key) ?? null,
+				semesters: [..._semesters].sort((a, b) => a - b),
+			}))
 			.sort((a, b) => a.register_number.localeCompare(b.register_number))
 
 		const response: ArrearLearnersResponse = {
 			data: learners,
-			filters: { programs: programOptions, semesters: semesterOptions },
+			filters: {
+				programs: programOptions,
+				semesters: semesterOptions,
+				totals: {
+					programs: totalsOf(backlogs, learnerOf),
+					semesters: totalsOf(programScoped, learnerOf),
+				},
+			},
 			summary: {
 				learners: learners.length,
 				arrears: learners.reduce((sum, l) => sum + l.arrear_count, 0),
