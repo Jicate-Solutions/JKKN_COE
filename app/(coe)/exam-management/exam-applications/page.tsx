@@ -165,6 +165,119 @@ function Segmented<T extends string>({
 	)
 }
 
+/**
+ * Programme multi-select with tier shortcuts.
+ *
+ * An empty selection means every programme - "none selected" and "all selected"
+ * are deliberately the same thing, so clearing the filter can never return an
+ * empty list. All UG / All PG tick a whole tier at once, which is how the CoE
+ * actually works through a session.
+ */
+function ProgramMultiSelect({
+	value, onChange, options, disabled, loading,
+}: {
+	value: string[]
+	onChange: (v: string[]) => void
+	options: { value: string; label: string; level?: string | null }[]
+	disabled?: boolean
+	loading?: boolean
+}) {
+	const [open, setOpen] = useState(false)
+	const [search, setSearch] = useState('')
+
+	const filtered = useMemo(() => {
+		if (!search.trim()) return options
+		const q = search.toLowerCase()
+		return options.filter(o => o.label.toLowerCase().includes(q))
+	}, [options, search])
+
+	const levels = useMemo(() => {
+		const seen = new Map<string, string[]>()
+		for (const o of options) {
+			const level = String(o.level || '').toUpperCase()
+			if (!level) continue
+			const list = seen.get(level)
+			if (list) list.push(o.value)
+			else seen.set(level, [o.value])
+		}
+		return [...seen.entries()].sort((a, b) => a[0].localeCompare(b[0]))
+	}, [options])
+
+	const selected = new Set(value)
+	const toggle = (code: string) => {
+		const next = new Set(selected)
+		if (next.has(code)) next.delete(code)
+		else next.add(code)
+		onChange([...next])
+	}
+
+	const label = value.length === 0
+		? 'All programs'
+		: value.length === 1
+			? (options.find(o => o.value === value[0])?.label || value[0])
+			: `${value.length} programs selected`
+
+	return (
+		<Popover open={open} onOpenChange={o => { setOpen(o); if (!o) setSearch('') }}>
+			<PopoverTrigger asChild>
+				<Button
+					variant="outline"
+					role="combobox"
+					aria-expanded={open}
+					disabled={disabled || loading}
+					className="h-9 w-full justify-between rounded-md font-normal text-sm px-3"
+				>
+					{loading
+						? <span className="flex items-center gap-2 text-muted-foreground"><Loader2 className="h-3 w-3 animate-spin" />Loading...</span>
+						: <span className={cn('truncate', value.length === 0 && 'text-muted-foreground')}>{label}</span>}
+					<ChevronsUpDown className="h-4 w-4 shrink-0 opacity-50 ml-1" />
+				</Button>
+			</PopoverTrigger>
+			<PopoverContent className="p-0 w-[var(--radix-popover-trigger-width)] min-w-[320px]" align="start">
+				<div className="flex flex-wrap items-center gap-1.5 border-b p-2">
+					<Button variant={value.length === 0 ? 'default' : 'outline'} size="sm" className="h-7 text-xs px-2" onClick={() => onChange([])}>
+						All programs
+					</Button>
+					{levels.map(([level, codes]) => {
+						const allOn = codes.length > 0 && codes.every(c => selected.has(c))
+						return (
+							<Button
+								key={level}
+								variant={allOn ? 'default' : 'outline'}
+								size="sm"
+								className="h-7 text-xs px-2"
+								onClick={() => onChange(allOn ? value.filter(v => !codes.includes(v)) : [...new Set([...value, ...codes])])}
+							>
+								All {level}
+							</Button>
+						)
+					})}
+					{value.length > 0 && (
+						<Button variant="ghost" size="sm" className="h-7 text-xs px-2 ml-auto" onClick={() => onChange([])}>
+							Clear
+						</Button>
+					)}
+				</div>
+				<Command shouldFilter={false}>
+					<CommandInput placeholder="Search program..." value={search} onValueChange={setSearch} className="h-9 text-sm" />
+					<CommandList className="max-h-64 overflow-y-auto">
+						{filtered.length === 0
+							? <CommandEmpty className="py-4 text-center text-sm text-muted-foreground">No results found</CommandEmpty>
+							: filtered.map(opt => (
+								<CommandItem key={opt.value} value={opt.value} onSelect={() => toggle(opt.value)} className="text-sm cursor-pointer gap-2">
+									<Checkbox checked={selected.has(opt.value)} className="pointer-events-none" />
+									<span className="truncate flex-1">{opt.label}</span>
+									{opt.level && <Badge variant="outline" className="text-[10px] px-1 py-0 h-4 shrink-0">{opt.level}</Badge>}
+								</CommandItem>
+							))
+						}
+					</CommandList>
+				</Command>
+			</PopoverContent>
+		</Popover>
+	)
+}
+
 // ── Searchable single-select ──
 function SearchableSelect({
 	value, onValueChange, placeholder, options, disabled, loading, searchPlaceholder,
@@ -625,8 +738,11 @@ export default function ExamApplicationsPage() {
 	const [failures, setFailures] = useState<{ register_number: string; course_code: string; reason?: string }[]>([])
 
 	// ── Current Papers state ──
-	// Shared across both tabs - see the Program filter note in the scope card.
-	const [program, setProgram] = useState('all')
+	// Shared across both tabs. Empty means every programme - "none selected" and
+	// "all selected" are the same thing, so clearing can never list nothing.
+	const [programs, setPrograms] = useState<string[]>([])
+	/** Stable key for the loaded-scope cache and the request parameter */
+	const programKey = useMemo(() => [...programs].sort().join(','), [programs])
 	const [cpSemester, setCpSemester] = useState('all')
 	const [cpStatus, setCpStatus] = useState('pending')
 	const [cpSearch, setCpSearch] = useState('')
@@ -662,6 +778,12 @@ export default function ExamApplicationsPage() {
 	const [offerings, setOfferings] = useState<OfferingOption[]>([])
 	const [loadingOfferings, setLoadingOfferings] = useState(false)
 	const [offeringProgram, setOfferingProgram] = useState('all')
+	/** Programme scope for the subject-wise candidate list */
+	const subjectPrograms = useMemo(
+		() => (offeringProgram === 'all' ? programs : [offeringProgram]),
+		[offeringProgram, programs]
+	)
+	const subjectProgramKey = useMemo(() => [...subjectPrograms].sort().join(','), [subjectPrograms])
 	const [offeringId, setOfferingId] = useState('')
 	const [subjectOffering, setSubjectOffering] = useState<BulkSubjectOffering | null>(null)
 	const [candidates, setCandidates] = useState<BulkSubjectCandidate[]>([])
@@ -688,7 +810,7 @@ export default function ExamApplicationsPage() {
 		setCpLearners([])
 		setCpFilters({ programs: [], semesters: [], totals: EMPTY_FILTER_TOTALS })
 		setCpSelected(new Set())
-		setProgram('all')
+		setPrograms([])
 		setCpSemester('all')
 		setArLearners([])
 		setArFilters({ programs: [], semesters: [], totals: EMPTY_FILTER_TOTALS })
@@ -733,7 +855,7 @@ export default function ExamApplicationsPage() {
 				institutions_id: institutionsId,
 				examination_session_id: sessionId,
 			})
-			if (program !== 'all') params.set('program_code', program)
+			if (programKey) params.set('program_codes', programKey)
 			if (cpSemester !== 'all') params.set('semester', cpSemester)
 
 			const res = await fetch(`/api/exam-management/exam-applications/current-papers?${params}`)
@@ -744,7 +866,7 @@ export default function ExamApplicationsPage() {
 			setCpFilters(raw.filters || { programs: [], semesters: [], totals: EMPTY_FILTER_TOTALS })
 			setCpFee(raw.fee || null)
 			setChargeColumnsReady(raw.charge_columns_ready !== false)
-			setCpLoadedKey(`${institutionsId}|${sessionId}|${program}|${cpSemester}`)
+			setCpLoadedKey(`${institutionsId}|${sessionId}|${programKey}|${cpSemester}`)
 			setCpSelected(new Set())
 		} catch (err) {
 			console.error('[exam-applications] load current papers failed:', err)
@@ -757,16 +879,16 @@ export default function ExamApplicationsPage() {
 			} finally {
 			setLoadingCp(false)
 		}
-	}, [institutionsId, sessionId, program, cpSemester, toast])
+	}, [institutionsId, sessionId, programKey, cpSemester, toast])
 
 	useEffect(() => {
 		if (tab !== 'current') return
 		if (!institutionsId || !sessionId) return
 		// Already showing exactly this scope - a tab switch alone must not refetch.
-		if (cpLoadedKey === `${institutionsId}|${sessionId}|${program}|${cpSemester}`) return
+		if (cpLoadedKey === `${institutionsId}|${sessionId}|${programKey}|${cpSemester}`) return
 		loadCurrentPapers()
 		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [tab, institutionsId, sessionId, program, cpSemester, cpLoadedKey])
+	}, [tab, institutionsId, sessionId, programKey, cpSemester, cpLoadedKey])
 
 	// A semester that no longer exists under the newly chosen programme would
 	// filter the list down to nothing, so drop it back to "all".
@@ -789,7 +911,7 @@ export default function ExamApplicationsPage() {
 		try {
 			const params = new URLSearchParams({ institutions_id: institutionsId })
 			if (sessionId) params.set('examination_session_id', sessionId)
-			if (program !== 'all') params.set('program_code', program)
+			if (programKey) params.set('program_codes', programKey)
 			if (arSemester !== 'all') params.set('semester', arSemester)
 
 			const res = await fetch(`/api/exam-management/exam-applications/arrear-learners?${params}`)
@@ -798,7 +920,7 @@ export default function ExamApplicationsPage() {
 
 			const rows = raw.data || []
 			setArLearners(rows)
-			setArLoadedKey(`${institutionsId}|${sessionId}|${program}|${arSemester}`)
+			setArLoadedKey(`${institutionsId}|${sessionId}|${programKey}|${arSemester}`)
 			setArFilters(raw.filters || { programs: [], semesters: [], totals: EMPTY_FILTER_TOTALS })
 
 			// Changing the programme / semester filter changes who is on the list. A
@@ -820,17 +942,17 @@ export default function ExamApplicationsPage() {
 		} finally {
 			setLoadingArLearners(false)
 		}
-	}, [institutionsId, sessionId, program, arSemester, toast])
+	}, [institutionsId, sessionId, programKey, arSemester, toast])
 
 	useEffect(() => {
 		if (tab !== 'arrear' || arMode !== 'learner') return
 		if (!institutionsId) return
 		// Already showing exactly this scope - switching tabs or flipping between
 		// Learner wise / Subject wise must not refetch.
-		if (arLoadedKey === `${institutionsId}|${sessionId}|${program}|${arSemester}`) return
+		if (arLoadedKey === `${institutionsId}|${sessionId}|${programKey}|${arSemester}`) return
 		loadArrearLearners()
 		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [tab, arMode, institutionsId, sessionId, program, arSemester, arLoadedKey])
+	}, [tab, arMode, institutionsId, sessionId, programKey, arSemester, arLoadedKey])
 
 	useEffect(() => {
 		if (arSemester === 'all') return
@@ -972,6 +1094,9 @@ export default function ExamApplicationsPage() {
 					examination_session_id: sessionId,
 					course_offering_id: selectedOfferingId,
 					cohort: [],
+					// A shared paper is carried as a backlog right across the college, so
+					// without this the candidate list ignored the programme filter.
+					program_codes: subjectPrograms,
 				}),
 			})
 			const raw = await parseJsonResponse(res)
@@ -990,7 +1115,7 @@ export default function ExamApplicationsPage() {
 		} finally {
 			setLoadingCandidates(false)
 		}
-	}, [institutionsId, sessionId, toast])
+	}, [institutionsId, sessionId, subjectProgramKey, toast])
 
 	// =====================================================
 	// Derived - Current Papers
@@ -1000,8 +1125,7 @@ export default function ExamApplicationsPage() {
 	// has nothing more to narrow rather than looking like it did nothing.
 	const cpProgramOptions = useMemo(
 		() => [
-			{ value: 'all', label: `All programs — ${countLabel(cpFilters.totals.programs, 'papers')}` },
-			...cpFilters.programs.map(p => ({ value: p.value, label: `${p.value} — ${countLabel(p, 'papers')}` })),
+			...cpFilters.programs.map(p => ({ value: p.value, label: `${p.value} — ${countLabel(p, 'papers')}`, level: p.level })),
 		],
 		[cpFilters.programs, cpFilters.totals.programs]
 	)
@@ -1095,8 +1219,7 @@ export default function ExamApplicationsPage() {
 	// =====================================================
 	const arProgramOptions = useMemo(
 		() => [
-			{ value: 'all', label: `All programs — ${countLabel(arFilters.totals.programs, 'arrears')}` },
-			...arFilters.programs.map(p => ({ value: p.value, label: `${p.value} — ${countLabel(p, 'arrears')}` })),
+			...arFilters.programs.map(p => ({ value: p.value, label: `${p.value} — ${countLabel(p, 'arrears')}`, level: p.level })),
 		],
 		[arFilters.programs, arFilters.totals.programs]
 	)
@@ -1287,7 +1410,7 @@ export default function ExamApplicationsPage() {
 			body: JSON.stringify({
 				institutions_id: institutionsId,
 				examination_session_id: sessionId,
-				program_code: program === 'all' ? '' : program,
+				program_codes: programs,
 				semester: cpSemester === 'all' ? null : Number(cpSemester),
 				learners,
 			}),
@@ -1548,11 +1671,9 @@ export default function ExamApplicationsPage() {
 											<>
 												<div className="space-y-1.5">
 													<Label className="text-xs font-medium">Program</Label>
-													<SearchableSelect
-														value={program}
-														onValueChange={setProgram}
-														placeholder="All programs"
-														searchPlaceholder="Search program..."
+													<ProgramMultiSelect
+														value={programs}
+														onChange={setPrograms}
 														options={tab === 'current' ? cpProgramOptions : arProgramOptions}
 														disabled={!scopeReady}
 														loading={tab === 'current' ? loadingCp : loadingArLearners}

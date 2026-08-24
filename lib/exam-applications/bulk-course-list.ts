@@ -27,6 +27,17 @@ export interface BuildSubjectCandidatesParams {
 	course_offering_id: string
 	/** Current-paper cohort (programme + semester of the offering), supplied by the caller */
 	cohort?: BulkLearnerRef[]
+	/**
+	 * Restrict candidates to one programme.
+	 *
+	 * A shared paper (GENERAL TAMIL-I and friends) is offered under a single
+	 * programme but carried as a backlog by learners right across the college, so
+	 * looking the course code up on its own returned every programme's arrears.
+	 * When the operator has picked a programme, only its learners are candidates.
+	 * Left empty, every programme holding the arrear is returned - which is what
+	 * "All programs" means.
+	 */
+	program_codes?: string[]
 }
 
 /** Uppercased register number used as the learner merge key */
@@ -335,6 +346,9 @@ export async function buildSubjectWiseCandidates(
 	params: BuildSubjectCandidatesParams
 ): Promise<{ offering: BulkSubjectOffering; candidates: BulkSubjectCandidate[] }> {
 	const { institutions_id, examination_session_id, course_offering_id, cohort = [] } = params
+	const programFilter = new Set((params.program_codes || []).map(c => String(c || '').trim().toUpperCase()).filter(Boolean))
+	const matchesProgram = (code: any) =>
+		programFilter.size === 0 || programFilter.has(String(code || '').trim().toUpperCase())
 
 	// ── 1. The selected offering ──
 	const { data: offeringRow, error: offeringError } = await supabase
@@ -379,14 +393,19 @@ export async function buildSubjectWiseCandidates(
 	// ── 2. Backlog holders for this course code ──
 	let backlogs: any[] = []
 	{
-		const { data, error } = await supabase
+		let backlogQuery = supabase
 			.from('student_backlogs_detailed_view')
 			.select('id, student_id, register_number, student_name, program_code, course_id, course_code, original_semester, attempt_count, max_attempts_allowed, failure_reason, priority_level')
 			.eq('institutions_id', institutions_id)
 			.eq('is_cleared', false)
 			.eq('is_active', true)
 			.eq('course_code', courseCode)
-			.range(0, MAX_ROWS)
+
+		// One programme narrows in the query; several are filtered in memory, which
+		// keeps the PostgREST URL short for a whole-tier selection.
+		if (programFilter.size === 1) backlogQuery = backlogQuery.eq('program_code', [...programFilter][0])
+
+		const { data, error } = await backlogQuery.range(0, MAX_ROWS)
 		if (error) {
 			console.error('[exam-applications:subject] student_backlogs_detailed_view error:', error)
 		} else {
@@ -466,7 +485,7 @@ export async function buildSubjectWiseCandidates(
 	}
 
 	// 4a. Current paper cohort
-	for (const learner of cohort) {
+	for (const learner of cohort.filter(l => matchesProgram(l.program_code))) {
 		const draft = upsert(learner)
 		if (!draft) continue
 		draft.sources.add('Offer List')
@@ -476,7 +495,7 @@ export async function buildSubjectWiseCandidates(
 	}
 
 	// 4b. Backlog holders
-	for (const backlog of backlogs) {
+	for (const backlog of backlogs.filter(b => matchesProgram(b.program_code))) {
 		const draft = upsert({ student_id: backlog.student_id, register_number: backlog.register_number })
 		if (!draft) continue
 		draft.sources.add('Backlog')
@@ -493,7 +512,7 @@ export async function buildSubjectWiseCandidates(
 	}
 
 	// 4c. Already registered
-	for (const registration of registrations) {
+	for (const registration of registrations.filter(r => matchesProgram(r.program_code))) {
 		const draft = upsert({ student_id: registration.student_id, register_number: registration.stu_register_no })
 		if (!draft) continue
 		draft.sources.add('Exam Registration')

@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
 import { chargeKey } from '@/lib/exam-applications/session-charges'
+import { levelOf, loadProgramLevelMap, parseProgramCodes } from '@/lib/exam-applications/program-levels'
 import type { ArrearLearner, ArrearLearnersResponse, CohortFilterOption, CohortFilterTotals } from '@/types/exam-applications'
 
 /** Distinct-learner and row counts per filter value, sorted numerically when possible */
@@ -219,8 +220,12 @@ export async function GET(request: Request) {
 
 		const institutions_id = searchParams.get('institutions_id') || ''
 		const examination_session_id = searchParams.get('examination_session_id') || ''
-		const programParam = (searchParams.get('program_code') || '').trim()
-		const programFilter = programParam && programParam !== 'all' ? programParam : ''
+		const programCodes = parseProgramCodes(
+			searchParams.get('program_codes') || searchParams.get('program_code')
+		)
+		const programSet = new Set(programCodes)
+		const inProgramFilter = (code: any) =>
+			programSet.size === 0 || programSet.has(String(code || '').trim().toUpperCase())
 		const semesterParam = searchParams.get('semester')
 		const semesterFilter = semesterParam && semesterParam !== 'all' ? Number(semesterParam) : null
 
@@ -249,11 +254,11 @@ export async function GET(request: Request) {
 		const learnerOf = (b: BacklogRow) =>
 			chargeKey({ student_id: b.student_id, register_number: b.register_number })
 
+		const levelMap = await loadProgramLevelMap(supabase, institutions_id)
 		const programOptions = countBy(backlogs, b => String(b.program_code || '').trim() || null, learnerOf)
+			.map(option => ({ ...option, level: levelOf(option.value, levelMap) }))
 
-		const programScoped = programFilter
-			? backlogs.filter(b => String(b.program_code || '').trim() === programFilter)
-			: backlogs
+		const programScoped = backlogs.filter(b => inProgramFilter(b.program_code))
 
 		const semesterOptions = countBy(
 			programScoped,

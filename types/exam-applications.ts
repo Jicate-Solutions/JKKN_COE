@@ -343,6 +343,12 @@ export interface CohortFilterOption {
 	learners: number
 	/** Registered papers (current tab) or uncleared arrears (arrear tab) */
 	rows: number
+	/**
+	 * UG / PG / MCA, on programme options only. Drives the "All UG" / "All PG"
+	 * one-click groups, and is resolved the same way the fee engine resolves it so
+	 * a programme is never grouped as UG here while being priced as PG.
+	 */
+	level?: string | null
 }
 
 /**

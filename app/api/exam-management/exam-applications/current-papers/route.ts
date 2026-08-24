@@ -16,6 +16,7 @@ import {
 	NO_CHARGE,
 	type SessionCharge,
 } from '@/lib/exam-applications/session-charges'
+import { levelOf, loadProgramLevelMap, parseProgramCodes } from '@/lib/exam-applications/program-levels'
 import type {
 	CohortFilterOption,
 	CohortFilterTotals,
@@ -287,8 +288,14 @@ export async function GET(request: Request) {
 
 		const institutions_id = searchParams.get('institutions_id') || ''
 		const examination_session_id = searchParams.get('examination_session_id') || ''
-		const programParam = (searchParams.get('program_code') || '').trim()
-		const programFilter = programParam && programParam !== 'all' ? programParam : ''
+		// program_codes is a CSV so "All UG" can send the whole tier at once;
+		// program_code is still honoured for any older caller.
+		const programCodes = parseProgramCodes(
+			searchParams.get('program_codes') || searchParams.get('program_code')
+		)
+		const programSet = new Set(programCodes)
+		const inProgramFilter = (code: string) =>
+			programSet.size === 0 || programSet.has(String(code || '').trim().toUpperCase())
 		const semesterParam = searchParams.get('semester')
 		const semesterFilter = semesterParam && semesterParam !== 'all' ? Number(semesterParam) : null
 
@@ -329,8 +336,10 @@ export async function GET(request: Request) {
 		// list instead of leaving stale semesters that match nothing.
 		const learnerOf = (r: FlatRow) => chargeKey({ student_id: r.student_id, register_number: r.stu_register_no })
 
+		const levelMap = await loadProgramLevelMap(supabase, institutions_id)
 		const programOptions = countBy(rows, r => r.program || null, learnerOf)
-		const semesterScope = programFilter ? rows.filter(r => r.program === programFilter) : rows
+			.map(option => ({ ...option, level: levelOf(option.value, levelMap) }))
+		const semesterScope = rows.filter(r => inProgramFilter(r.program))
 		const semesterOptions = countBy(
 			semesterScope,
 			r => (typeof r.semester === 'number' && r.semester > 0 ? String(r.semester) : null),
@@ -544,8 +553,12 @@ export async function POST(request: Request) {
 
 		const institutions_id = String(body.institutions_id || '')
 		const examination_session_id = String(body.examination_session_id || '')
-		const programParam = String(body.program_code || '').trim()
-		const programFilter = programParam && programParam !== 'all' ? programParam : ''
+		const programCodes = parseProgramCodes(
+			Array.isArray(body.program_codes) ? body.program_codes.join(',') : (body.program_codes || body.program_code)
+		)
+		const programSet = new Set(programCodes)
+		const inProgramFilter = (code: string) =>
+			programSet.size === 0 || programSet.has(String(code || '').trim().toUpperCase())
 		const semesterFilter = body.semester != null && body.semester !== 'all' ? Number(body.semester) : null
 
 		if (!institutions_id) {
@@ -581,7 +594,7 @@ export async function POST(request: Request) {
 			fetchSessionRegistrations(supabase, {
 				institutions_id,
 				examination_session_id,
-				program_code: programFilter || null,
+				program_code: programCodes.length === 1 ? programCodes[0] : null,
 			}),
 			loadOfferingIndex(supabase, { institutions_id, examination_session_id }),
 		])
@@ -600,6 +613,7 @@ export async function POST(request: Request) {
 
 			const offering = reg.course_offering_id ? offeringById.get(reg.course_offering_id) : undefined
 			if (semesterFilter != null && (offering?.semester ?? null) !== semesterFilter) continue
+			if (!inProgramFilter(String(reg.program_code || offering?.program_code || ''))) continue
 
 			const course_code = String(reg.course_code || offering?.course_code || '').trim()
 			if (!course_code) continue

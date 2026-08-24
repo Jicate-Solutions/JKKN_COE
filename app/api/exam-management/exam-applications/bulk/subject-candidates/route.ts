@@ -8,6 +8,7 @@ import {
 	priceCourseList,
 	resolveProgramLevel,
 } from '@/lib/exam-fee/calculate'
+import { parseProgramCodes } from '@/lib/exam-applications/program-levels'
 import type { BulkLearnerRef } from '@/types/exam-applications'
 
 /**
@@ -58,6 +59,9 @@ export async function POST(request: Request) {
 			examination_session_id,
 			course_offering_id,
 			cohort,
+			program_codes: parseProgramCodes(
+				Array.isArray(body.program_codes) ? body.program_codes.join(',') : (body.program_codes || body.program_code)
+			),
 		})
 
 		// course_category + exam_duration decide which fee head this paper falls under
