@@ -101,19 +101,30 @@ async function fetchBacklogs(
 	return rows
 }
 
+interface ArrearRegistrationIndex {
+	/** `${learner key}|${UPPER course code}` -> holds a registration row */
+	registered: Set<string>
+	/** ...and that row has reached 'Applied' */
+	applied: Set<string>
+}
+
 /**
- * `${learner key}|${UPPER course code}` for every arrear already registered in
- * this session, so the picker can show what is left to do.
+ * Which arrears already have a registration in this session, and which of those
+ * have actually been applied for.
+ *
+ * The two are not the same: a registered-but-unapplied arrear is still work to
+ * do (applying updates that row), so counting only "registered" made a learner
+ * look finished when they were not.
  */
 async function fetchSessionArrearRegistrations(
 	supabase: Supabase,
 	params: { institutions_id: string; examination_session_id: string }
-): Promise<Set<string>> {
-	const keys = new Set<string>()
+): Promise<ArrearRegistrationIndex> {
+	const index: ArrearRegistrationIndex = { registered: new Set(), applied: new Set() }
 
 	const { data, error } = await supabase
 		.from('exam_registrations')
-		.select('student_id, stu_register_no, course_code, is_regular')
+		.select('student_id, stu_register_no, course_code, registration_status')
 		.eq('institutions_id', params.institutions_id)
 		.eq('examination_session_id', params.examination_session_id)
 		.eq('is_regular', false)
@@ -123,17 +134,23 @@ async function fetchSessionArrearRegistrations(
 		// A degraded count is better than a failed page - the submit path re-checks
 		// eligibility anyway, so nothing can be double-registered from here.
 		console.error('[arrear-learners] registrations lookup error:', error.message)
-		return keys
+		return index
 	}
 
 	for (const row of data || []) {
 		const code = String(row.course_code || '').trim().toUpperCase()
 		if (!code) continue
-		keys.add(`${chargeKey({ student_id: row.student_id, register_number: row.stu_register_no })}|${code}`)
-		if (row.student_id) keys.add(`sid:${row.student_id}|${code}`)
+		const isApplied = String(row.registration_status || '').trim().toUpperCase() === 'APPLIED'
+		for (const key of [
+			`${chargeKey({ student_id: row.student_id, register_number: row.stu_register_no })}|${code}`,
+			...(row.student_id ? [`sid:${row.student_id}|${code}`] : []),
+		]) {
+			index.registered.add(key)
+			if (isApplied) index.applied.add(key)
+		}
 	}
 
-	return keys
+	return index
 }
 
 /**
@@ -217,7 +234,7 @@ export async function GET(request: Request) {
 			fetchBacklogs(supabase, { institutions_id }),
 			examination_session_id
 				? fetchSessionArrearRegistrations(supabase, { institutions_id, examination_session_id })
-				: Promise.resolve(new Set<string>()),
+				: Promise.resolve({ registered: new Set<string>(), applied: new Set<string>() } as ArrearRegistrationIndex),
 			examination_session_id
 				? fetchLearnerCurrentSemesters(supabase, { institutions_id, examination_session_id })
 				: Promise.resolve(new Map<string, number>()),
@@ -272,6 +289,7 @@ export async function GET(request: Request) {
 					semesters: [],
 					arrear_count: 0,
 					registered_count: 0,
+					applied_count: 0,
 					_semesters: new Set<number>(),
 				}
 				learnerByKey.set(key, learner)
@@ -285,8 +303,10 @@ export async function GET(request: Request) {
 			learner.arrear_count++
 
 			const code = String(row.course_code || '').trim().toUpperCase()
-			if (code && (registeredKeys.has(`${key}|${code}`) || (row.student_id && registeredKeys.has(`sid:${row.student_id}|${code}`)))) {
-				learner.registered_count++
+			if (code) {
+				const candidates = [`${key}|${code}`, ...(row.student_id ? [`sid:${row.student_id}|${code}`] : [])]
+				if (candidates.some(c => registeredKeys.registered.has(c))) learner.registered_count++
+				if (candidates.some(c => registeredKeys.applied.has(c))) learner.applied_count++
 			}
 		}
 
@@ -314,6 +334,7 @@ export async function GET(request: Request) {
 				learners: learners.length,
 				arrears: learners.reduce((sum, l) => sum + l.arrear_count, 0),
 				registered: learners.reduce((sum, l) => sum + l.registered_count, 0),
+				applied: learners.reduce((sum, l) => sum + l.applied_count, 0),
 			},
 		}
 

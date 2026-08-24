@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback, useMemo, memo, type CSSProperties } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef, memo, type CSSProperties } from 'react'
 import { FixedSizeList as VirtualList } from 'react-window'
 import AutoSizer from 'react-virtualized-auto-sizer'
 import Link from 'next/link'
@@ -70,6 +70,13 @@ import type {
 
 const ROMAN = ['', 'I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X', 'XI', 'XII']
 const ROW_HEIGHT = 56
+/**
+ * The working lists size to the viewport rather than a fixed 520px, so the page
+ * uses the whole screen on a large monitor and still fits a laptop. The subtracted
+ * space is the header, breadcrumb, scorecards, the two step cards and the sticky
+ * submit bar.
+ */
+const PANEL_HEIGHT = 'h-[calc(100vh-30rem)] min-h-[26rem]'
 const MAX_LEARNERS_PER_BATCH = 500
 
 const CURRENT_BADGE = 'bg-emerald-100 text-emerald-700 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-900'
@@ -222,6 +229,68 @@ function SearchableSelect({
 	)
 }
 
+/**
+ * Each stage of the flow owns a colour, carried by its step badge and the card's
+ * left border, so the four stages are told apart at a glance rather than by
+ * reading the headings.
+ */
+type StepTone = 'violet' | 'sky' | 'amber' | 'emerald'
+
+const STEP_TONES: Record<StepTone, { active: string; done: string; card: string }> = {
+	violet: {
+		active: 'bg-violet-600 text-white border-transparent',
+		done: 'bg-violet-100 text-violet-700 border-violet-300 dark:bg-violet-950/50 dark:text-violet-300 dark:border-violet-800',
+		card: 'border-l-4 border-l-violet-500',
+	},
+	sky: {
+		active: 'bg-sky-600 text-white border-transparent',
+		done: 'bg-sky-100 text-sky-700 border-sky-300 dark:bg-sky-950/50 dark:text-sky-300 dark:border-sky-800',
+		card: 'border-l-4 border-l-sky-500',
+	},
+	amber: {
+		active: 'bg-amber-500 text-white border-transparent',
+		done: 'bg-amber-100 text-amber-700 border-amber-300 dark:bg-amber-950/50 dark:text-amber-300 dark:border-amber-800',
+		card: 'border-l-4 border-l-amber-500',
+	},
+	emerald: {
+		active: 'bg-emerald-600 text-white border-transparent',
+		done: 'bg-emerald-100 text-emerald-700 border-emerald-300 dark:bg-emerald-950/50 dark:text-emerald-300 dark:border-emerald-800',
+		card: 'border-l-4 border-l-emerald-500',
+	},
+}
+
+/**
+ * Numbered step marker.
+ *
+ * The page is a fixed four-step flow (choose -> filter -> pick learners ->
+ * review papers) and nothing on screen said so, so each stage carries its number
+ * and dims until the step before it is satisfied.
+ */
+function Step({ n, title, hint, done, active, tone }: {
+	n: number
+	title: string
+	hint?: string
+	done?: boolean
+	active?: boolean
+	tone: StepTone
+}) {
+	const styles = STEP_TONES[tone]
+	return (
+		<div className={cn('flex items-start gap-2.5 min-w-0', !active && !done && 'opacity-55')}>
+			<span className={cn(
+				'flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs font-bold border shadow-sm',
+				done ? styles.done : active ? styles.active : 'bg-muted text-muted-foreground'
+			)}>
+				{done ? <Check className="h-4 w-4" /> : n}
+			</span>
+			<div className="min-w-0">
+				<h3 className="text-sm font-semibold leading-7">{title}</h3>
+				{hint && <p className="text-xs text-muted-foreground leading-snug">{hint}</p>}
+			</div>
+		</div>
+	)
+}
+
 // ── Scorecard ──
 function StatCard({
 	value, label, accent, icon: Icon, tone,
@@ -299,6 +368,16 @@ const CurrentLearnerRow = memo(function CurrentLearnerRow({
 })
 
 // ── Current Papers: one distinct paper in the cohort ──
+/** One head of the fee breakdown - label above amount so two fit per row */
+function FeeLine({ label, value, tone }: { label: string; value: string; tone?: string }) {
+	return (
+		<div className="min-w-0">
+			<div className="text-[11px] text-muted-foreground truncate" title={label}>{label}</div>
+			<div className={cn('text-sm tabular-nums', tone)}>{value}</div>
+		</div>
+	)
+}
+
 const CohortPaperRow = memo(function CohortPaperRow({
 	paper, showFee, style,
 }: {
@@ -313,7 +392,7 @@ const CohortPaperRow = memo(function CohortPaperRow({
 					<span className="text-xs font-mono text-muted-foreground">{paper.course_code}</span>
 					<Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4">Sem {romanSemester(paper.semester)}</Badge>
 				</div>
-				<div className="text-sm truncate">{paper.course_name || '—'}</div>
+				<div className="text-sm truncate" title={paper.course_name || undefined}>{paper.course_name || '—'}</div>
 			</div>
 			<div className="w-24 shrink-0 text-right text-xs text-muted-foreground tabular-nums">
 				{paper.applied_count}/{paper.learner_count} applied
@@ -334,7 +413,9 @@ const ArrearLearnerRow = memo(function ArrearLearnerRow({
 	onToggle: (key: string) => void
 	style?: CSSProperties
 }) {
-	const pending = learner.arrear_count - learner.registered_count
+	// Registered is not the same as applied - a registered-but-unapplied arrear is
+	// still work, so the badge counts against applied_count.
+	const pending = learner.arrear_count - learner.applied_count
 	return (
 		<label
 			style={style}
@@ -348,12 +429,19 @@ const ArrearLearnerRow = memo(function ArrearLearnerRow({
 				<div className="flex items-center gap-1.5 flex-wrap">
 					<span className="text-xs font-mono text-muted-foreground">{learner.register_number || '—'}</span>
 					<Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4">{learner.program_code || '—'}</Badge>
-					<Badge variant="outline" className={cn('text-[10px] px-1.5 py-0 h-4', ARREAR_BADGE)}>
-						{pending > 0 ? `${pending} arrear` : 'all registered'}
+					<Badge
+						variant="outline"
+						className={cn('text-[10px] px-1.5 py-0 h-4', pending > 0 ? ARREAR_BADGE : 'bg-slate-100 text-slate-600 border-slate-200 dark:bg-slate-900/60 dark:text-slate-300 dark:border-slate-800')}
+					>
+						{pending > 0 ? `${pending} to apply` : 'all applied'}
 					</Badge>
-					{/* The learner's own semester is what the Semester filter matches, so it
-					    leads. Which semesters their arrears came from is secondary detail. */}
-					<Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4">Sem {romanSemester(learner.semester)}</Badge>
+					{/* The learner's own semester leads, since that is what the Semester
+					    filter matches. It is unknown for anyone with no regular paper this
+					    session (arrear-only candidates), and an empty "Sem —" badge was
+					    pure noise - so it is simply omitted. */}
+					{learner.semester != null && (
+						<Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4">Sem {romanSemester(learner.semester)}</Badge>
+					)}
 					{learner.semesters.length > 0 && (
 						<span className="text-[10px] text-muted-foreground">
 							arrears from Sem {learner.semesters.map(s => romanSemester(s)).join(', ')}
@@ -751,6 +839,9 @@ export default function ExamApplicationsPage() {
 	}, [arFilters.semesters, arSemester])
 
 	// ── Arrear - load the papers for the picked learners ──
+	// Runs automatically as the selection changes (see the effect below), so responses
+	// can land out of order - only the newest request is allowed to write.
+	const arCoursesReq = useRef(0)
 	const loadArrearCourses = useCallback(async () => {
 		if (!institutionsId || !sessionId || arPicked.size === 0) return
 		if (arPicked.size > MAX_LEARNERS_PER_BATCH) {
@@ -762,6 +853,7 @@ export default function ExamApplicationsPage() {
 			return
 		}
 
+		const reqId = ++arCoursesReq.current
 		setLoadingArCourses(true)
 		setArCourses([])
 		setArSelectedRows(new Set())
@@ -787,11 +879,13 @@ export default function ExamApplicationsPage() {
 				}),
 			})
 			const raw = await parseJsonResponse(res)
+			if (reqId !== arCoursesReq.current) return   // a newer selection superseded this one
 			if (!res.ok) throw new Error(raw?.error || 'Failed to load arrear papers')
 
 			setArCourses(raw?.data || [])
 			setArFee(raw?.fee || null)
 		} catch (err) {
+			if (reqId !== arCoursesReq.current) return
 			console.error('[exam-applications] load arrear courses failed:', err)
 			toast({
 				title: '❌ Failed',
@@ -799,9 +893,27 @@ export default function ExamApplicationsPage() {
 				variant: 'destructive',
 			})
 		} finally {
-			setLoadingArCourses(false)
+			if (reqId === arCoursesReq.current) setLoadingArCourses(false)
 		}
 	}, [institutionsId, sessionId, arPicked, arLearners, toast])
+
+	// ── Arrear - papers follow the selection, no button press needed ──
+	// Debounced because ticking learners one at a time would otherwise fire a
+	// request per tick. Over the batch cap nothing is fetched: the footer button
+	// stays as the explicit path and reports why.
+	useEffect(() => {
+		if (tab !== 'arrear' || arMode !== 'learner') return
+		if (arPicked.size === 0) {
+			arCoursesReq.current++          // discard anything still in flight
+			setArCourses([])
+			setArSelectedRows(new Set())
+			setArFee(null)
+			return
+		}
+		if (arPicked.size > MAX_LEARNERS_PER_BATCH) return
+		const t = setTimeout(() => { loadArrearCourses() }, 400)
+		return () => clearTimeout(t)
+	}, [tab, arMode, arPicked, loadArrearCourses])
 
 	// =====================================================
 	// Arrear / subject-wise
@@ -1333,201 +1445,228 @@ export default function ExamApplicationsPage() {
 							)}
 						</div>
 
-						{/* Scope */}
-						<Card>
-							<CardHeader className="px-4 py-3 border-b">
-								<div className="flex items-center justify-between gap-3 flex-wrap">
-									<div>
-										<h2 className="text-base font-semibold">Exam Applications</h2>
-										<p className="text-xs text-muted-foreground">
-											{tab === 'current'
-												? 'Confirm the learners whose already-registered papers are being applied for'
-												: 'Register arrear papers for learners carrying uncleared backlogs'}
-										</p>
+						{/* Tabs */}
+						<Tabs value={tab} onValueChange={v => setTab(v as ApplyTab)} className="w-full">
+							{/* Choosing the tab first is deliberate: the filter's option counts are
+							    per tab (registered papers vs uncleared arrears), so the numbers only
+							    mean something once you have said which job you are doing. */}
+							<Card className={STEP_TONES.violet.card}>
+								<CardContent className="p-4 space-y-3">
+									<Step
+										n={1}
+										tone="violet"
+										title="Choose what to apply for"
+										hint="Current papers move existing registrations to Applied; arrears create new ones"
+										active
+									/>
+									{/* Emerald = current paper, rose = arrear - the same pairing the row
+									    badges use throughout, so the tab colour reads as the same thing. */}
+									<TabsList className="grid w-full max-w-lg grid-cols-2 h-10">
+										<TabsTrigger
+											value="current"
+											className="gap-1.5 data-[state=active]:bg-emerald-600 data-[state=active]:text-white data-[state=active]:shadow-sm"
+										>
+											<BookOpen className="h-3.5 w-3.5" />Current Papers
+										</TabsTrigger>
+										<TabsTrigger
+											value="arrear"
+											className="gap-1.5 data-[state=active]:bg-rose-600 data-[state=active]:text-white data-[state=active]:shadow-sm"
+										>
+											<RotateCcw className="h-3.5 w-3.5" />Arrear Papers
+										</TabsTrigger>
+									</TabsList>
+								</CardContent>
+							</Card>
+
+							{/* Scope */}
+							<Card className={STEP_TONES.sky.card}>
+								<CardHeader className="px-4 py-3 border-b">
+									<div className="flex items-center justify-between gap-3 flex-wrap">
+										<Step
+											n={2}
+											tone="sky"
+											title="Filter"
+											hint="Session, then programme and semester — this is what fetches the learners"
+											active
+											done={scopeReady}
+										/>
+										<Link href="/fee-details">
+											<Button variant="outline" size="sm" className="h-8 text-sm px-3 gap-1.5">
+												<IndianRupee className="h-3.5 w-3.5" />Fee Details
+											</Button>
+										</Link>
 									</div>
-									<Link href="/fee-details">
-										<Button variant="outline" size="sm" className="h-8 text-sm px-3 gap-1.5">
-											<IndianRupee className="h-3.5 w-3.5" />Fee Details
-										</Button>
-									</Link>
-								</div>
-							</CardHeader>
-							<CardContent className="p-4 space-y-3">
-								<div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
-									{showInstitutionField && (
-										<div className="space-y-1.5">
-											<Label className="text-xs font-medium">Institution <span className="text-red-500">*</span></Label>
-											<Select
-												value={selectedInstitution?.id || ''}
-												onValueChange={val => {
-													const inst = availableInstitutions.find((i: Institution) => i.id === val)
-													selectInstitution(inst || null)
-												}}
-											>
-												<SelectTrigger className="h-9 text-sm"><SelectValue placeholder="Select institution" /></SelectTrigger>
-												<SelectContent>
-													{availableInstitutions.filter((i: Institution) => i.id !== 'all').map((inst: Institution) => (
-														<SelectItem key={inst.id} value={inst.id}>{inst.institution_name}</SelectItem>
-													))}
-												</SelectContent>
-											</Select>
-										</div>
-									)}
-
-									{mustSelectSession && (
-										<div className="space-y-1.5">
-											<Label className="text-xs font-medium">Exam Session <span className="text-red-500">*</span></Label>
-											<Select
-												value={sessionId}
-												onValueChange={val => {
-													setSessionId(val)
-													setSessionCode(sessions.find(s => s.id === val)?.session_code || '')
-												}}
-												disabled={!institutionsId || loadingSessions}
-											>
-												<SelectTrigger className="h-9 text-sm">
-													{loadingSessions
-														? <span className="flex items-center gap-2 text-muted-foreground"><Loader2 className="h-3 w-3 animate-spin" />Loading...</span>
-														: <SelectValue placeholder="Select session" />}
-												</SelectTrigger>
-												<SelectContent>
-													{sessions.map(s => <SelectItem key={s.id} value={s.id}>{s.session_name}</SelectItem>)}
-												</SelectContent>
-											</Select>
-										</div>
-									)}
-
-									{/* Subject-wise arrears carry their own programme picker and take the
-									    semester from the chosen offering, so these two would do nothing there. */}
-									{showScopeFilters && (
-										<>
+								</CardHeader>
+								<CardContent className="p-4 space-y-3">
+									<div className="flex flex-wrap items-end gap-3 [&>div]:w-full [&>div]:sm:w-56">
+										{showInstitutionField && (
 											<div className="space-y-1.5">
-												<Label className="text-xs font-medium">Program</Label>
-												<SearchableSelect
-													value={program}
-													onValueChange={setProgram}
-													placeholder="All programs"
-													searchPlaceholder="Search program..."
-													options={tab === 'current' ? cpProgramOptions : arProgramOptions}
-													disabled={!scopeReady}
-													loading={tab === 'current' ? loadingCp : loadingArLearners}
-												/>
-											</div>
-
-											<div className="space-y-1.5">
-												<Label className="text-xs font-medium">
-													Semester {tab === 'arrear' && <span className="text-muted-foreground font-normal">(optional)</span>}
-												</Label>
+												<Label className="text-xs font-medium">Institution <span className="text-red-500">*</span></Label>
 												<Select
-													value={tab === 'current' ? cpSemester : arSemester}
-													onValueChange={val => (tab === 'current' ? setCpSemester(val) : setArSemester(val))}
-													disabled={!scopeReady}
+													value={selectedInstitution?.id || ''}
+													onValueChange={val => {
+														const inst = availableInstitutions.find((i: Institution) => i.id === val)
+														selectInstitution(inst || null)
+													}}
 												>
-													<SelectTrigger className="h-9 text-sm"><SelectValue placeholder="All semesters" /></SelectTrigger>
+													<SelectTrigger className="h-9 text-sm"><SelectValue placeholder="Select institution" /></SelectTrigger>
 													<SelectContent>
-														<SelectItem value="all">
-															{`All semesters — ${countLabel(semesterTotals, rowNoun)}`}
-														</SelectItem>
-														{semesterFilterOptions.map(o => (
-															<SelectItem key={o.value} value={o.value}>
-																{`Semester ${romanSemester(Number(o.value))} — ${countLabel(o, rowNoun)}`}
-															</SelectItem>
+														{availableInstitutions.filter((i: Institution) => i.id !== 'all').map((inst: Institution) => (
+															<SelectItem key={inst.id} value={inst.id}>{inst.institution_name}</SelectItem>
 														))}
 													</SelectContent>
 												</Select>
 											</div>
-										</>
-									)}
-								</div>
+										)}
 
-								{/* Program is shared but Semester is not, which is worth stating outright. */}
-								{showScopeFilters && (
-									<p className="text-[11px] text-muted-foreground leading-relaxed">
-										<span className="font-medium text-foreground">Program carries across both tabs</span> — apply Current Papers,
-										then switch to Arrear Papers for the same programme without re-filtering. Semester means the learner&apos;s own
-										semester on both tabs, so Semester&nbsp;III lists the Sem&nbsp;III cohort together with every arrear they carry —
-										each arrear still shows the semester it came from on its own row.
-									</p>
-								)}
+										{mustSelectSession && (
+											<div className="space-y-1.5">
+												<Label className="text-xs font-medium">Exam Session <span className="text-red-500">*</span></Label>
+												<Select
+													value={sessionId}
+													onValueChange={val => {
+														setSessionId(val)
+														setSessionCode(sessions.find(s => s.id === val)?.session_code || '')
+													}}
+													disabled={!institutionsId || loadingSessions}
+												>
+													<SelectTrigger className="h-9 text-sm">
+														{loadingSessions
+															? <span className="flex items-center gap-2 text-muted-foreground"><Loader2 className="h-3 w-3 animate-spin" />Loading...</span>
+															: <SelectValue placeholder="Select session" />}
+													</SelectTrigger>
+													<SelectContent>
+														{sessions.map(s => <SelectItem key={s.id} value={s.id}>{s.session_name}</SelectItem>)}
+													</SelectContent>
+												</Select>
+											</div>
+										)}
 
-								{/* The charge columns arrive with a hand-applied migration. Until it runs,
-								    applications still save but the two per-learner fees cannot be stored,
-								    so say so rather than showing amounts that will not be written. */}
-								{!chargeColumnsReady && (
-									<div className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
-										<Info className="h-3.5 w-3.5 mt-0.5 shrink-0" />
-										<p>
-											<span className="font-medium">Application fee and mark statement fee cannot be stored yet.</span>{' '}
-											Run <code className="font-mono">supabase/migrations/20260824_add_application_fees_to_exam_registrations.sql</code>{' '}
-											in the Supabase SQL Editor. Applying still works — papers move to Applied and the per-paper fee is stamped —
-											but the two per-learner charges are skipped until those columns exist.
-										</p>
-									</div>
-								)}
+										{/* Subject-wise arrears carry their own programme picker and take the
+										    semester from the chosen offering, so these two would do nothing there. */}
+										{showScopeFilters && (
+											<>
+												<div className="space-y-1.5">
+													<Label className="text-xs font-medium">Program</Label>
+													<SearchableSelect
+														value={program}
+														onValueChange={setProgram}
+														placeholder="All programs"
+														searchPlaceholder="Search program..."
+														options={tab === 'current' ? cpProgramOptions : arProgramOptions}
+														disabled={!scopeReady}
+														loading={tab === 'current' ? loadingCp : loadingArLearners}
+													/>
+												</div>
 
-								{/* Two sessions can share a session_code with only one carrying a fee
-								    schedule. Without one there is no fine and no circular reference, and
-								    nothing else in the flow would ever mention it. */}
-								{feeContext?.configured && !feeContext.last_date_without_fine && !feeContext.circular_ref && (
-									<div className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
-										<Info className="h-3.5 w-3.5 mt-0.5 shrink-0" />
-										<p>
-											Paper rates are configured, but this exam session has no fee schedule — no cut-off dates, no late fine and no
-											circular reference will be recorded. Check you picked the right session if two share a code.{' '}
-											<Link href="/fee-details" className="underline font-medium">Review fee schedule</Link>
-										</p>
-									</div>
-								)}
-
-								{/* Fee banner - only for the two states that need action */}
-								{feeContext && (!feeContext.configured || feeContext.fine_applicable) && (
-									<div className={cn(
-										'flex items-start gap-2 rounded-md border px-3 py-2 text-xs',
-										!feeContext.configured
-											? 'border-amber-200 bg-amber-50 text-amber-800 dark:bg-amber-950/30 dark:text-amber-200 dark:border-amber-900'
-											: 'border-rose-200 bg-rose-50 text-rose-800 dark:bg-rose-950/30 dark:text-rose-200 dark:border-rose-900'
-									)}>
-										<Info className="h-3.5 w-3.5 mt-0.5 shrink-0" />
-										{!feeContext.configured ? (
-											<p>
-												No exam fee rates are configured for this institution — applications will still save, but no fee is stamped.{' '}
-												<Link href="/fee-details" className="underline font-medium">Configure fees</Link>
-											</p>
-										) : (
-											<p className="font-medium">
-												Late fine of {money(feeContext.fine_amount)} applies — the no-fine date
-												{feeContext.last_date_without_fine ? ` (${feeContext.last_date_without_fine})` : ''} has passed
-											</p>
+												<div className="space-y-1.5">
+													<Label className="text-xs font-medium">
+														Semester {tab === 'arrear' && <span className="text-muted-foreground font-normal">(optional)</span>}
+													</Label>
+													<Select
+														value={tab === 'current' ? cpSemester : arSemester}
+														onValueChange={val => (tab === 'current' ? setCpSemester(val) : setArSemester(val))}
+														disabled={!scopeReady}
+													>
+														<SelectTrigger className="h-9 text-sm"><SelectValue placeholder="All semesters" /></SelectTrigger>
+														<SelectContent>
+															<SelectItem value="all">
+																{`All semesters — ${countLabel(semesterTotals, rowNoun)}`}
+															</SelectItem>
+															{semesterFilterOptions.map(o => (
+																<SelectItem key={o.value} value={o.value}>
+																	{`Semester ${romanSemester(Number(o.value))} — ${countLabel(o, rowNoun)}`}
+																</SelectItem>
+															))}
+														</SelectContent>
+													</Select>
+												</div>
+											</>
 										)}
 									</div>
-								)}
 
-								{!scopeReady && (
-									<p className="text-xs text-muted-foreground">Select an institution and exam session to begin.</p>
-								)}
-							</CardContent>
-						</Card>
+									{/* Program is shared but Semester is not, which is worth stating outright. */}
+									{showScopeFilters && (
+										<p className="text-[11px] text-muted-foreground leading-relaxed">
+											Program carries across both tabs, so you can apply Current Papers then Arrear Papers for the same cohort without
+											re-filtering. Semester always means the learner&apos;s own semester.
+										</p>
+									)}
 
-						{/* Tabs */}
-						<Tabs value={tab} onValueChange={v => setTab(v as ApplyTab)} className="w-full">
-							<TabsList className="grid w-full max-w-md grid-cols-2">
-								<TabsTrigger value="current">Current Papers</TabsTrigger>
-								<TabsTrigger value="arrear">Arrear Papers</TabsTrigger>
-							</TabsList>
+									{/* The charge columns arrive with a hand-applied migration. Until it runs,
+									    applications still save but the two per-learner fees cannot be stored,
+									    so say so rather than showing amounts that will not be written. */}
+									{!chargeColumnsReady && (
+										<div className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
+											<Info className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+											<p>
+												<span className="font-medium">Application fee and mark statement fee cannot be stored yet.</span>{' '}
+												Run <code className="font-mono">supabase/migrations/20260824_add_application_fees_to_exam_registrations.sql</code>{' '}
+												in the Supabase SQL Editor. Applying still works — papers move to Applied and the per-paper fee is stamped —
+												but the two per-learner charges are skipped until those columns exist.
+											</p>
+										</div>
+									)}
 
-							{/* ── Current Papers ── */}
+									{/* Two sessions can share a session_code with only one carrying a fee
+									    schedule. Without one there is no fine and no circular reference, and
+									    nothing else in the flow would ever mention it. */}
+									{feeContext?.configured && !feeContext.last_date_without_fine && !feeContext.circular_ref && (
+										<div className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
+											<Info className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+											<p>
+												Paper rates are configured, but this exam session has no fee schedule — no cut-off dates, no late fine and no
+												circular reference will be recorded. Check you picked the right session if two share a code.{' '}
+												<Link href="/fee-details" className="underline font-medium">Review fee schedule</Link>
+											</p>
+										</div>
+									)}
+
+									{/* Fee banner - only for the two states that need action */}
+									{feeContext && (!feeContext.configured || feeContext.fine_applicable) && (
+										<div className={cn(
+											'flex items-start gap-2 rounded-md border px-3 py-2 text-xs',
+											!feeContext.configured
+												? 'border-amber-200 bg-amber-50 text-amber-800 dark:bg-amber-950/30 dark:text-amber-200 dark:border-amber-900'
+												: 'border-rose-200 bg-rose-50 text-rose-800 dark:bg-rose-950/30 dark:text-rose-200 dark:border-rose-900'
+										)}>
+											<Info className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+											{!feeContext.configured ? (
+												<p>
+													No exam fee rates are configured for this institution — applications will still save, but no fee is stamped.{' '}
+													<Link href="/fee-details" className="underline font-medium">Configure fees</Link>
+												</p>
+											) : (
+												<p className="font-medium">
+													Late fine of {money(feeContext.fine_amount)} applies — the no-fine date
+													{feeContext.last_date_without_fine ? ` (${feeContext.last_date_without_fine})` : ''} has passed
+												</p>
+											)}
+										</div>
+									)}
+
+									{!scopeReady && (
+										<p className="text-xs text-muted-foreground">Select an institution and exam session to begin.</p>
+									)}
+								</CardContent>
+							</Card>
+
+
+								{/* ── Current Papers ── */}
 							<TabsContent value="current" className="mt-3">
-								<div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.7fr)_minmax(0,1fr)] gap-3">
+								<div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.7fr)_minmax(0,1fr)] gap-3 min-h-0">
 
-									<Card className="flex flex-col min-h-[520px]">
+									<Card className={cn('flex flex-col overflow-hidden', PANEL_HEIGHT, STEP_TONES.amber.card)}>
 										<CardHeader className="px-4 py-3 border-b space-y-3">
 											<div className="flex items-center justify-between gap-2 flex-wrap">
-												<div>
-													<h3 className="text-sm font-semibold">Learners</h3>
-													<p className="text-xs text-muted-foreground">
-														Selecting a learner applies for every paper they are already registered for
-													</p>
-												</div>
+												<Step
+													n={3}
+													tone="amber"
+													title="Select learners"
+													hint="Each one applies for every paper they are already registered for"
+													active={scopeReady}
+													done={cpSelected.size > 0}
+												/>
 												<Button
 													variant="outline"
 													size="sm"
@@ -1573,9 +1712,21 @@ export default function ExamApplicationsPage() {
 													<p>Select an exam session to list the registered learners</p>
 												</div>
 											) : filteredCpLearners.length === 0 ? (
-												<div className="flex flex-col items-center justify-center flex-1 p-8 text-sm text-muted-foreground">
+												<div className="flex flex-col items-center justify-center flex-1 p-8 text-sm text-muted-foreground text-center">
 													<Users className="h-8 w-8 mb-2 opacity-40" />
-													<p>{cpLearners.length === 0 ? 'No exam registrations in this session for the selected scope' : 'No learners match the current filters'}</p>
+													{cpLearners.length === 0 ? (
+														<p>No exam registrations in this session for the selected scope</p>
+													) : selectableCpLearners.length === 0 && cpStatus === 'pending' ? (
+														<>
+															<p className="font-medium text-foreground">Nothing left to apply for</p>
+															<p className="text-xs mt-1">
+																All {cpLearners.length} learner{cpLearners.length === 1 ? '' : 's'} in this scope have already applied.
+																Switch the filter to “All learners” to review them.
+															</p>
+														</>
+													) : (
+														<p>No learners match the current filters</p>
+													)}
 													{cpLearners.length === 0 && (
 														<Link href="/exam-management/exam-registrations/bulk-create" className="text-xs mt-2 underline">
 															Register learners for this session first
@@ -1595,7 +1746,7 @@ export default function ExamApplicationsPage() {
 														{showFee && <span className="w-24 text-right text-muted-foreground">Fee</span>}
 														<span className="w-[92px] text-center text-muted-foreground">Status</span>
 													</div>
-													<div className="flex-1 min-h-0" style={{ minHeight: 340 }}>
+													<div className="flex-1 min-h-0">
 														<AutoSizer>
 															{({ height, width }) => (
 																<VirtualList height={height} width={width} itemCount={filteredCpLearners.length} itemSize={ROW_HEIGHT}>
@@ -1621,15 +1772,18 @@ export default function ExamApplicationsPage() {
 									</Card>
 
 									{/* Papers in the cohort + fee breakdown */}
-									<div className="flex flex-col gap-3">
-										<Card className="flex flex-col min-h-[300px]">
+									<div className={cn('flex flex-col gap-3', PANEL_HEIGHT)}>
+										<Card className={cn('flex flex-col flex-1 min-h-0 overflow-hidden', STEP_TONES.emerald.card)}>
 											<CardHeader className="px-4 py-3 border-b">
-												<h3 className="text-sm font-semibold">Papers being applied for</h3>
-												<p className="text-xs text-muted-foreground">
-													{cpSelection.learners === 0
-														? 'Select learners to see the papers'
+												<Step
+													n={4}
+													tone="emerald"
+													title="Papers being applied for"
+													hint={cpSelection.learners === 0
+														? 'Appear once learners are selected'
 														: `${cpSelectedPapers.length} distinct paper${cpSelectedPapers.length === 1 ? '' : 's'} across ${cpSelection.learners} selected learner${cpSelection.learners === 1 ? '' : 's'}`}
-												</p>
+													active={cpSelection.learners > 0}
+												/>
 											</CardHeader>
 											<CardContent className="p-0 flex-1 flex flex-col min-h-0">
 												{cpSelectedPapers.length === 0 ? (
@@ -1639,7 +1793,7 @@ export default function ExamApplicationsPage() {
 														<p className="text-xs mt-1 opacity-80">Their registered papers appear here</p>
 													</div>
 												) : (
-													<div className="flex-1 min-h-0" style={{ minHeight: 240 }}>
+													<div className="flex-1 min-h-0">
 														<AutoSizer>
 															{({ height, width }) => (
 																<VirtualList height={height} width={width} itemCount={cpSelectedPapers.length} itemSize={ROW_HEIGHT}>
@@ -1655,26 +1809,29 @@ export default function ExamApplicationsPage() {
 										</Card>
 
 										{showFee && (
-											<Card>
-												<CardHeader className="px-4 py-3 border-b">
+											<Card className="shrink-0">
+												<CardHeader className="px-4 py-2 border-b flex-row items-baseline justify-between gap-2 space-y-0">
 													<h3 className="text-sm font-semibold">Fee for selection</h3>
 													<p className="text-xs text-muted-foreground">
 														{cpSelection.learners} learner{cpSelection.learners === 1 ? '' : 's'} · {cpSelection.papers} paper{cpSelection.papers === 1 ? '' : 's'}
 													</p>
 												</CardHeader>
-												<CardContent className="p-4 space-y-1.5 text-sm">
-													<div className="flex justify-between"><span className="text-muted-foreground">Exam papers</span><span className="tabular-nums">{money(cpSelection.paperFee)}</span></div>
-													<div className="flex justify-between"><span className="text-muted-foreground">Application fee</span><span className="tabular-nums">{money(cpSelection.applicationFee)}</span></div>
-													<div className="flex justify-between"><span className="text-muted-foreground">Mark statement fee</span><span className="tabular-nums">{money(cpSelection.markStatementFee)}</span></div>
-													{cpSelection.fine > 0 && (
-														<div className="flex justify-between text-rose-600 dark:text-rose-400"><span>Late fine</span><span className="tabular-nums">{money(cpSelection.fine)}</span></div>
-													)}
-													<div className="flex justify-between pt-2 mt-1 border-t font-semibold">
-														<span>Total</span><span className="tabular-nums text-sky-600 dark:text-sky-400">{money(cpSelection.total)}</span>
+												<CardContent className="px-4 py-3 space-y-2">
+													<div className="grid grid-cols-2 gap-x-4 gap-y-1 text-sm">
+														<FeeLine label="Exam papers" value={money(cpSelection.paperFee)} />
+														<FeeLine label="Application fee" value={money(cpSelection.applicationFee)} />
+														<FeeLine label="Mark statement fee" value={money(cpSelection.markStatementFee)} />
+														{cpSelection.fine > 0 && (
+															<FeeLine label="Late fine" value={money(cpSelection.fine)} tone="text-rose-600 dark:text-rose-400" />
+														)}
 													</div>
-													<p className="text-[10px] text-muted-foreground pt-1 leading-relaxed">
-														Application and mark statement fees are charged once per learner per session — learners already
-														charged in this session contribute paper fees only.
+													<div className="flex justify-between items-baseline pt-2 border-t">
+														<span className="text-sm font-semibold">Total</span>
+														<span className="text-base font-semibold tabular-nums text-sky-600 dark:text-sky-400">{money(cpSelection.total)}</span>
+													</div>
+													<p className="text-[10px] text-muted-foreground leading-snug">
+														Application and mark statement fees are charged once per learner per session — a learner already
+														charged this session contributes paper fees only.
 													</p>
 												</CardContent>
 											</Card>
@@ -1701,7 +1858,7 @@ export default function ExamApplicationsPage() {
 											</div>
 											<p className="text-xs text-muted-foreground pb-2">
 												{arMode === 'learner'
-													? 'Pick learners on the left, then tick the arrear papers they should be registered for. Each row becomes a new arrear registration.'
+													? 'Pick learners on the left — their arrear papers load automatically. Tick the ones to register; each becomes a new arrear registration.'
 													: 'Pick one subject code, then tick the learners holding an uncleared arrear in it.'}
 											</p>
 										</div>
@@ -1712,15 +1869,17 @@ export default function ExamApplicationsPage() {
 									<div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.8fr)] gap-3">
 
 										{/* Learners with arrears */}
-										<Card className="flex flex-col min-h-[520px]">
+										<Card className={cn('flex flex-col overflow-hidden', PANEL_HEIGHT, STEP_TONES.amber.card)}>
 											<CardHeader className="px-4 py-3 border-b space-y-3">
 												<div className="flex items-center justify-between gap-2">
-													<div>
-														<h3 className="text-sm font-semibold">Learners with arrears</h3>
-														<p className="text-xs text-muted-foreground">
-															{loadingArLearners ? 'Loading...' : `${filteredArLearners.length} of ${arLearners.length} • ${arPicked.size} selected`}
-														</p>
-													</div>
+													<Step
+														n={3}
+														tone="amber"
+														title="Select learners"
+														hint={loadingArLearners ? 'Loading...' : `${filteredArLearners.length} of ${arLearners.length} • ${arPicked.size} selected`}
+														active={scopeReady}
+														done={arPicked.size > 0}
+													/>
 													<Button
 														variant="outline"
 														size="sm"
@@ -1759,7 +1918,7 @@ export default function ExamApplicationsPage() {
 															<Checkbox checked={allArChecked} onCheckedChange={toggleAllAr} />
 															<span>Select all ({filteredArLearners.length})</span>
 														</label>
-														<div className="flex-1 min-h-0" style={{ minHeight: 280 }}>
+														<div className="flex-1 min-h-0">
 															<AutoSizer>
 																{({ height, width }) => (
 																	<VirtualList height={height} width={width} itemCount={filteredArLearners.length} itemSize={ROW_HEIGHT}>
@@ -1778,16 +1937,27 @@ export default function ExamApplicationsPage() {
 																)}
 															</AutoSizer>
 														</div>
-														<div className="p-3 border-t">
+														<div className="px-3 py-2 border-t flex items-center justify-between gap-2 shrink-0">
+															<span className="text-xs text-muted-foreground min-w-0 truncate">
+																{arPicked.size === 0
+																	? 'Tick learners — their papers load automatically'
+																	: loadingArCourses
+																		? 'Loading papers…'
+																		: arPicked.size > MAX_LEARNERS_PER_BATCH
+																			? `${arPicked.size} selected — over the ${MAX_LEARNERS_PER_BATCH} limit`
+																			: `${arPicked.size} learner${arPicked.size === 1 ? '' : 's'} selected`}
+															</span>
 															<Button
+																variant="outline"
 																size="sm"
-																className="w-full h-9 text-sm gap-1.5"
+																className="h-8 text-xs gap-1.5 shrink-0"
 																onClick={loadArrearCourses}
 																disabled={arPicked.size === 0 || loadingArCourses || !sessionId}
 															>
 																{loadingArCourses
-																	? <><Loader2 className="h-3.5 w-3.5 animate-spin" />Loading papers...</>
-																	: <><BookOpen className="h-3.5 w-3.5" />Load arrear papers for {arPicked.size} learner{arPicked.size === 1 ? '' : 's'}</>}
+																	? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+																	: <BookOpen className="h-3.5 w-3.5" />}
+																Reload
 															</Button>
 														</div>
 													</>
@@ -1796,15 +1966,17 @@ export default function ExamApplicationsPage() {
 										</Card>
 
 										{/* Arrear papers */}
-										<Card className="flex flex-col min-h-[520px]">
+										<Card className={cn('flex flex-col overflow-hidden', PANEL_HEIGHT, STEP_TONES.emerald.card)}>
 											<CardHeader className="px-4 py-3 border-b space-y-3">
 												<div className="flex items-center justify-between gap-2 flex-wrap">
-													<div>
-														<h3 className="text-sm font-semibold">Arrear papers to register</h3>
-														<p className="text-xs text-muted-foreground">
-															Each learner gets only their own arrears — nothing is applied across learners
-														</p>
-													</div>
+													<Step
+														n={4}
+														tone="emerald"
+														title="Arrear papers to register"
+														hint="Each learner gets only their own arrears"
+														active={arCourseRows.length > 0}
+														done={arSelectedRows.size > 0}
+													/>
 													<Button
 														variant="ghost"
 														size="sm"
@@ -1848,9 +2020,19 @@ export default function ExamApplicationsPage() {
 														<p>Pick learners on the left, then load their arrear papers</p>
 													</div>
 												) : filteredArRows.length === 0 ? (
-													<div className="flex flex-col items-center justify-center flex-1 p-8 text-sm text-muted-foreground">
+													<div className="flex flex-col items-center justify-center flex-1 p-8 text-sm text-muted-foreground text-center">
 														<ClipboardCheck className="h-8 w-8 mb-2 opacity-40" />
-														<p>No arrear papers match the current filters</p>
+														{selectableArRows.length === 0 && arCourseStatus === 'eligible' ? (
+															<>
+																<p className="font-medium text-foreground">Nothing left to apply for</p>
+																<p className="text-xs mt-1">
+																	All {arCourseRows.length} arrear paper{arCourseRows.length === 1 ? '' : 's'} for these learners
+																	{' '}have already been applied for. Switch Status to “All” to review them.
+																</p>
+															</>
+														) : (
+															<p>No arrear papers match the current filters</p>
+														)}
 													</div>
 												) : (
 													<>
@@ -1865,7 +2047,7 @@ export default function ExamApplicationsPage() {
 															{showFee && <span className="w-16 text-right text-muted-foreground">Fee</span>}
 															<span className="w-[112px] text-center text-muted-foreground">Status</span>
 														</div>
-														<div className="flex-1 min-h-0" style={{ minHeight: 340 }}>
+														<div className="flex-1 min-h-0">
 															<AutoSizer>
 																{({ height, width }) => (
 																	<VirtualList height={height} width={width} itemCount={filteredArRows.length} itemSize={ROW_HEIGHT}>
@@ -1892,7 +2074,7 @@ export default function ExamApplicationsPage() {
 									</div>
 								) : (
 									/* Subject-wise */
-									<Card className="flex flex-col min-h-[520px]">
+									<Card className={cn('flex flex-col overflow-hidden', PANEL_HEIGHT)}>
 										<CardHeader className="px-4 py-3 border-b space-y-3">
 											<div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(0,2.5fr)_minmax(0,1fr)_minmax(0,1.2fr)] gap-3">
 												<div className="space-y-1.5">
@@ -1985,9 +2167,20 @@ export default function ExamApplicationsPage() {
 													<p>Select a subject code to list the learners holding an arrear in it</p>
 												</div>
 											) : filteredCandidates.length === 0 ? (
-												<div className="flex flex-col items-center justify-center flex-1 p-8 text-sm text-muted-foreground">
+												<div className="flex flex-col items-center justify-center flex-1 p-8 text-sm text-muted-foreground text-center">
 													<Users className="h-8 w-8 mb-2 opacity-40" />
-													<p>{candidates.length === 0 ? 'Nobody holds an uncleared arrear in this subject' : 'No learners match the current filters'}</p>
+													{candidates.length === 0 ? (
+														<p>Nobody holds an uncleared arrear in this subject</p>
+													) : selectableCandidates.length === 0 && candidateStatus === 'eligible' ? (
+														<>
+															<p className="font-medium text-foreground">Nothing left to apply for</p>
+															<p className="text-xs mt-1">
+																All {candidates.length} candidate{candidates.length === 1 ? '' : 's'} have already applied for this subject.
+															</p>
+														</>
+													) : (
+														<p>No learners match the current filters</p>
+													)}
 												</div>
 											) : (
 												<>
@@ -2002,7 +2195,7 @@ export default function ExamApplicationsPage() {
 														{showFee && <span className="w-20 text-right text-muted-foreground">Fee</span>}
 														<span className="w-[112px] text-center text-muted-foreground">Status</span>
 													</div>
-													<div className="flex-1 min-h-0" style={{ minHeight: 340 }}>
+													<div className="flex-1 min-h-0">
 														<AutoSizer>
 															{({ height, width }) => (
 																<VirtualList height={height} width={width} itemCount={filteredCandidates.length} itemSize={ROW_HEIGHT}>

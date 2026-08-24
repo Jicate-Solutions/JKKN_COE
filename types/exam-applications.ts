@@ -427,8 +427,14 @@ export interface ArrearLearner {
 	semester: number | null
 	semesters: number[]
 	arrear_count: number
-	/** Arrears already registered in the selected session */
+	/** Arrears holding any registration row in the selected session */
 	registered_count: number
+	/**
+	 * Arrears whose registration has reached 'Applied' - the only ones that are
+	 * genuinely done. A registered-but-unapplied arrear is still actionable, so
+	 * `arrear_count - applied_count` is what the operator has left to do.
+	 */
+	applied_count: number
 }
 
 export interface ArrearLearnersResponse {
@@ -445,5 +451,7 @@ export interface ArrearLearnersResponse {
 		learners: number
 		arrears: number
 		registered: number
+		/** Of those, the ones already moved to 'Applied' */
+		applied: number
 	}
 }

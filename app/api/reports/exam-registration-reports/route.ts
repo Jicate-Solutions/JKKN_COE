@@ -199,6 +199,13 @@ export async function GET(request: Request) {
 		const examination_session_id = searchParams.get('examination_session_id')
 		const report_type = searchParams.get('report_type')
 
+		// The two Exam Application reports are the fee form a learner signs, so they
+		// cover only learners who actually applied - a Pending registration has not
+		// been applied for and owes nothing yet. Filtered in the query rather than
+		// after the fetch: on a live session this is 363 rows instead of 12,507.
+		const APPLIED_STATUSES = ['Applied', 'Approved']
+		const isApplicationReport = report_type === 'student-fee-details' || report_type === 'student-wise-application'
+
 		if (!institutions_id || !examination_session_id || !report_type) {
 			return NextResponse.json(
 				{ error: 'institutions_id, examination_session_id, and report_type are required' },
@@ -210,16 +217,18 @@ export async function GET(request: Request) {
 		const [{ data: institution }, { data: session }, allRegistrations] = await Promise.all([
 			supabase.from('institutions').select('id, institution_code, name, myjkkn_institution_ids').eq('id', institutions_id).single(),
 			supabase.from('examination_sessions').select('id, session_code, session_name').eq('id', examination_session_id).single(),
-			fetchAllPaginated((from, to) =>
-				supabase
+			fetchAllPaginated((from, to) => {
+				let query = supabase
 					.from('exam_registrations')
-					.select('id, stu_register_no, student_name, is_regular, attempt_number, fee_paid, fee_amount, program_code, course_offering_id, course_code')
+					.select('id, stu_register_no, student_name, is_regular, attempt_number, fee_paid, fee_amount, registration_status, program_code, course_offering_id, course_code')
 					.eq('institutions_id', institutions_id)
 					.eq('examination_session_id', examination_session_id)
+				if (isApplicationReport) query = query.in('registration_status', APPLIED_STATUSES)
+				return query
 					.order('stu_register_no', { ascending: true })
 					.order('id', { ascending: true })
 					.range(from, to)
-			),
+			}),
 		])
 
 		if (!institution || !session) {
@@ -227,6 +236,9 @@ export async function GET(request: Request) {
 		}
 
 		if (allRegistrations.length === 0) {
+			if (isApplicationReport) {
+				console.warn(`[ExamReports] No registration in this session has registration_status ${APPLIED_STATUSES.join(' / ')} - the Exam Application report covers applied learners only. Apply the cohort from Exam Management > Exam Applications first.`)
+			}
 			return NextResponse.json({
 				report_type,
 				institution_name: institution.name,
@@ -516,15 +528,15 @@ export async function GET(request: Request) {
 					examination_session_id,
 				}),
 				chargeColumnsExist
-					? fetchAllPaginated((from, to) =>
-						supabase
+					? fetchAllPaginated((from, to) => {
+						let query = supabase
 							.from('exam_registrations')
 							.select('id, application_fee, mark_statement_fee, late_fine')
 							.eq('institutions_id', institutions_id)
 							.eq('examination_session_id', examination_session_id)
-							.order('id', { ascending: true })
-							.range(from, to)
-					)
+						if (isApplicationReport) query = query.in('registration_status', APPLIED_STATUSES)
+						return query.order('id', { ascending: true }).range(from, to)
+					})
 					: Promise.resolve([] as any[]),
 			])
 
