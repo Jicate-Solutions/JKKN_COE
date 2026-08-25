@@ -107,7 +107,7 @@ async function fetchByLearners(
 }
 
 /** UPPER course_code set for every course the given learners have already cleared */
-async function fetchPassedCourseCodes(
+export async function fetchPassedCourseCodes(
 	supabase: SupabaseClient,
 	institutions_id: string,
 	studentIds: string[]

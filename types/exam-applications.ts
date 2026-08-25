@@ -432,7 +432,17 @@ export interface ArrearLearner {
 	/** Highest original_semester across their backlogs - what the semester filter matches */
 	semester: number | null
 	semesters: number[]
+	/**
+	 * Distinct uncleared arrears that are actually offered this session - the ones
+	 * that can be applied for.
+	 */
 	arrear_count: number
+	/**
+	 * Every distinct uncleared arrear the learner carries, including any not
+	 * offered this session. Shown beside the actionable count so a learner with 8
+	 * applicable out of 12 outstanding reads honestly.
+	 */
+	total_arrears: number
 	/** Arrears holding any registration row in the selected session */
 	registered_count: number
 	/**

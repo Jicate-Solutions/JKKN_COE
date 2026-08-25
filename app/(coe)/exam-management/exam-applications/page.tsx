@@ -71,12 +71,13 @@ import type {
 const ROMAN = ['', 'I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X', 'XI', 'XII']
 const ROW_HEIGHT = 56
 /**
- * The working lists size to the viewport rather than a fixed 520px, so the page
- * uses the whole screen on a large monitor and still fits a laptop. The subtracted
- * space is the header, breadcrumb, scorecards, the two step cards and the sticky
- * submit bar.
+ * The working lists size to the viewport rather than a fixed height, so the page
+ * uses the whole screen on a large monitor. The subtracted space is the header,
+ * the step cards and the sticky submit bar; the floor keeps roughly ten rows
+ * visible on a laptop, letting the page scroll rather than shrinking the list to
+ * the four rows it was showing.
  */
-const PANEL_HEIGHT = 'h-[calc(100vh-30rem)] min-h-[26rem]'
+const PANEL_HEIGHT = 'h-[calc(100vh-19rem)] min-h-[34rem]'
 const MAX_LEARNERS_PER_BATCH = 500
 
 const CURRENT_BADGE = 'bg-emerald-100 text-emerald-700 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-900'
@@ -143,24 +144,32 @@ function Segmented<T extends string>({
 }: {
 	value: T
 	onChange: (v: T) => void
-	options: { value: T; label: string }[]
+	/** activeClass colours the selected option; icon labels which end it starts from */
+	options: { value: T; label: string; icon?: typeof Users; activeClass?: string }[]
 	disabled?: boolean
 }) {
 	return (
-		<div className={cn('inline-flex h-9 items-center rounded-md border bg-muted/40 p-0.5 w-full', disabled && 'opacity-60 pointer-events-none')}>
-			{options.map(opt => (
-				<button
-					key={opt.value}
-					type="button"
-					onClick={() => onChange(opt.value)}
-					className={cn(
-						'flex-1 h-8 rounded-[5px] text-sm font-medium transition-colors px-2',
-						value === opt.value ? 'bg-background shadow-sm' : 'text-muted-foreground hover:text-foreground'
-					)}
-				>
-					{opt.label}
-				</button>
-			))}
+		<div className={cn('inline-flex h-10 items-center rounded-md border bg-muted/40 p-0.5 w-full', disabled && 'opacity-60 pointer-events-none')}>
+			{options.map(opt => {
+				const Icon = opt.icon
+				const active = value === opt.value
+				return (
+					<button
+						key={opt.value}
+						type="button"
+						onClick={() => onChange(opt.value)}
+						className={cn(
+							'flex-1 h-9 rounded-[5px] text-sm font-medium transition-colors px-2 inline-flex items-center justify-center gap-1.5',
+							active
+								? (opt.activeClass || 'bg-background shadow-sm')
+								: 'text-muted-foreground hover:text-foreground'
+						)}
+					>
+						{Icon && <Icon className="h-3.5 w-3.5" />}
+						{opt.label}
+					</button>
+				)
+			})}
 		</div>
 	)
 }
@@ -529,6 +538,9 @@ const ArrearLearnerRow = memo(function ArrearLearnerRow({
 	// Registered is not the same as applied - a registered-but-unapplied arrear is
 	// still work, so the badge counts against applied_count.
 	const pending = learner.arrear_count - learner.applied_count
+	// total_arrears is newer than the rest of the row; a response cached before it
+	// existed would otherwise render "of arrears" with no number.
+	const totalArrears = learner.total_arrears ?? learner.arrear_count
 	return (
 		<label
 			style={style}
@@ -545,9 +557,20 @@ const ArrearLearnerRow = memo(function ArrearLearnerRow({
 					<Badge
 						variant="outline"
 						className={cn('text-[10px] px-1.5 py-0 h-4', pending > 0 ? ARREAR_BADGE : 'bg-slate-100 text-slate-600 border-slate-200 dark:bg-slate-900/60 dark:text-slate-300 dark:border-slate-800')}
+						title={pending > 0
+							? `${pending} uncleared arrear${pending === 1 ? '' : 's'} that are offered this session and not yet applied for`
+							+ (learner.applied_count > 0 ? ` — ${learner.applied_count} already applied` : '')
+							+ '. Load the papers to see which are selectable.'
+							: 'Every arrear offered this session has already been applied for'}
 					>
 						{pending > 0 ? `${pending} to apply` : 'all applied'}
 					</Badge>
+					{/* The actionable count on its own hid the rest of the picture: a
+					    learner can carry 12 arrears with only 8 offered this session. */}
+					<span className="text-[10px] text-muted-foreground">
+						of {totalArrears} arrear{totalArrears === 1 ? '' : 's'}
+						{totalArrears > learner.arrear_count && ` · ${totalArrears - learner.arrear_count} not offered`}
+					</span>
 					{/* The learner's own semester leads, since that is what the Semester
 					    filter matches. It is unknown for anyone with no regular paper this
 					    session (arrear-only candidates), and an empty "Sem —" badge was
@@ -1972,8 +1995,18 @@ export default function ExamApplicationsPage() {
 													value={arMode}
 													onChange={(v: ArrearMode) => setArMode(v)}
 													options={[
-														{ value: 'learner' as ArrearMode, label: 'Learner wise' },
-														{ value: 'subject' as ArrearMode, label: 'Subject wise' },
+														{
+															value: 'learner' as ArrearMode,
+															label: 'Learner wise',
+															icon: Users,
+															activeClass: 'bg-amber-500 text-white shadow-sm',
+														},
+														{
+															value: 'subject' as ArrearMode,
+															label: 'Subject wise',
+															icon: BookOpen,
+															activeClass: 'bg-emerald-600 text-white shadow-sm',
+														},
 													]}
 												/>
 											</div>

@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
 import { chargeKey } from '@/lib/exam-applications/session-charges'
+import { fetchPassedCourseCodes } from '@/lib/exam-applications/bulk-course-list'
 import { levelOf, loadProgramLevelMap, parseProgramCodes } from '@/lib/exam-applications/program-levels'
 import type { ArrearLearner, ArrearLearnersResponse, CohortFilterOption, CohortFilterTotals } from '@/types/exam-applications'
 
@@ -213,6 +214,40 @@ async function fetchLearnerCurrentSemesters(
 	return byLearner
 }
 
+/**
+ * UPPER course codes actually offered in this session.
+ *
+ * A backlog whose course is not offered cannot be applied for - the merge engine
+ * marks it "Not Offered" and greys it out - so counting it as outstanding work in
+ * the picker promised papers the panel then refused to show.
+ */
+async function fetchOfferedCourseCodes(
+	supabase: Supabase,
+	params: { institutions_id: string; examination_session_id: string }
+): Promise<Set<string>> {
+	const codes = new Set<string>()
+
+	const { data, error } = await supabase
+		.from('course_offerings')
+		.select('course_code, is_active')
+		.eq('institutions_id', params.institutions_id)
+		.eq('examination_session_id', params.examination_session_id)
+		.range(0, MAX_ROWS)
+
+	if (error) {
+		console.error('[arrear-learners] offerings lookup error:', error.message)
+		return codes
+	}
+
+	for (const row of data || []) {
+		if (row.is_active === false) continue
+		const code = String(row.course_code || '').trim().toUpperCase()
+		if (code) codes.add(code)
+	}
+
+	return codes
+}
+
 export async function GET(request: Request) {
 	try {
 		const supabase = getSupabaseServer()
@@ -235,7 +270,7 @@ export async function GET(request: Request) {
 
 		// The programme filter is applied in memory so the programme option list can
 		// still be built from every backlog in the institution.
-		const [backlogs, registeredKeys, currentSemesterByLearner] = await Promise.all([
+		const [backlogs, registeredKeys, currentSemesterByLearner, offeredCourseCodes] = await Promise.all([
 			fetchBacklogs(supabase, { institutions_id }),
 			examination_session_id
 				? fetchSessionArrearRegistrations(supabase, { institutions_id, examination_session_id })
@@ -243,7 +278,16 @@ export async function GET(request: Request) {
 			examination_session_id
 				? fetchLearnerCurrentSemesters(supabase, { institutions_id, examination_session_id })
 				: Promise.resolve(new Map<string, number>()),
+			examination_session_id
+				? fetchOfferedCourseCodes(supabase, { institutions_id, examination_session_id })
+				: Promise.resolve(new Set<string>()),
 		])
+
+		// When a session has no offerings at all, "not offered" cannot be told apart
+		// from "offerings not set up yet", so the filter is skipped rather than
+		// reporting every learner as having nothing to do.
+		const offeringsKnown = offeredCourseCodes.size > 0
+		const isOffered = (code: string) => !offeringsKnown || offeredCourseCodes.has(code)
 
 		/** The semester the backlog's OWNER is currently in - what the filter matches */
 		const currentSemesterOf = (b: BacklogRow): number | null =>
@@ -276,7 +320,17 @@ export async function GET(request: Request) {
 			? programScoped
 			: programScoped.filter(b => currentSemesterOf(b) === semesterFilter)
 
+		// student_backlogs drifts from final_marks: a learner can have passed a course
+		// while its backlog row still says is_cleared = false. The papers panel drops
+		// those (the merge engine checks final_marks), so counting them here made the
+		// badge overshoot the list - "8 to apply" against 7 papers. The same lookup
+		// the panel uses is applied here so the two always agree.
+		const scopedStudentIds = [...new Set(scoped.map(b => String(b.student_id || '').trim()).filter(Boolean))]
+		const passedByStudent = await fetchPassedCourseCodes(supabase, institutions_id, scopedStudentIds)
+
 		const learnerByKey = new Map<string, ArrearLearner & { _semesters: Set<number> }>()
+		/** `${learner}|${course}` already counted - the panel merges by course code */
+		const countedCourses = new Set<string>()
 
 		for (const row of scoped) {
 			const register_number = String(row.register_number || '').trim()
@@ -293,6 +347,7 @@ export async function GET(request: Request) {
 					semester: null,
 					semesters: [],
 					arrear_count: 0,
+					total_arrears: 0,
 					registered_count: 0,
 					applied_count: 0,
 					_semesters: new Set<number>(),
@@ -305,17 +360,34 @@ export async function GET(request: Request) {
 			if (!learner.program_code && row.program_code) learner.program_code = String(row.program_code).trim()
 			if (row.original_semester != null && row.original_semester > 0) learner._semesters.add(row.original_semester)
 
+			const code = String(row.course_code || '').trim().toUpperCase()
+			if (!code) continue
+
+			// The papers panel merges by course code, so two backlog rows for the same
+			// course are one paper - counting rows here made the badge overshoot.
+			const dedupeKey = `${key}|${code}`
+			if (countedCourses.has(dedupeKey)) continue
+			countedCourses.add(dedupeKey)
+
+			// Already cleared per final_marks - the backlog row is simply stale.
+			if (passedByStudent.get(String(row.student_id || '').trim())?.has(code)) continue
+
+			// Counted whether or not it is offered, so the row can say "8 of 12".
+			learner.total_arrears++
+
+			if (!isOffered(code)) continue
+
 			learner.arrear_count++
 
-			const code = String(row.course_code || '').trim().toUpperCase()
-			if (code) {
-				const candidates = [`${key}|${code}`, ...(row.student_id ? [`sid:${row.student_id}|${code}`] : [])]
-				if (candidates.some(c => registeredKeys.registered.has(c))) learner.registered_count++
-				if (candidates.some(c => registeredKeys.applied.has(c))) learner.applied_count++
-			}
+			const candidates = [dedupeKey, ...(row.student_id ? [`sid:${row.student_id}|${code}`] : [])]
+			if (candidates.some(c => registeredKeys.registered.has(c))) learner.registered_count++
+			if (candidates.some(c => registeredKeys.applied.has(c))) learner.applied_count++
 		}
 
 		const learners: ArrearLearner[] = [...learnerByKey.values()]
+			// A learner whose every arrear is unoffered this session has nothing to do
+			// here, so they are not listed at all.
+			.filter(l => l.arrear_count > 0)
 			.map(({ _semesters, ...learner }) => ({
 				...learner,
 				// semester = where the learner is now (what the filter matches);
