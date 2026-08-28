@@ -4,8 +4,9 @@
 // authored in MyJKKN — inline math (KaTeX), tables, bold/italic/sub/superscript —
 // prints EXACTLY as it appears in the editor. Both surfaces share one source of
 // truth: sanitized HTML where each formula is a <span data-latex="…">. Here that
-// LaTeX is expanded to MathML (Chromium renders it natively — no KaTeX fonts to
-// bundle), and the HTML is printed through the same Chromium pattern used by
+// LaTeX is typeset by KaTeX's own HTML renderer against an inlined katex.min.css
+// (lib/ia/katex-css.ts) — the same stylesheet and faces the editor loads — and the
+// page is printed through the same Chromium pattern used by
 // lib/pdf/central-valuation-appointment-letter.ts.
 //
 // Tamil/Bamini/Suntommy: fonts under public/fonts/tamil/ are embedded as base64
@@ -17,6 +18,7 @@ import path from 'path'
 import katex from 'katex'
 import { readSubQuestions, readQuestionImage } from './sub-questions'
 import { paperPdfFilename } from './paper-filename'
+import { buildKatexCss } from './katex-css'
 import {
 	buildLatinSerifFontFaceCss,
 	buildTamilFontFaceCss,
@@ -199,11 +201,21 @@ function decodeEntities(s: string): string {
 		.replace(/&#39;/g, "'")
 }
 
-/** LaTeX → MathML (native Chromium rendering; degrade to plain text on error). */
-function latexToMathml(latex: string): string {
+/**
+ * LaTeX → print-ready formula markup.
+ *
+ * Prefers KaTeX's own HTML output, styled by the embedded katex.min.css — the very
+ * stylesheet and faces the editor loads, so a formula prints exactly as it was
+ * authored, on any machine. MathML is only the fallback for when the KaTeX data
+ * files are missing from the deployment: Chromium renders a single-letter <mi>
+ * through the Unicode math-alphanumeric block (U+1D400…), which no text font
+ * carries, so identifiers silently vanish while digits and operators survive —
+ * "dy/dx" printed as a bare fraction bar. See lib/ia/katex-css.ts.
+ */
+function latexToPrintHtml(latex: string): string {
 	try {
 		return katex.renderToString(decodeEntities(latex), {
-			output: 'mathml',
+			output: buildKatexCss() ? 'html' : 'mathml',
 			throwOnError: false,
 			displayMode: false,
 			strict: false,
@@ -218,18 +230,47 @@ function escapeHtml(s: string): string {
 }
 
 /**
+ * A question pasted in from Word arrives wrapped in a 1x1 Tiptap table that holds
+ * no tabular data at all — 97 of the 101 papers carrying a <table> are this. The
+ * cell's own padding then shifted that question a few points right of and below
+ * its neighbours, so it visibly failed to line up with its question number and
+ * with the questions around it. Unwrap the shell; anything with a second cell or
+ * a second row is a real table and is left alone.
+ */
+const SINGLE_CELL_TABLE =
+	/<table\b[^>]*>\s*(?:<tbody\b[^>]*>\s*)?<tr\b[^>]*>\s*<t[dh]\b[^>]*>([\s\S]*?)<\/t[dh]>\s*<\/tr>\s*(?:<\/tbody>\s*)?<\/table>/gi
+
+/**
+ * Any table markup surviving inside the captured cell means the lazy capture
+ * backtracked past the cell it was meant to match — on a multi-row table the
+ * engine happily stretches it to the LAST </td></tr></table> and would splice the
+ * intervening </tr><tr><td> straight into the question. Those stray tags become
+ * extra columns on the paper table, which then splits the body column in half and
+ * squeezes every question on the sheet. Only a genuinely single-cell table passes.
+ */
+const CELL_HAS_TABLE_MARKUP = /<\/?(?:table|thead|tbody|tr|td|th)\b/i
+
+function unwrapSingleCellTables(html: string): string {
+	if (!/<table/i.test(html)) return html
+	return html.replace(SINGLE_CELL_TABLE, (whole, inner: string) =>
+		CELL_HAS_TABLE_MARKUP.test(inner) ? whole : inner
+	)
+}
+
+/**
  * Turn stored question HTML into print-ready HTML:
  *   1. sanitize (allowlist — the content comes from users)
- *   2. expand every <span data-latex="…"> to rendered MathML
+ *   2. drop 1x1 table shells left behind by Word pastes
+ *   3. typeset every <span data-latex="…"> through KaTeX
  * Plain-text (legacy) questions pass straight through as safe text.
  */
 function renderQuestionHtml(raw: string): string {
 	if (!raw) return ''
-	const clean = sanitizeHtml(raw)
-	// Replace the (atom) math spans with MathML.
+	const clean = unwrapSingleCellTables(sanitizeHtml(raw))
+	// Replace the (atom) math spans with their typeset form.
 	return clean.replace(
 		/<span[^>]*\bdata-latex="([^"]*)"[^>]*>(?:.*?)<\/span>/g,
-		(_m, latex) => `<span class="qp-math">${latexToMathml(latex)}</span>`
+		(_m, latex) => `<span class="qp-math">${latexToPrintHtml(latex)}</span>`
 	)
 }
 
@@ -275,6 +316,31 @@ function questionImageHtml(image: any): string {
 export type PdfVariant = 'single' | '2up'
 
 /**
+ * A Continuous Internal Assessment paper is printed as a hand-out and must not
+ * run past two sheets. When the content overflows, the whole sheet is printed at
+ * a reduced scale rather than spilling onto a third page — every proportion is
+ * preserved, only the size changes.
+ */
+const MAX_PAGES = 2
+
+/**
+ * The smallest print scale that keeps an 11pt paper legible in the hand (~7.7pt).
+ * A paper that still overflows at this size has more content than two sheets can
+ * hold, and is printed full size instead — see buildPaperPdfHtml.
+ */
+const MIN_PRINT_SCALE = 0.7
+
+/**
+ * Pages in a Chromium-generated PDF. Its page objects are written as plain
+ * dictionaries, so counting `/Type /Page` markers is exact — the negative lookahead
+ * keeps the single `/Type /Pages` tree node out of the tally.
+ */
+function countPdfPages(buffer: Buffer): number {
+	const matches = buffer.toString('latin1').match(/\/Type\s*\/Page(?![s/\w])/g)
+	return matches ? matches.length : 1
+}
+
+/**
  * Inheritable font stack for the whole paper — Latin serif faces + Unicode Tamil.
  * 'QP Serif' is the optional Times-metric TTF embedded from public/fonts/latin/
  * (see buildLatinSerifFontFaceCss); without it Chromium uses whatever serif the
@@ -295,6 +361,8 @@ function buildHtml(ctx: {
 	grouped: Map<string, any[]>
 	partByLabel: Map<string, any>
 	tamilFontCss: string
+	/** katex.min.css with its faces inlined ('' when the package data is missing). */
+	katexCss: string
 	/** Paper-wide common font (already canonicalized), or null. */
 	defaultFont: string | null
 	/** Printed letterhead for this institution (plain, or the boxed engineering one). */
@@ -302,12 +370,19 @@ function buildHtml(ctx: {
 	/** Base64 logo for a boxed letterhead, or null when the file is missing. */
 	logoDataUri: string | null
 }): string {
-	const { variant, institutionName, address, examHeading, roman, semesterText, paper, grouped, partByLabel, tamilFontCss, defaultFont, letterhead, logoDataUri } = ctx
+	const { variant, institutionName, address, examHeading, roman, semesterText, paper, grouped, partByLabel, tamilFontCss, katexCss, defaultFont, letterhead, logoDataUri } = ctx
 	const isTwoUp = variant === '2up'
 
 	// One table for the WHOLE paper (part headings are full-width rows) so every
 	// question row — across Part A, B, C — shares identical column geometry and the
 	// CO / K-Level columns line up perfectly.
+	//
+	// Pagination is controlled with <tbody> groups rather than per-row rules, which
+	// is the only lever Chromium honours reliably inside a table: `break-after:avoid`
+	// on a <tr> is ignored, so a PART heading used to be able to print alone at the
+	// foot of a page with its first question stranded overleaf. Each group below is
+	// one indivisible block — a question with its (OR) marker, its stem and all of
+	// its sub-divisions; the part heading is bound to its first question.
 	const partsRows = [...grouped.entries()]
 		.map(([label, qs], partIdx) => {
 			const part: any = partByLabel.get(label)
@@ -325,7 +400,7 @@ function buildHtml(ctx: {
 				<td class="kl-head">K-Level(s)</td>
 			</tr>`
 
-			const qRows = qs
+			const qGroups = qs
 				.map((q: any) => {
 					const orRow = q.is_choice_alternative
 						? `<tr><td colspan="4" class="or">(OR)</td></tr>`
@@ -375,15 +450,21 @@ function buildHtml(ctx: {
 						<td class="kl">${escapeHtml(q.k_level || '')}</td>
 					</tr>`
 				})
-				.join('')
 
-			return headerRow + qRows
+			// The heading rides along with the first question so it can never be
+			// orphaned at the foot of a page; everything after it is its own block.
+			const first = qGroups.length > 0 ? qGroups[0] : ''
+			const rest = qGroups.slice(1)
+			return (
+				`<tbody class="grp part-open">${headerRow}${first}</tbody>` +
+				rest.map((g) => `<tbody class="grp">${g}</tbody>`).join('')
+			)
 		})
 		.join('')
 
 	const partsHtml = `<table class="paper">
 		<colgroup><col class="c-qno"/><col class="c-body"/><col class="c-co"/><col class="c-kl"/></colgroup>
-		<tbody>${partsRows}</tbody>
+		${partsRows}
 	</table>`
 
 	// Register Number grid — printed above the letterhead, at the right, exactly as
@@ -430,6 +511,7 @@ function buildHtml(ctx: {
 	return `<!doctype html>
 <html><head><meta charset="utf-8"/>
 <style>
+	${katexCss}
 	${tamilFontCss}
 	@page { size: ${isTwoUp ? 'A4 landscape' : 'A4 portrait'}; margin: ${isTwoUp ? '5mm' : '8mm'}; }
 	* { box-sizing: border-box; font-family: inherit; }
@@ -486,26 +568,43 @@ function buildHtml(ctx: {
 	.meta .title { font-weight: bold; }
 	/* ONE table for the whole paper: table-layout:fixed + colgroup give every row the
 	   same column geometry, so CO / K-Level align across Part A, B, C — always. */
-	table.paper { width: 100%; border-collapse: collapse; margin-top: 6px; table-layout: fixed; }
-	table.paper .c-qno { width: 14mm; }
+	table.paper { width: 100%; border-collapse: collapse; margin-top: ${isTwoUp ? '6px' : '10px'}; table-layout: fixed; }
+	table.paper .c-qno { width: ${isTwoUp ? '12mm' : '15mm'}; }
 	table.paper .c-co  { width: 12mm; }
 	table.paper .c-kl  { width: 20mm; }
-	table.paper td { border: none; vertical-align: top; padding: 2px 3px; word-wrap: break-word; overflow-wrap: break-word; }
-	/* Keep each question row intact; Chromium can otherwise split a row at the
-	   page boundary and visually repeat fragments (e.g., "8 a)" on page 2). */
+	/* One ABSOLUTE line-height for every cell in the row. CO / K-Level print two
+	   points smaller than the question, so a relative line-height gave them a
+	   shorter first line box and their baseline floated above the question's — the
+	   columns looked a whisker high on every row. An absolute value is inherited as
+	   computed, so all four cells open with an identical first line. */
+	table.paper td {
+		border: none; vertical-align: top;
+		padding: ${isTwoUp ? '2.5px 3px' : '4px 4px'};
+		line-height: ${isTwoUp ? '12.5pt' : '15.5pt'};
+		word-wrap: break-word; overflow-wrap: break-word;
+	}
+	/* Pagination, in blocks rather than rows: a <tbody class="grp"> holds one whole
+	   question — its (OR) marker, stem and every sub-division — and .part-open also
+	   carries the PART heading, so a heading can never print alone at the foot of a
+	   page. Rows/cells keep their own avoid rules for the degenerate case of a group
+	   taller than the page, where Chromium has to break somewhere. */
+	table.paper tbody.grp { break-inside: avoid; page-break-inside: avoid; }
 	table.paper tr { break-inside: avoid; page-break-inside: avoid; }
 	table.paper td { break-inside: avoid; page-break-inside: avoid; }
-	/* Part heading rows */
-	.part-hdr td { padding-top: 9px; }
+	/* Part heading rows: clear air above the heading separates it from the previous
+	   part, and a little below it before the first question. */
+	.part-hdr td { padding-top: ${isTwoUp ? '8px' : '16px'}; padding-bottom: ${isTwoUp ? '2px' : '4px'}; }
 	.part-hdr.first td { padding-top: 2px; }
 	.part-head { text-align: center; font-weight: bold; }
 	.part-instr { font-weight: normal; font-size: 9pt; margin-top: 2px; }
 	.co-head, .kl-head { text-align: center; font-weight: bold; font-size: 9pt; white-space: nowrap; vertical-align: bottom; }
-	.qno { font-weight: bold; }
+	.qno { font-weight: bold; white-space: nowrap; }
 	.co { text-align: center; font-weight: bold; font-size: 9pt; }
 	.kl { text-align: center; font-weight: bold; font-size: 9pt; }
-	.or { text-align: center; font-weight: bold; }
+	/* (OR) sits midway between the two alternatives it separates. */
+	.or { text-align: center; font-weight: bold; padding-top: ${isTwoUp ? '3px' : '6px'}; padding-bottom: ${isTwoUp ? '1px' : '3px'}; }
 	.qbody p { margin: 0 0 2px; }
+	.qbody p:last-child { margin-bottom: 0; }
 	/* Sub-divisions ("12 a) i. … (8)"): indented under their parent question, with
 	   the marks printed inline at the end of the sub-division's text. */
 	.qbody.sub { padding-left: 5mm; }
@@ -515,8 +614,8 @@ function buildHtml(ctx: {
 	/* Paper-wide common font: question bodies render in it unless an inline span
 	   (explicit per-selection font) overrides. Scoped to .qbody so question numbers,
 	   CO/K columns and headings keep the Latin serif — never put a legacy TSCII face
-	   on html/body (see the html/body rule above). Math resets to the serif stack via
-	   the math rule below, so formulae stay correct. */
+	   on html/body (see the html/body rule above). Formulae are immune: KaTeX's own
+	   .katex rule names its faces explicitly and wins over this inherited family. */
 	${defaultFont ? `.qbody { font-family: '${defaultFont}'; }` : ''}
 	.options { margin-top: 2px; }
 	.options .opt { display: inline-block; margin-right: 12px; }
@@ -535,12 +634,26 @@ function buildHtml(ctx: {
 	}
 	/* CO / K values sit at the top of the row, aligned with the question's first line. */
 	.co, .kl { vertical-align: top; }
-	/* Author-drawn tables inside a question */
-	.qbody table { border-collapse: collapse; margin: 3px 0; }
-	.qbody td, .qbody th { border: 1px solid #000; padding: 2px 5px; }
-	.qbody th { font-weight: bold; }
-	math { font-family: ${BASE_FONT_STACK}; font-size: 1em; }
+	/* Author-drawn tables inside a question (accounting figures, comparison grids).
+	   They stay BORDERLESS: the paper table is table-layout:fixed, so an inner table
+	   whose min-content width exceeds the body column pushes the whole sheet wider
+	   than A4 and Chromium then shrinks the entire page to fit — borders and roomy
+	   cells alone were enough to trigger it. max-width pins the inner table to its
+	   column, and the tight cell padding out-specifies the paper's own row padding
+	   so a wide figure table keeps its columns. */
+	.qbody table { border-collapse: collapse; margin: 3px 0; max-width: 100%; }
+	table.paper .qbody table td, table.paper .qbody table th {
+		padding: 1px 4px; line-height: 1.35;
+	}
+	table.paper .qbody table th { font-weight: bold; }
+	/* Formulae. KaTeX sets .katex to 1.21em so its glyphs optically match the
+	   surrounding serif; keep that, but pin the line-height so a fraction or a
+	   superscript cannot stretch the row it sits in — the tall/deep parts are
+	   already drawn with negative margins inside .katex's own box. */
 	.qp-math { white-space: nowrap; }
+	.qp-math .katex { line-height: 1.2; text-indent: 0; }
+	/* MathML fallback (only when the KaTeX data files are missing — see katex-css.ts). */
+	math { font-family: ${BASE_FONT_STACK}; font-size: 1em; }
 </style></head>
 <body>
 	${sheetHtml}
@@ -629,6 +742,7 @@ export async function buildPaperPdfHtml(
 		grouped,
 		partByLabel,
 		tamilFontCss,
+		katexCss: buildKatexCss(),
 		defaultFont,
 		letterhead: letterhead || null,
 		logoDataUri,
@@ -658,9 +772,6 @@ export async function buildPaperPdfHtml(
 	try {
 		const page = await browser.newPage()
 		await page.setContent(html, { waitUntil: 'domcontentloaded' })
-		// Keep natural print scale so larger papers can flow to next page when needed.
-		// We only wait for fonts to load before rendering.
-		const printScale = 1
 		await page.evaluate(async () => {
 			try {
 				await (document as any).fonts?.ready
@@ -686,15 +797,56 @@ export async function buildPaperPdfHtml(
 			}
 		})
 		const marginMm = isTwoUp ? '5mm' : '8mm'
-		const pdf = await page.pdf({
-			format: 'A4',
-			landscape: isTwoUp,
-			printBackground: true,
-			scale: printScale,
-			margin: { top: marginMm, bottom: marginMm, left: marginMm, right: marginMm },
-		})
+		const renderAt = async (scale: number) => {
+			const out = await page.pdf({
+				format: 'A4',
+				landscape: isTwoUp,
+				printBackground: true,
+				scale,
+				margin: { top: marginMm, bottom: marginMm, left: marginMm, right: marginMm },
+			})
+			const buffer = Buffer.from(out)
+			return { scale, buffer, pages: countPdfPages(buffer) }
+		}
+
+		// A CIA paper is a hand-out, not a booklet: it must come off the press as
+		// MAX_PAGES sheets. Full size first — that is what nearly every paper needs —
+		// and only a paper that overflows pays for the search below.
+		let best = await renderAt(1)
+		if (best.pages > MAX_PAGES) {
+			const floor = await renderAt(MIN_PRINT_SCALE)
+			// Aim for MAX_PAGES; when even the smallest legible size cannot reach it —
+			// three full-page balance-sheet problems simply are not a two-page paper —
+			// aim instead for the fewest pages that size can achieve. Shrinking past
+			// what actually saves a page only makes the paper harder to read.
+			const target = Math.max(MAX_PAGES, floor.pages)
+			if (best.pages > target) {
+				// Largest scale that still meets the target: binary search between the
+				// floor (known to meet it) and 1 (known not to). Four probes land within
+				// ~2% of the true threshold, finer than the eye reads off the page.
+				best = floor
+				let lo = MIN_PRINT_SCALE
+				let hi = 1
+				for (let i = 0; i < 4; i++) {
+					const mid = (lo + hi) / 2
+					const probe = await renderAt(mid)
+					if (probe.pages <= target) {
+						best = probe
+						lo = mid
+					} else {
+						hi = mid
+					}
+				}
+			}
+			const how = `${best.pages} page(s) at ${best.scale.toFixed(3)}x`
+			if (best.pages > MAX_PAGES) {
+				console.warn(`[QP PDF] ${paper.course_code || id} will not fit ${MAX_PAGES} pages — printed as ${how}`)
+			} else {
+				console.info(`[QP PDF] ${paper.course_code || id} fitted to ${how}`)
+			}
+		}
 		const filename = paperPdfFilename(paper, { variant })
-		return { buffer: Buffer.from(pdf), filename }
+		return { buffer: best.buffer, filename }
 	} finally {
 		await browser.close()
 	}
