@@ -24,7 +24,7 @@ import {
 import { useToast } from '@/hooks/common/use-toast'
 import {
 	Loader2, MoreHorizontal, RefreshCw, Search, FileText, Mail, CheckCircle2, Undo2, CalendarClock,
-	ShieldAlert, Ban, Trash2, Download, History, ExternalLink,
+	ShieldAlert, Ban, Download, ExternalLink,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { formatIst, isoToIstLocal } from '@/lib/qp-portal/ist'
@@ -78,6 +78,9 @@ export function AssignmentsTab({ institutionsId, session, refreshKey, onChanged 
 	const [logSummary, setLogSummary] = useState<any>(null)
 
 	// ── Actions ───────────────────────────────────────────────────────────
+	// The Return / Change-period sheets act on their own row, which may have been
+	// reached straight from the row menu without the detail sheet ever opening.
+	const [actionRow, setActionRow] = useState<AssignmentRow | null>(null)
 	const [busy, setBusy] = useState<string | null>(null)
 	const [returnOpen, setReturnOpen] = useState(false)
 	const [returnRemarks, setReturnRemarks] = useState('')
@@ -386,7 +389,7 @@ export function AssignmentsTab({ institutionsId, session, refreshKey, onChanged 
 														{r.status === 'submitted' && (
 															<DropdownMenuItem
 																onClick={() => {
-																	setOpenRow(r)
+																	setActionRow(r)
 																	setReturnRemarks('')
 																	setReturnNewTo('')
 																	setReturnOpen(true)
@@ -398,7 +401,7 @@ export function AssignmentsTab({ institutionsId, session, refreshKey, onChanged 
 														)}
 														<DropdownMenuItem
 															onClick={() => {
-																setOpenRow(r)
+																setActionRow(r)
 																setWindowFrom(isoToIstLocal(r.valid_from))
 																setWindowTo(isoToIstLocal(r.valid_to))
 																setWindowOpen(true)
@@ -431,7 +434,7 @@ export function AssignmentsTab({ institutionsId, session, refreshKey, onChanged 
 
 			{/* ── Detail sheet ──────────────────────────────────────────────── */}
 			<Sheet
-				open={!!openRow && !returnOpen && !windowOpen}
+				open={!!openRow}
 				onOpenChange={o => {
 					if (!o) {
 						setOpenRow(null)
@@ -545,6 +548,7 @@ export function AssignmentsTab({ institutionsId, session, refreshKey, onChanged 
 												variant="outline"
 												size="sm"
 												onClick={() => {
+													setActionRow(openRow)
 													setReturnRemarks('')
 													setReturnNewTo('')
 													setReturnOpen(true)
@@ -705,7 +709,7 @@ export function AssignmentsTab({ institutionsId, session, refreshKey, onChanged 
 			</Sheet>
 
 			{/* ── Return for revision ───────────────────────────────────────── */}
-			<Sheet open={returnOpen} onOpenChange={setReturnOpen}>
+			<Sheet open={returnOpen} onOpenChange={o => { setReturnOpen(o); if (!o) setActionRow(null) }}>
 				<SheetContent className="w-full sm:max-w-lg">
 					<SheetHeader>
 						<SheetTitle>Return the question paper for revision</SheetTitle>
@@ -741,17 +745,17 @@ export function AssignmentsTab({ institutionsId, session, refreshKey, onChanged 
 						<Button variant="outline" onClick={() => setReturnOpen(false)}>Cancel</Button>
 						<Button
 							onClick={async () => {
-								if (!openRow) return
+								if (!actionRow) return
 								const ok = await runAction(
-									openRow.id,
+									actionRow.id,
 									{ action: 'return', remarks: returnRemarks, valid_to: returnNewTo || undefined },
 									'Returned to the examiner'
 								)
 								if (ok) setReturnOpen(false)
 							}}
-							disabled={!returnRemarks.trim() || busy === openRow?.id}
+							disabled={!returnRemarks.trim() || busy === actionRow?.id}
 						>
-							{busy === openRow?.id && <Loader2 className="h-4 w-4 mr-1.5 animate-spin" />}
+							{busy === actionRow?.id && <Loader2 className="h-4 w-4 mr-1.5 animate-spin" />}
 							Return for revision
 						</Button>
 					</div>
@@ -759,7 +763,7 @@ export function AssignmentsTab({ institutionsId, session, refreshKey, onChanged 
 			</Sheet>
 
 			{/* ── Change access period ──────────────────────────────────────── */}
-			<Sheet open={windowOpen} onOpenChange={setWindowOpen}>
+			<Sheet open={windowOpen} onOpenChange={o => { setWindowOpen(o); if (!o) setActionRow(null) }}>
 				<SheetContent className="w-full sm:max-w-lg">
 					<SheetHeader>
 						<SheetTitle>Change the access period</SheetTitle>
@@ -788,7 +792,7 @@ export function AssignmentsTab({ institutionsId, session, refreshKey, onChanged 
 								className="h-9 mt-1"
 							/>
 						</div>
-						{openRow?.status === 'submitted' && (
+						{actionRow?.status === 'submitted' && (
 							<div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
 								This paper has already been submitted. Reopening the window will also put it back into
 								the examiner&apos;s hands for editing.
@@ -799,11 +803,11 @@ export function AssignmentsTab({ institutionsId, session, refreshKey, onChanged 
 						<Button variant="outline" onClick={() => setWindowOpen(false)}>Cancel</Button>
 						<Button
 							onClick={async () => {
-								if (!openRow) return
+								if (!actionRow) return
 								const ok = await runAction(
-									openRow.id,
+									actionRow.id,
 									{
-										action: openRow.status === 'submitted' ? 'reopen' : 'window',
+										action: actionRow.status === 'submitted' ? 'reopen' : 'window',
 										valid_from: windowFrom,
 										valid_to: windowTo,
 									},
@@ -811,9 +815,9 @@ export function AssignmentsTab({ institutionsId, session, refreshKey, onChanged 
 								)
 								if (ok) setWindowOpen(false)
 							}}
-							disabled={!windowTo || busy === openRow?.id}
+							disabled={!windowTo || busy === actionRow?.id}
 						>
-							{busy === openRow?.id && <Loader2 className="h-4 w-4 mr-1.5 animate-spin" />}
+							{busy === actionRow?.id && <Loader2 className="h-4 w-4 mr-1.5 animate-spin" />}
 							Save period
 						</Button>
 					</div>

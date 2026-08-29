@@ -25,23 +25,39 @@ function semesterToYear(semester: number): string {
 	return `${toRoman(yearNum)} Year`
 }
 
-/** Build a map of student register number → current year (based on max regular semester) */
-function buildStudentYearMap(data: any[]): Map<string, string> {
+/**
+ * Build a map of student register number → the learner's CURRENT semester.
+ *
+ * The API stamps learner_semester on every row, resolved over the whole session
+ * before any filter is applied. The fallbacks re-derive it from the rows in hand:
+ * regular papers define the semester, and a learner who applied for arrears only is
+ * placed by the highest semester they applied in.
+ */
+function buildStudentSemesterMap(data: any[]): Map<string, number> {
+	const stamped = new Map<string, number>()
 	const maxRegSem = new Map<string, number>()
 	const maxAnySem = new Map<string, number>()
 	for (const row of data) {
 		const regNo = row.stu_register_no
 		if (!regNo) continue
+		const stampedSem = Number(row.learner_semester) || 0
+		if (stampedSem > 0) stamped.set(regNo, stampedSem)
 		const sem = row.course_offering?.semester || 0
 		if (sem <= 0) continue
 		if (row.is_regular) maxRegSem.set(regNo, Math.max(maxRegSem.get(regNo) || 0, sem))
 		maxAnySem.set(regNo, Math.max(maxAnySem.get(regNo) || 0, sem))
 	}
-	const result = new Map<string, string>()
-	for (const regNo of new Set([...maxRegSem.keys(), ...maxAnySem.keys()])) {
-		const maxSem = maxRegSem.get(regNo) || maxAnySem.get(regNo) || 1
-		result.set(regNo, semesterToYear(maxSem))
+	const result = new Map<string, number>()
+	for (const regNo of new Set([...stamped.keys(), ...maxRegSem.keys(), ...maxAnySem.keys()])) {
+		result.set(regNo, stamped.get(regNo) || maxRegSem.get(regNo) || maxAnySem.get(regNo) || 1)
 	}
+	return result
+}
+
+/** Build a map of student register number → current year */
+function buildStudentYearMap(data: any[]): Map<string, string> {
+	const result = new Map<string, string>()
+	for (const [regNo, sem] of buildStudentSemesterMap(data)) result.set(regNo, semesterToYear(sem))
 	return result
 }
 
@@ -741,13 +757,10 @@ export async function exportExamRegistrationReportExcel(opts: ExcelExportOptions
 		for (const programCode of sortedPrograms) {
 			const programData = programGroups.get(programCode)!
 
-			// Determine each student's year (by max semester)
-			const studentYearMap = new Map<string, number>()
-			for (const row of programData) {
-				const regNo = row.stu_register_no || 'Unknown'
-				const semester = row.course_offering?.semester || 0
-				studentYearMap.set(regNo, Math.max(studentYearMap.get(regNo) || 0, semester))
-			}
+			// The learner's own semester decides the year block they are printed in -
+			// not the highest paper they applied for, which for an arrear belongs to a
+			// year they have already left.
+			const studentYearMap = buildStudentSemesterMap(programData)
 
 			// Group rows by student's year
 			const yearGroups = new Map<string, any[]>()

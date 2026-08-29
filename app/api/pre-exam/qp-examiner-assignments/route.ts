@@ -208,7 +208,7 @@ export async function POST(req: NextRequest) {
 
 		const { data: institution } = await supabase
 			.from('institutions')
-			.select('id, institution_code')
+			.select('id, name, institution_code')
 			.eq('id', institutions_id)
 			.maybeSingle()
 		const institutionCode = body.institution_code || institution?.institution_code || null
@@ -259,7 +259,9 @@ export async function POST(req: NextRequest) {
 						mobile: staff.mobile || null,
 						designation: staff.designation || null,
 						department: staff.department || null,
-						institution_name: institution?.institution_code || null,
+						// Their employing institution is this one — the Examiner Order
+						// prints this line, so it must be the name, not the code.
+						institution_name: institution?.name || null,
 						is_internal: true,
 						// An internal staff member is vouched for by the appointment
 						// itself — no self-registration approval step applies.

@@ -416,15 +416,26 @@ export default function ExamRegistrationReportsPage() {
 			const sem = Number(r.course_offering?.semester)
 			return sem > 0 ? sem : UNMAPPED_SEMESTER
 		}
+		// The learner's own semester, as opposed to the paper's
+		const learnerSemesterOf = (r: any) => {
+			const sem = Number(r.learner_semester)
+			return sem > 0 ? sem : UNMAPPED_SEMESTER
+		}
 
 		// On the learner forms a semester selection picks the learner COHORT, and every
 		// paper that learner applied for is then printed - including arrears carried
 		// from earlier semesters. Matching row-by-row would drop exactly those arrear
 		// papers, which is the fee the form exists to collect.
+		//
+		// The cohort keys off learner_semester - the learner's own semester, stamped by
+		// the API - not off the semesters of their papers. Keying off the papers listed
+		// a Semester 5 learner in the Semester 1 report as well, purely because they
+		// carried a Semester 1 arrear. A learner belongs to one semester and is printed
+		// once, under it, with every paper they applied for.
 		const semesterCohort = semesterActive && isLearnerFormReport
 			? new Set(
 				reportData
-					.filter(r => selectedSemesters.includes(semesterOf(r)))
+					.filter(r => selectedSemesters.includes(learnerSemesterOf(r)))
 					.map(r => r.stu_register_no)
 					.filter(Boolean)
 			)

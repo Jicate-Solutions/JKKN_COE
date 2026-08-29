@@ -459,8 +459,9 @@ export async function GET(request: Request) {
 				// Try another offering with the same course_code (gets course_name, semester, etc.)
 				const byCode = courseCodeToOffering.get(r.course_code)
 				if (byCode) {
-					// Use the other offering's data but override program_code from registration
-					offering = { ...byCode, program_code: r.program_code || byCode.program_code }
+					// Another offering of the same course carries the course data; the
+					// programme is re-resolved from the registration just below.
+					offering = { ...byCode }
 				} else {
 					// Build from direct courses lookup + registration data
 					const directCourse = directCourseMap.get(r.course_code)
@@ -487,15 +488,64 @@ export async function GET(request: Request) {
 					}
 				}
 			}
+
+			// A learner is printed under their OWN programme, never the programme that
+			// owns the course offering. A generic elective is offered once and taken
+			// across programmes - 24USTAGE1 / 24UMAGE5 sit on the UCS offering while
+			// UCA / UCY / UAD learners register against them - so attributing a row by
+			// the offering dragged those learners into the UCS section of every
+			// program-wise report (and past the program filter). exam_registrations
+			// .program_code is the learner's programme and is what every consumer here
+			// means by "program", so it wins wherever the two disagree.
+			const learnerProgram = r.program_code || offering?.program_code || ''
+			if (offering && learnerProgram && offering.program_code !== learnerProgram) {
+				offering = {
+					...offering,
+					program_code: learnerProgram,
+					program_type: programTypeMap.get(learnerProgram) || offering.program_type || null,
+					program_name: programNameMap.get(learnerProgram) || boardNameMap.get(learnerProgram) || null,
+					program_order: programOrderMap.get(learnerProgram) ?? 999,
+					program_board_order: boardCodeMap.get(learnerProgram)?.board_order ?? 999,
+				}
+			}
+
 			return {
 				...r,
 				course_offering: offering,
 				student_board_type: boardCodeMap.get(r.program_code)?.board_type || programTypeMap.get(r.program_code) || null,
 				student_name: (regNo && nameMap.get(regNo)) || r.student_name,
+				learner_semester: 0, // filled in below, once every row of the learner is known
 				...(regNo && dobMap.has(regNo) ? { date_of_birth: dobMap.get(regNo) } : {}),
 				...(regNo && genderMap.has(regNo) ? { gender: genderMap.get(regNo) } : {}),
 			}
 		})
+
+		// ── Phase 4a: The learner's current semester ──
+		// A learner sits in ONE semester and carries arrear papers from the semesters
+		// behind it. The learner forms print a whole learner - every paper applied for,
+		// regular and arrear, in semester order - so a semester selection scopes the
+		// learner COHORT, not the rows. Deciding that per paper listed a Semester 5
+		// learner again in the Semester 1, 2, 3 and 4 reports, once for every semester
+		// they still owed a paper in.
+		//
+		// Regular papers define the semester: a learner's regular papers never span two
+		// of them. A learner applying for arrears only has no regular paper to go by, so
+		// the highest semester they applied in stands in. Resolved over the whole session
+		// here, before any filter, so a category or program selection can never move a
+		// learner into a different semester.
+		const regularSemester = new Map<string, number>()
+		const anySemester = new Map<string, number>()
+		for (const row of enriched) {
+			const sem = Number(row.course_offering?.semester) || 0
+			if (!row.stu_register_no || sem <= 0) continue
+			if (row.is_regular) regularSemester.set(row.stu_register_no, Math.max(regularSemester.get(row.stu_register_no) ?? 0, sem))
+			anySemester.set(row.stu_register_no, Math.max(anySemester.get(row.stu_register_no) ?? 0, sem))
+		}
+		for (const row of enriched) {
+			row.learner_semester = row.stu_register_no
+				? (regularSemester.get(row.stu_register_no) ?? anySemester.get(row.stu_register_no) ?? 0)
+				: 0
+		}
 
 		// ── Phase 4b: Exam application fees (Student Exam Application report) ──
 		// The printed form carries a per-paper fee column plus the application and
