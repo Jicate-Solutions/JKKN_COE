@@ -36,12 +36,19 @@ const RATE_LIMITS: Record<string, RateLimitConfig> = {
 	public: { windowMs: 60_000, maxRequests: 20 },      // Public endpoints: 20/min
 	admin: { windowMs: 60_000, maxRequests: 200 },      // Admin operations: 200/min
 	api: { windowMs: 60_000, maxRequests: 100 },         // General API: 100/min
+	// Examiner portal: an examiner authoring a paper auto-saves, uploads figures
+	// and re-renders previews, so the 20/min public cap would 429 normal work.
+	// Its sign-in routes get the tighter `portal_auth` bucket instead.
+	portal: { windowMs: 60_000, maxRequests: 150 },
+	portal_auth: { windowMs: 60_000, maxRequests: 10 },
 }
 
 /**
  * Determine which rate limit category a route belongs to.
  */
 function getRouteCategory(pathname: string): string {
+	if (pathname.startsWith('/api/examiner-portal/auth')) return 'portal_auth'
+	if (pathname.startsWith('/api/examiner-portal')) return 'portal'
 	if (pathname.startsWith('/api/auth') || pathname.startsWith('/api/token')) return 'auth'
 	if (pathname.startsWith('/api/public')) return 'public'
 	if (pathname.startsWith('/api/admin')) return 'admin'

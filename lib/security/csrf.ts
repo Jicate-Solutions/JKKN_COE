@@ -60,7 +60,17 @@ export function validateCsrf(request: NextRequest): NextResponse | null {
 
 	// Skip CSRF for public API routes (they use API keys or are intentionally open)
 	const pathname = request.nextUrl.pathname
-	const csrfExemptPrefixes = ['/api/auth', '/api/token', '/api/public', '/api/v1', '/api/transaction-logs']
+	// /api/examiner-portal is exempt because its session cookie is SameSite=Strict
+	// and httpOnly: a cross-site request cannot carry it, so there is nothing for
+	// a CSRF token to add. Its sign-in routes are unauthenticated by design.
+	const csrfExemptPrefixes = [
+		'/api/auth',
+		'/api/token',
+		'/api/public',
+		'/api/v1',
+		'/api/transaction-logs',
+		'/api/examiner-portal',
+	]
 	if (csrfExemptPrefixes.some((prefix) => pathname.startsWith(prefix))) {
 		return null
 	}

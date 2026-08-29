@@ -600,9 +600,6 @@ export async function buildSubjectWiseCandidates(
 		} else if (!offering.is_active) {
 			status = 'Inactive Offering'
 			reason = 'The course offering is inactive for this session'
-		} else if (draft.is_backlog && draft.max_attempts_allowed > 0 && draft.attempt_count >= draft.max_attempts_allowed) {
-			status = 'Attempts Exhausted'
-			reason = `All ${draft.max_attempts_allowed} permitted attempts have been used`
 		} else if (seatsFull) {
 			status = 'Seats Full'
 			reason = `Offering is full (${offering.enrolled_count}/${offering.max_enrollment})`

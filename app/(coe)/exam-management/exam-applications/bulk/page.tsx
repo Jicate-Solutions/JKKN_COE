@@ -52,7 +52,6 @@ const ELIGIBILITY_STYLES: Record<string, string> = {
 	'Already Passed': 'bg-slate-100 text-slate-600 border-slate-200',
 	'Not Offered': 'bg-red-100 text-red-700 border-red-200',
 	'Inactive Offering': 'bg-red-100 text-red-700 border-red-200',
-	'Attempts Exhausted': 'bg-red-100 text-red-700 border-red-200',
 	'Seats Full': 'bg-orange-100 text-orange-700 border-orange-200',
 }
 

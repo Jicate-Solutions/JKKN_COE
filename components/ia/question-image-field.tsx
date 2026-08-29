@@ -37,9 +37,25 @@ interface Props {
 	disabled?: boolean
 	/** Shown on the empty-state button — "Add image" / "Add image to i." */
 	label?: string
+	/**
+	 * Endpoint that stores the image. Defaults to the CoE route, which is behind
+	 * a COE role. The examiner portal passes its own assignment-scoped route,
+	 * since an external examiner has no COE session to authorise that one.
+	 * Both accept POST (multipart `file`) and DELETE (?path=…) and answer the
+	 * same { url, path } shape.
+	 */
+	uploadUrl?: string
 }
 
-export function QuestionImageField({ paperId, value, onChange, disabled, label = 'Add image' }: Props) {
+export function QuestionImageField({
+	paperId,
+	value,
+	onChange,
+	disabled,
+	label = 'Add image',
+	uploadUrl,
+}: Props) {
+	const endpoint = uploadUrl || `/api/pre-exam/question-papers/${paperId}/image`
 	const { toast } = useToast()
 	const inputRef = useRef<HTMLInputElement>(null)
 	const [busy, setBusy] = useState(false)
@@ -61,7 +77,7 @@ export function QuestionImageField({ paperId, value, onChange, disabled, label =
 			const ext = (prepared.blob.type.split('/')[1] || 'png').replace('jpeg', 'jpg')
 			form.append('file', prepared.blob, prepared.original ? file.name : `question.${ext}`)
 
-			const res = await fetch(`/api/pre-exam/question-papers/${paperId}/image`, {
+			const res = await fetch(endpoint, {
 				method: 'POST',
 				body: form,
 			})
@@ -96,7 +112,7 @@ export function QuestionImageField({ paperId, value, onChange, disabled, label =
 
 	const removeObject = async (path: string) => {
 		try {
-			await fetch(`/api/pre-exam/question-papers/${paperId}/image?path=${encodeURIComponent(path)}`, {
+			await fetch(`${endpoint}?path=${encodeURIComponent(path)}`, {
 				method: 'DELETE',
 			})
 		} catch {

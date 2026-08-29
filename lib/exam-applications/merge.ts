@@ -207,6 +207,10 @@ export function mergeExamApplicationCourses(input: MergeCourseInput): ExamApplic
 		let status: ExamApplicationEligibility = 'Eligible'
 		let reason: string | null = null
 
+		// Attempt limits are deliberately not part of this ladder: a backlog holder
+		// past max_attempts_allowed can still be applied for, so attempt_count and
+		// max_attempts_allowed are carried through for display only.
+		//
 		// A registration existing is NOT the same as it having been applied for.
 		// Registration and application happen on the same screen, so a paper the
 		// learner is registered for but has not applied for must stay actionable -
@@ -232,13 +236,6 @@ export function mergeExamApplicationCourses(input: MergeCourseInput): ExamApplic
 		} else if (offering.is_active === false) {
 			status = 'Inactive Offering'
 			reason = 'The course offering is inactive for this session'
-		} else if (
-			draft.is_backlog &&
-			draft.max_attempts_allowed > 0 &&
-			draft.attempt_count >= draft.max_attempts_allowed
-		) {
-			status = 'Attempts Exhausted'
-			reason = `All ${draft.max_attempts_allowed} permitted attempts have been used`
 		} else if (
 			!registeredNotApplied &&
 			offering.max_enrollment != null &&

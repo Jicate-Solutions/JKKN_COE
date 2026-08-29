@@ -25,11 +25,16 @@ export function sanitizeFilePart(value: string): string {
 /**
  * Assessment token. A standard round prints as CIA1 / CIA2; a round named
  * something else ("Model Exam") keeps its own name so the file still says what
- * it is.
+ * it is. A paper with no round at all is an end-semester paper and says ESE —
+ * without this it would land as "CIA1" and overwrite the internal paper for the
+ * same course in a bulk download.
  */
 export function assessmentLabel(paper: any): string {
-	const round = Number(paper?.cia_round) || 1
 	const named = String(paper?.cia_round_name || '').trim()
+	if (paper?.cia_round == null && paper?.cia_setting_id == null) {
+		return named && !/^cia\b/i.test(named) ? sanitizeFilePart(named) : 'ESE'
+	}
+	const round = Number(paper?.cia_round) || 1
 	if (!named || /^cia\b/i.test(named)) return `CIA${round}`
 	return sanitizeFilePart(named)
 }

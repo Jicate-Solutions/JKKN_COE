@@ -36,6 +36,8 @@ import {
 	EngineeringExaminerFormData,
 	DEFAULT_ENGINEERING_FORM,
 } from '@/types/examiner'
+import { ExaminerPortal } from './portal'
+import { PortalOtpSignIn } from './portal-otp-signin'
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -83,6 +85,17 @@ export default function EnggExaminerRegistrationPage() {
 	// Form data
 	const [formData, setFormData] = useState<EngineeringExaminerFormData>(DEFAULT_ENGINEERING_FORM)
 
+	// Examiner Portal. The same URL serves both audiences: an appointed examiner
+	// signs in and lands in the portal; everyone else sees the registration form
+	// below, exactly as before.
+	const [portalExaminer, setPortalExaminer] = useState<{
+		id: string
+		full_name: string
+		email: string
+		kind: 'internal' | 'external'
+	} | null>(null)
+	const [portalChecking, setPortalChecking] = useState(true)
+
 	// UI state
 	const [loading, setLoading] = useState(true)
 	const [submitting, setSubmitting] = useState(false)
@@ -112,13 +125,57 @@ export default function EnggExaminerRegistrationPage() {
 		fetchConfig()
 	}, [])
 
+	// ── Existing portal session ─────────────────────────────────────────────
+
+	useEffect(() => {
+		const check = async () => {
+			try {
+				const res = await fetch('/api/examiner-portal/session')
+				const data = await res.json()
+				if (res.ok && data.authenticated) setPortalExaminer(data.examiner)
+			} catch {
+				// No session — the registration form below is the right landing.
+			} finally {
+				setPortalChecking(false)
+			}
+		}
+		check()
+	}, [])
+
 	// ── Google Identity Services ────────────────────────────────────────────
 
 	const handleGoogleCredential = useCallback(async (response: { credential: string }) => {
 		try {
-			const base64 = response.credential.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')
-			const payload: GooglePayload = JSON.parse(atob(base64))
+			// The credential is verified SERVER-side (signature, audience, expiry).
+			// A browser-side decode is enough to prefill a form but must never be
+			// what admits someone to a question paper, so the portal route is the
+			// single place that decides.
+			const res = await fetch('/api/examiner-portal/auth/google', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ credential: response.credential }),
+			})
+			const data = await res.json().catch(() => ({}))
 
+			// An appointed examiner goes straight into the portal.
+			if (res.ok && data.success) {
+				setPortalExaminer(data.examiner)
+				return
+			}
+
+			// Not appointed (or not yet approved): fall through to the registration
+			// form, prefilled from the address the server just verified.
+			const verifiedEmail: string | undefined = data.email
+			if (!verifiedEmail) {
+				toast({ title: '❌ Google Sign-In Failed', description: data.message || 'Please try again.', variant: 'destructive' })
+				return
+			}
+
+			const payload: GooglePayload = {
+				email: verifiedEmail,
+				email_verified: true,
+				name: data.name || verifiedEmail,
+			}
 			setGoogleUser(payload)
 			setGoogleVerified(true)
 			setFormData(prev => ({
@@ -126,13 +183,13 @@ export default function EnggExaminerRegistrationPage() {
 				personal_email: prev.personal_email || payload.email,
 			}))
 
-			// Check if this email is already registered
+			// Check if this email already has a registration on file
 			setCheckingStatus(true)
 			try {
-				const res = await fetch(`/api/public/examiner/status?email=${encodeURIComponent(payload.email)}`)
-				const data = await res.json()
-				if (data.exists) {
-					setExistingRegistration({ examiner: data.examiner })
+				const statusRes = await fetch(`/api/public/examiner/status?email=${encodeURIComponent(payload.email)}`)
+				const statusData = await statusRes.json()
+				if (statusData.exists) {
+					setExistingRegistration({ examiner: statusData.examiner })
 				}
 			} catch {
 				// silently ignore — just show the registration form
@@ -330,6 +387,24 @@ export default function EnggExaminerRegistrationPage() {
 						<h2 className="text-2xl font-bold text-gray-900">{config.title}</h2>
 						<p className="text-gray-600 text-sm leading-relaxed">{config.message}</p>
 					</div>
+				</div>
+			</div>
+		)
+	}
+
+	// ── Examiner Portal ──────────────────────────────────────────────────────
+	// A signed-in examiner sees their assignments here instead of the form.
+
+	if (portalExaminer) {
+		return <ExaminerPortal examiner={portalExaminer} onSignedOut={() => setPortalExaminer(null)} />
+	}
+
+	if (portalChecking) {
+		return (
+			<div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
+				<div className="text-center space-y-3">
+					<Loader2 className="w-8 h-8 text-blue-600 animate-spin mx-auto" />
+					<p className="text-sm text-gray-500">Loading...</p>
 				</div>
 			</div>
 		)
@@ -742,10 +817,15 @@ export default function EnggExaminerRegistrationPage() {
 											)
 										)}
 										<p className="text-xs text-gray-400 text-center">
-											Your Google email will be used as your examiner contact.
+											Your Google email will be used as your examiner contact. If you have already
+											been appointed as a question paper setter, signing in takes you straight to
+											the Examiner Portal.
 										</p>
 									</div>
 								</div>
+
+								{/* For an appointed examiner whose registered address is not Google-backed. */}
+								<PortalOtpSignIn onSignedIn={setPortalExaminer} />
 							</div>
 						</CardContent>
 					</Card>

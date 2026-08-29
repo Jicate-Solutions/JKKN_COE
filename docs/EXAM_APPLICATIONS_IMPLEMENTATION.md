@@ -102,12 +102,17 @@ Resolved in this exact order — first match wins:
 | 2 | `Already Passed` | `final_marks.is_pass = true` for the course, and it is not a backlog |
 | 3 | `Not Offered` | No `course_offerings` row for the course in this session |
 | 4 | `Inactive Offering` | `course_offerings.is_active = false` |
-| 5 | `Attempts Exhausted` | `attempt_count >= max_attempts_allowed` |
-| 6 | `Seats Full` | `enrolled_count >= max_enrollment` |
-| 7 | `Eligible` | — |
+| 5 | `Seats Full` | `enrolled_count >= max_enrollment` |
+| 6 | `Eligible` | — |
 
 Only `Eligible` rows can be selected. Everything else renders dimmed with the checkbox
 disabled, and the reason is on the badge's `title`.
+
+### Attempt limits are not enforced
+
+`student_backlogs.attempt_count` / `max_attempts_allowed` are shown on the row (the
+`Attempt N` badge) but never block an application — a learner past the permitted number of
+attempts stays `Eligible`.
 
 ### Passed courses are never shown as backlog
 

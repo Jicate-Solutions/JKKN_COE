@@ -17,7 +17,6 @@ export type ExamApplicationEligibility =
 	| 'Already Registered'
 	| 'Already Passed'
 	| 'Not Offered'
-	| 'Attempts Exhausted'
 	| 'Seats Full'
 	| 'Inactive Offering'
 

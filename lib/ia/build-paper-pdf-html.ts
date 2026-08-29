@@ -355,7 +355,11 @@ function buildHtml(ctx: {
 	institutionName: string
 	address: string
 	examHeading: string
-	roman: string
+	/**
+	 * The line under the degree heading. For a CIA paper this is the round;
+	 * for an end-semester paper it names the examination and session instead.
+	 */
+	examLine: string
 	semesterText: string
 	paper: any
 	grouped: Map<string, any[]>
@@ -370,7 +374,7 @@ function buildHtml(ctx: {
 	/** Base64 logo for a boxed letterhead, or null when the file is missing. */
 	logoDataUri: string | null
 }): string {
-	const { variant, institutionName, address, examHeading, roman, semesterText, paper, grouped, partByLabel, tamilFontCss, katexCss, defaultFont, letterhead, logoDataUri } = ctx
+	const { variant, institutionName, address, examHeading, examLine, semesterText, paper, grouped, partByLabel, tamilFontCss, katexCss, defaultFont, letterhead, logoDataUri } = ctx
 	const isTwoUp = variant === '2up'
 
 	// One table for the WHOLE paper (part headings are full-width rows) so every
@@ -491,8 +495,7 @@ function buildHtml(ctx: {
 		${registerHtml}
 		${letterheadHtml}
 		<div class="head-exam">${escapeHtml(examHeading)}</div>
-		<div class="head-cia">CONTINUOUS INTERNAL ASSESSMENT-${escapeHtml(roman)} - JULY-AUG-2026
-		</div>
+		<div class="head-cia">${escapeHtml(examLine)}</div>
 		${semesterText ? `<div class="head-sem">${escapeHtml(semesterText)}</div>` : ''}
 		<div class="meta">
 			<div>Subject Code: ${escapeHtml(paper.course_code || '')}</div>
@@ -682,7 +685,11 @@ export async function buildPaperPdfHtml(
 
 	const questionArr: any[] = Array.isArray(paper.questions) ? paper.questions : []
 
-	const [instRes, { data: parts }] = await Promise.all([
+	// An end-semester paper is the one with no CIA round; it prints the
+	// examination's own heading, so the session and its exam type are needed.
+	const isEndSemester = paper.cia_round == null && paper.cia_setting_id == null
+
+	const [instRes, { data: parts }, sessionRes] = await Promise.all([
 		supabase.from('institutions').select('*').eq('id', paper.institutions_id).single(),
 		paper.template_id
 			? supabase
@@ -691,6 +698,13 @@ export async function buildPaperPdfHtml(
 					.eq('template_id', paper.template_id)
 					.order('display_order', { ascending: true })
 			: Promise.resolve({ data: [] as any[] }),
+		isEndSemester && paper.examination_session_id
+			? supabase
+					.from('examination_sessions')
+					.select('id, session_name, month_year, exam_type_id')
+					.eq('id', paper.examination_session_id)
+					.maybeSingle()
+			: Promise.resolve({ data: null }),
 	])
 
 	const institution: any = instRes.data
@@ -717,6 +731,25 @@ export async function buildPaperPdfHtml(
 	}
 	const roman = ['', 'I', 'II', 'III', 'IV', 'V', 'VI'][paper.cia_round || 1] || String(paper.cia_round || 1)
 
+	// The heading under the degree line. A CIA paper names its round; an
+	// end-semester paper names the examination and the session instead — printing
+	// "CONTINUOUS INTERNAL ASSESSMENT" on an ESE paper would be simply wrong.
+	let examLine = `CONTINUOUS INTERNAL ASSESSMENT-${roman}`
+	if (isEndSemester) {
+		const session: any = sessionRes?.data
+		let examName = 'END SEMESTER EXAMINATIONS'
+		if (session?.exam_type_id) {
+			const { data: examType } = await supabase
+				.from('exam_types')
+				.select('examination_name')
+				.eq('id', session.exam_type_id)
+				.maybeSingle()
+			if (examType?.examination_name) examName = String(examType.examination_name).toUpperCase()
+		}
+		const when = session?.month_year || session?.session_name || ''
+		examLine = when ? `${examName} - ${String(when).toUpperCase()}` : examName
+	}
+
 	// Latin serif first so 'QP Serif' resolves ahead of the Tamil faces in the stack.
 	const tamilFontCss = [buildLatinSerifFontFaceCss(), buildTamilFontFaceCss()]
 		.filter(Boolean)
@@ -736,7 +769,7 @@ export async function buildPaperPdfHtml(
 		institutionName,
 		address,
 		examHeading,
-		roman,
+		examLine,
 		semesterText,
 		paper,
 		grouped,

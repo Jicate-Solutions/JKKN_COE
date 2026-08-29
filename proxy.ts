@@ -24,6 +24,11 @@ const publicApiRoutes = [
 	'/api/myjkkn',
 	'/api/public',
 	'/api/v1',
+	// Examiner portal: reached by external examiners who have no COE account.
+	// Every route under it authenticates with its own signed, httpOnly,
+	// SameSite=Strict session cookie (lib/qp-portal/session.ts) and authorises
+	// against the assignment + its IST window (lib/qp-portal/guard.ts).
+	'/api/examiner-portal',
 ]
 
 export async function proxy(request: NextRequest) {
