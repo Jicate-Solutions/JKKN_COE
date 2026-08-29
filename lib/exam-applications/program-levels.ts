@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
+import { PAGE_SIZE } from './paginate'
 import { resolveProgramLevel } from '@/lib/exam-fee/calculate'
 import type { ProgramLevel } from '@/lib/exam-fee-catalog'
 
@@ -28,7 +29,8 @@ export async function loadProgramLevelMap(
 		.select('program_code, program_level')
 		.eq('institutions_id', institutions_id)
 		.eq('is_active', true)
-		.range(0, 9999)
+		.order('id', { ascending: true })
+		.range(0, PAGE_SIZE - 1)
 
 	if (error) {
 		// The map is an optional refinement - fall back to the heuristic for every

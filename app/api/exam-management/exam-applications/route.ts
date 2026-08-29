@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
 import { buildExamApplicationCourses } from '@/lib/exam-applications/course-list'
+import { fetchAllRows } from '@/lib/exam-applications/paginate'
 import { buildRegistrationPricer } from '@/lib/exam-fee/calculate'
 import type { ExamApplicationSubmitResult } from '@/types/exam-applications'
 
@@ -44,16 +45,21 @@ export async function GET(request: Request) {
 		if (student_id) clauses.push(`student_id.eq.${student_id}`)
 		if (register_number) clauses.push(`stu_register_no.eq."${register_number.replace(/"/g, '')}"`)
 
-		const { data, error } = await supabase
-			.from('exam_registrations')
-			.select('*, course_offering:course_offerings(id, course_code, program_code, semester)')
-			.eq('institutions_id', institutions_id)
-			.eq('examination_session_id', examination_session_id)
-			.or(clauses.join(','))
-			.order('created_at', { ascending: false })
-			.range(0, 9999)
-
-		if (error) {
+		let data: any[]
+		try {
+			// Paged rather than `.range(0, 9999)`, which the server silently truncates
+			// at 1000 rows. `created_at` is not unique, so fetchAllRows adds `id` as the
+			// tiebreaker - without one, rows drift between pages and some are lost.
+			data = await fetchAllRows<any>(
+				() => supabase
+					.from('exam_registrations')
+					.select('*, course_offering:course_offerings(id, course_code, program_code, semester)')
+					.eq('institutions_id', institutions_id)
+					.eq('examination_session_id', examination_session_id)
+					.or(clauses.join(',')),
+				{ orderColumn: 'created_at', ascending: false, label: 'exam_registrations' }
+			)
+		} catch (error) {
 			console.error('Exam applications fetch error:', error)
 			return NextResponse.json({ error: 'Failed to fetch exam applications' }, { status: 500 })
 		}

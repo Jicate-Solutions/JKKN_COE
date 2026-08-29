@@ -8,8 +8,8 @@ import type {
 	ExamApplicationSource,
 } from '@/types/exam-applications'
 import { collectInvolvedCourseCodes, mergeExamApplicationCourses } from './merge'
+import { chunk, fetchAllInChunks, fetchAllRows, tryFetchAllRows } from './paginate'
 
-const MAX_ROWS = 9999
 /** Learners per `.in()` filter - keeps the PostgREST GET URL well under any length limit */
 const IN_CHUNK = 60
 /** Ids per `.in()` filter for plain uuid lookups */
@@ -47,12 +47,6 @@ export function learnerKey(learner: { student_id?: string | null; register_numbe
 	return `sid:${learner.student_id || ''}`
 }
 
-function chunk<T>(items: T[], size: number): T[][] {
-	const out: T[][] = []
-	for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size))
-	return out
-}
-
 function pushToMap<T>(map: Map<string, T[]>, key: string, value: T) {
 	const list = map.get(key)
 	if (list) list.push(value)
@@ -85,23 +79,30 @@ async function fetchByLearners(
 		}
 	}
 
-	for (const batch of chunk(studentIds, ID_CHUNK)) {
-		if (batch.length === 0) continue
-		const { data, error } = await applyScope(
-			supabase.from(table).select(columns).in(idColumn, batch).range(0, MAX_ROWS)
-		)
-		if (error) throw new Error(`Failed to fetch ${table}: ${error.message}`)
-		absorb(data)
-	}
+	// Each chunk still has to page: 300 learners x several papers each runs well past
+	// the server's 1000-row ceiling, and a truncated chunk drops those learners'
+	// papers in silence - the exact shape of the "missing arrear subject" bug.
+	//
+	// The two sweeps and every chunk within them are independent, so they all go out
+	// at once - stacking them cost a round trip each, and round trips are what this
+	// endpoint is made of.
+	const [byId, byReg] = await Promise.all([
+		fetchAllInChunks(studentIds, ID_CHUNK, batch =>
+			fetchAllRows(
+				() => applyScope(supabase.from(table).select(columns).in(idColumn, batch)),
+				{ label: table }
+			)
+		),
+		fetchAllInChunks(registerNumbers, IN_CHUNK, batch =>
+			fetchAllRows(
+				() => applyScope(supabase.from(table).select(columns).in(regColumn, batch)),
+				{ label: table }
+			)
+		),
+	])
 
-	for (const batch of chunk(registerNumbers, IN_CHUNK)) {
-		if (batch.length === 0) continue
-		const { data, error } = await applyScope(
-			supabase.from(table).select(columns).in(regColumn, batch).range(0, MAX_ROWS)
-		)
-		if (error) throw new Error(`Failed to fetch ${table}: ${error.message}`)
-		absorb(data)
-	}
+	absorb(byId)
+	absorb(byReg)
 
 	return [...rows.values()]
 }
@@ -115,31 +116,30 @@ export async function fetchPassedCourseCodes(
 	const byStudent = new Map<string, Set<string>>()
 	if (studentIds.length === 0) return byStudent
 
-	const passedRows: any[] = []
-	for (const batch of chunk(studentIds, ID_CHUNK)) {
-		const { data, error } = await supabase
-			.from('final_marks')
-			.select('student_id, course_id')
-			.eq('institutions_id', institutions_id)
-			.eq('is_pass', true)
-			.in('student_id', batch)
-			.range(0, MAX_ROWS)
-		if (error) {
-			console.error('[exam-applications:bulk] final_marks error:', error)
-			return byStudent
-		}
-		passedRows.push(...(data || []))
-	}
+	// 300 learners x their whole passed history is several thousand rows, so a single
+	// request would only ever see the first 1000 of them.
+	const passedRows = await fetchAllInChunks(studentIds, ID_CHUNK, batch =>
+		tryFetchAllRows<any>(
+			() => supabase
+				.from('final_marks')
+				.select('id, student_id, course_id')
+				.eq('institutions_id', institutions_id)
+				.eq('is_pass', true)
+				.in('student_id', batch),
+			{ label: 'final_marks' }
+		)
+	)
 
 	if (passedRows.length === 0) return byStudent
 
 	const courseIds = [...new Set(passedRows.map(r => r.course_id).filter(Boolean))]
 	const codeById = new Map<string, string>()
-	for (const batch of chunk(courseIds, ID_CHUNK)) {
+	const courseRows = await fetchAllInChunks(courseIds, ID_CHUNK, async batch => {
 		const { data } = await supabase.from('courses').select('id, course_code').in('id', batch)
-		for (const c of data || []) {
-			if (c.course_code) codeById.set(c.id, String(c.course_code).trim().toUpperCase())
-		}
+		return data || []
+	})
+	for (const c of courseRows) {
+		if (c.course_code) codeById.set(c.id, String(c.course_code).trim().toUpperCase())
 	}
 
 	for (const row of passedRows) {
@@ -156,15 +156,15 @@ export async function fetchPassedCourseCodes(
 /** UPPER course_code -> courses master row */
 async function fetchCourseDetails(supabase: SupabaseClient, codes: string[]): Promise<Map<string, any>> {
 	const details = new Map<string, any>()
-	for (const batch of chunk(codes, 500)) {
-		if (batch.length === 0) continue
+	const rows = await fetchAllInChunks(codes, 500, async batch => {
 		const { data } = await supabase
 			.from('courses')
 			.select('course_code, course_name, course_type, credit, course_category, exam_duration')
 			.in('course_code', batch)
-		for (const c of data || []) {
-			if (c.course_code) details.set(String(c.course_code).trim().toUpperCase(), c)
-		}
+		return data || []
+	})
+	for (const c of rows) {
+		if (c.course_code) details.set(String(c.course_code).trim().toUpperCase(), c)
 	}
 	return details
 }
@@ -187,46 +187,39 @@ export async function buildBulkExamApplicationCourses(
 	const studentIds = [...new Set(learners.map(l => (l.student_id || '').trim()).filter(Boolean))]
 	const registerNumbers = [...new Set(learners.map(l => (l.register_number || '').trim()).filter(Boolean))]
 
-	// ── 1. All offerings in this session (indexed per programme below) ──
-	const { data: offeringRows, error: offeringError } = await supabase
-		.from('course_offerings')
-		.select('id, course_id, course_code, program_code, program_id, semester, is_active, max_enrollment, enrolled_count')
-		.eq('institutions_id', institutions_id)
-		.eq('examination_session_id', examination_session_id)
-		.range(0, MAX_ROWS)
+	// ── 1-4. The four sources, fetched concurrently ──
+	//
+	// None of them depends on another, and each is a remote round trip costing
+	// hundreds of milliseconds, so awaiting them in sequence was most of this
+	// endpoint's response time for no reason at all.
+	const [offerings, registrations, backlogs, passedByStudent] = await Promise.all([
+		// The complete offer list for the session. A course absent from here resolves
+		// as "Not Offered" and then disappears behind the Eligible-only filter, so
+		// this read above all must never come back short.
+		fetchAllRows<any>(
+			() => supabase
+				.from('course_offerings')
+				.select('id, course_id, course_code, program_code, program_id, semester, is_active, max_enrollment, enrolled_count')
+				.eq('institutions_id', institutions_id)
+				.eq('examination_session_id', examination_session_id),
+			{ label: 'course_offerings' }
+		),
 
-	if (offeringError) {
-		console.error('[exam-applications:bulk] course_offerings error:', offeringError)
-		throw new Error('Failed to fetch course offerings')
-	}
+		// Existing registrations for these learners in this session
+		fetchByLearners(
+			supabase,
+			'exam_registrations',
+			'id, student_id, stu_register_no, course_offering_id, course_code, registration_status, program_code, attempt_number, is_regular',
+			(q: any) => q.eq('institutions_id', institutions_id).eq('examination_session_id', examination_session_id),
+			'student_id',
+			'stu_register_no',
+			studentIds,
+			registerNumbers
+		),
 
-	const offerings = offeringRows || []
-	if (offerings.length > MAX_ROWS) {
-		console.warn(`[exam-applications:bulk] course_offerings hit the ${MAX_ROWS} row cap - some offerings may be missing`)
-	}
-
-	const offeringsByProgram = new Map<string, any[]>()
-	for (const offering of offerings) {
-		const code = (offering.program_code || '').trim().toUpperCase()
-		pushToMap(offeringsByProgram, code, offering)
-	}
-
-	// ── 2. Existing registrations for these learners in this session ──
-	const registrations = await fetchByLearners(
-		supabase,
-		'exam_registrations',
-		'id, student_id, stu_register_no, course_offering_id, course_code, registration_status, program_code, attempt_number, is_regular',
-		(q: any) => q.eq('institutions_id', institutions_id).eq('examination_session_id', examination_session_id),
-		'student_id',
-		'stu_register_no',
-		studentIds,
-		registerNumbers
-	)
-
-	// ── 3. Pending backlogs for these learners ──
-	let backlogs: any[] = []
-	try {
-		backlogs = await fetchByLearners(
+		// Pending backlogs for these learners. A missing/renamed view must not break
+		// the whole page - degrade gracefully.
+		fetchByLearners(
 			supabase,
 			'student_backlogs_detailed_view',
 			'id, student_id, register_number, program_code, course_id, course_code, course_name, course_credits, original_semester, attempt_count, max_attempts_allowed, failure_reason, priority_level, is_cleared, is_active',
@@ -235,14 +228,20 @@ export async function buildBulkExamApplicationCourses(
 			'register_number',
 			studentIds,
 			registerNumbers
-		)
-	} catch (e) {
-		// A missing/renamed view must not break the whole page - degrade gracefully.
-		console.error('[exam-applications:bulk] student_backlogs_detailed_view error:', e)
-	}
+		).catch(e => {
+			console.error('[exam-applications:bulk] student_backlogs_detailed_view error:', e)
+			return [] as any[]
+		}),
 
-	// ── 4. Already-cleared courses per learner ──
-	const passedByStudent = await fetchPassedCourseCodes(supabase, institutions_id, studentIds)
+		// Already-cleared courses per learner
+		fetchPassedCourseCodes(supabase, institutions_id, studentIds),
+	])
+
+	const offeringsByProgram = new Map<string, any[]>()
+	for (const offering of offerings) {
+		const code = (offering.program_code || '').trim().toUpperCase()
+		pushToMap(offeringsByProgram, code, offering)
+	}
 
 	// ── 5. Course master rows for everything that could surface ──
 	const courseDetails = await fetchCourseDetails(
@@ -390,43 +389,38 @@ export async function buildSubjectWiseCandidates(
 		enrolled_count: offeringRow.enrolled_count ?? null,
 	}
 
-	// ── 2. Backlog holders for this course code ──
-	let backlogs: any[] = []
-	{
-		let backlogQuery = supabase
-			.from('student_backlogs_detailed_view')
-			.select('id, student_id, register_number, student_name, program_code, course_id, course_code, original_semester, attempt_count, max_attempts_allowed, failure_reason, priority_level')
-			.eq('institutions_id', institutions_id)
-			.eq('is_cleared', false)
-			.eq('is_active', true)
-			.eq('course_code', courseCode)
+	// ── 2-3. Backlog holders and existing registrations for this course code ──
+	// Independent of each other, so both go out at once.
+	const [backlogs, registrations] = await Promise.all([
+		tryFetchAllRows<any>(
+			() => {
+				const backlogQuery = supabase
+					.from('student_backlogs_detailed_view')
+					.select('id, student_id, register_number, student_name, program_code, course_id, course_code, original_semester, attempt_count, max_attempts_allowed, failure_reason, priority_level')
+					.eq('institutions_id', institutions_id)
+					.eq('is_cleared', false)
+					.eq('is_active', true)
+					.eq('course_code', courseCode)
 
-		// One programme narrows in the query; several are filtered in memory, which
-		// keeps the PostgREST URL short for a whole-tier selection.
-		if (programFilter.size === 1) backlogQuery = backlogQuery.eq('program_code', [...programFilter][0])
+				// One programme narrows in the query; several are filtered in memory, which
+				// keeps the PostgREST URL short for a whole-tier selection.
+				return programFilter.size === 1
+					? backlogQuery.eq('program_code', [...programFilter][0])
+					: backlogQuery
+			},
+			{ label: 'student_backlogs_detailed_view' }
+		),
 
-		const { data, error } = await backlogQuery.range(0, MAX_ROWS)
-		if (error) {
-			console.error('[exam-applications:subject] student_backlogs_detailed_view error:', error)
-		} else {
-			backlogs = data || []
-		}
-	}
-
-	// ── 3. Registrations for this course code in this session ──
-	const { data: registrationRows, error: registrationError } = await supabase
-		.from('exam_registrations')
-		.select('id, student_id, stu_register_no, student_name, course_offering_id, course_code, registration_status, program_code')
-		.eq('institutions_id', institutions_id)
-		.eq('examination_session_id', examination_session_id)
-		.eq('course_code', courseCode)
-		.range(0, MAX_ROWS)
-
-	if (registrationError) {
-		console.error('[exam-applications:subject] exam_registrations error:', registrationError)
-		throw new Error('Failed to fetch existing registrations')
-	}
-	const registrations = registrationRows || []
+		fetchAllRows<any>(
+			() => supabase
+				.from('exam_registrations')
+				.select('id, student_id, stu_register_no, student_name, course_offering_id, course_code, registration_status, program_code')
+				.eq('institutions_id', institutions_id)
+				.eq('examination_session_id', examination_session_id)
+				.eq('course_code', courseCode),
+			{ label: 'exam_registrations' }
+		),
+	])
 
 	// ── 4. Merge the pools ──
 	interface CandidateDraft {
@@ -543,20 +537,22 @@ export async function buildSubjectWiseCandidates(
 		const scope = (q: any) =>
 			q.eq('institutions_id', institutions_id).eq('examination_session_id', examination_session_id)
 
-		for (const batch of chunk(sids, ID_CHUNK)) {
-			const { data, error } = await scope(
-				supabase.from('exam_registrations').select('student_id, stu_register_no').in('student_id', batch)
-			).range(0, MAX_ROWS)
-			if (error) { console.error('[exam-applications:subject] session registrations error:', error); break }
-			absorb(data)
-		}
-		for (const batch of chunk(regs, IN_CHUNK)) {
-			const { data, error } = await scope(
-				supabase.from('exam_registrations').select('student_id, stu_register_no').in('stu_register_no', batch)
-			).range(0, MAX_ROWS)
-			if (error) { console.error('[exam-applications:subject] session registrations error:', error); break }
-			absorb(data)
-		}
+		const [bySid, byReg] = await Promise.all([
+			fetchAllInChunks(sids, ID_CHUNK, batch =>
+				tryFetchAllRows<any>(
+					() => scope(supabase.from('exam_registrations').select('id, student_id, stu_register_no').in('student_id', batch)),
+					{ label: 'session registrations' }
+				)
+			),
+			fetchAllInChunks(regs, IN_CHUNK, batch =>
+				tryFetchAllRows<any>(
+					() => scope(supabase.from('exam_registrations').select('id, student_id, stu_register_no').in('stu_register_no', batch)),
+					{ label: 'session registrations' }
+				)
+			),
+		])
+		absorb(bySid)
+		absorb(byReg)
 	}
 
 	// ── 5. Learners who already cleared this course ──
@@ -564,22 +560,20 @@ export async function buildSubjectWiseCandidates(
 	const candidateStudentIds = [...drafts.values()].map(d => d.student_id).filter(Boolean) as string[]
 	const courseId = offeringRow.course_id || backlogs.find(b => b.course_id)?.course_id || null
 	if (courseId && candidateStudentIds.length > 0) {
-		for (const batch of chunk(candidateStudentIds, ID_CHUNK)) {
-			const { data, error } = await supabase
-				.from('final_marks')
-				.select('student_id')
-				.eq('institutions_id', institutions_id)
-				.eq('course_id', courseId)
-				.eq('is_pass', true)
-				.in('student_id', batch)
-				.range(0, MAX_ROWS)
-			if (error) {
-				console.error('[exam-applications:subject] final_marks error:', error)
-				break
-			}
-			for (const row of data || []) {
-				if (row.student_id) passedStudentIds.add(row.student_id)
-			}
+		const rows = await fetchAllInChunks(candidateStudentIds, ID_CHUNK, batch =>
+			tryFetchAllRows<any>(
+				() => supabase
+					.from('final_marks')
+					.select('id, student_id')
+					.eq('institutions_id', institutions_id)
+					.eq('course_id', courseId)
+					.eq('is_pass', true)
+					.in('student_id', batch),
+				{ label: 'final_marks' }
+			)
+		)
+		for (const row of rows) {
+			if (row.student_id) passedStudentIds.add(row.student_id)
 		}
 	}
 

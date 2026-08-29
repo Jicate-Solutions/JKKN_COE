@@ -60,15 +60,19 @@ export async function POST(request: Request) {
 			)
 		}
 
-		const data = await buildBulkExamApplicationCourses(supabase, {
-			institutions_id,
-			examination_session_id,
-			learners,
-		})
+		// The course lists and the fee rate book are independent lookups, so they are
+		// fetched together rather than one after the other.
+		const asOf = new Date().toISOString().slice(0, 10)
+		const [data, book] = await Promise.all([
+			buildBulkExamApplicationCourses(supabase, {
+				institutions_id,
+				examination_session_id,
+				learners,
+			}),
+			loadFeeRateBook(supabase, { institutions_id, examination_session_id, asOf }),
+		])
 
 		// ── Price every course, then quote each learner ──
-		const asOf = new Date().toISOString().slice(0, 10)
-		const book = await loadFeeRateBook(supabase, { institutions_id, examination_session_id, asOf })
 		const fineApplicable = isFineApplicable(book.schedule, asOf)
 		const fine = fineApplicable ? (book.schedule?.fine_amount || 0) : 0
 

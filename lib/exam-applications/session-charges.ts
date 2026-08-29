@@ -6,6 +6,7 @@ import {
 	type FeeRateBook,
 } from '@/lib/exam-fee/calculate'
 import type { ProgramLevel } from '@/lib/exam-fee-catalog'
+import { tryFetchAllRows } from './paginate'
 
 /**
  * Once-per-learner-per-session exam charges
@@ -78,7 +79,6 @@ export function sessionChargeForProgram(
 
 /** Rows per `.in()` filter - keeps the PostgREST GET URL well under any length limit */
 const IN_CHUNK = 60
-const MAX_ROWS = 9999
 
 /**
  * Whether exam_registrations actually has the charge columns yet.
@@ -149,34 +149,28 @@ export async function loadAlreadyChargedKeys(
 	const base = () =>
 		supabase
 			.from('exam_registrations')
-			.select('student_id, stu_register_no')
+			.select('id, student_id, stu_register_no')
 			.eq('institutions_id', params.institutions_id)
 			.eq('examination_session_id', params.examination_session_id)
 			.or('application_fee.gt.0,mark_statement_fee.gt.0,late_fine.gt.0')
 
 	const registers = (params.registerNumbers || []).map(r => String(r || '').trim()).filter(Boolean)
 
+	// The fee columns are added by 20260824_add_application_fees_to_exam_registrations.
+	// Before that migration runs the lookup errors, and tryFetchAllRows treats nobody
+	// as charged rather than failing the whole apply - the amounts simply will not be
+	// stamped.
 	if (registers.length === 0) {
-		const { data, error } = await base().range(0, MAX_ROWS)
-		if (error) {
-			// The columns are added by 20260824_add_application_fees_to_exam_registrations.
-			// Before that migration runs, treat nobody as charged rather than failing
-			// the whole apply - the amounts simply will not be stamped.
-			console.error('[exam-applications] already-charged lookup failed:', error.message)
-			return charged
-		}
-		absorb(data)
+		absorb(await tryFetchAllRows<any>(base, { label: 'already-charged registrations' }))
 		return charged
 	}
 
 	for (let i = 0; i < registers.length; i += IN_CHUNK) {
 		const batch = registers.slice(i, i + IN_CHUNK)
-		const { data, error } = await base().in('stu_register_no', batch).range(0, MAX_ROWS)
-		if (error) {
-			console.error('[exam-applications] already-charged lookup failed:', error.message)
-			return charged
-		}
-		absorb(data)
+		absorb(await tryFetchAllRows<any>(
+			() => base().in('stu_register_no', batch),
+			{ label: 'already-charged registrations' }
+		))
 	}
 
 	return charged

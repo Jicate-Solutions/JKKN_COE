@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
 import { chargeKey } from '@/lib/exam-applications/session-charges'
 import { fetchPassedCourseCodes } from '@/lib/exam-applications/bulk-course-list'
+import { fetchAllRows, tryFetchAllRows } from '@/lib/exam-applications/paginate'
+import { cachedSession } from '@/lib/exam-applications/session-cache'
 import { levelOf, loadProgramLevelMap, parseProgramCodes } from '@/lib/exam-applications/program-levels'
 import type { ArrearLearner, ArrearLearnersResponse, CohortFilterOption, CohortFilterTotals } from '@/types/exam-applications'
 
@@ -58,10 +60,6 @@ function totalsOf<T>(rows: T[], learnerOf: (row: T) => string): CohortFilterTota
  * shown on the row.
  */
 
-const MAX_ROWS = 9999
-const PAGE_SIZE = 1000
-const MAX_PAGES = 20
-
 type Supabase = ReturnType<typeof getSupabaseServer>
 
 interface BacklogRow {
@@ -79,28 +77,19 @@ async function fetchBacklogs(
 	supabase: Supabase,
 	params: { institutions_id: string; program_code?: string | null }
 ): Promise<BacklogRow[]> {
-	const rows: BacklogRow[] = []
-
-	for (let page = 0; page < MAX_PAGES; page++) {
-		let query = supabase
-			.from('student_backlogs_detailed_view')
-			.select('id, student_id, register_number, student_name, program_code, course_code, original_semester')
-			.eq('institutions_id', params.institutions_id)
-			.eq('is_cleared', false)
-			.eq('is_active', true)
-			.order('id', { ascending: true })
-			.range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1)
-
-		if (params.program_code) query = query.eq('program_code', params.program_code)
-
-		const { data, error } = await query
-		if (error) throw new Error(`Failed to fetch backlogs: ${error.message}`)
-
-		rows.push(...((data || []) as BacklogRow[]))
-		if (!data || data.length < PAGE_SIZE) break
-	}
-
-	return rows
+	return fetchAllRows<BacklogRow>(
+		() => {
+			let query = supabase
+				.from('student_backlogs_detailed_view')
+				.select('id, student_id, register_number, student_name, program_code, course_code, original_semester')
+				.eq('institutions_id', params.institutions_id)
+				.eq('is_cleared', false)
+				.eq('is_active', true)
+			if (params.program_code) query = query.eq('program_code', params.program_code)
+			return query
+		},
+		{ label: 'student_backlogs_detailed_view' }
+	)
 }
 
 interface ArrearRegistrationIndex {
@@ -124,22 +113,19 @@ async function fetchSessionArrearRegistrations(
 ): Promise<ArrearRegistrationIndex> {
 	const index: ArrearRegistrationIndex = { registered: new Set(), applied: new Set() }
 
-	const { data, error } = await supabase
-		.from('exam_registrations')
-		.select('student_id, stu_register_no, course_code, registration_status')
-		.eq('institutions_id', params.institutions_id)
-		.eq('examination_session_id', params.examination_session_id)
-		.eq('is_regular', false)
-		.range(0, MAX_ROWS)
+	// A degraded count is better than a failed page - the submit path re-checks
+	// eligibility anyway, so nothing can be double-registered from here.
+	const rows = await tryFetchAllRows<any>(
+		() => supabase
+			.from('exam_registrations')
+			.select('id, student_id, stu_register_no, course_code, registration_status')
+			.eq('institutions_id', params.institutions_id)
+			.eq('examination_session_id', params.examination_session_id)
+			.eq('is_regular', false),
+		{ label: 'arrear registrations' }
+	)
 
-	if (error) {
-		// A degraded count is better than a failed page - the submit path re-checks
-		// eligibility anyway, so nothing can be double-registered from here.
-		console.error('[arrear-learners] registrations lookup error:', error.message)
-		return index
-	}
-
-	for (const row of data || []) {
+	for (const row of rows) {
 		const code = String(row.course_code || '').trim().toUpperCase()
 		if (!code) continue
 		const isApplied = String(row.registration_status || '').trim().toUpperCase() === 'APPLIED'
@@ -167,41 +153,18 @@ async function fetchSessionArrearRegistrations(
  * in THIS session give the same answer locally: their semester is the semester of
  * the papers they are sitting.
  */
-async function fetchLearnerCurrentSemesters(
-	supabase: Supabase,
-	params: { institutions_id: string; examination_session_id: string }
-): Promise<Map<string, number>> {
+function learnerCurrentSemesters(
+	regs: any[],
+	offerings: OfferingRow[]
+): Map<string, number> {
 	const byLearner = new Map<string, number>()
 
-	const [regs, offerings] = await Promise.all([
-		supabase
-			.from('exam_registrations')
-			.select('student_id, stu_register_no, course_offering_id')
-			.eq('institutions_id', params.institutions_id)
-			.eq('examination_session_id', params.examination_session_id)
-			.or('is_regular.is.null,is_regular.eq.true')
-			.range(0, MAX_ROWS),
-		supabase
-			.from('course_offerings')
-			.select('id, semester')
-			.eq('institutions_id', params.institutions_id)
-			.eq('examination_session_id', params.examination_session_id)
-			.range(0, MAX_ROWS),
-	])
-
-	if (regs.error || offerings.error) {
-		// Without this map the semester filter simply offers nothing - far better
-		// than failing the learner list outright.
-		console.error('[arrear-learners] current-semester lookup failed:', regs.error?.message || offerings.error?.message)
-		return byLearner
-	}
-
 	const semesterByOffering = new Map<string, number>()
-	for (const o of offerings.data || []) {
+	for (const o of offerings) {
 		if (typeof o.semester === 'number' && o.semester > 0) semesterByOffering.set(o.id, o.semester)
 	}
 
-	for (const row of regs.data || []) {
+	for (const row of regs) {
 		const semester = row.course_offering_id ? semesterByOffering.get(row.course_offering_id) : undefined
 		if (!semester) continue
 		const key = chargeKey({ student_id: row.student_id, register_number: row.stu_register_no })
@@ -215,36 +178,79 @@ async function fetchLearnerCurrentSemesters(
 }
 
 /**
+ * The session's regular registrations.
+ *
+ * Without them the semester filter simply offers nothing - far better than failing
+ * the learner list outright, so the read degrades to empty.
+ *
+ * This is the sweep that used to truncate hardest: a busy session holds ~12k
+ * registrations, of which a single request returned only the first 1000, leaving
+ * ~91% of learners with no resolvable semester.
+ */
+function fetchRegularRegistrations(
+	supabase: Supabase,
+	params: { institutions_id: string; examination_session_id: string }
+): Promise<any[]> {
+	// Cached: this screen never writes regular registrations, and every filter
+	// change would otherwise re-read all ~11k of them to rebuild the same map.
+	return cachedSession(`${params.institutions_id}|${params.examination_session_id}|regular-regs`, () =>
+		tryFetchAllRows<any>(
+			() => supabase
+				.from('exam_registrations')
+				.select('id, student_id, stu_register_no, course_offering_id')
+				.eq('institutions_id', params.institutions_id)
+				.eq('examination_session_id', params.examination_session_id)
+				.or('is_regular.is.null,is_regular.eq.true'),
+			{ label: 'regular registrations' }
+		)
+	)
+}
+
+interface OfferingRow {
+	id: string
+	course_code: string | null
+	semester: number | null
+	is_active: boolean | null
+}
+
+/**
+ * Every offering in the session, read ONCE.
+ *
+ * Two things are derived from it - the offering -> semester index behind the
+ * Semester filter, and the set of course codes actually on offer - and each used
+ * to fetch the table for itself, paying a second round trip for identical rows.
+ */
+function fetchSessionOfferings(
+	supabase: Supabase,
+	params: { institutions_id: string; examination_session_id: string }
+): Promise<OfferingRow[]> {
+	// Cached: the offer list is maintained on the Course Offerings screen, not here.
+	return cachedSession(`${params.institutions_id}|${params.examination_session_id}|offerings`, () =>
+		tryFetchAllRows<OfferingRow>(
+			() => supabase
+				.from('course_offerings')
+				.select('id, course_code, semester, is_active')
+				.eq('institutions_id', params.institutions_id)
+				.eq('examination_session_id', params.examination_session_id),
+			{ label: 'course_offerings' }
+		)
+	)
+}
+
+/**
  * UPPER course codes actually offered in this session.
  *
  * A backlog whose course is not offered cannot be applied for - the merge engine
  * marks it "Not Offered" and greys it out - so counting it as outstanding work in
  * the picker promised papers the panel then refused to show.
  */
-async function fetchOfferedCourseCodes(
-	supabase: Supabase,
-	params: { institutions_id: string; examination_session_id: string }
-): Promise<Set<string>> {
+function offeredCourseCodesOf(offerings: OfferingRow[]): Set<string> {
 	const codes = new Set<string>()
-
-	const { data, error } = await supabase
-		.from('course_offerings')
-		.select('course_code, is_active')
-		.eq('institutions_id', params.institutions_id)
-		.eq('examination_session_id', params.examination_session_id)
-		.range(0, MAX_ROWS)
-
-	if (error) {
-		console.error('[arrear-learners] offerings lookup error:', error.message)
-		return codes
-	}
-
-	for (const row of data || []) {
+	for (const row of offerings) {
 		if (row.is_active === false) continue
 		const code = String(row.course_code || '').trim().toUpperCase()
 		if (code) codes.add(code)
 	}
-
 	return codes
 }
 
@@ -270,18 +276,25 @@ export async function GET(request: Request) {
 
 		// The programme filter is applied in memory so the programme option list can
 		// still be built from every backlog in the institution.
-		const [backlogs, registeredKeys, currentSemesterByLearner, offeredCourseCodes] = await Promise.all([
+		//
+		// Every read here is independent, including the programme-level map that used
+		// to be awaited on its own further down, so they all go out together.
+		const [backlogs, registeredKeys, regularRegs, offerings, levelMap] = await Promise.all([
 			fetchBacklogs(supabase, { institutions_id }),
 			examination_session_id
 				? fetchSessionArrearRegistrations(supabase, { institutions_id, examination_session_id })
 				: Promise.resolve({ registered: new Set<string>(), applied: new Set<string>() } as ArrearRegistrationIndex),
 			examination_session_id
-				? fetchLearnerCurrentSemesters(supabase, { institutions_id, examination_session_id })
-				: Promise.resolve(new Map<string, number>()),
+				? fetchRegularRegistrations(supabase, { institutions_id, examination_session_id })
+				: Promise.resolve([] as any[]),
 			examination_session_id
-				? fetchOfferedCourseCodes(supabase, { institutions_id, examination_session_id })
-				: Promise.resolve(new Set<string>()),
+				? fetchSessionOfferings(supabase, { institutions_id, examination_session_id })
+				: Promise.resolve([] as OfferingRow[]),
+			loadProgramLevelMap(supabase, institutions_id),
 		])
+
+		const currentSemesterByLearner = learnerCurrentSemesters(regularRegs, offerings)
+		const offeredCourseCodes = offeredCourseCodesOf(offerings)
 
 		// When a session has no offerings at all, "not offered" cannot be told apart
 		// from "offerings not set up yet", so the filter is skipped rather than
@@ -298,7 +311,6 @@ export async function GET(request: Request) {
 		const learnerOf = (b: BacklogRow) =>
 			chargeKey({ student_id: b.student_id, register_number: b.register_number })
 
-		const levelMap = await loadProgramLevelMap(supabase, institutions_id)
 		const programOptions = countBy(backlogs, b => String(b.program_code || '').trim() || null, learnerOf)
 			.map(option => ({ ...option, level: levelOf(option.value, levelMap) }))
 
@@ -385,9 +397,15 @@ export async function GET(request: Request) {
 		}
 
 		const learners: ArrearLearner[] = [...learnerByKey.values()]
-			// A learner whose every arrear is unoffered this session has nothing to do
-			// here, so they are not listed at all.
-			.filter(l => l.arrear_count > 0)
+			// Listed as long as they hold ANY uncleared arrear.
+			//
+			// Hiding the learners whose arrears are all unoffered this session made a
+			// real backlog look like lost data: searching the register number simply
+			// returned nothing, with no hint that the course had no offering. They are
+			// listed instead as "0 of N - N not offered", and the papers panel names
+			// each paper and badges it "Not Offered", so the gap reads as the missing
+			// course offering it actually is.
+			.filter(l => l.total_arrears > 0)
 			.map(({ _semesters, ...learner }) => ({
 				...learner,
 				// semester = where the learner is now (what the filter matches);

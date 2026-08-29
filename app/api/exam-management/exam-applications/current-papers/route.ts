@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
+import { fetchAllRows } from '@/lib/exam-applications/paginate'
 import {
 	isFineApplicable,
 	loadFeeRateBook,
@@ -194,16 +195,19 @@ async function loadOfferingIndex(
 ): Promise<Map<string, OfferingInfo>> {
 	const byId = new Map<string, OfferingInfo>()
 
-	const { data, error } = await supabase
-		.from('course_offerings')
-		.select('id, course_id, course_code, program_code, semester')
-		.eq('institutions_id', params.institutions_id)
-		.eq('examination_session_id', params.examination_session_id)
-		.range(0, 9999)
+	// Paged, not `.range(0, 9999)`: the server returns at most 1000 rows per request
+	// whatever the range asks for, and an offering missing from this index leaves its
+	// paper unresolvable.
+	const data = await fetchAllRows<any>(
+		() => supabase
+			.from('course_offerings')
+			.select('id, course_id, course_code, program_code, semester')
+			.eq('institutions_id', params.institutions_id)
+			.eq('examination_session_id', params.examination_session_id),
+		{ label: 'course_offerings' }
+	)
 
-	if (error) throw new Error(`Failed to fetch course offerings: ${error.message}`)
-
-	for (const row of data || []) {
+	for (const row of data) {
 		byId.set(row.id, {
 			course_code: String(row.course_code || '').trim(),
 			program_code: row.program_code || null,
