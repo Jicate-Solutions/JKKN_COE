@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
+import { checkDependencies } from '@/lib/delete-helpers'
 
 interface BulkSyncItem {
 	course_mapping_id: string
@@ -48,12 +49,37 @@ export async function POST(request: Request) {
 		let deleted = 0
 		let skipped = 0
 		const errors: string[] = []
+		const blocked: Array<{
+			offering_id: string
+			total: number
+			dependencies: Array<{ table: string; column: string; count: number }>
+		}> = []
 
 		// ── DELETE unchecked offerings ──
+		// An offering that already carries learner data (exam registrations,
+		// marks, question papers) is NEVER removed here. Unticking a course on
+		// the sync screen must not be able to destroy a completed registration —
+		// that is exactly how UZO Sem-5 and UCC Sem-3 were wiped. Offerings with
+		// dependents are reported back as `blocked` so the user can see why.
 		if (deleteIds.length > 0) {
+			const safeToDelete: string[] = []
+
+			for (const id of deleteIds) {
+				const deps = await checkDependencies('course_offerings', id)
+				if (deps.has_dependencies) {
+					blocked.push({
+						offering_id: id,
+						total: deps.total_count,
+						dependencies: deps.dependencies,
+					})
+				} else {
+					safeToDelete.push(id)
+				}
+			}
+
 			const BATCH = 500
-			for (let i = 0; i < deleteIds.length; i += BATCH) {
-				const batch = deleteIds.slice(i, i + BATCH)
+			for (let i = 0; i < safeToDelete.length; i += BATCH) {
+				const batch = safeToDelete.slice(i, i + BATCH)
 				const { error } = await supabase
 					.from('course_offerings')
 					.delete()
@@ -63,7 +89,13 @@ export async function POST(request: Request) {
 
 				if (error) {
 					console.error('Bulk delete error:', error)
-					errors.push(`Delete batch: ${error.message}`)
+					// 23503 = the DB-level RESTRICT caught a dependent row the
+					// pre-check missed. Report it, never retry with a cascade.
+					errors.push(
+						error.code === '23503'
+							? 'Delete blocked: those offerings still have linked records.'
+							: `Delete batch: ${error.message}`
+					)
 				} else {
 					deleted += batch.length
 				}
@@ -131,12 +163,17 @@ export async function POST(request: Request) {
 		if (created > 0) parts.push(`${created} created`)
 		if (deleted > 0) parts.push(`${deleted} removed`)
 		if (skipped > 0) parts.push(`${skipped} unchanged`)
+		if (blocked.length > 0) {
+			const rows = blocked.reduce((sum, b) => sum + b.total, 0)
+			parts.push(`${blocked.length} kept — still has ${rows} linked record${rows !== 1 ? 's' : ''} (registrations/marks)`)
+		}
 		const message = parts.join(', ') || 'No changes made'
 
 		return NextResponse.json({
 			created,
 			deleted,
 			skipped,
+			blocked: blocked.length > 0 ? blocked : undefined,
 			errors: errors.length > 0 ? errors : undefined,
 			message,
 		}, { status: created > 0 || deleted > 0 ? 201 : 200 })

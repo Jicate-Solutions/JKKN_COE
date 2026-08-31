@@ -1,11 +1,13 @@
 'use client'
 
-// Step 3 to 8 of the spec's flow: pick the question paper, pick the examiner
-// type, pick the examiner, set the availability period, confirm.
+// Step two of the flow: pick a GENERATED question paper, pick the examiner type,
+// pick the examiner, set the availability period, confirm.
 //
-// The subject list shows EVERY end-semester paper of the selected session,
+// The list shows every end-semester paper generated for the selected session,
 // marking the ones already handed out, so what is left to assign is visible at a
-// glance rather than something the CoE has to remember.
+// glance rather than something the CoE has to remember. A subject with no paper
+// yet does not appear here at all — it is generated in the Generate Papers tab,
+// where its format is chosen.
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Card, CardContent, CardHeader } from '@/components/ui/card'
@@ -27,7 +29,7 @@ import { isoToIstLocal, formatIst } from '@/lib/qp-portal/ist'
 import type { QpExaminerKind } from '@/types/qp-examiner-assignment'
 import {
 	apiFetch, SearchableSelect, StatusBadge, KindBadge,
-	type CourseRow, type ExaminerOpt, type SessionOpt,
+	type PaperRow, type ExaminerOpt, type SessionOpt, type BlockedExaminer,
 } from './shared'
 
 interface Props {
@@ -53,7 +55,7 @@ function defaultWindow(): { from: string; to: string } {
 export function AssignTab({ institutionsId, institutionCode, session, onAssigned }: Props) {
 	const { toast } = useToast()
 
-	const [courses, setCourses] = useState<CourseRow[]>([])
+	const [papers, setPapers] = useState<PaperRow[]>([])
 	const [loading, setLoading] = useState(false)
 	const [loadError, setLoadError] = useState<string | null>(null)
 
@@ -70,6 +72,11 @@ export function AssignTab({ institutionsId, institutionCode, session, onAssigned
 	const [sheetOpen, setSheetOpen] = useState(false)
 	const [kind, setKind] = useState<QpExaminerKind>('external')
 	const [examiners, setExaminers] = useState<ExaminerOpt[]>([])
+	// Examiners who hold the Question Paper Setter role but are not ACTIVE yet.
+	// Kept so a search that matches one can say WHY they are not selectable.
+	const [blocked, setBlocked] = useState<BlockedExaminer[]>([])
+	// True backlog size — `blocked` above may be a truncated sample of it.
+	const [blockedTotal, setBlockedTotal] = useState(0)
 	const [examinerLoading, setExaminerLoading] = useState(false)
 	const [examinerSearch, setExaminerSearch] = useState('')
 	const [examinerId, setExaminerId] = useState('')
@@ -80,24 +87,25 @@ export function AssignTab({ institutionsId, institutionCode, session, onAssigned
 	const [sendEmail, setSendEmail] = useState(true)
 	const [saving, setSaving] = useState(false)
 
-	const rowKey = (c: CourseRow) => `${c.course_offering_id}:${c.set_number}`
+	// The paper is the unit of assignment, so it is also the row identity.
+	const rowKey = (c: PaperRow) => c.paper_id
 
 	// ── Load the subject list ─────────────────────────────────────────────
-	const loadCourses = useCallback(async () => {
+	const loadPapers = useCallback(async () => {
 		if (!institutionsId || !session?.id) {
-			setCourses([])
+			setPapers([])
 			return
 		}
 		setLoading(true)
 		setLoadError(null)
 		try {
 			const json = await apiFetch(
-				`/api/pre-exam/qp-examiner-assignments/courses?institutions_id=${institutionsId}&examination_session_id=${session.id}`
+				`/api/pre-exam/qp-examiner-assignments/papers?institutions_id=${institutionsId}&examination_session_id=${session.id}`
 			)
-			setCourses(json.data || [])
+			setPapers(json.data || [])
 			setPicked(new Set())
 		} catch (e: any) {
-			setCourses([])
+			setPapers([])
 			setLoadError(e.message)
 		} finally {
 			setLoading(false)
@@ -105,8 +113,8 @@ export function AssignTab({ institutionsId, institutionCode, session, onAssigned
 	}, [institutionsId, session?.id])
 
 	useEffect(() => {
-		loadCourses()
-	}, [loadCourses])
+		loadPapers()
+	}, [loadPapers])
 
 	// ── Load eligible examiners when the sheet opens or the tab changes ───
 	useEffect(() => {
@@ -119,10 +127,16 @@ export function AssignTab({ institutionsId, institutionCode, session, onAssigned
 					`/api/pre-exam/qp-examiner-assignments/examiners?kind=${kind}&institutions_id=${institutionsId}` +
 						(session?.id ? `&examination_session_id=${session.id}` : '')
 				)
-				if (!cancelled) setExaminers(json.data || [])
+				if (!cancelled) {
+					setExaminers(json.data || [])
+					setBlocked(json.blocked || [])
+					setBlockedTotal(json.blocked_total ?? (json.blocked || []).length)
+				}
 			} catch (e: any) {
 				if (!cancelled) {
 					setExaminers([])
+					setBlocked([])
+					setBlockedTotal(0)
 					toast({ title: 'Could not load examiners', description: e.message, variant: 'destructive' })
 				}
 			} finally {
@@ -138,20 +152,20 @@ export function AssignTab({ institutionsId, institutionCode, session, onAssigned
 
 	// ── Derived filter options ────────────────────────────────────────────
 	const programs = useMemo(
-		() => [...new Set(courses.map(c => c.program_code).filter(Boolean))].sort(),
-		[courses]
+		() => [...new Set(papers.map(c => c.program_code).filter(Boolean))].sort(),
+		[papers]
 	)
 	const semesters = useMemo(
 		() =>
-			[...new Set(courses.filter(c => programFilter === 'all' || c.program_code === programFilter).map(c => c.semester))]
+			[...new Set(papers.filter(c => programFilter === 'all' || c.program_code === programFilter).map(c => c.semester))]
 				.filter(s => s != null)
 				.sort((a, b) => a - b),
-		[courses, programFilter]
+		[papers, programFilter]
 	)
 
 	const visible = useMemo(() => {
 		const q = search.trim().toLowerCase()
-		return courses.filter(c => {
+		return papers.filter(c => {
 			if (programFilter !== 'all' && c.program_code !== programFilter) return false
 			if (semesterFilter !== 'all' && String(c.semester) !== semesterFilter) return false
 			if (assignedFilter === 'unassigned' && c.assignment) return false
@@ -159,12 +173,12 @@ export function AssignTab({ institutionsId, institutionCode, session, onAssigned
 			if (q && !`${c.course_code} ${c.subject_title}`.toLowerCase().includes(q)) return false
 			return true
 		})
-	}, [courses, programFilter, semesterFilter, assignedFilter, search])
+	}, [papers, programFilter, semesterFilter, assignedFilter, search])
 
 	const selectable = useMemo(() => visible.filter(c => !c.assignment), [visible])
-	const pickedRows = useMemo(() => courses.filter(c => picked.has(rowKey(c))), [courses, picked])
+	const pickedRows = useMemo(() => papers.filter(c => picked.has(rowKey(c))), [papers, picked])
 
-	const togglePick = (c: CourseRow) => {
+	const togglePick = (c: PaperRow) => {
 		if (c.assignment) return
 		setPicked(prev => {
 			const next = new Set(prev)
@@ -209,6 +223,22 @@ export function AssignTab({ institutionsId, institutionCode, session, onAssigned
 		)
 	}, [examiners, examinerSearch])
 
+	// Blocked candidates that match what the user just typed. This is the whole
+	// point of keeping them: someone searching a name that exists but is stuck in
+	// PENDING must be told that, not shown a blank list.
+	const blockedMatches = useMemo(() => {
+		if (kind !== 'external') return []
+		const q = examinerSearch.trim().toLowerCase()
+		if (!q) return []
+		return blocked.filter(
+			b =>
+				b.full_name.toLowerCase().includes(q) ||
+				b.email.toLowerCase().includes(q) ||
+				(b.department || '').toLowerCase().includes(q) ||
+				(b.institution_name || '').toLowerCase().includes(q)
+		)
+	}, [blocked, examinerSearch, kind])
+
 	const chosenExaminer = examiners.find(e => e.id === examinerId) || null
 
 	// ── Confirm ───────────────────────────────────────────────────────────
@@ -233,9 +263,9 @@ export function AssignTab({ institutionsId, institutionCode, session, onAssigned
 					institutions_id: institutionsId,
 					institution_code: institutionCode,
 					examination_session_id: session.id,
-					course_offering_id: row.course_offering_id,
-					template_id: row.template_id,
-					set_number: row.set_number,
+					// The paper already exists with its format chosen — assignment only
+					// attaches an examiner to it.
+					paper_id: row.paper_id,
 					examiner_kind: kind,
 					examiner_id: kind === 'external' ? examinerId : chosenExaminer.already_mirrored ? examinerId : undefined,
 					staff:
@@ -290,7 +320,7 @@ export function AssignTab({ institutionsId, institutionCode, session, onAssigned
 			})
 			setSheetOpen(false)
 			setPicked(new Set())
-			loadCourses()
+			loadPapers()
 			onAssigned()
 		}
 		if (results.failed.length) {
@@ -341,11 +371,11 @@ export function AssignTab({ institutionsId, institutionCode, session, onAssigned
 							<p className="text-base font-semibold">End Semester Question Papers</p>
 							<p className="text-xs text-muted-foreground">
 								{session.session_name} · {session.exam_type_name} ·{' '}
-								{courses.filter(c => !c.assignment).length} of {courses.length} not yet assigned
+								{papers.filter(c => !c.assignment).length} of {papers.length} not yet assigned
 							</p>
 						</div>
 						<div className="flex items-center gap-2">
-							<Button variant="outline" size="sm" onClick={loadCourses} disabled={loading}>
+							<Button variant="outline" size="sm" onClick={loadPapers} disabled={loading}>
 								<RefreshCw className={cn('h-4 w-4 mr-1.5', loading && 'animate-spin')} />
 								Refresh
 							</Button>
@@ -410,10 +440,19 @@ export function AssignTab({ institutionsId, institutionCode, session, onAssigned
 							<Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
 						</div>
 					) : visible.length === 0 && !loadError ? (
-						<div className="p-10 text-center text-sm text-muted-foreground">
-							{courses.length === 0
-								? 'No end-semester papers are offered for this session.'
-								: 'Nothing matches these filters.'}
+						<div className="p-10 text-center text-sm text-muted-foreground space-y-1">
+							{papers.length === 0 ? (
+								<>
+									<p className="font-medium text-foreground">No question papers generated yet</p>
+									<p className="max-w-md mx-auto">
+										An examiner is appointed to a paper, so the paper has to exist first. Open the{' '}
+										<span className="font-medium">Generate Papers</span> tab, choose the format for each
+										subject, and generate — then come back here.
+									</p>
+								</>
+							) : (
+								'Nothing matches these filters.'
+							)}
 						</div>
 					) : (
 						<div className="overflow-x-auto">
@@ -537,7 +576,7 @@ export function AssignTab({ institutionsId, institutionCode, session, onAssigned
 							</Tabs>
 							<p className="text-xs text-muted-foreground mt-1.5">
 								{kind === 'external'
-									? 'From the Examiner Panel, showing only those whose willingness roles include Question Paper Setter.'
+									? 'From the Examiner Panel — approved examiners whose willingness roles include Question Paper Setter. A self-registered examiner stays out of this list until their registration is approved.'
 									: 'Teaching staff of this institution. Assigning creates their examiner record and portal access automatically.'}
 							</p>
 						</div>
@@ -559,10 +598,59 @@ export function AssignTab({ institutionsId, institutionCode, session, onAssigned
 							</div>
 							<div className="mt-2 rounded-md border divide-y max-h-64 overflow-y-auto">
 								{filteredExaminers.length === 0 && !examinerLoading && (
-									<div className="p-6 text-center text-sm text-muted-foreground">
-										{kind === 'external'
-											? 'No active examiner has “Question Paper Setter” among their willingness roles. Add it on the Examiner Panel.'
-											: 'No staff found for this institution.'}
+									<div className="p-4 text-sm text-muted-foreground space-y-2">
+										{kind !== 'external' ? (
+											<p className="text-center">No staff found for this institution.</p>
+										) : blockedMatches.length > 0 ? (
+											// The searched-for person exists and already holds the role —
+											// they are simply not approved. Saying "nobody has the role"
+											// here would send the CoE to change the wrong thing.
+											<>
+												<p>
+													{blockedMatches.length === 1
+														? '1 examiner matches, but is not approved yet:'
+														: `${blockedMatches.length} examiners match, but are not approved yet:`}
+												</p>
+												<ul className="space-y-1">
+													{blockedMatches.slice(0, 5).map(b => (
+														<li key={b.id} className="flex items-start justify-between gap-2">
+															<span className="min-w-0">
+																<span className="font-medium text-foreground">{b.full_name}</span>
+																<span className="block text-xs truncate">{b.email}</span>
+															</span>
+															<Badge
+																variant="outline"
+																className="shrink-0 text-[10px] bg-amber-50 text-amber-700 border-amber-200"
+															>
+																{b.status}
+															</Badge>
+														</li>
+													))}
+												</ul>
+												{blockedMatches.length > 5 && (
+													<p className="text-xs">…and {blockedMatches.length - 5} more.</p>
+												)}
+												<p className="text-xs">
+													They already have “Question Paper Setter” in their willingness roles. Approve them
+													on the Examiner Panel and they become selectable here.
+												</p>
+											</>
+										) : examinerSearch.trim() ? (
+											<p className="text-center">
+												No approved question paper setter matches “{examinerSearch.trim()}”.
+											</p>
+										) : blocked.length > 0 ? (
+											<p className="text-center">
+												No approved examiner is available yet. {blockedTotal} examiner
+												{blockedTotal === 1 ? '' : 's'} already have “Question Paper Setter” in their
+												willingness roles but are awaiting approval — approve them on the Examiner Panel.
+											</p>
+										) : (
+											<p className="text-center">
+												No active examiner has “Question Paper Setter” among their willingness roles. Add it
+												on the Examiner Panel.
+											</p>
+										)}
 									</div>
 								)}
 								{filteredExaminers.map(e => (

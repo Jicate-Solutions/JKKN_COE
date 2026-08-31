@@ -143,7 +143,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
 				patch.return_remarks = null
 				// Acceptance locks the paper so no later edit can slip in.
 				await supabase
-					.from('ia_question_papers')
+					.from('ese_question_papers')
 					.update({ status: 'approved', approved_at: now, approved_by: perm.userId })
 					.eq('id', current.paper_id)
 				logAction = 'assignment_accepted'
@@ -183,7 +183,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
 					patch.window_extensions = (current.window_extensions || 0) + 1
 				}
 
-				await supabase.from('ia_question_papers').update({ status: 'draft' }).eq('id', current.paper_id)
+				await supabase.from('ese_question_papers').update({ status: 'draft' }).eq('id', current.paper_id)
 				logAction = 'assignment_returned'
 				logDetail = { by: perm.email, remarks }
 				message = 'Question paper returned to the examiner.'

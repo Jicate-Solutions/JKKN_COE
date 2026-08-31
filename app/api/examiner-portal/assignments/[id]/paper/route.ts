@@ -40,7 +40,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
 		const { assignment } = auth.access
 
 		const { data: paper } = await supabase
-			.from('ia_question_papers')
+			.from('ese_question_papers')
 			.select('*')
 			.eq('id', assignment.paper_id)
 			.maybeSingle()
@@ -117,7 +117,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
 				paperPatch.status = 'submitted'
 				paperPatch.submitted_at = new Date().toISOString()
 			}
-			let q = supabase.from('ia_question_papers').update(paperPatch).eq('id', paper.id)
+			let q = supabase.from('ese_question_papers').update(paperPatch).eq('id', paper.id)
 			if (body.base_updated_at) q = q.eq('updated_at', body.base_updated_at)
 			const { data: updated, error } = await q.select().single()
 

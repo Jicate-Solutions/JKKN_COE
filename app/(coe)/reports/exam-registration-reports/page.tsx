@@ -80,14 +80,14 @@ const REPORT_CATEGORIES: { value: ReportCategory; label: string }[] = [
 
 const REPORT_OPTIONS: { value: ReportType; label: string; description: string; group: ReportCategory; section?: string }[] = [
 	{ value: 'student-exam-registration', label: 'Student Exam Registration', description: 'Learner-wise regular exam registration (regular papers only)', group: 'exam-reg-app', section: 'Program wise Report' },
-	{ value: 'student-exam-registration-summary', label: 'Student Exam Registration - Subject Summary', description: 'Subject-wise registered count per program & year (A4 portrait, no incharge columns)', group: 'exam-reg-app', section: 'Program wise Report' },
+	{ value: 'student-exam-registration-summary', label: 'Student Exam Registration - Subject Summary', description: 'Subject-wise registered count per program & semester (A4 portrait, no incharge columns)', group: 'exam-reg-app', section: 'Program wise Report' },
 	{ value: 'student-fee-details', label: 'Student Exam Application', description: 'Learner-wise exam application with courses and fee columns', group: 'exam-reg-app', section: 'Program wise Report' },
 	{ value: 'student-wise-registration', label: 'Student Exam Registration', description: 'Student-wise regular exam registration (regular papers only)', group: 'exam-reg-app', section: 'Student wise Report' },
 	{ value: 'student-wise-application', label: 'Student Exam Application', description: 'Student-wise exam application with courses and fee columns', group: 'exam-reg-app', section: 'Student wise Report' },
 	{ value: 'course-count-regular-arrear', label: 'Regular / Arrear Count', description: 'Course-wise student count split by Regular and Arrear', group: 'registration' },
-	{ value: 'course-count-year-wise', label: 'Board & Year Wise Course List', description: 'Course-wise student count split by Year', group: 'registration' },
-	{ value: 'course-count-program-year-wise', label: 'Board & Program Wise Registration List', description: 'Course-wise count with Program Code, split by Year', group: 'registration' },
-	{ value: 'course-count-program-year-section', label: 'Program Wise Registration List', description: 'Course-wise student count grouped by Program', group: 'registration' },
+	{ value: 'course-count-year-wise', label: 'Board & Semester Wise Course List', description: 'Course-wise learner count split by the semester the LEARNER is in', group: 'registration' },
+	{ value: 'course-count-program-year-wise', label: 'Board & Program Wise Registration List', description: 'Course-wise count with Program Code, split by the semester the LEARNER is in', group: 'registration' },
+	{ value: 'course-count-program-year-section', label: 'Program Wise Registration List', description: 'Course-wise learner count grouped by Program, split by the semester the LEARNER is in', group: 'registration' },
 	{ value: 'board-wise-exam-timetable', label: 'Board Wise Exam Timetable', description: 'Board-wise exam timetable with date and session', group: 'exam-date' },
 	{ value: 'exam-date-wise-summary', label: 'Exam Date-wise Summary', description: 'Date-wise FN/AN registration count summary', group: 'exam-date' },
 	{ value: 'qp-packing-list', label: 'QP Packing List', description: 'Question Paper packing list - one page per date & session', group: 'exam-date' },
@@ -377,20 +377,22 @@ export default function ExamRegistrationReportsPage() {
 		})
 	}, [programOptions])
 
-	// ── Semester options (derived from the generated report, fallback to 1-10) ──
-
+	// ── Semester options (the LEARNERS' own semesters in the generated report) ──
+	// Never the semesters of the papers: a session where every learner sits in
+	// Semester 3 still carries Semester 1 and 2 arrear papers, and offering those as
+	// choices produced an empty report - nobody is IN Semester 1.
 	const semesterOptions = useMemo(() => {
 		const found = new Set<number>()
 		let hasUnmapped = false
 		for (const r of reportData) {
-			const sem = Number(r.course_offering?.semester)
+			const sem = Number(r.learner_semester)
 			if (sem > 0) found.add(sem)
 			else hasUnmapped = true
 		}
-		// Report with rows but no mapped semester at all: only "Not Mapped" makes sense
+		// Report with rows but no learner semester at all: only "Not Mapped" makes sense
 		if (found.size === 0) return hasUnmapped ? [UNMAPPED_SEMESTER] : DEFAULT_SEMESTER_OPTIONS
 		const list = [...found].sort((a, b) => a - b)
-		// 0 = rows whose course offering has no semester — selectable so they stay reachable
+		// 0 = learners whose semester could not be resolved — selectable so they stay reachable
 		return hasUnmapped ? [...list, UNMAPPED_SEMESTER] : list
 	}, [reportData])
 
@@ -412,27 +414,24 @@ export default function ExamRegistrationReportsPage() {
 		const semesterActive = selectedSemesters.length > 0 && selectedSemesters.length < semesterOptions.length
 		if (!categoryActive && !programActive && !semesterActive) return reportData
 
-		const semesterOf = (r: any) => {
-			const sem = Number(r.course_offering?.semester)
-			return sem > 0 ? sem : UNMAPPED_SEMESTER
-		}
 		// The learner's own semester, as opposed to the paper's
 		const learnerSemesterOf = (r: any) => {
 			const sem = Number(r.learner_semester)
 			return sem > 0 ? sem : UNMAPPED_SEMESTER
 		}
 
-		// On the learner forms a semester selection picks the learner COHORT, and every
-		// paper that learner applied for is then printed - including arrears carried
-		// from earlier semesters. Matching row-by-row would drop exactly those arrear
-		// papers, which is the fee the form exists to collect.
+		// A semester selection picks the learner COHORT on EVERY report, and every paper
+		// that learner applied for then rides along - including arrears carried from
+		// earlier semesters. Matching row-by-row would drop exactly those arrear papers
+		// from the learner forms, and would count them under the arrear's own semester
+		// on the course-count reports.
 		//
 		// The cohort keys off learner_semester - the learner's own semester, stamped by
 		// the API - not off the semesters of their papers. Keying off the papers listed
-		// a Semester 5 learner in the Semester 1 report as well, purely because they
-		// carried a Semester 1 arrear. A learner belongs to one semester and is printed
+		// a Semester 3 learner in the Semester 1 report as well, purely because they
+		// carried a Semester 1 arrear. A learner belongs to one semester and is reported
 		// once, under it, with every paper they applied for.
-		const semesterCohort = semesterActive && isLearnerFormReport
+		const semesterCohort = semesterActive
 			? new Set(
 				reportData
 					.filter(r => selectedSemesters.includes(learnerSemesterOf(r)))
@@ -451,19 +450,13 @@ export default function ExamRegistrationReportsPage() {
 				const code = r.course_offering?.program_code || r.program_code
 				if (!code || !selectedPrograms.includes(code)) return false
 			}
-			if (semesterActive) {
-				if (semesterCohort) {
-					// Learner forms: keep every row of a learner in the selected semester(s)
-					if (!r.stu_register_no || !semesterCohort.has(r.stu_register_no)) return false
-				} else {
-					// Count / date-wise reports aggregate by course, so they match per row.
-					// Strict: a row without a semester only shows under "Not Mapped"
-					if (!selectedSemesters.includes(semesterOf(r))) return false
-				}
+			if (semesterCohort) {
+				// Keep every row of a learner whose OWN semester was selected
+				if (!r.stu_register_no || !semesterCohort.has(r.stu_register_no)) return false
 			}
 			return true
 		})
-	}, [reportData, selectedCourseCategories, selectedPrograms, programOptions, selectedSemesters, semesterOptions, isLearnerFormReport])
+	}, [reportData, selectedCourseCategories, selectedPrograms, programOptions, selectedSemesters, semesterOptions])
 
 	// Student-type reports: count unique learners (by register no), not raw registration rows
 	const isStudentReport = isLearnerFormReport
@@ -605,14 +598,18 @@ export default function ExamRegistrationReportsPage() {
 
 		const reportData2 = filteredReportData
 
-		// Build student year map: each student's current year based on their max regular semester
-		const studentYearMap = new Map<string, string>()
+		// Each learner's OWN semester — the bucket every count column keys off. The API
+		// stamps learner_semester over the whole session; the fallbacks re-derive it from
+		// the rows in hand (regular papers define it, arrear-only learners fall back to
+		// the highest semester they applied in).
+		const studentSemesterMap = new Map<string, number>()
 		const studentMaxRegSem = new Map<string, number>()
 		const studentMaxAnySem = new Map<string, number>()
-		const roman = ['I', 'II', 'III', 'IV', 'V']
 		for (const row of reportData2) {
 			const regNo = row.stu_register_no
 			if (!regNo) continue
+			const stamped = Number(row.learner_semester) || 0
+			if (stamped > 0) studentSemesterMap.set(regNo, stamped)
 			const sem = row.course_offering?.semester || 0
 			if (sem <= 0) continue
 			if (row.is_regular) {
@@ -621,9 +618,8 @@ export default function ExamRegistrationReportsPage() {
 			studentMaxAnySem.set(regNo, Math.max(studentMaxAnySem.get(regNo) || 0, sem))
 		}
 		for (const regNo of new Set([...studentMaxRegSem.keys(), ...studentMaxAnySem.keys()])) {
-			const maxSem = studentMaxRegSem.get(regNo) || studentMaxAnySem.get(regNo) || 1
-			const yearNum = Math.ceil(maxSem / 2)
-			studentYearMap.set(regNo, `${roman[yearNum - 1] || yearNum} Year`)
+			if (studentSemesterMap.has(regNo)) continue
+			studentSemesterMap.set(regNo, studentMaxRegSem.get(regNo) || studentMaxAnySem.get(regNo) || UNMAPPED_SEMESTER)
 		}
 
 		switch (selectedReportType) {
@@ -680,13 +676,13 @@ export default function ExamRegistrationReportsPage() {
 					const co = row.course_offering
 					if (!co) continue
 					const key = `${co.board_code || ''}|${co.course_code}`
-					// Use student's current year, not course semester
-					const year = studentYearMap.get(row.stu_register_no) || 'I Year'
+					// The learner's OWN semester, never the paper's
+					const sem = studentSemesterMap.get(row.stu_register_no) ?? UNMAPPED_SEMESTER
 					if (!countMap.has(key)) {
-						countMap.set(key, { board_code: co.board_code || '', board_name: co.board_name || '', board_order: co.board_order ?? 999, program_code: co.program_code || '', program_order: co.program_order ?? 999, semester: co.semester || 0, course_order: co.course_order ?? 999, course_code: co.course_code, course_name: co.course_name || '', years: {} })
+						countMap.set(key, { board_code: co.board_code || '', board_name: co.board_name || '', board_order: co.board_order ?? 999, program_code: co.program_code || '', program_order: co.program_order ?? 999, semester: co.semester || 0, course_order: co.course_order ?? 999, course_code: co.course_code, course_name: co.course_name || '', semesters: {} })
 					}
 					const entry = countMap.get(key)!
-					entry.years[year] = (entry.years[year] || 0) + 1
+					entry.semesters[sem] = (entry.semesters[sem] || 0) + 1
 				}
 				return Array.from(countMap.values()).sort((a: any, b: any) =>
 				(a.board_order - b.board_order) || (a.semester - b.semester) || (a.course_order - b.course_order) || a.course_code.localeCompare(b.course_code)
@@ -700,13 +696,13 @@ export default function ExamRegistrationReportsPage() {
 					if (!co) continue
 					const programCode = co.program_code || row.program_code || ''
 					const key = `${co.board_code || ''}|${programCode}|${co.course_code}`
-					// Use student's current year, not course semester
-					const year = studentYearMap.get(row.stu_register_no) || 'I Year'
+					// The learner's OWN semester, never the paper's
+					const sem = studentSemesterMap.get(row.stu_register_no) ?? UNMAPPED_SEMESTER
 					if (!countMap.has(key)) {
-						countMap.set(key, { board_code: co.board_code || '', board_name: co.board_name || '', board_order: co.board_order ?? 999, program_code: programCode, program_board_order: co.program_board_order ?? 999, program_order: co.program_order ?? 999, semester: co.semester || 0, course_order: co.course_order ?? 999, course_code: co.course_code, course_name: co.course_name || '', years: {} })
+						countMap.set(key, { board_code: co.board_code || '', board_name: co.board_name || '', board_order: co.board_order ?? 999, program_code: programCode, program_board_order: co.program_board_order ?? 999, program_order: co.program_order ?? 999, semester: co.semester || 0, course_order: co.course_order ?? 999, course_code: co.course_code, course_name: co.course_name || '', semesters: {} })
 					}
 					const entry = countMap.get(key)!
-					entry.years[year] = (entry.years[year] || 0) + 1
+					entry.semesters[sem] = (entry.semesters[sem] || 0) + 1
 				}
 				return Array.from(countMap.values()).sort((a: any, b: any) =>
 				(a.board_order - b.board_order) || (a.program_order - b.program_order) || a.program_code.localeCompare(b.program_code) || (a.semester - b.semester) || (a.course_order - b.course_order) || a.course_code.localeCompare(b.course_code)
@@ -714,14 +710,14 @@ export default function ExamRegistrationReportsPage() {
 			}
 
 			case 'course-count-program-year-section': {
-				// Group by program_code → list of courses with year-wise student counts
-				const programMap = new Map<string, { program_code: string; program_name: string | null; program_order: number; courses: Map<string, { semester: number; course_order: number; course_code: string; course_name: string; years: Record<string, number> }> }>()
+				// Group by program_code → list of courses with semester-wise student counts
+				const programMap = new Map<string, { program_code: string; program_name: string | null; program_order: number; courses: Map<string, { semester: number; course_order: number; course_code: string; course_name: string; semesters: Record<number, number> }> }>()
 
 				for (const row of reportData2) {
 					const co = row.course_offering
 					if (!co) continue
 					const programCode = co.program_code || row.program_code || ''
-					const studentYear = studentYearMap.get(row.stu_register_no) || 'I Year'
+					const sem = studentSemesterMap.get(row.stu_register_no) ?? UNMAPPED_SEMESTER
 
 					if (!programMap.has(programCode)) {
 						programMap.set(programCode, {
@@ -739,11 +735,11 @@ export default function ExamRegistrationReportsPage() {
 							course_order: co.course_order ?? 999,
 							course_code: co.course_code,
 							course_name: co.course_name || '',
-							years: {},
+							semesters: {},
 						})
 					}
 					const course = program.courses.get(courseKey)!
-					course.years[studentYear] = (course.years[studentYear] || 0) + 1
+					course.semesters[sem] = (course.semesters[sem] || 0) + 1
 				}
 
 				return Array.from(programMap.values())
@@ -846,17 +842,20 @@ export default function ExamRegistrationReportsPage() {
 		}
 	}, [filteredReportData, selectedReportType])
 
-	// Unique year columns for year-wise reports
-	const yearColumns = useMemo(() => {
+	// Learner-semester count columns for the course-count reports
+	const semesterColumns = useMemo(() => {
 		if (selectedReportType !== 'course-count-year-wise' && selectedReportType !== 'course-count-program-year-wise' && selectedReportType !== 'course-count-program-year-section') return []
-		const allYears = new Set<string>()
+		const found = new Set<number>()
+		const collect = (counts: Record<string, number> | undefined) => {
+			if (counts) Object.keys(counts).forEach(s => found.add(Number(s)))
+		}
 		previewData.forEach((row: any) => {
-			if (row.years) Object.keys(row.years).forEach(y => allYears.add(y))
-			// For program-year-section, courses have years
-			if (row.courses) row.courses.forEach((c: any) => { if (c.years) Object.keys(c.years).forEach(y => allYears.add(y)) })
+			collect(row.semesters)
+			// For the program-section report the counts hang off each course
+			if (row.courses) row.courses.forEach((c: any) => collect(c.semesters))
 		})
-		const order = ['I Year', 'II Year', 'III Year', 'IV Year', 'V Year']
-		return Array.from(allYears).sort((a, b) => order.indexOf(a) - order.indexOf(b))
+		// An unresolved semester (0) sorts after every real one
+		return Array.from(found).sort((a, b) => (a || 99) - (b || 99))
 	}, [previewData, selectedReportType])
 
 	// Pagination
@@ -1412,8 +1411,8 @@ export default function ExamRegistrationReportsPage() {
 													<TableHead className="text-center w-14">Sem</TableHead>
 													<TableHead className="text-center">Course Code</TableHead>
 													<TableHead className="text-center">Course Name</TableHead>
-													{yearColumns.map(y => (
-														<TableHead key={y} className="text-center">{y}</TableHead>
+													{semesterColumns.map(s => (
+														<TableHead key={s} className="text-center">{semesterLabel(s)}</TableHead>
 													))}
 													<TableHead className="text-center">Total</TableHead>
 												</TableRow>
@@ -1421,11 +1420,11 @@ export default function ExamRegistrationReportsPage() {
 											<TableBody>
 												{paginatedData.length === 0 ? (
 													<TableRow>
-														<TableCell colSpan={6 + yearColumns.length} className="text-center py-8 text-muted-foreground">No data</TableCell>
+														<TableCell colSpan={6 + semesterColumns.length} className="text-center py-8 text-muted-foreground">No data</TableCell>
 													</TableRow>
 												) : (
 													paginatedData.map((row: any, idx: number) => {
-														const total = yearColumns.reduce((sum, y) => sum + (row.years[y] || 0), 0)
+														const total = semesterColumns.reduce((sum, s) => sum + (row.semesters[s] || 0), 0)
 														return (
 															<TableRow key={idx}>
 																<TableCell className="text-center text-xs">{(currentPage - 1) * pageSize + idx + 1}</TableCell>
@@ -1433,8 +1432,8 @@ export default function ExamRegistrationReportsPage() {
 																<TableCell className="text-center text-xs">{row.semester ? toRoman(row.semester) : '-'}</TableCell>
 																<TableCell className="text-center text-xs font-medium">{row.course_code}</TableCell>
 																<TableCell className="text-xs max-w-[200px] break-words">{row.course_name || '-'}</TableCell>
-																{yearColumns.map(y => (
-																	<TableCell key={y} className="text-center text-xs">{row.years[y] || 0}</TableCell>
+																{semesterColumns.map(s => (
+																	<TableCell key={s} className="text-center text-xs">{row.semesters[s] || 0}</TableCell>
 																))}
 																<TableCell className="text-center text-xs font-semibold">{total}</TableCell>
 															</TableRow>
@@ -1455,8 +1454,8 @@ export default function ExamRegistrationReportsPage() {
 													<TableHead className="text-center w-14">Sem</TableHead>
 													<TableHead className="text-center">Course Code</TableHead>
 													<TableHead className="text-center">Course Name</TableHead>
-													{yearColumns.map(y => (
-														<TableHead key={y} className="text-center">{y}</TableHead>
+													{semesterColumns.map(s => (
+														<TableHead key={s} className="text-center">{semesterLabel(s)}</TableHead>
 													))}
 													<TableHead className="text-center">Total</TableHead>
 												</TableRow>
@@ -1464,11 +1463,11 @@ export default function ExamRegistrationReportsPage() {
 											<TableBody>
 												{paginatedData.length === 0 ? (
 													<TableRow>
-														<TableCell colSpan={7 + yearColumns.length} className="text-center py-8 text-muted-foreground">No data</TableCell>
+														<TableCell colSpan={7 + semesterColumns.length} className="text-center py-8 text-muted-foreground">No data</TableCell>
 													</TableRow>
 												) : (
 													paginatedData.map((row: any, idx: number) => {
-														const total = yearColumns.reduce((sum, y) => sum + (row.years[y] || 0), 0)
+														const total = semesterColumns.reduce((sum, s) => sum + (row.semesters[s] || 0), 0)
 														return (
 															<TableRow key={idx}>
 																<TableCell className="text-center text-xs">{(currentPage - 1) * pageSize + idx + 1}</TableCell>
@@ -1477,8 +1476,8 @@ export default function ExamRegistrationReportsPage() {
 																<TableCell className="text-center text-xs">{row.semester ? toRoman(row.semester) : '-'}</TableCell>
 																<TableCell className="text-center text-xs font-medium">{row.course_code}</TableCell>
 																<TableCell className="text-xs max-w-[200px] break-words">{row.course_name || '-'}</TableCell>
-																{yearColumns.map(y => (
-																	<TableCell key={y} className="text-center text-xs">{row.years[y] || 0}</TableCell>
+																{semesterColumns.map(s => (
+																	<TableCell key={s} className="text-center text-xs">{row.semesters[s] || 0}</TableCell>
 																))}
 																<TableCell className="text-center text-xs font-semibold">{total}</TableCell>
 															</TableRow>
@@ -1508,23 +1507,23 @@ export default function ExamRegistrationReportsPage() {
 																	<TableHead className="text-center w-14">Sem</TableHead>
 																	<TableHead className="text-center">Course Code</TableHead>
 																	<TableHead>Course Name</TableHead>
-																	{yearColumns.map(y => (
-																		<TableHead key={y} className="text-center w-20">{y}</TableHead>
+																	{semesterColumns.map(s => (
+																		<TableHead key={s} className="text-center w-20">{semesterLabel(s)}</TableHead>
 																	))}
 																	<TableHead className="text-center w-16">Total</TableHead>
 																</TableRow>
 															</TableHeader>
 															<TableBody>
 																{section.courses.map((course: any, cIdx: number) => {
-																	const total = yearColumns.reduce((sum: number, y: string) => sum + (course.years[y] || 0), 0)
+																	const total = semesterColumns.reduce((sum: number, s: number) => sum + (course.semesters[s] || 0), 0)
 																	return (
 																		<TableRow key={course.course_code}>
 																			<TableCell className="text-center text-xs">{cIdx + 1}</TableCell>
 																			<TableCell className="text-center text-xs">{toRoman(course.semester)}</TableCell>
 																			<TableCell className="text-center text-xs font-medium">{course.course_code}</TableCell>
 																			<TableCell className="text-xs">{course.course_name}</TableCell>
-																			{yearColumns.map(y => (
-																				<TableCell key={y} className="text-center text-xs">{course.years[y] || 0}</TableCell>
+																			{semesterColumns.map(s => (
+																				<TableCell key={s} className="text-center text-xs">{course.semesters[s] || 0}</TableCell>
 																			))}
 																			<TableCell className="text-center text-xs font-semibold">{total}</TableCell>
 																		</TableRow>

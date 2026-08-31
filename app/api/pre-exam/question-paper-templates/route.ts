@@ -353,13 +353,15 @@ export async function DELETE(req: NextRequest) {
 			return NextResponse.json({ error: ownership.error }, { status: ownership.status })
 		}
 
-		const { data: papers } = await supabase
-			.from('ia_question_papers')
-			.select('id')
-			.eq('template_id', id)
-			.limit(1)
+		// Both paper tables must be checked. An end-semester paper holds its
+		// template with ON DELETE RESTRICT, so without this the delete fails with a
+		// raw foreign-key error instead of an explanation.
+		const [{ data: ciaPapers }, { data: esePapers }] = await Promise.all([
+			supabase.from('ia_question_papers').select('id').eq('template_id', id).limit(1),
+			supabase.from('ese_question_papers').select('id').eq('template_id', id).limit(1),
+		])
 
-		if (papers && papers.length > 0) {
+		if ((ciaPapers && ciaPapers.length > 0) || (esePapers && esePapers.length > 0)) {
 			return NextResponse.json(
 				{ error: 'Cannot delete: question papers were generated from this template. Archive it instead.' },
 				{ status: 400 }

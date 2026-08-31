@@ -207,7 +207,10 @@ WITH page_perms(name, description, resource, role_names) AS (
 			'page.pre_exam.qp_examiner_assignment.view',
 			'Access Question Paper Examiner Assignment page',
 			'page.pre_exam.qp_examiner_assignment',
-			ARRAY['super_admin', 'coe', 'deputy_coe']
+			-- 'dupty_coe' is how the deputy CoE role is actually spelled in this
+			-- database; both spellings are listed so the grant lands either way.
+			-- The JOIN on roles silently ignores whichever does not exist.
+			ARRAY['super_admin', 'coe', 'dupty_coe', 'deputy_coe']
 		),
 		(
 			'page.pre_exam.qp_portal_content.view',

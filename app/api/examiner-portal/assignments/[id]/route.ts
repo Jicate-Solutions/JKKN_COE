@@ -32,7 +32,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 
 		const [paperRes, partsRes, outcomesRes, sessionRes] = await Promise.all([
 			supabase
-				.from('ia_question_papers')
+				.from('ese_question_papers')
 				// updated_at is what the editor sends back as base_updated_at — without
 				// it the optimistic-concurrency guard on save is silently disabled.
 				.select('id, status, subject_title, course_code, set_label, semester, program_code, max_marks, duration_minutes, default_font, questions, submitted_at, updated_at')

@@ -20,13 +20,57 @@ interface ReportPdfOptions {
 const ROMAN = ['', 'I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X']
 function toRoman(n: number): string { return ROMAN[n] || String(n) }
 
-function semesterToYear(semester: number): string {
-	const yearNum = Math.ceil(semester / 2)
-	return `${toRoman(yearNum)} Year`
+/** Section label for a learner's own semester */
+function semesterLabel(semester: number): string {
+	return semester > 0 ? toRoman(semester) : 'Not Mapped'
+}
+
+/** Compact header for a learner-semester count column (these columns are narrow) */
+function semesterColumnLabel(semester: number): string {
+	return semester > 0 ? toRoman(semester) : 'N/M'
+}
+
+/** Semester sort key — an unresolved semester sorts after every real one */
+function semesterSortKey(semester: number): number {
+	return semester > 0 ? semester : 99
+}
+
+/**
+ * Size the per-semester count columns on the course-count reports.
+ *
+ * A session can carry up to ten learner semesters where the old year columns
+ * capped out at five, so `nameColIdx` (the Course Name column, which wraps) gives
+ * up width — down to a floor — rather than letting the count columns collapse.
+ * MUTATES `fixedColWidths` and returns the resulting fixed total.
+ */
+function fitSemesterColumns(
+	fixedColWidths: number[],
+	nameColIdx: number,
+	availableWidth: number,
+	semesterCount: number
+): { fixedTotal: number; semColWidth: number } {
+	const MIN_SEM_COL = 9
+	const MIN_NAME_COL = 30
+	let fixedTotal = fixedColWidths.reduce((a, b) => a + b, 0)
+	const columns = Math.max(semesterCount, 1)
+	const shortfall = MIN_SEM_COL * columns - (availableWidth - fixedTotal)
+	if (shortfall > 0) {
+		const borrow = Math.min(shortfall, fixedColWidths[nameColIdx] - MIN_NAME_COL)
+		if (borrow > 0) {
+			fixedColWidths[nameColIdx] -= borrow
+			fixedTotal -= borrow
+		}
+	}
+	return { fixedTotal, semColWidth: Math.min(25, (availableWidth - fixedTotal) / columns) }
 }
 
 /**
  * Build a map of student register number → the learner's CURRENT semester.
+ *
+ * Every report is bucketed by this, never by the semester of the paper: a learner
+ * sits in ONE semester and carries arrear papers from the semesters behind it, so
+ * keying off the paper would print a Semester 3 learner again under Semester 1 and
+ * Semester 2 purely because they still owe a paper there.
  *
  * The API stamps learner_semester on every row, resolved over the whole session
  * before any filter is applied. The fallbacks re-derive it from the rows in hand:
@@ -49,15 +93,8 @@ function buildStudentSemesterMap(data: any[]): Map<string, number> {
 	}
 	const result = new Map<string, number>()
 	for (const regNo of new Set([...stamped.keys(), ...maxRegSem.keys(), ...maxAnySem.keys()])) {
-		result.set(regNo, stamped.get(regNo) || maxRegSem.get(regNo) || maxAnySem.get(regNo) || 1)
+		result.set(regNo, stamped.get(regNo) || maxRegSem.get(regNo) || maxAnySem.get(regNo) || 0)
 	}
-	return result
-}
-
-/** Build a map of student register number → current year */
-function buildStudentYearMap(data: any[]): Map<string, string> {
-	const result = new Map<string, string>()
-	for (const [regNo, sem] of buildStudentSemesterMap(data)) result.set(regNo, semesterToYear(sem))
 	return result
 }
 
@@ -270,15 +307,15 @@ function drawHeader(
 	return currentY
 }
 
-/** Draw Program and Year subtitle lines below the main header */
-function drawProgramYearSubtitle(
+/** Draw Program and Semester subtitle lines below the main header */
+function drawProgramSemesterSubtitle(
 	doc: jsPDF,
 	pageWidth: number,
 	margin: number,
 	y: number,
 	programCode: string,
 	programName: string | null,
-	year: string,
+	semester: number,
 	subjectCount?: number,
 	studentCount?: number,
 	studentCountWord: string = 'Registered'
@@ -296,9 +333,9 @@ function drawProgramYearSubtitle(
 		doc.text(`No.of Subjects : ${subjectCount}`, pageWidth - margin, y, { align: 'right' })
 	}
 
-	// Line 2: Year (left)  |  No. of Students Registered/Applied (right)
+	// Line 2: Semester (left)  |  No. of Students Registered/Applied (right)
 	const y2 = y + 4
-	doc.text(`Year : ${year}`, margin, y2)
+	doc.text(`Semester : ${semesterLabel(semester)}`, margin, y2)
 	if (studentCount != null) {
 		doc.text(`No.of Students ${studentCountWord}: ${studentCount}`, pageWidth - margin, y2, { align: 'right' })
 	}
@@ -308,7 +345,7 @@ function drawProgramYearSubtitle(
 
 /**
  * Draw a per-program subject-wise summary on fresh page(s), placed immediately after a
- * program+year detail section. Lists every distinct subject with the number of students
+ * program+semester detail section. Lists every distinct subject with the number of students
  * registered/applied, plus blank columns for the subject incharge name and signature.
  */
 function drawProgramSummary(
@@ -322,7 +359,7 @@ function drawProgramSummary(
 	studentCountWord: string,
 	programCode: string,
 	programName: string | null,
-	year: string,
+	semester: number,
 	students: { courses: { semester: number; course_order: number; course_code: string; course_name: string }[] }[],
 	/**
 	 * `compact` drops the two blank incharge columns (portrait A4 layout);
@@ -356,8 +393,8 @@ function drawProgramSummary(
 	// Columns — landscape A4 ~284mm usable, portrait A4 ~197mm usable
 	const colWidths = compact ? [14, 20, 32, 96, 35] : [14, 20, 32, 78, 36, 50, 54]
 	const headers = compact
-		? ['S.No', 'SEM/\nYear', 'Subject\nCode', 'Course Name', countHeaderLabel]
-		: ['S.No', 'SEM/\nYear', 'Subject\nCode', 'Course Name', countHeaderLabel, 'Name of the\nSubject Incharge', 'Signature of the\nSubject Incharge']
+		? ['S.No', 'Sem', 'Subject\nCode', 'Course Name', countHeaderLabel]
+		: ['S.No', 'Sem', 'Subject\nCode', 'Course Name', countHeaderLabel, 'Name of the\nSubject Incharge', 'Signature of the\nSubject Incharge']
 	const headerHeight = 14
 	const baseRowHeight = 14
 
@@ -381,7 +418,7 @@ function drawProgramSummary(
 
 	if (newPage) doc.addPage()
 	let startY = drawHeader(doc, pageWidth, margin, opts, title)
-	startY = drawProgramYearSubtitle(doc, pageWidth, margin, startY, programCode, programName, year, subjectCount, students.length, studentCountWord)
+	startY = drawProgramSemesterSubtitle(doc, pageWidth, margin, startY, programCode, programName, semester, subjectCount, students.length, studentCountWord)
 	let tableY = drawSummaryHeader(startY)
 
 	courses.forEach((course, idx) => {
@@ -402,7 +439,7 @@ function drawProgramSummary(
 		doc.rect(x, tableY, colWidths[0], rh)
 		doc.text(String(idx + 1), x + colWidths[0] / 2, tableY + rh / 2 + 1.5, { align: 'center' })
 		x += colWidths[0]
-		// SEM/Year
+		// Sem — the semester the PAPER belongs to (an arrear keeps its own)
 		doc.rect(x, tableY, colWidths[1], rh)
 		doc.text(course.semester ? toRoman(course.semester) : '', x + colWidths[1] / 2, tableY + rh / 2 + 1.5, { align: 'center' })
 		x += colWidths[1]
@@ -469,7 +506,7 @@ function generateStudentFeeDetailsPdf(opts: ReportPdfOptions): string {
 	const pageHeight = doc.internal.pageSize.getHeight()
 	const margin = 6.35
 
-	// Group registrations by program_code, then by year within each program
+	// Group registrations by program_code, then by the LEARNER's own semester
 	const programDataMap = new Map<string, any[]>()
 	const programMeta = new Map<string, { program_order: number, program_name: string | null }>()
 	for (const row of opts.data) {
@@ -491,41 +528,38 @@ function generateStudentFeeDetailsPdf(opts: ReportPdfOptions): string {
 		return (ma.program_order - mb.program_order) || a.localeCompare(b)
 	})
 
-	// Build sections: each section = one program + one year
-	const yearOrder = ['I Year', 'II Year', 'III Year', 'IV Year', 'V Year']
-	interface Section { programCode: string, programName: string | null, year: string, rows: any[] }
+	// Build sections: each section = one program + one semester
+	interface Section { programCode: string, programName: string | null, semester: number, rows: any[] }
 	const sections: Section[] = []
 
 	for (const programCode of sortedPrograms) {
 		const programRows = programDataMap.get(programCode)!
 
-		// Group rows by year. The learner's own semester decides the year block they are
-		// printed in - not the highest paper they applied for, which for an arrear
-		// belongs to a year they have already left.
-		const studentYearMap = buildStudentSemesterMap(programRows)
+		// The learner's own semester decides the block they are printed in - not the
+		// semester of the paper, which for an arrear belongs to a semester they have
+		// already left. Every paper they applied for, regular and arrear alike, then
+		// prints under that one block.
+		const studentSemesterMap = buildStudentSemesterMap(programRows)
 
-		// Group rows by the student's year
-		const yearGroups = new Map<string, any[]>()
+		const semesterGroups = new Map<number, any[]>()
 		for (const row of programRows) {
 			const regNo = row.stu_register_no || 'Unknown'
-			const maxSem = studentYearMap.get(regNo) || 1
-			const year = semesterToYear(maxSem)
-			if (!yearGroups.has(year)) yearGroups.set(year, [])
-			yearGroups.get(year)!.push(row)
+			const sem = studentSemesterMap.get(regNo) || 0
+			if (!semesterGroups.has(sem)) semesterGroups.set(sem, [])
+			semesterGroups.get(sem)!.push(row)
 		}
 
-		// Sort years in order
-		const sortedYears = Array.from(yearGroups.keys()).sort((a, b) => yearOrder.indexOf(a) - yearOrder.indexOf(b))
+		const sortedSemesters = Array.from(semesterGroups.keys()).sort((a, b) => semesterSortKey(a) - semesterSortKey(b))
 
 		const pName = programMeta.get(programCode)?.program_name || null
-		for (const year of sortedYears) {
-			sections.push({ programCode, programName: pName, year, rows: yearGroups.get(year)! })
+		for (const semester of sortedSemesters) {
+			sections.push({ programCode, programName: pName, semester, rows: semesterGroups.get(semester)! })
 		}
 	}
 
 	// Column widths (landscape A4 = ~287mm usable width minus margins)
 	const colWidths = [9, 26, 32, 19, 15, 21, 57, 16, 16, 18, 18, 15, 22]
-	const headers = ['S.No', 'Register No', 'Name of the\nCandidate', 'Date of\nBirth', 'SEM/\nYear', 'Subject\nCode', 'Course Name', 'Total\nSubjects', 'Theory', 'Application\nFee', 'Mark\nStatement\nFee', 'Total\nAmount', 'Signature of\nthe Student']
+	const headers = ['S.No', 'Register No', 'Name of the\nCandidate', 'Date of\nBirth', 'Sem', 'Subject\nCode', 'Course Name', 'Total\nSubjects', 'Theory', 'Application\nFee', 'Mark\nStatement\nFee', 'Total\nAmount', 'Signature of\nthe Student']
 	const headerHeight = 10
 	const rowHeight = 6
 	const footerSpace = 10
@@ -552,9 +586,9 @@ function generateStudentFeeDetailsPdf(opts: ReportPdfOptions): string {
 		return y + headerHeight
 	}
 
-	// Render each section (program + year) on a fresh page with header
+	// Render each section (program + semester) on a fresh page with header
 	sections.forEach((section, sectionIdx) => {
-		const { programCode, programName, year, rows: sectionRows } = section
+		const { programCode, programName, semester, rows: sectionRows } = section
 
 		// Build student map for this section
 		const studentMap = new Map<string, { name: string, dob: string, courses: any[], fees: StudentFees }>()
@@ -601,9 +635,9 @@ function generateStudentFeeDetailsPdf(opts: ReportPdfOptions): string {
 			currentPage++
 		}
 
-		// Draw header + program/year subtitle
+		// Draw header + program/semester subtitle
 		let startY = drawHeader(doc, pageWidth, margin, opts, 'STUDENT EXAM APPLICATION')
-		startY = drawProgramYearSubtitle(doc, pageWidth, margin, startY, programCode, programName, year, subjectCount, students.length, 'Applied')
+		startY = drawProgramSemesterSubtitle(doc, pageWidth, margin, startY, programCode, programName, semester, subjectCount, students.length, 'Applied')
 		let tableY = drawTableHeader(startY)
 		rowsOnPage = 0
 
@@ -721,7 +755,7 @@ function generateStudentFeeDetailsPdf(opts: ReportPdfOptions): string {
 		})
 
 		// Per-program subject-wise summary — printed immediately after this program section
-		drawProgramSummary(doc, pageWidth, pageHeight, margin, opts, 'STUDENT EXAM APPLICATION - SUBJECT SUMMARY', 'No. of Students\nApplied', 'Applied', programCode, programName, year, students)
+		drawProgramSummary(doc, pageWidth, pageHeight, margin, opts, 'STUDENT EXAM APPLICATION - SUBJECT SUMMARY', 'No. of Students\nApplied', 'Applied', programCode, programName, semester, students)
 	})
 
 	// Add footers to all pages
@@ -745,7 +779,7 @@ function generateStudentExamRegistrationPdf(opts: ReportPdfOptions): string {
 	const pageHeight = doc.internal.pageSize.getHeight()
 	const margin = 6.35
 
-	// Group registrations by program_code, then by year within each program
+	// Group registrations by program_code, then by the LEARNER's own semester
 	const programDataMap = new Map<string, any[]>()
 	const programMeta = new Map<string, { program_order: number, program_name: string | null }>()
 	for (const row of opts.data) {
@@ -767,39 +801,38 @@ function generateStudentExamRegistrationPdf(opts: ReportPdfOptions): string {
 		return (ma.program_order - mb.program_order) || a.localeCompare(b)
 	})
 
-	// Build sections: each section = one program + one year
-	const yearOrder = ['I Year', 'II Year', 'III Year', 'IV Year', 'V Year']
-	interface Section { programCode: string, programName: string | null, year: string, rows: any[] }
+	// Build sections: each section = one program + one semester
+	interface Section { programCode: string, programName: string | null, semester: number, rows: any[] }
 	const sections: Section[] = []
 
 	for (const programCode of sortedPrograms) {
 		const programRows = programDataMap.get(programCode)!
 
-		// The learner's own semester decides the year block they are printed in - not
-		// the highest paper they applied for, which for an arrear belongs to a year
-		// they have already left.
-		const studentYearMap = buildStudentSemesterMap(programRows)
+		// The learner's own semester decides the block they are printed in - not the
+		// semester of the paper, which for an arrear belongs to a semester they have
+		// already left. Every paper they applied for, regular and arrear alike, then
+		// prints under that one block.
+		const studentSemesterMap = buildStudentSemesterMap(programRows)
 
-		const yearGroups = new Map<string, any[]>()
+		const semesterGroups = new Map<number, any[]>()
 		for (const row of programRows) {
 			const regNo = row.stu_register_no || 'Unknown'
-			const maxSem = studentYearMap.get(regNo) || 1
-			const year = semesterToYear(maxSem)
-			if (!yearGroups.has(year)) yearGroups.set(year, [])
-			yearGroups.get(year)!.push(row)
+			const sem = studentSemesterMap.get(regNo) || 0
+			if (!semesterGroups.has(sem)) semesterGroups.set(sem, [])
+			semesterGroups.get(sem)!.push(row)
 		}
 
-		const sortedYears = Array.from(yearGroups.keys()).sort((a, b) => yearOrder.indexOf(a) - yearOrder.indexOf(b))
+		const sortedSemesters = Array.from(semesterGroups.keys()).sort((a, b) => semesterSortKey(a) - semesterSortKey(b))
 
 		const pName = programMeta.get(programCode)?.program_name || null
-		for (const year of sortedYears) {
-			sections.push({ programCode, programName: pName, year, rows: yearGroups.get(year)! })
+		for (const semester of sortedSemesters) {
+			sections.push({ programCode, programName: pName, semester, rows: semesterGroups.get(semester)! })
 		}
 	}
 
 	// Column widths (landscape A4 = ~284mm usable). No fee columns.
 	const colWidths = [11, 30, 50, 24, 18, 26, 75, 18, 32]
-	const headers = ['S.No', 'Register No', 'Name of the\nCandidate', 'Date of\nBirth', 'SEM/\nYear', 'Subject\nCode', 'Course Name', 'Total\nSubjects', 'Signature of\nthe Student']
+	const headers = ['S.No', 'Register No', 'Name of the\nCandidate', 'Date of\nBirth', 'Sem', 'Subject\nCode', 'Course Name', 'Total\nSubjects', 'Signature of\nthe Student']
 	const headerHeight = 10
 	const rowHeight = 6
 	const footerSpace = 10
@@ -826,9 +859,9 @@ function generateStudentExamRegistrationPdf(opts: ReportPdfOptions): string {
 		return y + headerHeight
 	}
 
-	// Render each section (program + year) on a fresh page with header
+	// Render each section (program + semester) on a fresh page with header
 	sections.forEach((section, sectionIdx) => {
-		const { programCode, programName, year, rows: sectionRows } = section
+		const { programCode, programName, semester, rows: sectionRows } = section
 
 		// Build student map for this section
 		const studentMap = new Map<string, { name: string, dob: string, courses: any[] }>()
@@ -873,7 +906,7 @@ function generateStudentExamRegistrationPdf(opts: ReportPdfOptions): string {
 		}
 
 		let startY = drawHeader(doc, pageWidth, margin, opts, 'STUDENT EXAM REGISTRATION')
-		startY = drawProgramYearSubtitle(doc, pageWidth, margin, startY, programCode, programName, year, subjectCount, students.length, 'Registered')
+		startY = drawProgramSemesterSubtitle(doc, pageWidth, margin, startY, programCode, programName, semester, subjectCount, students.length, 'Registered')
 		let tableY = drawTableHeader(startY)
 		rowsOnPage = 0
 
@@ -981,7 +1014,7 @@ function generateStudentExamRegistrationPdf(opts: ReportPdfOptions): string {
 		})
 
 		// Per-program subject-wise summary — printed immediately after this program section
-		drawProgramSummary(doc, pageWidth, pageHeight, margin, opts, 'STUDENT EXAM REGISTRATION - SUBJECT SUMMARY', 'No. of Students\nRegistered', 'Registered', programCode, programName, year, students)
+		drawProgramSummary(doc, pageWidth, pageHeight, margin, opts, 'STUDENT EXAM REGISTRATION - SUBJECT SUMMARY', 'No. of Students\nRegistered', 'Registered', programCode, programName, semester, students)
 	})
 
 	// Add footers to all pages
@@ -1005,7 +1038,7 @@ function generateStudentExamRegistrationSummaryPdf(opts: ReportPdfOptions): stri
 	const pageHeight = doc.internal.pageSize.getHeight()
 	const margin = 6.35
 
-	// Group registrations by program_code, then by year within each program
+	// Group registrations by program_code, then by the LEARNER's own semester
 	const programDataMap = new Map<string, any[]>()
 	const programMeta = new Map<string, { program_order: number, program_name: string | null }>()
 	for (const row of opts.data) {
@@ -1026,40 +1059,39 @@ function generateStudentExamRegistrationSummaryPdf(opts: ReportPdfOptions): stri
 		return (ma.program_order - mb.program_order) || a.localeCompare(b)
 	})
 
-	// Build sections: each section = one program + one year
-	const yearOrder = ['I Year', 'II Year', 'III Year', 'IV Year', 'V Year']
-	interface Section { programCode: string, programName: string | null, year: string, rows: any[] }
+	// Build sections: each section = one program + one semester
+	interface Section { programCode: string, programName: string | null, semester: number, rows: any[] }
 	const sections: Section[] = []
 
 	for (const programCode of sortedPrograms) {
 		const programRows = programDataMap.get(programCode)!
 
-		// The learner's own semester decides the year block they are printed in - not
-		// the highest paper they applied for, which for an arrear belongs to a year
-		// they have already left.
-		const studentYearMap = buildStudentSemesterMap(programRows)
+		// The learner's own semester decides the block they are printed in - not the
+		// semester of the paper, which for an arrear belongs to a semester they have
+		// already left. Every paper they applied for, regular and arrear alike, then
+		// prints under that one block.
+		const studentSemesterMap = buildStudentSemesterMap(programRows)
 
-		const yearGroups = new Map<string, any[]>()
+		const semesterGroups = new Map<number, any[]>()
 		for (const row of programRows) {
 			const regNo = row.stu_register_no || 'Unknown'
-			const maxSem = studentYearMap.get(regNo) || 1
-			const year = semesterToYear(maxSem)
-			if (!yearGroups.has(year)) yearGroups.set(year, [])
-			yearGroups.get(year)!.push(row)
+			const sem = studentSemesterMap.get(regNo) || 0
+			if (!semesterGroups.has(sem)) semesterGroups.set(sem, [])
+			semesterGroups.get(sem)!.push(row)
 		}
 
-		const sortedYears = Array.from(yearGroups.keys()).sort((a, b) => yearOrder.indexOf(a) - yearOrder.indexOf(b))
+		const sortedSemesters = Array.from(semesterGroups.keys()).sort((a, b) => semesterSortKey(a) - semesterSortKey(b))
 
 		const pName = programMeta.get(programCode)?.program_name || null
-		for (const year of sortedYears) {
-			sections.push({ programCode, programName: pName, year, rows: yearGroups.get(year)! })
+		for (const semester of sortedSemesters) {
+			sections.push({ programCode, programName: pName, semester, rows: semesterGroups.get(semester)! })
 		}
 	}
 
 	let rendered = 0
 
 	sections.forEach((section) => {
-		const { programCode, programName, year, rows: sectionRows } = section
+		const { programCode, programName, semester, rows: sectionRows } = section
 
 		// Collapse registrations into per-student course lists
 		const studentMap = new Map<string, { courses: any[] }>()
@@ -1088,7 +1120,7 @@ function generateStudentExamRegistrationSummaryPdf(opts: ReportPdfOptions): stri
 			doc, pageWidth, pageHeight, margin, opts,
 			'STUDENT EXAM REGISTRATION - SUBJECT SUMMARY',
 			'No. of Students\nRegistered', 'Registered',
-			programCode, programName, year, students,
+			programCode, programName, semester, students,
 			{ compact: true, newPage: rendered > 0 },
 		)
 		rendered++
@@ -1324,39 +1356,38 @@ function generateCourseCountRegularArrearPdf(opts: ReportPdfOptions): string {
 	return filename
 }
 
-// ── Report 2B: Board & Year Wise Course List (A4 Portrait) ──
+// ── Report 2B: Board & Semester Wise Course List (A4 Portrait) ──
 
-function generateCourseCountYearWisePdf(opts: ReportPdfOptions): string {
+function generateCourseCountSemesterWisePdf(opts: ReportPdfOptions): string {
 	const doc = new jsPDF('portrait', 'mm', 'a4')
 	const pageWidth = doc.internal.pageSize.getWidth()
 	const pageHeight = doc.internal.pageSize.getHeight()
 	const margin = 6.35
 
-	// Build student year map for student-based year counting
-	const studentYearMap = buildStudentYearMap(opts.data)
+	// The learner's own semester - never the paper's - decides which column a
+	// registration is counted under, so a Semester 3 learner's Semester 1 arrear
+	// is counted in the Semester 3 column.
+	const studentSemesterMap = buildStudentSemesterMap(opts.data)
 
-	// Aggregate counts by board_code + course_code + year (using student's current year)
+	// Aggregate counts by board_code + course_code + the learner's own semester
 	const countMap = new Map<string, any>()
-	const allYears = new Set<string>()
+	const allSemesters = new Set<number>()
 
 	for (const row of opts.data) {
 		const co = row.course_offering
 		if (!co) continue
 		const key = `${co.board_code || ''}|${co.course_code}`
-		const year = studentYearMap.get(row.stu_register_no) || semesterToYear(co.semester || 1)
-		allYears.add(year)
+		const sem = studentSemesterMap.get(row.stu_register_no) || 0
+		allSemesters.add(sem)
 
 		if (!countMap.has(key)) {
-			countMap.set(key, { board_code: co.board_code || '', board_name: co.board_name || '', board_order: co.board_order ?? 999, program_order: co.program_order ?? 999, semester: co.semester || 0, course_order: co.course_order ?? 999, course_code: co.course_code, course_name: co.course_name || '', years: {} })
+			countMap.set(key, { board_code: co.board_code || '', board_name: co.board_name || '', board_order: co.board_order ?? 999, program_order: co.program_order ?? 999, semester: co.semester || 0, course_order: co.course_order ?? 999, course_code: co.course_code, course_name: co.course_name || '', semesters: {} })
 		}
 		const entry = countMap.get(key)!
-		entry.years[year] = (entry.years[year] || 0) + 1
+		entry.semesters[sem] = (entry.semesters[sem] || 0) + 1
 	}
 
-	const sortedYears = Array.from(allYears).sort((a, b) => {
-		const order = ['I Year', 'II Year', 'III Year', 'IV Year', 'V Year']
-		return order.indexOf(a) - order.indexOf(b)
-	})
+	const sortedSemesters = Array.from(allSemesters).sort((a, b) => semesterSortKey(a) - semesterSortKey(b))
 
 	const rows = Array.from(countMap.values())
 		.sort((a, b) => (a.board_order - b.board_order) || (a.semester - b.semester) || (a.course_order - b.course_order) || a.course_code.localeCompare(b.course_code))
@@ -1373,11 +1404,11 @@ function generateCourseCountYearWisePdf(opts: ReportPdfOptions): string {
 		}
 	}
 
-	// Dynamic columns: fixed cols + year cols + total col (portrait A4 = ~197mm usable)
+	// Dynamic columns: fixed cols + semester cols + total col (portrait A4 = ~197mm usable)
 	const fixedColWidths = [8, 40, 10, 22, 47]
-	const fixedTotal = fixedColWidths.reduce((a, b) => a + b, 0)
 	const totalColWidth = 18
-	const yearColWidth = Math.min(25, (pageWidth - margin * 2 - fixedTotal - totalColWidth) / Math.max(sortedYears.length, 1))
+	// Course Name (index 4) gives up width when many semesters are in play
+	const { fixedTotal, semColWidth } = fitSemesterColumns(fixedColWidths, 4, pageWidth - margin * 2 - totalColWidth, sortedSemesters.length)
 	const headerHeight = 12
 	const rowHeight = 7
 	const footerSpace = 10
@@ -1385,18 +1416,18 @@ function generateCourseCountYearWisePdf(opts: ReportPdfOptions): string {
 	let currentPage = 1
 	let rowsOnPage = 0
 
-	function drawYearHeader(y: number): number {
+	function drawSemesterHeader(y: number): number {
 		doc.setFont('times', 'bold')
 		doc.setFontSize(9)
 		doc.setDrawColor(0, 0, 0)
 		doc.setLineWidth(0.3)
 
-		// Spanning header for year columns + total
+		// Spanning header for semester columns + total
 		const dataColsStart = margin + fixedTotal
-		const dataColsWidth = sortedYears.length * yearColWidth + totalColWidth
-		if (sortedYears.length > 0) {
+		const dataColsWidth = sortedSemesters.length * semColWidth + totalColWidth
+		if (sortedSemesters.length > 0) {
 			doc.rect(dataColsStart, y, dataColsWidth, headerHeight / 2)
-			doc.text('No. Of Students Register', dataColsStart + dataColsWidth / 2, y + headerHeight / 2 - 1, { align: 'center' })
+			doc.text('No. Of Students Register (Semester Wise)', dataColsStart + dataColsWidth / 2, y + headerHeight / 2 - 1, { align: 'center' })
 		}
 
 		// Fixed column headers
@@ -1412,13 +1443,13 @@ function generateCourseCountYearWisePdf(opts: ReportPdfOptions): string {
 			x += fixedColWidths[i]
 		}
 
-		// Year sub-headers
+		// Semester sub-headers
 		let sx = dataColsStart
-		for (let i = 0; i < sortedYears.length; i++) {
-			doc.rect(sx, y + headerHeight / 2, yearColWidth, headerHeight / 2)
+		for (let i = 0; i < sortedSemesters.length; i++) {
+			doc.rect(sx, y + headerHeight / 2, semColWidth, headerHeight / 2)
 			doc.setFontSize(8)
-			doc.text(sortedYears[i], sx + yearColWidth / 2, y + headerHeight - 1, { align: 'center' })
-			sx += yearColWidth
+			doc.text(semesterColumnLabel(sortedSemesters[i]), sx + semColWidth / 2, y + headerHeight - 1, { align: 'center' })
+			sx += semColWidth
 		}
 
 		// Total sub-header
@@ -1429,8 +1460,8 @@ function generateCourseCountYearWisePdf(opts: ReportPdfOptions): string {
 		return y + headerHeight
 	}
 
-	let startY = drawHeader(doc, pageWidth, margin, opts, 'BOARD & YEAR WISE COURSE LIST')
-	let tableY = drawYearHeader(startY)
+	let startY = drawHeader(doc, pageWidth, margin, opts, 'BOARD & SEMESTER WISE COURSE LIST')
+	let tableY = drawSemesterHeader(startY)
 
 	// Pre-compute row heights based on course name wrapping
 	doc.setFont('times', 'normal')
@@ -1456,7 +1487,7 @@ function generateCourseCountYearWisePdf(opts: ReportPdfOptions): string {
 				doc.addPage()
 				currentPage++
 				tableY = margin + 2
-				tableY = drawYearHeader(tableY)
+				tableY = drawSemesterHeader(tableY)
 				rowsOnPage = 0
 			}
 		}
@@ -1465,7 +1496,7 @@ function generateCourseCountYearWisePdf(opts: ReportPdfOptions): string {
 			doc.addPage()
 			currentPage++
 			tableY = margin + 2
-			tableY = drawYearHeader(tableY)
+			tableY = drawSemesterHeader(tableY)
 			rowsOnPage = 0
 		}
 
@@ -1514,14 +1545,14 @@ function generateCourseCountYearWisePdf(opts: ReportPdfOptions): string {
 		drawWrappedCell(doc, row.course_name, x, tableY, fixedColWidths[4], rh)
 		x += fixedColWidths[4]
 
-		// Year columns
+		// Semester columns - the learner's own semester
 		let rowTotal = 0
-		for (let yi = 0; yi < sortedYears.length; yi++) {
-			doc.rect(x, tableY, yearColWidth, rh)
-			const count = row.years[sortedYears[yi]] || 0
+		for (let yi = 0; yi < sortedSemesters.length; yi++) {
+			doc.rect(x, tableY, semColWidth, rh)
+			const count = row.semesters[sortedSemesters[yi]] || 0
 			rowTotal += count
-			doc.text(String(count), x + yearColWidth / 2, tableY + rh / 2 + 1.5, { align: 'center' })
-			x += yearColWidth
+			doc.text(String(count), x + semColWidth / 2, tableY + rh / 2 + 1.5, { align: 'center' })
+			x += semColWidth
 		}
 
 		// Total column
@@ -1547,45 +1578,44 @@ function generateCourseCountYearWisePdf(opts: ReportPdfOptions): string {
 	}
 
 	const levelSuffix = opts.course_level ? `-${opts.course_level}` : ''
-	const filename = `exam-reg-course-count-year-wise-${opts.session_code}${levelSuffix}-${new Date().toISOString().slice(0, 10)}.pdf`
+	const filename = `exam-reg-course-count-semester-wise-${opts.session_code}${levelSuffix}-${new Date().toISOString().slice(0, 10)}.pdf`
 	doc.save(filename)
 	return filename
 }
 
 // ── Report 2C: Board & Program Wise Course List (A4 Portrait) ──
 
-function generateCourseCountProgramYearWisePdf(opts: ReportPdfOptions): string {
+function generateCourseCountProgramSemesterWisePdf(opts: ReportPdfOptions): string {
 	const doc = new jsPDF('portrait', 'mm', 'a4')
 	const pageWidth = doc.internal.pageSize.getWidth()
 	const pageHeight = doc.internal.pageSize.getHeight()
 	const margin = 6.35
 
-	// Build student year map
-	const studentYearMap = buildStudentYearMap(opts.data)
+	// The learner's own semester - never the paper's - decides which column a
+	// registration is counted under, so a Semester 3 learner's Semester 1 arrear
+	// is counted in the Semester 3 column.
+	const studentSemesterMap = buildStudentSemesterMap(opts.data)
 
-	// Aggregate counts by board_code + program_code + course_code + year (using student's current year)
+	// Aggregate counts by board_code + program_code + course_code + the learner's own semester
 	const countMap = new Map<string, any>()
-	const allYears = new Set<string>()
+	const allSemesters = new Set<number>()
 
 	for (const row of opts.data) {
 		const co = row.course_offering
 		if (!co) continue
 		const programCode = co.program_code || row.program_code || ''
 		const key = `${co.board_code || ''}|${programCode}|${co.course_code}`
-		const year = studentYearMap.get(row.stu_register_no) || semesterToYear(co.semester || 1)
-		allYears.add(year)
+		const sem = studentSemesterMap.get(row.stu_register_no) || 0
+		allSemesters.add(sem)
 
 		if (!countMap.has(key)) {
-			countMap.set(key, { board_code: co.board_code || '', board_name: co.board_name || '', board_order: co.board_order ?? 999, program_code: programCode, program_order: co.program_order ?? 999, semester: co.semester || 0, course_order: co.course_order ?? 999, course_code: co.course_code, course_name: co.course_name || '', years: {} })
+			countMap.set(key, { board_code: co.board_code || '', board_name: co.board_name || '', board_order: co.board_order ?? 999, program_code: programCode, program_order: co.program_order ?? 999, semester: co.semester || 0, course_order: co.course_order ?? 999, course_code: co.course_code, course_name: co.course_name || '', semesters: {} })
 		}
 		const entry = countMap.get(key)!
-		entry.years[year] = (entry.years[year] || 0) + 1
+		entry.semesters[sem] = (entry.semesters[sem] || 0) + 1
 	}
 
-	const sortedYears = Array.from(allYears).sort((a, b) => {
-		const order = ['I Year', 'II Year', 'III Year', 'IV Year', 'V Year']
-		return order.indexOf(a) - order.indexOf(b)
-	})
+	const sortedSemesters = Array.from(allSemesters).sort((a, b) => semesterSortKey(a) - semesterSortKey(b))
 
 	const rows = Array.from(countMap.values())
 		.sort((a, b) => (a.board_order - b.board_order) || (a.program_order - b.program_order) || a.program_code.localeCompare(b.program_code) || (a.semester - b.semester) || (a.course_order - b.course_order) || a.course_code.localeCompare(b.course_code))
@@ -1627,9 +1657,9 @@ function generateCourseCountProgramYearWisePdf(opts: ReportPdfOptions): string {
 
 	// Dynamic columns with total (portrait A4 = ~197mm usable)
 	const fixedColWidths = [8, 37, 18, 10, 20, 37]
-	const fixedTotal2c = fixedColWidths.reduce((a, b) => a + b, 0)
 	const totalColWidth = 18
-	const yearColWidth = Math.min(25, (pageWidth - margin * 2 - fixedTotal2c - totalColWidth) / Math.max(sortedYears.length, 1))
+	// Course Name (index 5) gives up width when many semesters are in play
+	const { fixedTotal: fixedTotal2c, semColWidth } = fitSemesterColumns(fixedColWidths, 5, pageWidth - margin * 2 - totalColWidth, sortedSemesters.length)
 	const headerHeight = 12
 	const rowHeight = 7
 	const footerSpace = 10
@@ -1643,12 +1673,12 @@ function generateCourseCountProgramYearWisePdf(opts: ReportPdfOptions): string {
 		doc.setDrawColor(0, 0, 0)
 		doc.setLineWidth(0.3)
 
-		// Spanning header for year columns + total
+		// Spanning header for semester columns + total
 		const dataColsStart = margin + fixedTotal2c
-		const dataColsWidth = sortedYears.length * yearColWidth + totalColWidth
-		if (sortedYears.length > 0) {
+		const dataColsWidth = sortedSemesters.length * semColWidth + totalColWidth
+		if (sortedSemesters.length > 0) {
 			doc.rect(dataColsStart, y, dataColsWidth, headerHeight / 2)
-			doc.text('No. Of Students Register', dataColsStart + dataColsWidth / 2, y + headerHeight / 2 - 1, { align: 'center' })
+			doc.text('No. Of Students Register (Semester Wise)', dataColsStart + dataColsWidth / 2, y + headerHeight / 2 - 1, { align: 'center' })
 		}
 
 		// Fixed column headers
@@ -1664,13 +1694,13 @@ function generateCourseCountProgramYearWisePdf(opts: ReportPdfOptions): string {
 			hx += fixedColWidths[i]
 		}
 
-		// Year sub-headers
+		// Semester sub-headers
 		let sx = dataColsStart
-		for (let i = 0; i < sortedYears.length; i++) {
-			doc.rect(sx, y + headerHeight / 2, yearColWidth, headerHeight / 2)
+		for (let i = 0; i < sortedSemesters.length; i++) {
+			doc.rect(sx, y + headerHeight / 2, semColWidth, headerHeight / 2)
 			doc.setFontSize(8)
-			doc.text(sortedYears[i], sx + yearColWidth / 2, y + headerHeight - 1, { align: 'center' })
-			sx += yearColWidth
+			doc.text(semesterColumnLabel(sortedSemesters[i]), sx + semColWidth / 2, y + headerHeight - 1, { align: 'center' })
+			sx += semColWidth
 		}
 
 		// Total sub-header
@@ -1784,14 +1814,14 @@ function generateCourseCountProgramYearWisePdf(opts: ReportPdfOptions): string {
 		drawWrappedCell(doc, row.course_name, x, tableY, fixedColWidths[5], rh)
 		x += fixedColWidths[5]
 
-		// Year columns
+		// Semester columns - the learner's own semester
 		let rowTotal = 0
-		for (let yi = 0; yi < sortedYears.length; yi++) {
-			doc.rect(x, tableY, yearColWidth, rh)
-			const count = row.years[sortedYears[yi]] || 0
+		for (let yi = 0; yi < sortedSemesters.length; yi++) {
+			doc.rect(x, tableY, semColWidth, rh)
+			const count = row.semesters[sortedSemesters[yi]] || 0
 			rowTotal += count
-			doc.text(String(count), x + yearColWidth / 2, tableY + rh / 2 + 1.5, { align: 'center' })
-			x += yearColWidth
+			doc.text(String(count), x + semColWidth / 2, tableY + rh / 2 + 1.5, { align: 'center' })
+			x += semColWidth
 		}
 
 		// Total column
@@ -1811,37 +1841,39 @@ function generateCourseCountProgramYearWisePdf(opts: ReportPdfOptions): string {
 	}
 
 	const levelSuffix = opts.course_level ? `-${opts.course_level}` : ''
-	const filename = `exam-reg-course-count-program-year-wise-${opts.session_code}${levelSuffix}-${new Date().toISOString().slice(0, 10)}.pdf`
+	const filename = `exam-reg-course-count-program-semester-wise-${opts.session_code}${levelSuffix}-${new Date().toISOString().slice(0, 10)}.pdf`
 	doc.save(filename)
 	return filename
 }
 
 // ── Report 3: Program Wise Course List (A4 Portrait, 1 page per section) ──
 
-function generateCourseCountProgramYearSectionPdf(opts: ReportPdfOptions): string {
+function generateCourseCountProgramSectionPdf(opts: ReportPdfOptions): string {
 	const doc = new jsPDF('portrait', 'mm', 'a4')
 	const pageWidth = doc.internal.pageSize.getWidth()
 	const pageHeight = doc.internal.pageSize.getHeight()
 	const margin = 6.35
 
-	// Build student year map
-	const studentYearMap = buildStudentYearMap(opts.data)
+	// The learner's own semester - never the paper's - decides which column a
+	// registration is counted under, so a Semester 3 learner's Semester 1 arrear
+	// is counted in the Semester 3 column.
+	const studentSemesterMap = buildStudentSemesterMap(opts.data)
 
-	// Group registrations by program_code → courses with year-wise counts
+	// Group registrations by program_code → courses with semester-wise counts
 	const programMap = new Map<string, {
 		program_code: string
 		program_name: string | null
 		program_order: number
-		courses: Map<string, { semester: number; course_order: number; course_code: string; course_name: string; years: Record<string, number> }>
+		courses: Map<string, { semester: number; course_order: number; course_code: string; course_name: string; semesters: Record<number, number> }>
 	}>()
-	const allYears = new Set<string>()
+	const allSemesters = new Set<number>()
 
 	for (const row of opts.data) {
 		const co = row.course_offering
 		if (!co) continue
 		const programCode = co.program_code || row.program_code || ''
-		const studentYear = studentYearMap.get(row.stu_register_no) || semesterToYear(co.semester || 1)
-		allYears.add(studentYear)
+		const sem = studentSemesterMap.get(row.stu_register_no) || 0
+		allSemesters.add(sem)
 
 		if (!programMap.has(programCode)) {
 			programMap.set(programCode, {
@@ -1859,14 +1891,14 @@ function generateCourseCountProgramYearSectionPdf(opts: ReportPdfOptions): strin
 				course_order: co.course_order ?? 999,
 				course_code: co.course_code,
 				course_name: co.course_name || '',
-				years: {},
+				semesters: {},
 			})
 		}
 		const course = program.courses.get(courseKey)!
-		course.years[studentYear] = (course.years[studentYear] || 0) + 1
+		course.semesters[sem] = (course.semesters[sem] || 0) + 1
 	}
 
-	const sortedYears = ['I Year', 'II Year', 'III Year', 'IV Year', 'V Year'].filter(y => allYears.has(y))
+	const sortedSemesters = Array.from(allSemesters).sort((a, b) => semesterSortKey(a) - semesterSortKey(b))
 
 	const sections = Array.from(programMap.values())
 		.sort((a, b) => (a.program_order - b.program_order) || a.program_code.localeCompare(b.program_code))
@@ -1875,9 +1907,9 @@ function generateCourseCountProgramYearSectionPdf(opts: ReportPdfOptions): strin
 
 	// Table config (portrait A4 = ~197mm usable)
 	const fixedColWidths = [10, 12, 28, 75]
-	const fixedTotal = fixedColWidths.reduce((a, b) => a + b, 0)
 	const totalColWidth = 18
-	const yearColWidth = Math.min(25, (pageWidth - margin * 2 - fixedTotal - totalColWidth) / Math.max(sortedYears.length, 1))
+	// Course Name (index 3) gives up width when many semesters are in play
+	const { fixedTotal, semColWidth } = fitSemesterColumns(fixedColWidths, 3, pageWidth - margin * 2 - totalColWidth, sortedSemesters.length)
 	const headerHeight = 14
 	const rowHeight = 7
 	const signatureSpaceHeight = 25
@@ -1891,12 +1923,12 @@ function generateCourseCountProgramYearSectionPdf(opts: ReportPdfOptions): strin
 		const spanH = 6
 		const subH = headerHeight - spanH
 
-		// Spanning header for year columns + total
+		// Spanning header for semester columns + total
 		const dataColsStart = margin + fixedTotal
-		const dataColsWidth = sortedYears.length * yearColWidth + totalColWidth
-		if (sortedYears.length > 0) {
+		const dataColsWidth = sortedSemesters.length * semColWidth + totalColWidth
+		if (sortedSemesters.length > 0) {
 			doc.rect(dataColsStart, y, dataColsWidth, spanH)
-			doc.text('No. Of Students Register', dataColsStart + dataColsWidth / 2, y + spanH - 1.5, { align: 'center' })
+			doc.text('No. Of Students Register (Semester Wise)', dataColsStart + dataColsWidth / 2, y + spanH - 1.5, { align: 'center' })
 		}
 
 		// Fixed column headers
@@ -1912,13 +1944,13 @@ function generateCourseCountProgramYearSectionPdf(opts: ReportPdfOptions): strin
 			hx += fixedColWidths[i]
 		}
 
-		// Year sub-headers
+		// Semester sub-headers
 		let sx = dataColsStart
 		doc.setFontSize(8)
-		for (const yr of sortedYears) {
-			doc.rect(sx, y + spanH, yearColWidth, subH)
-			doc.text(yr, sx + yearColWidth / 2, y + headerHeight - 1, { align: 'center' })
-			sx += yearColWidth
+		for (const sem of sortedSemesters) {
+			doc.rect(sx, y + spanH, semColWidth, subH)
+			doc.text(semesterColumnLabel(sem), sx + semColWidth / 2, y + headerHeight - 1, { align: 'center' })
+			sx += semColWidth
 		}
 
 		// Total sub-header
@@ -1950,7 +1982,7 @@ function generateCourseCountProgramYearSectionPdf(opts: ReportPdfOptions): strin
 
 		let currentY = drawHeader(doc, pageWidth, margin, opts, 'PROGRAM WISE REGISTRATION LIST')
 
-		// Program subtitle (no year)
+		// Program subtitle (no semester - each row carries its own columns)
 		doc.setFont('times', 'bold')
 		doc.setFontSize(10)
 		const displayProgramName = getProgramDisplayName(section.program_code, section.program_name)
@@ -2008,14 +2040,14 @@ function generateCourseCountProgramYearSectionPdf(opts: ReportPdfOptions): strin
 			drawWrappedCell(doc, course.course_name, x, tableY, fixedColWidths[3], rh)
 			x += fixedColWidths[3]
 
-			// Year columns
+			// Semester columns - the learner's own semester
 			let rowTotal = 0
-			for (const yr of sortedYears) {
-				doc.rect(x, tableY, yearColWidth, rh)
-				const count = course.years[yr] || 0
+			for (const sem of sortedSemesters) {
+				doc.rect(x, tableY, semColWidth, rh)
+				const count = course.semesters[sem] || 0
 				rowTotal += count
-				doc.text(String(count), x + yearColWidth / 2, tableY + rh / 2 + 1.5, { align: 'center' })
-				x += yearColWidth
+				doc.text(String(count), x + semColWidth / 2, tableY + rh / 2 + 1.5, { align: 'center' })
+				x += semColWidth
 			}
 
 			// Total
@@ -2038,7 +2070,7 @@ function generateCourseCountProgramYearSectionPdf(opts: ReportPdfOptions): strin
 	}
 
 	const levelSuffix = opts.course_level ? `-${opts.course_level}` : ''
-	const filename = `exam-reg-course-count-program-year-section-${opts.session_code}${levelSuffix}-${new Date().toISOString().slice(0, 10)}.pdf`
+	const filename = `exam-reg-course-count-program-section-${opts.session_code}${levelSuffix}-${new Date().toISOString().slice(0, 10)}.pdf`
 	doc.save(filename)
 	return filename
 }
@@ -2892,6 +2924,11 @@ function generateStudentWiseFormPdf(opts: ReportPdfOptions): string {
 		program_order: number
 		courses: { semester: number; course_order: number; course_code: string; course_name: string }[]
 	}
+	// The learner's own semester, resolved from their regular papers - not the highest
+	// paper on the form, which for an arrear-only applicant belongs to a semester behind
+	// the one they now sit in.
+	const learnerSemesterMap = buildStudentSemesterMap(opts.data)
+
 	const studentMap = new Map<string, FormStudent>()
 	for (const row of opts.data) {
 		const regNo = row.stu_register_no || 'Unknown'
@@ -2901,7 +2938,7 @@ function generateStudentWiseFormPdf(opts: ReportPdfOptions): string {
 				name: row.student_name || '',
 				dob: row.date_of_birth || '',
 				gender: row.gender || '',
-				semester: 0,
+				semester: learnerSemesterMap.get(regNo) || 0,
 				program_code: row.course_offering?.program_code || row.program_code || '',
 				program_name: row.course_offering?.program_name || null,
 				program_order: row.course_offering?.program_order ?? 999,
@@ -2911,8 +2948,6 @@ function generateStudentWiseFormPdf(opts: ReportPdfOptions): string {
 		const co = row.course_offering
 		if (co && co.course_code) {
 			const s = studentMap.get(regNo)!
-			// Current semester = highest semester the student is registered in
-			if (co.semester && co.semester > s.semester) s.semester = co.semester
 			if (!s.courses.some(c => c.course_code === co.course_code)) {
 				s.courses.push({ semester: co.semester || 0, course_order: co.course_order ?? 999, course_code: co.course_code, course_name: co.course_name || '' })
 			}
@@ -2927,7 +2962,9 @@ function generateStudentWiseFormPdf(opts: ReportPdfOptions): string {
 
 	students.forEach((student, idx) => {
 		if (idx > 0) doc.addPage()
-		student.courses.sort((a, b) => (a.course_order - b.course_order) || (a.semester - b.semester) || a.course_code.localeCompare(b.course_code)) // course_mapping.course_order ASC
+		// Semester-wise course order: the paper's own semester first (arrears from
+		// earlier semesters lead), then course_mapping.course_order within it.
+		student.courses.sort((a, b) => (a.semester - b.semester) || (a.course_order - b.course_order) || a.course_code.localeCompare(b.course_code))
 
 		// Header (institution-based)
 		let currentY = drawHeader(doc, pageWidth, margin, opts, title)
@@ -3167,11 +3204,11 @@ export function generateExamRegistrationReportPdf(opts: ReportPdfOptions): strin
 		case 'course-count-regular-arrear':
 			return generateCourseCountRegularArrearPdf(filteredOpts)
 		case 'course-count-year-wise':
-			return generateCourseCountYearWisePdf(filteredOpts)
+			return generateCourseCountSemesterWisePdf(filteredOpts)
 		case 'course-count-program-year-wise':
-			return generateCourseCountProgramYearWisePdf(filteredOpts)
+			return generateCourseCountProgramSemesterWisePdf(filteredOpts)
 		case 'course-count-program-year-section':
-			return generateCourseCountProgramYearSectionPdf(filteredOpts)
+			return generateCourseCountProgramSectionPdf(filteredOpts)
 		case 'qp-packing-list':
 			return generateQPPackingListPdf(filteredOpts)
 		case 'board-wise-exam-timetable':

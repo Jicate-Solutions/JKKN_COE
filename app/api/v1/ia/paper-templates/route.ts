@@ -222,8 +222,13 @@ export const DELETE = withExternalAuth(async (request: Request, context: Externa
 		return NextResponse.json({ error: 'Not found or not permitted' }, { status: 404 })
 	}
 
-	const { data: papers } = await supabase.from('ia_question_papers').select('id').eq('template_id', id).limit(1)
-	if (papers && papers.length > 0) {
+	// Both paper tables — an end-semester paper holds its template with ON DELETE
+	// RESTRICT, so skipping it turns this into a raw foreign-key error.
+	const [{ data: ciaPapers }, { data: esePapers }] = await Promise.all([
+		supabase.from('ia_question_papers').select('id').eq('template_id', id).limit(1),
+		supabase.from('ese_question_papers').select('id').eq('template_id', id).limit(1),
+	])
+	if ((ciaPapers && ciaPapers.length > 0) || (esePapers && esePapers.length > 0)) {
 		return NextResponse.json({ error: 'Papers exist for this template; archive instead' }, { status: 409 })
 	}
 	const { error } = await supabase.from('ia_paper_templates').delete().eq('id', id)

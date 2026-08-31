@@ -196,7 +196,9 @@ export function AssignmentsTab({ institutionsId, session, refreshKey, onChanged 
 		window.open(`/api/pre-exam/qp-examiner-assignments/${id}/order`, '_blank', 'noopener')
 	}
 	const openPaperPdf = (paperId: string) => {
-		window.open(`/api/pre-exam/question-papers/${paperId}/pdf`, '_blank', 'noopener')
+		// An assignment's paper is an ese_question_papers row — the CIA route would
+		// 404 on this id.
+		window.open(`/api/pre-exam/ese-question-papers/${paperId}/pdf`, '_blank', 'noopener')
 	}
 
 	const counts = useMemo(

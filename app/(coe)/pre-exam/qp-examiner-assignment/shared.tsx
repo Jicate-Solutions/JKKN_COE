@@ -31,29 +31,41 @@ export interface SessionOpt {
 	session_status: string | null
 }
 
-export interface CourseRow {
+/**
+ * One generated end-semester paper, as the Assign tab sees it.
+ *
+ * Papers are generated first (Generate tab) with their format already chosen, so
+ * every row here already has a paper_id — a subject with no paper simply does
+ * not appear, and cannot be assigned to anyone.
+ */
+export interface PaperRow {
+	paper_id: string
 	course_offering_id: string
 	course_id: string | null
 	course_code: string
 	subject_title: string
-	course_category: string | null
 	program_code: string
 	semester: number
 	set_number: number
 	set_label: string | null
-	template_id: string
-	template_name: string
-	template_total_marks: number
-	duration_minutes: number | null
-	paper_id: string | null
 	paper_status: string | null
+	max_marks: number | null
+	duration_minutes: number | null
+	template_id: string
+	template_name: string | null
+	template_total_marks: number | null
 	authored: boolean
+	authored_count: number
+	question_count: number
+	/** A cancelled assignment still holds this paper's unique slot. */
+	cancelled_assignment_id: string | null
 	assignment: {
 		id: string
 		status: QpAssignmentStatus
 		examiner_kind: QpExaminerKind
 		valid_from: string
 		valid_to: string
+		window_state: QpWindowState
 		order_ref_no: string | null
 		examiner_name: string | null
 		examiner_email: string | null
@@ -74,6 +86,23 @@ export interface ExaminerOpt {
 	willingness_roles?: string[] | null
 	status?: string | null
 	active_assignments?: number
+}
+
+/**
+ * An examiner who holds the Question Paper Setter willingness role but whose
+ * panel registration is not ACTIVE, so they cannot be appointed yet.
+ *
+ * Returned alongside the selectable list purely so the picker can explain a
+ * search that finds nothing: the panel is largely self-registered, and the
+ * common case is a candidate sitting in PENDING with the role already set.
+ */
+export interface BlockedExaminer {
+	id: string
+	full_name: string
+	email: string
+	department?: string | null
+	institution_name?: string | null
+	status: string
 }
 
 export interface AssignmentRow {

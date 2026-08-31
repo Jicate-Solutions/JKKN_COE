@@ -1,11 +1,16 @@
 // End-Semester Question Paper Examiner Assignment + Examiner Portal.
 //
-// One assignment hands ONE end-semester paper (ia_question_papers) to ONE
+// One assignment hands ONE end-semester paper (ese_question_papers) to ONE
 // examiner (examiners) for a fixed IST window. The examiner authors the paper in
 // the portal at /engg-examiner-registration; the CoE reviews and accepts it.
 //
+// The paper is generated with its format BEFORE any of this — see
+// types/ese-question-paper.ts. An assignment attaches an examiner to a paper
+// that already exists; it never creates one.
+//
 // Tables: ia_qp_assignments, ia_qp_portal_content, ia_qp_access_logs
-// (supabase/migrations/20260823_qp_setter_portal.sql + 20260828_qp_examiner_assignment.sql)
+// (supabase/migrations/20260823_qp_setter_portal.sql + 20260828_qp_examiner_assignment.sql
+//  + 20260829_ese_question_papers.sql)
 
 export type QpAssignmentStatus =
 	| 'assigned'
@@ -111,9 +116,12 @@ export interface QpAssignmentCreateInput {
 	institution_code?: string
 	examination_session_id: string
 	exam_type_id?: string | null
-	course_offering_id: string
-	template_id: string
-	set_number?: number
+	/**
+	 * The ese_question_papers row to appoint an examiner to. The paper is
+	 * generated first (with its format chosen), so assignment never creates one —
+	 * course, programme, semester, set and template all come from this row.
+	 */
+	paper_id: string
 	examiner_kind: QpExaminerKind
 	/** External: an examiners.id. Internal: omit and send `staff` instead. */
 	examiner_id?: string

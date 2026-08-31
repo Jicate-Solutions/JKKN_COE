@@ -89,11 +89,28 @@ export async function handleDeleteWithDependencyCheck(
 		)
 	}
 
-	// Proceed with delete (CASCADE will handle child records)
+	// Proceed with delete. Note: ?force=true is NOT a licence to destroy child
+	// records — academic tables (registrations, marks) are ON DELETE RESTRICT,
+	// so the database refuses and we report that back rather than cascading.
 	const { error } = await supabase.from(tableName).delete().eq('id', recordId)
 
 	if (error) {
 		console.error(`Error deleting from ${tableName}:`, error)
+
+		// 23503 = foreign key violation: a RESTRICT child still references this row
+		if (error.code === '23503') {
+			return NextResponse.json(
+				{
+					error: `Cannot delete this ${tableName} record — other records still depend on it.`,
+					has_dependencies: true,
+					dependencies: deps.dependencies,
+					total_count: deps.total_count,
+					suggestion: 'Remove or reassign the dependent records first. Learner registrations and marks are protected and cannot be deleted this way.',
+				},
+				{ status: 409 }
+			)
+		}
+
 		return NextResponse.json(
 			{ error: `Failed to delete ${tableName} record` },
 			{ status: 500 }

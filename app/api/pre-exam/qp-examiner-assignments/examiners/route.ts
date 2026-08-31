@@ -18,6 +18,14 @@ import { QP_SETTER_ROLE, type QpExaminerOption } from '@/types/qp-examiner-assig
 
 export const dynamic = 'force-dynamic'
 
+/**
+ * How many unapproved-but-willing examiners to send back for the picker's
+ * "why isn't my person here?" lookup. Comfortably past the current backlog so
+ * a search still finds its match, while keeping the response bounded if the
+ * panel grows. The true figure travels separately as blocked_total.
+ */
+const BLOCKED_LIMIT = 1500
+
 /** Live assignments per examiner in a session — shown as a workload hint. */
 async function assignmentCounts(
 	supabase: any,
@@ -60,12 +68,16 @@ export async function GET(req: NextRequest) {
 
 		// ── External: the examiner panel ──────────────────────────────────────
 		if (kind === 'external') {
+			// Read every examiner, not just the ACTIVE ones. The status filter is
+			// applied below instead, so the route can also report WHO was excluded
+			// and WHY — the panel is overwhelmingly self-registered and unapproved,
+			// and "nobody has the role" is the wrong thing to tell someone whose
+			// candidate is sitting in PENDING with the role already set.
 			const { data, error } = await supabase
 				.from('examiners')
 				.select(
 					'id, full_name, email, mobile, designation, department, institution_name, willingness_roles, status, institution_id, is_internal'
 				)
-				.eq('status', 'ACTIVE')
 				.order('full_name', { ascending: true })
 				.range(0, 4999)
 
@@ -74,15 +86,38 @@ export async function GET(req: NextRequest) {
 				return NextResponse.json({ error: error.message }, { status: 500 })
 			}
 
-			const options: QpExaminerOption[] = (data || [])
-				// The willingness role is the eligibility rule from the spec. Rows are
-				// filtered here rather than with a Postgres array operator so a row
-				// storing the role with different spacing/case still matches.
-				.filter(e =>
-					(e.willingness_roles || []).some(
-						(r: string) => String(r).trim().toLowerCase() === QP_SETTER_ROLE.toLowerCase()
-					)
+			// The willingness role is the eligibility rule from the spec. Matched
+			// here rather than with a Postgres array operator so a row storing the
+			// role with different spacing/case still matches.
+			const hasSetterRole = (e: any) =>
+				(e.willingness_roles || []).some(
+					(r: string) => String(r).trim().toLowerCase() === QP_SETTER_ROLE.toLowerCase()
 				)
+
+			const all = data || []
+			const withRole = all.filter(hasSetterRole).filter(e => !e.is_internal)
+
+			// Has the role, but not approved yet. Returned so the picker can say
+			// "these two match your search but need approving" instead of behaving
+			// as though they do not exist.
+			//
+			// The panel is overwhelmingly self-registered — 663 of 811 rows sit
+			// unapproved today — so this list is capped rather than sent whole. The
+			// UI filters it client-side for instant feedback; blocked_total carries
+			// the real figure so the count shown is never the truncated one.
+			const blockedAll = withRole.filter(e => e.status !== 'ACTIVE')
+			const blocked = blockedAll.slice(0, BLOCKED_LIMIT).map(e => ({
+				id: e.id,
+				full_name: e.full_name,
+				email: e.email,
+				department: e.department,
+				institution_name: e.institution_name,
+				status: e.status,
+			}))
+
+			const options: QpExaminerOption[] = all
+				.filter(hasSetterRole)
+				.filter(e => e.status === 'ACTIVE')
 				// An internal staff member mirrored by a previous assignment must not
 				// reappear in the external list — they belong to the Internal tab.
 				.filter(e => !e.is_internal)
@@ -107,7 +142,23 @@ export async function GET(req: NextRequest) {
 					active_assignments: counts.get(e.id) || 0,
 				}))
 
-			return NextResponse.json({ kind, data: options, count: options.length })
+			return NextResponse.json({
+				kind,
+				data: options,
+				count: options.length,
+				// Why the list is as short as it is. The panel is largely
+				// self-registered, so the usual cause of an empty picker is a queue of
+				// unapproved rows, not a missing willingness role.
+				blocked,
+				/** The real count, which `blocked` may have truncated. */
+				blocked_total: blockedAll.length,
+				diagnostics: {
+					total: all.length,
+					with_role: withRole.length,
+					active: all.filter(e => e.status === 'ACTIVE').length,
+					blocked_by_status: blockedAll.length,
+				},
+			})
 		}
 
 		// ── Internal: MyJKKN staff of this institution ────────────────────────

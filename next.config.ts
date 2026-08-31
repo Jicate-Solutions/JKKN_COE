@@ -31,6 +31,14 @@ const nextConfig: NextConfig = {
       './node_modules/katex/dist/fonts/**/*.woff2',
       './public/fonts/**/*',
     ],
+    // End-semester papers render through the same headless Chromium path as the
+    // CIA ones (lib/ia/build-paper-pdf-html), so they need the same files traced.
+    '/api/pre-exam/ese-question-papers/**': [
+      './node_modules/@sparticuz/chromium/**/*',
+      './node_modules/katex/dist/katex.min.css',
+      './node_modules/katex/dist/fonts/**/*.woff2',
+      './public/fonts/**/*',
+    ],
   },
 };
 

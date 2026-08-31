@@ -26,23 +26,25 @@ export interface CourseCountRegularArrearRow {
 	arrear_count: number
 }
 
-// ── Report 2B: Course Count (Year-wise) ──
+// ── Report 2B: Course Count (Semester-wise) ──
+// Counts are keyed by the LEARNER's own semester, never the semester of the paper:
+// a Semester 3 learner's Semester 1 arrear counts in the Semester 3 column.
 
-export interface CourseCountYearWiseRow {
+export interface CourseCountSemesterWiseRow {
 	sno: number
 	board_code: string
 	course_code: string
-	year_counts: Record<string, number> // e.g. { "I Year": 10, "II Year": 3 }
+	semester_counts: Record<number, number> // e.g. { 1: 10, 3: 3 }
 }
 
-// ── Report 2C: Course Count with Program Code (Year-wise) ──
+// ── Report 2C: Course Count with Program Code (Semester-wise) ──
 
-export interface CourseCountProgramYearWiseRow {
+export interface CourseCountProgramSemesterWiseRow {
 	sno: number
 	board_code: string
 	program_code: string
 	course_code: string
-	year_counts: Record<string, number>
+	semester_counts: Record<number, number>
 }
 
 // ── API Response ──
@@ -55,8 +57,8 @@ export interface ExamRegistrationReportData {
 	session_code: string
 	generated_at: string
 	course_count_regular_arrear?: CourseCountRegularArrearRow[]
-	course_count_year_wise?: CourseCountYearWiseRow[]
-	course_count_program_year_wise?: CourseCountProgramYearWiseRow[]
+	course_count_semester_wise?: CourseCountSemesterWiseRow[]
+	course_count_program_semester_wise?: CourseCountProgramSemesterWiseRow[]
 }
 
 // ── Filter Options ──
@@ -78,6 +80,13 @@ export interface RawRegistrationRow {
 	fee_paid: boolean
 	fee_amount: number | null
 	program_code: string | null
+	/**
+	 * The semester the LEARNER is in, stamped by the API over the whole session before
+	 * any filter. This is what every report buckets by — 0 when it could not be
+	 * resolved. `course_offering.semester` below is the semester of the PAPER, which
+	 * for an arrear belongs to a semester the learner has already left.
+	 */
+	learner_semester: number
 	course_offering: {
 		course_code: string
 		course_name: string | null

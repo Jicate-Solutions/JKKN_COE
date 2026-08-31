@@ -3,16 +3,18 @@
 // GET  /api/pre-exam/qp-examiner-assignments   list, with filters
 // POST /api/pre-exam/qp-examiner-assignments   assign a paper to an examiner
 //
-// Creating an assignment is one call that does four things, in this order, so a
-// half-made assignment is never left behind:
+// Assignment is step TWO of the flow. The paper and its format are settled in
+// the Generate step (/api/pre-exam/ese-question-papers) and this call only
+// attaches an examiner to a paper that already exists — it never creates one.
+//
+// In order, so a half-made assignment is never left behind:
 //   1. verify the session really is an End Semester examination (spec §4.2)
 //   2. mirror an internal MyJKKN staff member into `examiners` if needed
-//   3. create the end-semester paper shell if it does not exist yet
+//   3. load the ese_question_papers row and prove it belongs to this session
 //   4. write the assignment and allocate its order reference
 
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
-import { scaffoldQuestions } from '@/lib/ia/paper-scaffold'
 import { istLocalToIso, windowState } from '@/lib/qp-portal/ist'
 import { getPortalContent } from '@/lib/qp-portal/content'
 import { nextOrderRef } from '@/lib/qp-portal/assignment-service'
@@ -80,7 +82,7 @@ export async function GET(req: NextRequest) {
 		const paperById = new Map<string, any>()
 		for (let i = 0; i < paperIds.length; i += 200) {
 			const { data: papers } = await supabase
-				.from('ia_question_papers')
+				.from('ese_question_papers')
 				.select('id, status, questions, max_marks')
 				.in('id', paperIds.slice(i, i + 200))
 			for (const p of papers || []) paperById.set(p.id, p)
@@ -145,9 +147,7 @@ export async function POST(req: NextRequest) {
 		const {
 			institutions_id,
 			examination_session_id,
-			course_offering_id,
-			template_id,
-			set_number = 1,
+			paper_id,
 			examiner_kind,
 			examiner_id,
 			staff,
@@ -155,9 +155,9 @@ export async function POST(req: NextRequest) {
 			notes,
 		} = body
 
-		if (!institutions_id || !examination_session_id || !course_offering_id || !template_id) {
+		if (!institutions_id || !examination_session_id || !paper_id) {
 			return NextResponse.json(
-				{ error: 'institutions_id, examination_session_id, course_offering_id and template_id are required' },
+				{ error: 'institutions_id, examination_session_id and paper_id are required' },
 				{ status: 400 }
 			)
 		}
@@ -305,88 +305,40 @@ export async function POST(req: NextRequest) {
 			)
 		}
 
-		// ── 3. The end-semester paper shell ─────────────────────────────────
-		const { data: offering } = await supabase
-			.from('course_offerings')
-			.select('id, course_id, course_code, program_code, semester')
-			.eq('id', course_offering_id)
+		// ── 3. The paper must already exist ─────────────────────────────────
+		// The format is chosen in the Generate step, so by the time an examiner is
+		// appointed the paper and its question skeleton are settled. Nothing is
+		// created here.
+		const { data: paper } = await supabase
+			.from('ese_question_papers')
+			.select('*')
+			.eq('id', paper_id)
 			.maybeSingle()
-		if (!offering) {
-			return NextResponse.json({ error: 'Course offering not found' }, { status: 404 })
+		if (!paper) {
+			return NextResponse.json(
+				{
+					error:
+						'That question paper no longer exists. Generate the paper for this subject before assigning an examiner.',
+				},
+				{ status: 404 }
+			)
+		}
+		// A paper belonging to another session or institution must never be
+		// assignable from here, however the id arrived.
+		if (paper.examination_session_id !== examination_session_id || paper.institutions_id !== institutions_id) {
+			return NextResponse.json(
+				{ error: 'That question paper belongs to a different examination session.' },
+				{ status: 400 }
+			)
 		}
 
-		const { data: course } = await supabase
-			.from('courses')
-			.select('id, course_code, course_name, multiple_qp_set, exam_duration')
-			.eq('institutions_id', institutions_id)
-			.eq('course_code', offering.course_code)
-			.maybeSingle()
+		const paperId = paper.id as string
+		const setLabel = paper.set_label as string | null
+		const courseLabel = `${paper.course_code || 'This paper'}${setLabel ? ` (Set ${setLabel})` : ''}`
 
-		const { data: template } = await supabase
-			.from('ia_paper_templates')
-			.select('*, ia_template_parts(*)')
-			.eq('id', template_id)
-			.maybeSingle()
-		if (!template) {
-			return NextResponse.json({ error: 'Question paper template not found' }, { status: 404 })
-		}
-
-		const setNum = Number(set_number) || 1
-		const setLabel = setNum > 1 || course?.multiple_qp_set ? String.fromCharCode(64 + setNum) : null
-
-		// Reuse an existing shell — the partial unique index added in
-		// 20260828_qp_examiner_assignment.sql makes a duplicate impossible anyway.
-		const { data: existingPaper } = await supabase
-			.from('ia_question_papers')
-			.select('id, status')
-			.eq('examination_session_id', examination_session_id)
-			.eq('course_offering_id', course_offering_id)
-			.eq('set_number', setNum)
-			.is('cia_setting_id', null)
-			.is('cia_round', null)
-			.maybeSingle()
-
-		let paperId = existingPaper?.id as string | undefined
-		if (!paperId) {
-			const parts = (template as any).ia_template_parts || []
-			const { data: paper, error: paperErr } = await supabase
-				.from('ia_question_papers')
-				.insert({
-					institutions_id,
-					examination_session_id,
-					// NULL cia_setting_id + NULL cia_round is what marks this an
-					// end-semester paper; the template's exam_scope confirms it.
-					cia_setting_id: null,
-					cia_round: null,
-					cia_round_name: null,
-					course_offering_id,
-					course_id: course?.id || offering.course_id,
-					course_code: offering.course_code,
-					program_code: offering.program_code,
-					semester: offering.semester,
-					template_id: template.id,
-					template_version: template.version_number,
-					set_number: setNum,
-					set_label: setLabel,
-					subject_title: course?.course_name || offering.course_code,
-					duration_minutes: template.duration_minutes || course?.exam_duration || null,
-					max_marks: template.total_marks,
-					status: 'draft',
-					questions: scaffoldQuestions(parts),
-				})
-				.select('id')
-				.single()
-			if (paperErr || !paper) {
-				console.error('[QP assign] paper shell create failed:', paperErr?.message)
-				return NextResponse.json(
-					{ error: paperErr?.message || 'Could not create the question paper' },
-					{ status: 500 }
-				)
-			}
-			paperId = paper.id
-		}
-
-		// One paper, one examiner (ia_qp_assignments_paper_unique).
+		// One paper, one examiner (ia_qp_assignments_paper_unique). A cancelled row
+		// still holds the slot, so name that case rather than reporting a phantom
+		// examiner the CoE can see is no longer assigned.
 		const { data: clash } = await supabase
 			.from('ia_qp_assignments')
 			.select('id, examiner_id, status')
@@ -400,7 +352,10 @@ export async function POST(req: NextRequest) {
 				.maybeSingle()
 			return NextResponse.json(
 				{
-					error: `${offering.course_code}${setLabel ? ` (Set ${setLabel})` : ''} is already assigned to ${holder?.full_name || 'another examiner'}. Cancel that assignment first.`,
+					error:
+						clash.status === 'cancelled'
+							? `${courseLabel} has a cancelled assignment on record. Remove it from the Assignments tab before appointing someone else.`
+							: `${courseLabel} is already assigned to ${holder?.full_name || 'another examiner'}. Cancel that assignment first.`,
 					assignment_id: clash.id,
 				},
 				{ status: 409 }
@@ -419,12 +374,14 @@ export async function POST(req: NextRequest) {
 			examiner_id: resolvedExaminerId,
 			examiner_kind,
 			paper_id: paperId,
-			template_id: template.id,
-			course_id: course?.id || offering.course_id,
-			course_code: offering.course_code,
-			subject_title: course?.course_name || offering.course_code,
-			program_code: offering.program_code,
-			semester: offering.semester,
+			// Copied from the paper, not re-derived: the assignment must describe
+			// exactly the paper the order was issued for.
+			template_id: paper.template_id,
+			course_id: paper.course_id,
+			course_code: paper.course_code,
+			subject_title: paper.subject_title,
+			program_code: paper.program_code,
+			semester: paper.semester,
 			set_label: setLabel,
 			valid_from: validFrom,
 			valid_to: validTo,
@@ -477,7 +434,7 @@ export async function POST(req: NextRequest) {
 			{
 				success: true,
 				data: { ...inserted, examiner, window_state: windowState(validFrom, validTo) },
-				message: `${offering.course_code} assigned to ${examiner.full_name}.`,
+				message: `${courseLabel} assigned to ${examiner.full_name}.`,
 			},
 			{ status: 201 }
 		)

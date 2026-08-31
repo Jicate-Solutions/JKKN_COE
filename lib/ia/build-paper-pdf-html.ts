@@ -664,6 +664,17 @@ function buildHtml(ctx: {
 }
 
 /**
+ * Which table the paper lives in. CIA papers are ia_question_papers rows;
+ * end-semester papers have their own table since 20260829.
+ */
+export type PaperSource = 'ia' | 'ese'
+
+export const PAPER_TABLE: Record<PaperSource, string> = {
+	ia: 'ia_question_papers',
+	ese: 'ese_question_papers',
+}
+
+/**
  * Build the A4 PDF for one question paper. Same signature as the jsPDF builder so
  * the route swaps cleanly. Returns null if the paper isn't found.
  */
@@ -671,10 +682,11 @@ export async function buildPaperPdfHtml(
 	supabase: any,
 	id: string,
 	_origin: string,
-	variant: PdfVariant = 'single'
+	variant: PdfVariant = 'single',
+	source: PaperSource = 'ia'
 ): Promise<BuildPaperPdfResult | null> {
 	const { data: paper, error } = await supabase
-		.from('ia_question_papers')
+		.from(PAPER_TABLE[source])
 		.select('*')
 		.eq('id', id)
 		.single()
@@ -685,9 +697,10 @@ export async function buildPaperPdfHtml(
 
 	const questionArr: any[] = Array.isArray(paper.questions) ? paper.questions : []
 
-	// An end-semester paper is the one with no CIA round; it prints the
-	// examination's own heading, so the session and its exam type are needed.
-	const isEndSemester = paper.cia_round == null && paper.cia_setting_id == null
+	// An end-semester paper prints the examination's own heading, so the session
+	// and its exam type are needed. A row from ese_question_papers is one by
+	// definition; in ia_question_papers it is the row with no CIA round.
+	const isEndSemester = source === 'ese' || (paper.cia_round == null && paper.cia_setting_id == null)
 
 	const [instRes, { data: parts }, sessionRes] = await Promise.all([
 		supabase.from('institutions').select('*').eq('id', paper.institutions_id).single(),

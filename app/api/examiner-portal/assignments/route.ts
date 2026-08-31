@@ -41,7 +41,7 @@ export async function GET(req: NextRequest) {
 		const progressByPaper = new Map<string, { total: number; done: number; status: string }>()
 		for (let i = 0; i < paperIds.length; i += 200) {
 			const { data: papers } = await supabase
-				.from('ia_question_papers')
+				.from('ese_question_papers')
 				.select('id, status, questions, max_marks, duration_minutes')
 				.in('id', paperIds.slice(i, i + 200))
 			for (const p of papers || []) {

@@ -88,22 +88,117 @@ export function templateAppliesToCourse(
 	return tokens.has(category)
 }
 
-// Pick the best template for a course: prefer one that names the course's
-// category explicitly over a generic 'all' template. Returns null when none
-// apply, which callers treat as "don't generate a paper for this course".
-export function pickTemplateForCourse<T extends { course_type_applicability?: string | null }>(
-	templates: T[],
-	courseCategory?: string | null
-): T | null {
+// ── Which categories sit a written theory paper ─────────────────────────────
+//
+// A Question Paper setter is appointed to write a THEORY paper. Practical and
+// laboratory examinations are conducted and valued in the lab by the practical
+// examiners (pre-exam/practical-allotment) — there is no written paper for
+// anyone to set, so those courses must never reach the QP assignment screen.
+//
+// A combined course ("Theory + Practical", "Theory + Project") does sit a
+// written theory paper for its theory half, so it stays eligible.
+//
+// This is a rule about the examination, not about template configuration: it is
+// applied BEFORE any format matching, so a format that happened to name
+// 'practical' still cannot pull a lab course into the list.
+
+export const THEORY_PAPER_TOKENS: ReadonlySet<string> = new Set([
+	'theory',
+	'theory_practical',
+	'theory_project',
+])
+
+/** Does this `courses.course_category` sit a written end-semester theory paper? */
+export function hasTheoryPaper(courseCategory?: string | null): boolean {
+	return THEORY_PAPER_TOKENS.has(normalizeCourseCategory(courseCategory))
+}
+
+/** Human label for why a course was left out, used in the UI's excluded note. */
+export function nonTheoryReason(courseCategory?: string | null): string {
+	const label = (courseCategory || '').trim()
+	return label
+		? `${label} — no written theory paper`
+		: 'No course category set — cannot confirm it sits a written theory paper'
+}
+
+// ── Program type (ug / pg / diploma / certificate / all) ────────────────────
+//
+// `ia_paper_templates.program_type_applicability` holds a single token. It is a
+// second, independent dimension to the course category: an institution commonly
+// runs one ESE format for its UG programmes and another for its PG ones, both
+// covering exactly the same course categories.
+
+/** 'UG' / 'ug' / '' -> 'ug' | ''. Anything unrecognised normalises to ''. */
+export function normalizeProgramType(value?: string | null): string {
+	return (value || '').trim().toLowerCase()
+}
+
+// Does this template cover the given program type?
+// A template with no program type set ('' / 'all') covers everything.
+export function templateAppliesToProgramType(
+	programTypeApplicability: string | null | undefined,
+	programType?: string | null
+): boolean {
+	const token = normalizeProgramType(programTypeApplicability)
+	if (!token || token === ALL_TOKEN) return true
+	const want = normalizeProgramType(programType)
+	if (!want) return false
+	return token === want
+}
+
+/**
+ * Pick the best template for a course.
+ *
+ * Two independent dimensions are ranked, most specific first, so a template that
+ * names BOTH the course category and the programme type always beats one that
+ * names only one of them:
+ *
+ *   1. category named + program type named
+ *   2. category named + program type 'all'
+ *   3. category 'all'  + program type named
+ *   4. category 'all'  + program type 'all'
+ *
+ * `programType` is optional: the CIA callers do not pass it, and a template
+ * whose program type is 'all' matches regardless. Passing it matters when an
+ * institution keeps a UG and a PG format side by side with identical course
+ * categories — without it the two are indistinguishable and whichever the
+ * database happens to return first wins every course.
+ *
+ * Returns null when none apply, which callers treat as "no paper for this course".
+ */
+export function pickTemplateForCourse<
+	T extends { course_type_applicability?: string | null; program_type_applicability?: string | null },
+>(templates: T[], courseCategory?: string | null, programType?: string | null): T | null {
 	const category = normalizeCourseCategory(courseCategory)
+	const want = normalizeProgramType(programType)
 
-	if (category) {
-		const specific = templates.find(t => {
-			const tokens = parseApplicability(t.course_type_applicability)
-			return !tokens.has(ALL_TOKEN) && tokens.has(category)
-		})
-		if (specific) return specific
+	const namesCategory = (t: T) => {
+		const tokens = parseApplicability(t.course_type_applicability)
+		return !tokens.has(ALL_TOKEN) && !!category && tokens.has(category)
 	}
+	const anyCategory = (t: T) => parseApplicability(t.course_type_applicability).has(ALL_TOKEN)
+	const namesProgram = (t: T) => {
+		const token = normalizeProgramType(t.program_type_applicability)
+		return !!token && token !== ALL_TOKEN && !!want && token === want
+	}
+	// A template restricted to another programme type must never be picked, even
+	// as the last resort — a PG format on a UG paper is wrong, not a fallback.
+	//
+	// When the caller supplies no program type at all (the CIA routes), this
+	// dimension is simply not in play and every template stays eligible, exactly
+	// as before program-type ranking existed.
+	const programOk = (t: T) => !want || templateAppliesToProgramType(t.program_type_applicability, want)
 
-	return templates.find(t => parseApplicability(t.course_type_applicability).has(ALL_TOKEN)) || null
+	const tiers: ((t: T) => boolean)[] = [
+		t => namesCategory(t) && namesProgram(t),
+		t => namesCategory(t) && programOk(t),
+		t => anyCategory(t) && namesProgram(t),
+		t => anyCategory(t) && programOk(t),
+	]
+
+	for (const tier of tiers) {
+		const hit = templates.find(tier)
+		if (hit) return hit
+	}
+	return null
 }

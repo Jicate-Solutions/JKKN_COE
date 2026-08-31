@@ -50,7 +50,7 @@ export async function loadAssignmentBundle(
 					.maybeSingle()
 			: Promise.resolve({ data: null }),
 		supabase
-			.from('ia_question_papers')
+			.from('ese_question_papers')
 			.select('id, status, max_marks, duration_minutes, subject_title, course_code, set_label, semester, program_code, questions')
 			.eq('id', assignment.paper_id)
 			.maybeSingle(),

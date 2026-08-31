@@ -25,6 +25,7 @@ import { useInstitutionFilter } from '@/hooks/use-institution-filter'
 import {
 	FileText, UserCheck, Clock, CheckCircle2, AlertTriangle, Building2, Loader2,
 } from 'lucide-react'
+import { GenerateTab } from './generate-tab'
 import { AssignTab } from './assign-tab'
 import { AssignmentsTab } from './assignments-tab'
 import { ContentTab } from './content-tab'
@@ -263,9 +264,10 @@ export default function QpExaminerAssignmentPage() {
 							</CardContent>
 						</Card>
 					) : (
-						<Tabs defaultValue="assign" className="flex-1">
+						<Tabs defaultValue="generate" className="flex-1">
 							<TabsList>
-								<TabsTrigger value="assign">Assign</TabsTrigger>
+								<TabsTrigger value="generate">Generate Papers</TabsTrigger>
+								<TabsTrigger value="assign">Assign Examiner</TabsTrigger>
 								<TabsTrigger value="assignments">
 									Assignments
 									{counts.submitted > 0 && (
@@ -276,6 +278,15 @@ export default function QpExaminerAssignmentPage() {
 								</TabsTrigger>
 								<TabsTrigger value="content">Order Design</TabsTrigger>
 							</TabsList>
+
+							<TabsContent value="generate" className="pt-4">
+								<GenerateTab
+									institutionsId={effectiveInstitutionId}
+									institutionCode={effectiveInstitutionCode}
+									session={session}
+									onGenerated={bumpRefresh}
+								/>
+							</TabsContent>
 
 							<TabsContent value="assign" className="pt-4">
 								<AssignTab

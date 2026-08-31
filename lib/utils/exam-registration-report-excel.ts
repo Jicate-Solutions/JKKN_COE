@@ -20,13 +20,28 @@ interface ExcelReportResult {
 const ROMAN = ['', 'I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X']
 function toRoman(n: number): string { return ROMAN[n] || String(n) }
 
-function semesterToYear(semester: number): string {
-	const yearNum = Math.ceil(semester / 2)
-	return `${toRoman(yearNum)} Year`
+/** Sheet / block label for a learner's own semester */
+function semesterLabel(semester: number): string {
+	return semester > 0 ? toRoman(semester) : 'Not Mapped'
+}
+
+/** Column header for a learner-semester count column */
+function semesterColumnLabel(semester: number): string {
+	return semester > 0 ? `Sem ${toRoman(semester)}` : 'Not Mapped'
+}
+
+/** Semester sort key — an unresolved semester sorts after every real one */
+function semesterSortKey(semester: number): number {
+	return semester > 0 ? semester : 99
 }
 
 /**
  * Build a map of student register number → the learner's CURRENT semester.
+ *
+ * Every sheet is bucketed by this, never by the semester of the paper: a learner
+ * sits in ONE semester and carries arrear papers from the semesters behind it, so
+ * keying off the paper would list a Semester 3 learner again under Semester 1 and
+ * Semester 2 purely because they still owe a paper there.
  *
  * The API stamps learner_semester on every row, resolved over the whole session
  * before any filter is applied. The fallbacks re-derive it from the rows in hand:
@@ -49,15 +64,8 @@ function buildStudentSemesterMap(data: any[]): Map<string, number> {
 	}
 	const result = new Map<string, number>()
 	for (const regNo of new Set([...stamped.keys(), ...maxRegSem.keys(), ...maxAnySem.keys()])) {
-		result.set(regNo, stamped.get(regNo) || maxRegSem.get(regNo) || maxAnySem.get(regNo) || 1)
+		result.set(regNo, stamped.get(regNo) || maxRegSem.get(regNo) || maxAnySem.get(regNo) || 0)
 	}
-	return result
-}
-
-/** Build a map of student register number → current year */
-function buildStudentYearMap(data: any[]): Map<string, string> {
-	const result = new Map<string, string>()
-	for (const [regNo, sem] of buildStudentSemesterMap(data)) result.set(regNo, semesterToYear(sem))
 	return result
 }
 
@@ -182,7 +190,7 @@ function exportStudentFeeDetailsExcel(opts: ExcelExportOptions): ExcelReportResu
 				'Register No': ci === 0 ? regNo : '',
 				'Name of the Candidate': ci === 0 ? info.name : '',
 				'Date of Birth': ci === 0 ? info.dob : '',
-				'SEM/Year': toRoman(course.semester),
+				'Sem': toRoman(course.semester),
 				'Subject Code': course.course_code,
 				'Course Name': course.course_name,
 				'Total Subjects': ci === 0 ? info.courses.length : '',
@@ -201,7 +209,7 @@ function exportStudentFeeDetailsExcel(opts: ExcelExportOptions): ExcelReportResu
 				'Register No': regNo,
 				'Name of the Candidate': info.name,
 				'Date of Birth': info.dob,
-				'SEM/Year': '',
+				'Sem': '',
 				'Subject Code': '',
 				'Course Name': '',
 				'Total Subjects': 0,
@@ -272,7 +280,7 @@ function exportStudentExamRegistrationExcel(opts: ExcelExportOptions): ExcelRepo
 				'Register No': ci === 0 ? regNo : '',
 				'Name of the Candidate': ci === 0 ? info.name : '',
 				'Date of Birth': ci === 0 ? info.dob : '',
-				'SEM/Year': toRoman(course.semester),
+				'Sem': toRoman(course.semester),
 				'Subject Code': course.course_code,
 				'Course Name': course.course_name,
 				'Total Subjects': ci === 0 ? info.courses.length : '',
@@ -287,7 +295,7 @@ function exportStudentExamRegistrationExcel(opts: ExcelExportOptions): ExcelRepo
 				'Register No': regNo,
 				'Name of the Candidate': info.name,
 				'Date of Birth': info.dob,
-				'SEM/Year': '',
+				'Sem': '',
 				'Subject Code': '',
 				'Course Name': '',
 				'Total Subjects': 0,
@@ -353,31 +361,28 @@ function exportCourseCountRegularArrearExcel(opts: ExcelExportOptions): ExcelRep
 	return { rows, merges }
 }
 
-// ── Report 2B: Course Count Year-wise ──
+// ── Report 2B: Course Count Semester-wise ──
 
-function exportCourseCountYearWiseExcel(opts: ExcelExportOptions): ExcelReportResult {
-	const studentYearMap = buildStudentYearMap(opts.data)
+function exportCourseCountSemesterWiseExcel(opts: ExcelExportOptions): ExcelReportResult {
+	const studentSemesterMap = buildStudentSemesterMap(opts.data)
 	const countMap = new Map<string, any>()
-	const allYears = new Set<string>()
+	const allSemesters = new Set<number>()
 
 	for (const row of opts.data) {
 		const co = row.course_offering
 		if (!co) continue
 		const key = `${co.board_code || ''}|${co.course_code}`
-		const year = studentYearMap.get(row.stu_register_no) || semesterToYear(co.semester || 1)
-		allYears.add(year)
+		const sem = studentSemesterMap.get(row.stu_register_no) || 0
+		allSemesters.add(sem)
 
 		if (!countMap.has(key)) {
-			countMap.set(key, { board_code: co.board_code || '', board_name: co.board_name || '', board_order: co.board_order ?? 999, program_code: co.program_code || '', program_order: co.program_order ?? 999, semester: co.semester || 0, course_order: co.course_order ?? 999, course_code: co.course_code, course_name: co.course_name || '', years: {} })
+			countMap.set(key, { board_code: co.board_code || '', board_name: co.board_name || '', board_order: co.board_order ?? 999, program_code: co.program_code || '', program_order: co.program_order ?? 999, semester: co.semester || 0, course_order: co.course_order ?? 999, course_code: co.course_code, course_name: co.course_name || '', semesters: {} })
 		}
 		const entry = countMap.get(key)!
-		entry.years[year] = (entry.years[year] || 0) + 1
+		entry.semesters[sem] = (entry.semesters[sem] || 0) + 1
 	}
 
-	const sortedYears = Array.from(allYears).sort((a, b) => {
-		const order = ['I Year', 'II Year', 'III Year', 'IV Year', 'V Year']
-		return order.indexOf(a) - order.indexOf(b)
-	})
+	const sortedSemesters = Array.from(allSemesters).sort((a, b) => semesterSortKey(a) - semesterSortKey(b))
 
 	const sorted = Array.from(countMap.values())
 		.sort((a, b) => (a.board_order - b.board_order) || (a.semester - b.semester) || (a.course_order - b.course_order) || a.course_code.localeCompare(b.course_code))
@@ -401,11 +406,11 @@ function exportCourseCountYearWiseExcel(opts: ExcelExportOptions): ExcelReportRe
 	}
 
 	const rows = sorted.map((row, idx) => {
-		const yearCols: Record<string, number> = {}
+		const semCols: Record<string, number> = {}
 		let total = 0
-		sortedYears.forEach(y => {
-			const count = row.years[y] || 0
-			yearCols[y] = count
+		sortedSemesters.forEach(sem => {
+			const count = row.semesters[sem] || 0
+			semCols[semesterColumnLabel(sem)] = count
 			total += count
 		})
 		return {
@@ -414,7 +419,7 @@ function exportCourseCountYearWiseExcel(opts: ExcelExportOptions): ExcelReportRe
 			'Sem': row.semester ? toRoman(row.semester) : '',
 			'Course Code': row.course_code,
 			'Course Name': row.course_name,
-			...yearCols,
+			...semCols,
 			'Total': total,
 		}
 	})
@@ -422,32 +427,29 @@ function exportCourseCountYearWiseExcel(opts: ExcelExportOptions): ExcelReportRe
 	return { rows, merges }
 }
 
-// ── Report 2C: Course Count with Program Code Year-wise ──
+// ── Report 2C: Course Count with Program Code Semester-wise ──
 
-function exportCourseCountProgramYearWiseExcel(opts: ExcelExportOptions): ExcelReportResult {
-	const studentYearMap = buildStudentYearMap(opts.data)
+function exportCourseCountProgramSemesterWiseExcel(opts: ExcelExportOptions): ExcelReportResult {
+	const studentSemesterMap = buildStudentSemesterMap(opts.data)
 	const countMap = new Map<string, any>()
-	const allYears = new Set<string>()
+	const allSemesters = new Set<number>()
 
 	for (const row of opts.data) {
 		const co = row.course_offering
 		if (!co) continue
 		const programCode = co.program_code || row.program_code || ''
 		const key = `${co.board_code || ''}|${programCode}|${co.course_code}`
-		const year = studentYearMap.get(row.stu_register_no) || semesterToYear(co.semester || 1)
-		allYears.add(year)
+		const sem = studentSemesterMap.get(row.stu_register_no) || 0
+		allSemesters.add(sem)
 
 		if (!countMap.has(key)) {
-			countMap.set(key, { board_code: co.board_code || '', board_name: co.board_name || '', board_order: co.board_order ?? 999, program_code: programCode, program_order: co.program_order ?? 999, semester: co.semester || 0, course_order: co.course_order ?? 999, course_code: co.course_code, course_name: co.course_name || '', years: {} })
+			countMap.set(key, { board_code: co.board_code || '', board_name: co.board_name || '', board_order: co.board_order ?? 999, program_code: programCode, program_order: co.program_order ?? 999, semester: co.semester || 0, course_order: co.course_order ?? 999, course_code: co.course_code, course_name: co.course_name || '', semesters: {} })
 		}
 		const entry = countMap.get(key)!
-		entry.years[year] = (entry.years[year] || 0) + 1
+		entry.semesters[sem] = (entry.semesters[sem] || 0) + 1
 	}
 
-	const sortedYears = Array.from(allYears).sort((a, b) => {
-		const order = ['I Year', 'II Year', 'III Year', 'IV Year', 'V Year']
-		return order.indexOf(a) - order.indexOf(b)
-	})
+	const sortedSemesters = Array.from(allSemesters).sort((a, b) => semesterSortKey(a) - semesterSortKey(b))
 
 	const sorted = Array.from(countMap.values())
 		.sort((a, b) => (a.board_order - b.board_order) || (a.program_order - b.program_order) || a.program_code.localeCompare(b.program_code) || (a.semester - b.semester) || (a.course_order - b.course_order) || a.course_code.localeCompare(b.course_code))
@@ -488,11 +490,11 @@ function exportCourseCountProgramYearWiseExcel(opts: ExcelExportOptions): ExcelR
 	}
 
 	const rows = sorted.map((row, idx) => {
-		const yearCols: Record<string, number> = {}
+		const semCols: Record<string, number> = {}
 		let total = 0
-		sortedYears.forEach(y => {
-			const count = row.years[y] || 0
-			yearCols[y] = count
+		sortedSemesters.forEach(sem => {
+			const count = row.semesters[sem] || 0
+			semCols[semesterColumnLabel(sem)] = count
 			total += count
 		})
 		return {
@@ -502,7 +504,7 @@ function exportCourseCountProgramYearWiseExcel(opts: ExcelExportOptions): ExcelR
 			'Sem': row.semester ? toRoman(row.semester) : '',
 			'Course Code': row.course_code,
 			'Course Name': row.course_name,
-			...yearCols,
+			...semCols,
 			'Total': total,
 		}
 	})
@@ -510,26 +512,26 @@ function exportCourseCountProgramYearWiseExcel(opts: ExcelExportOptions): ExcelR
 	return { rows, merges }
 }
 
-// ── Report 3: Course Count by Program & Year Section ──
+// ── Report 3: Course Count by Program Section ──
 
-function exportCourseCountProgramYearSectionExcel(opts: ExcelExportOptions): { sections: { sheetName: string; result: ExcelReportResult }[] } {
-	const studentYearMap = buildStudentYearMap(opts.data)
-	const allYears = new Set<string>()
+function exportCourseCountProgramSectionExcel(opts: ExcelExportOptions): { sections: { sheetName: string; result: ExcelReportResult }[] } {
+	const studentSemesterMap = buildStudentSemesterMap(opts.data)
+	const allSemesters = new Set<number>()
 
-	// Group by program_code → courses with year-wise counts
+	// Group by program_code → courses with semester-wise counts
 	const programMap = new Map<string, {
 		program_code: string
 		program_name: string | null
 		program_order: number
-		courses: Map<string, { semester: number; course_order: number; course_code: string; course_name: string; years: Record<string, number> }>
+		courses: Map<string, { semester: number; course_order: number; course_code: string; course_name: string; semesters: Record<number, number> }>
 	}>()
 
 	for (const row of opts.data) {
 		const co = row.course_offering
 		if (!co) continue
 		const programCode = co.program_code || row.program_code || ''
-		const studentYear = studentYearMap.get(row.stu_register_no) || semesterToYear(co.semester || 1)
-		allYears.add(studentYear)
+		const sem = studentSemesterMap.get(row.stu_register_no) || 0
+		allSemesters.add(sem)
 
 		if (!programMap.has(programCode)) {
 			programMap.set(programCode, {
@@ -547,13 +549,13 @@ function exportCourseCountProgramYearSectionExcel(opts: ExcelExportOptions): { s
 				course_order: co.course_order ?? 999,
 				course_code: co.course_code,
 				course_name: co.course_name || '',
-				years: {},
+				semesters: {},
 			})
 		}
-		program.courses.get(courseKey)!.years[studentYear] = (program.courses.get(courseKey)!.years[studentYear] || 0) + 1
+		program.courses.get(courseKey)!.semesters[sem] = (program.courses.get(courseKey)!.semesters[sem] || 0) + 1
 	}
 
-	const sortedYears = ['I Year', 'II Year', 'III Year', 'IV Year', 'V Year'].filter(y => allYears.has(y))
+	const sortedSemesters = Array.from(allSemesters).sort((a, b) => semesterSortKey(a) - semesterSortKey(b))
 
 	const sections = Array.from(programMap.values())
 		.sort((a, b) => (a.program_order - b.program_order) || a.program_code.localeCompare(b.program_code))
@@ -564,11 +566,11 @@ function exportCourseCountProgramYearSectionExcel(opts: ExcelExportOptions): { s
 				.sort((a, b) => (a.semester - b.semester) || (a.course_order - b.course_order) || a.course_code.localeCompare(b.course_code))
 
 			const rows = courses.map((course, idx) => {
-				const yearCols: Record<string, number> = {}
+				const semCols: Record<string, number> = {}
 				let total = 0
-				sortedYears.forEach(y => {
-					const count = course.years[y] || 0
-					yearCols[y] = count
+				sortedSemesters.forEach(sem => {
+					const count = course.semesters[sem] || 0
+					semCols[semesterColumnLabel(sem)] = count
 					total += count
 				})
 				return {
@@ -576,7 +578,7 @@ function exportCourseCountProgramYearSectionExcel(opts: ExcelExportOptions): { s
 					'Sem': toRoman(course.semester),
 					'Course Code': course.course_code,
 					'Course Name': course.course_name,
-					...yearCols,
+					...semCols,
 					'Total': total,
 				}
 			})
@@ -675,13 +677,13 @@ function computeProgramInfo(data: any[]): { subjectCount: number; studentCount: 
 	return { subjectCount, studentCount: studentCourses.size, programName }
 }
 
-// ── Prepend Program / Year info rows (label left, count right-aligned) ──
+// ── Prepend Program / Semester info rows (label left, count right-aligned) ──
 
 function prependProgramInfoRows(
 	ws: ReturnType<typeof XLSX.utils.json_to_sheet>,
 	programLabel: string,
 	subjectsLabel: string,
-	yearLabel: string,
+	semesterInfoLabel: string,
 	studentsLabel: string
 ): void {
 	const range = XLSX.utils.decode_range(ws['!ref'] || 'A1')
@@ -702,8 +704,8 @@ function prependProgramInfoRows(
 	// Row 0: Program (left) + No. of Subjects (right-aligned, last column)
 	ws[XLSX.utils.encode_cell({ r: 0, c: 0 })] = { v: programLabel, t: 's', bold: true }
 	ws[XLSX.utils.encode_cell({ r: 0, c: lastCol })] = { v: subjectsLabel, t: 's', align: 'right', bold: true }
-	// Row 1: Year (left) + No. of Students (right-aligned, last column)
-	ws[XLSX.utils.encode_cell({ r: 1, c: 0 })] = { v: yearLabel, t: 's', bold: true }
+	// Row 1: Semester (left) + No. of Students (right-aligned, last column)
+	ws[XLSX.utils.encode_cell({ r: 1, c: 0 })] = { v: semesterInfoLabel, t: 's', bold: true }
 	ws[XLSX.utils.encode_cell({ r: 1, c: lastCol })] = { v: studentsLabel, t: 's', align: 'right', bold: true }
 
 	// Shift existing merges down by 2
@@ -729,7 +731,7 @@ export async function exportExamRegistrationReportExcel(opts: ExcelExportOptions
 		const buildSheet = isRegistrationType
 			? exportStudentExamRegistrationExcel
 			: exportStudentFeeDetailsExcel
-		// Group data by program_code, then by year within each program
+		// Group data by program_code, then by the LEARNER's semester within each program
 		const programGroups = new Map<string, any[]>()
 		const programMeta = new Map<string, { program_order: number }>()
 		for (const row of opts.data) {
@@ -752,58 +754,55 @@ export async function exportExamRegistrationReportExcel(opts: ExcelExportOptions
 
 		if (sortedPrograms.length === 0) return
 
-		const yearOrder = ['I Year', 'II Year', 'III Year', 'IV Year', 'V Year']
-
 		for (const programCode of sortedPrograms) {
 			const programData = programGroups.get(programCode)!
 
-			// The learner's own semester decides the year block they are printed in -
-			// not the highest paper they applied for, which for an arrear belongs to a
-			// year they have already left.
-			const studentYearMap = buildStudentSemesterMap(programData)
+			// The learner's own semester decides the sheet they are listed on - not the
+			// semester of the paper, which for an arrear belongs to a semester they have
+			// already left. Every paper they applied for, regular and arrear alike, then
+			// lands on that one sheet.
+			const studentSemesterMap = buildStudentSemesterMap(programData)
 
-			// Group rows by student's year
-			const yearGroups = new Map<string, any[]>()
+			const semesterGroups = new Map<number, any[]>()
 			for (const row of programData) {
 				const regNo = row.stu_register_no || 'Unknown'
-				const maxSem = studentYearMap.get(regNo) || 1
-				const year = semesterToYear(maxSem)
-				if (!yearGroups.has(year)) yearGroups.set(year, [])
-				yearGroups.get(year)!.push(row)
+				const sem = studentSemesterMap.get(regNo) || 0
+				if (!semesterGroups.has(sem)) semesterGroups.set(sem, [])
+				semesterGroups.get(sem)!.push(row)
 			}
 
-			const sortedYears = Array.from(yearGroups.keys()).sort((a, b) => yearOrder.indexOf(a) - yearOrder.indexOf(b))
+			const sortedSemesters = Array.from(semesterGroups.keys()).sort((a, b) => semesterSortKey(a) - semesterSortKey(b))
 
-			for (const year of sortedYears) {
-				const yearData = yearGroups.get(year)!
-				const result = buildSheet({ ...opts, data: yearData })
+			for (const semester of sortedSemesters) {
+				const semesterData = semesterGroups.get(semester)!
+				const result = buildSheet({ ...opts, data: semesterData })
 				if (result.rows.length === 0) continue
 
 				const ws = XLSX.utils.json_to_sheet(result.rows)
 				applySheetFormatting(ws, result)
 
-				// Program / Year info block (matches the PDF subtitle)
+				// Program / Semester info block (matches the PDF subtitle)
 				const word = isRegistrationType ? 'Registered' : 'Applied'
-				const info = computeProgramInfo(yearData)
+				const info = computeProgramInfo(semesterData)
 				prependProgramInfoRows(
 					ws,
 					`Program & Branch : ${programCode}${info.programName ? ` - ${info.programName}` : ''}`,
 					`No.of Subjects : ${info.subjectCount}`,
-					`Year : ${year}`,
+					`Semester : ${semesterLabel(semester)}`,
 					`No.of Students ${word} : ${info.studentCount}`
 				)
 				if (opts.course_category_filter?.length) prependInfoRow(ws, `Course Category : ${opts.course_category_filter.join(', ')}`)
 
-				// Sheet name: "PCA-I Year" (max 31 chars, sanitized)
-				const sheetName = `${programCode}-${year}`.replace(/[\\/*?[\]:]/g, '').slice(0, 31) || 'Unknown'
+				// Sheet name: "PCA-Sem III" (max 31 chars, sanitized)
+				const sheetName = `${programCode}-${semesterColumnLabel(semester)}`.replace(/[\\/*?[\]:]/g, '').slice(0, 31) || 'Unknown'
 				XLSX.utils.book_append_sheet(wb, ws, sheetName)
 			}
 		}
 
 		if (wb.SheetNames.length === 0) return
 	} else if (opts.report_type === 'course-count-program-year-section') {
-		// Each program+year section gets its own sheet
-		const { sections } = exportCourseCountProgramYearSectionExcel(opts)
+		// Each program section gets its own sheet
+		const { sections } = exportCourseCountProgramSectionExcel(opts)
 		for (const { sheetName, result } of sections) {
 			if (result.rows.length === 0) continue
 			const ws = XLSX.utils.json_to_sheet(result.rows)
@@ -1021,9 +1020,9 @@ export async function exportExamRegistrationReportExcel(opts: ExcelExportOptions
 				case 'course-count-regular-arrear':
 					return exportCourseCountRegularArrearExcel(levelOpts)
 				case 'course-count-year-wise':
-					return exportCourseCountYearWiseExcel(levelOpts)
+					return exportCourseCountSemesterWiseExcel(levelOpts)
 				case 'course-count-program-year-wise':
-					return exportCourseCountProgramYearWiseExcel(levelOpts)
+					return exportCourseCountProgramSemesterWiseExcel(levelOpts)
 				default:
 					throw new Error(`Unknown report type: ${opts.report_type}`)
 			}
