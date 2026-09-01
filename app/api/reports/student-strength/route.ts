@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { unstable_cache } from 'next/cache'
 import { getSupabaseServer } from '@/lib/supabase-server'
 import {
+	MyJKKNApiError,
 	fetchAllMyJKKNInstitutions,
 	fetchAllMyJKKNLearnerProfiles,
 	fetchAllMyJKKNPrograms,
@@ -53,6 +54,23 @@ const getCachedLearners = unstable_cache(
 	['myjkkn-learners'],
 	{ revalidate: 3600, tags: ['myjkkn-learners'] } // 1 hour
 )
+
+// unstable_cache does not coalesce concurrent misses: every report request that lands
+// while the first sweep is still running starts its own 25-page crawl, and MyJKKN
+// answers the pile-up with 500s. Share one in-flight sweep per institution instead.
+// Failures are not retained — the entry is dropped as soon as the sweep settles.
+const inflightLearners = new Map<string, Promise<SlimLearner[]>>()
+
+function getLearnersOnce(institutionId: string): Promise<SlimLearner[]> {
+	const pending = inflightLearners.get(institutionId)
+	if (pending) return pending
+
+	const sweep = getCachedLearners(institutionId).finally(() => {
+		inflightLearners.delete(institutionId)
+	})
+	inflightLearners.set(institutionId, sweep)
+	return sweep
+}
 
 function emptyYearCount(): YearCount {
 	return { aided: 0, sf: 0, total: 0 }
@@ -176,14 +194,12 @@ export async function GET(request: Request) {
 		const myjkknIds: string[] = institution.myjkkn_institution_ids || []
 		const myjkknIdsStr = myjkknIds.map(String)
 
-		// ── Phase 2: Parallel MyJKKN fetches (cached) ────────────────────────────
-		// Learners are fetched ONCE using the first myjkknId.
-		// The MyJKKN API ignores institution_id server-side and returns all learners;
-		// we filter by learner.institution_id client-side.
+		// ── Phase 2: MyJKKN institutions + programs (cached 24h, small) ──────────
+		// Learner profiles are deliberately NOT fetched here — whether they are needed
+		// at all depends on has_aided, which these two answers decide (see below).
 		// Results are cached via unstable_cache — subsequent requests skip the API calls.
-		const [allMyjkknInst, allLearners, allPrograms] = await Promise.all([
+		const [allMyjkknInst, allPrograms] = await Promise.all([
 			myjkknIdsStr.length > 0 ? getCachedInstitutions() : Promise.resolve([]),
-			myjkknIds.length > 0 ? getCachedLearners(myjkknIds[0]) : Promise.resolve([]),
 			getCachedPrograms(),
 		])
 
@@ -212,6 +228,17 @@ export async function GET(request: Request) {
 		}
 
 		const has_aided = [...institutionTypeMap.values()].includes('AIDED')
+
+		// ── Learner profiles (only when they can change the answer) ──────────────
+		// They feed two things: the AIDED/SF split and a program_code fallback for
+		// registrations that lack one. An institution with no aided arm whose
+		// registrations all carry a program_code gets an identical report without
+		// paying for — or failing on — the 25-page MyJKKN profile sweep.
+		const needsProgramFallback = allRegistrations.some(r => !(r.program_code || '').trim())
+		const allLearners: SlimLearner[] =
+			myjkknIds.length > 0 && (has_aided || needsProgramFallback)
+				? await getLearnersOnce(String(myjkknIds[0]))
+				: []
 
 		// ── Build learner map (register_number → AIDED/SF) ───────────────────────
 		// Filter to learners whose institution_id belongs to this COE institution.
@@ -385,6 +412,12 @@ export async function GET(request: Request) {
 		return NextResponse.json(report)
 	} catch (error) {
 		console.error('[Student Strength Report] Unexpected error:', error)
+		if (error instanceof MyJKKNApiError) {
+			return NextResponse.json(
+				{ error: `MyJKKN API is not responding (${error.status}). Please try again in a moment.` },
+				{ status: 502 }
+			)
+		}
 		return NextResponse.json({ error: 'Failed to generate report' }, { status: 500 })
 	}
 }

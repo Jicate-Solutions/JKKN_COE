@@ -68,7 +68,9 @@ export class MyJKKNApiError extends Error {
 // =====================================================
 
 const MYJKKN_FETCH_TIMEOUT_MS = Number(process.env.MYJKKN_FETCH_TIMEOUT_MS) || 30000 // per-attempt timeout; MyJKKN takes >10s under load
-const MYJKKN_FETCH_RETRIES = 1 // extra attempts on timeout / network failure / 5xx (all calls are GET, safe to retry)
+const MYJKKN_TRANSPORT_RETRIES = 1 // extra attempts on timeout / network failure (each one already burned a full timeout)
+const MYJKKN_SERVER_ERROR_RETRIES = 3 // extra attempts on 5xx — MyJKKN answers concurrent load with transient 500s
+const MYJKKN_RETRY_BASE_MS = 500 // backoff doubles per retry: 500ms, 1s, 2s
 
 async function fetchFromMyJKKN<T>(endpoint: string, params?: Record<string, string | number | boolean | undefined>): Promise<T> {
 	const apiKey = getApiKey()
@@ -86,14 +88,19 @@ async function fetchFromMyJKKN<T>(endpoint: string, params?: Record<string, stri
 		})
 	}
 
-	for (let attempt = 0; ; attempt++) {
-		const isLastAttempt = attempt >= MYJKKN_FETCH_RETRIES
+	let attempt = 0
+	let transportRetries = 0
+	let serverErrorRetries = 0
+
+	for (;;) {
 		if (attempt === 0) {
 			console.log(`[MyJKKN API] Fetching: ${url.toString()}`)
 		} else {
-			console.warn(`[MyJKKN API] Retry ${attempt}/${MYJKKN_FETCH_RETRIES}: ${endpoint}`)
-			await new Promise(resolve => setTimeout(resolve, 1000))
+			const backoff = MYJKKN_RETRY_BASE_MS * 2 ** (attempt - 1)
+			console.warn(`[MyJKKN API] Retry ${attempt} in ${backoff}ms: ${endpoint}`)
+			await new Promise(resolve => setTimeout(resolve, backoff))
 		}
+		attempt++
 
 		const controller = new AbortController()
 		const timeout = setTimeout(() => controller.abort(), MYJKKN_FETCH_TIMEOUT_MS)
@@ -113,7 +120,10 @@ async function fetchFromMyJKKN<T>(endpoint: string, params?: Record<string, stri
 			if (!response.ok) {
 				const errorBody = await response.json().catch(() => ({}))
 				console.error(`[MyJKKN API] Error ${response.status}:`, errorBody)
-				if (response.status >= 500 && !isLastAttempt) continue
+				if (response.status >= 500 && serverErrorRetries < MYJKKN_SERVER_ERROR_RETRIES) {
+					serverErrorRetries++
+					continue
+				}
 				throw new MyJKKNApiError(
 					errorBody.message || errorBody.error || `API Error: ${response.status}`,
 					response.status,
@@ -128,16 +138,20 @@ async function fetchFromMyJKKN<T>(endpoint: string, params?: Record<string, stri
 		} catch (error) {
 			if (error instanceof MyJKKNApiError) throw error
 			if (error instanceof Error && error.name === 'AbortError') {
-				console.error(`[MyJKKN API] Timed out after ${MYJKKN_FETCH_TIMEOUT_MS / 1000}s (attempt ${attempt + 1}): ${endpoint}`)
-				if (!isLastAttempt) continue
+				console.error(`[MyJKKN API] Timed out after ${MYJKKN_FETCH_TIMEOUT_MS / 1000}s (attempt ${attempt}): ${endpoint}`)
+				if (transportRetries < MYJKKN_TRANSPORT_RETRIES) {
+					transportRetries++
+					continue
+				}
 				throw new MyJKKNApiError(
 					`MyJKKN API request timed out after ${MYJKKN_FETCH_TIMEOUT_MS / 1000}s: ${endpoint}`,
 					504
 				)
 			}
 			// Network-level failure (DNS, connection reset, ...) — retry once
-			if (!isLastAttempt) {
-				console.error(`[MyJKKN API] Network error (attempt ${attempt + 1}): ${endpoint}`, error)
+			if (transportRetries < MYJKKN_TRANSPORT_RETRIES) {
+				transportRetries++
+				console.error(`[MyJKKN API] Network error (attempt ${attempt}): ${endpoint}`, error)
 				continue
 			}
 			throw error
@@ -159,6 +173,7 @@ async function fetchAllPages<T>(
 	let page = 1
 	let totalPages = 1
 	const limit = options.limit || 100
+	let effectiveLimit = limit // the server may silently cap page size below what we ask for
 	const MAX_PAGES = 50  // Safety limit to prevent infinite loops
 
 	do {
@@ -177,25 +192,42 @@ async function fetchAllPages<T>(
 			break
 		}
 
-		// Safely extract totalPages from metadata - handle missing/undefined metadata
-		if (response.metadata && typeof response.metadata.totalPages === 'number') {
+		const total = typeof response.metadata?.total === 'number' ? response.metadata.total : undefined
+
+		// Some endpoints silently cap page size below the limit we ask for (learner
+		// profiles cap at 200). Learn the real page size from page 1 so that a short
+		// page keeps meaning "end of results" rather than "capped".
+		if (page === 1 && pageData.length < effectiveLimit && total !== undefined && total > pageData.length) {
+			effectiveLimit = pageData.length
+			console.log(`[fetchAllPages] Server capped page size at ${effectiveLimit} (requested ${limit}, total ${total})`)
+		}
+
+		// Stop as soon as we hold everything the server says exists.
+		if (total !== undefined && allData.length >= total) {
+			console.log(`[fetchAllPages] Have all ${total} records, stopping`)
+			break
+		}
+
+		// A short page is the end of the result set, whatever the metadata claims.
+		// MyJKKN's metadata.totalPages is not trustworthy — /organizations/institutions
+		// reports totalPages 2 for 14 records — and requesting the phantom page answers
+		// 500 every time, which would abort the whole sweep.
+		if (pageData.length < effectiveLimit) {
+			console.log(`[fetchAllPages] Page ${page} returned ${pageData.length} < page size ${effectiveLimit} — last page, stopping`)
+			break
+		}
+
+		// Full page — work out whether to expect another
+		if (typeof response.metadata?.totalPages === 'number') {
 			totalPages = response.metadata.totalPages
 			console.log(`[fetchAllPages] Using metadata.totalPages: ${totalPages}`)
-		} else if (response.metadata && typeof response.metadata.total === 'number') {
-			// Calculate from total count
-			totalPages = Math.ceil(response.metadata.total / limit) || 1
-			console.log(`[fetchAllPages] Calculated totalPages from total: ${totalPages} (total: ${response.metadata.total}, limit: ${limit})`)
+		} else if (total !== undefined) {
+			totalPages = Math.ceil(total / effectiveLimit) || 1
+			console.log(`[fetchAllPages] Calculated totalPages from total: ${totalPages} (total: ${total}, page size: ${effectiveLimit})`)
 		} else {
-			// No metadata - use heuristic: if we got full page, there might be more
-			if (pageData.length >= limit) {
-				// Got full page, assume there's at least one more page
-				totalPages = page + 1
-				console.log(`[fetchAllPages] No metadata, got full page (${pageData.length}), will try page ${page + 1}`)
-			} else {
-				// Got partial page, this is the last page
-				totalPages = page
-				console.log(`[fetchAllPages] No metadata, got partial page (${pageData.length}), stopping`)
-			}
+			// No metadata - a full page means there may be another
+			totalPages = page + 1
+			console.log(`[fetchAllPages] No metadata, got full page (${pageData.length}), will try page ${page + 1}`)
 		}
 
 		page++

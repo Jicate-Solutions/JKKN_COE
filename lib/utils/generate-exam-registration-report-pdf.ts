@@ -390,8 +390,12 @@ function drawProgramSummary(
 	const subjectCount = students.reduce((max, s) => Math.max(max, s.courses.length), 0)
 	const footerSpace = 10
 
-	// Columns — landscape A4 ~284mm usable, portrait A4 ~197mm usable
-	const colWidths = compact ? [14, 20, 32, 96, 35] : [14, 20, 32, 78, 36, 50, 54]
+	// Columns — the base widths are scaled to fill the page, so the same layout spans
+	// portrait A4 (~197mm usable) and landscape A4 (~284mm usable) alike. `compact`
+	// drops the two Subject Incharge columns and the rest widen to take their place.
+	const baseWidths = compact ? [14, 20, 32, 96, 35] : [14, 20, 32, 78, 36, 50, 54]
+	const widthScale = (pageWidth - margin * 2) / baseWidths.reduce((a, b) => a + b, 0)
+	const colWidths = baseWidths.map(w => w * widthScale)
 	const headers = compact
 		? ['S.No', 'Sem', 'Subject\nCode', 'Course Name', countHeaderLabel]
 		: ['S.No', 'Sem', 'Subject\nCode', 'Course Name', countHeaderLabel, 'Name of the\nSubject Incharge', 'Signature of the\nSubject Incharge']
@@ -755,7 +759,8 @@ function generateStudentFeeDetailsPdf(opts: ReportPdfOptions): string {
 		})
 
 		// Per-program subject-wise summary — printed immediately after this program section
-		drawProgramSummary(doc, pageWidth, pageHeight, margin, opts, 'STUDENT EXAM APPLICATION - SUBJECT SUMMARY', 'No. of Students\nApplied', 'Applied', programCode, programName, semester, students)
+		// compact = no Subject Incharge name / signature columns on the application summary
+		drawProgramSummary(doc, pageWidth, pageHeight, margin, opts, 'STUDENT EXAM APPLICATION - SUBJECT SUMMARY', 'No. of Students\nApplied', 'Applied', programCode, programName, semester, students, { compact: true })
 	})
 
 	// Add footers to all pages
