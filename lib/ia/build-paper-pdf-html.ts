@@ -13,8 +13,6 @@
 // @font-face (see lib/ia/tamil-fonts.ts). Chromium shapes Tamil far more reliably
 // than jsPDF ever did.
 
-import fs from 'fs'
-import path from 'path'
 import katex from 'katex'
 import { readSubQuestions, readQuestionImage } from './sub-questions'
 import { paperPdfFilename } from './paper-filename'
@@ -25,6 +23,13 @@ import {
 	canonicalizeFontFamily,
 	listAvailableTamilFonts,
 } from '@/lib/ia/tamil-fonts'
+// The letterhead strings live in one place so this paper and the examiner order
+// print the same college name, accreditation and address.
+import {
+	JKKN_LETTERHEAD,
+	loadPublicImageDataUri,
+	type JkknLetterhead as Letterhead,
+} from '@/lib/pdf/jkkn-letterhead'
 // puppeteer-core + @sparticuz/chromium are imported LAZILY inside the Vercel branch
 // only — importing them at module top can fail on a local dev machine and take the
 // whole route module (→ Next 404) with it. Local dev uses full `puppeteer`.
@@ -88,77 +93,11 @@ export interface BuildPaperPdfResult {
 	filename: string
 }
 
-/** One printed line of a boxed letterhead; `cls` picks its colour/size. */
-interface LetterheadLine {
-	text: string
-	cls: 'lh-name' | 'lh-trust' | 'lh-approve' | 'lh-naac' | 'lh-addr' | 'lh-web'
-}
-
-interface Letterhead {
-	name: string
-	address: string
-	/**
-	 * 'plain'  — centred name + address (the arts & science paper).
-	 * 'boxed'  — the engineering-college letterhead: framed block with the logo at
-	 *            the left and the coloured name/affiliation lines centred beside it,
-	 *            under a Register Number grid.
-	 */
-	style?: 'plain' | 'boxed'
-	/** File under public/ — embedded as base64 (Chromium can't fetch a relative URL). */
-	logoFile?: string
-	lines?: LetterheadLine[]
-	/** Cells in the Register Number grid; 0 / absent = don't print one. */
-	registerCells?: number
-}
-
-/** Printed letterhead per COE institution_code (mirrors build-paper-pdf.ts). */
-const LETTERHEAD: Record<string, Letterhead> = {
-	CAS: {
-		name: 'J.K.K.NATARAJA COLLEGE OF ARTS & SCIENCE (AUTONOMOUS)',
-		address: 'Komarapalayam - 638 183, Namakkal District, Tamil Nadu',
-	},
-	// Engineering college. Its printed papers carry the Register Number grid at the
-	// top right; the "Question Paper Code" box next to it belongs to the SEMESTER-END
-	// paper only — an internal (CIA) paper has no code, so none is printed here.
-	CET: {
-		name: 'J.K.K.NATTRAJA COLLEGE OF ENGINEERING AND TECHNOLOGY',
-		address: 'Natarajapuram, NH-544, Kumarapalayam - 638 183, Namakkal Dt., Tamil Nadu.',
-		style: 'boxed',
-		logoFile: 'jkkncet_logo.png',
-		registerCells: 12,
-		lines: [
-			{ text: 'J.K.K.NATTRAJA COLLEGE OF ENGINEERING AND TECHNOLOGY', cls: 'lh-name' },
-			{ text: '(AUTONOMOUS)', cls: 'lh-name' },
-			{ text: '(MANAGED BY J.K.K.RANGAMMAL CHARITABLE TRUST)', cls: 'lh-trust' },
-			{ text: '(Approved by AICTE - New Delhi and Affiliated to Anna University - Chennai)', cls: 'lh-approve' },
-			{ text: 'Recognized by UGC under Section 2(f) & Accredited by NAAC', cls: 'lh-naac' },
-			{ text: 'Natarajapuram, NH-544, Kumarapalayam - 638 183, Namakkal Dt., Tamil Nadu.', cls: 'lh-addr' },
-			{ text: 'Website: www.engg.jkkn.in', cls: 'lh-web' },
-		],
-	},
-}
-
-/** public/<file> → data URI, so the logo survives into headless Chromium. */
-const logoCache = new Map<string, string | null>()
-function loadLogoDataUri(file?: string | null): string | null {
-	if (!file) return null
-	if (logoCache.has(file)) return logoCache.get(file) || null
-	let uri: string | null = null
-	try {
-		const full = path.join(process.cwd(), 'public', file)
-		if (fs.existsSync(full)) {
-			const ext = path.extname(full).toLowerCase()
-			const mime = ext === '.jpg' || ext === '.jpeg' ? 'image/jpeg' : ext === '.svg' ? 'image/svg+xml' : 'image/png'
-			uri = `data:${mime};base64,${fs.readFileSync(full).toString('base64')}`
-		} else {
-			console.warn('[QP PDF] letterhead logo not found:', full)
-		}
-	} catch (e: any) {
-		console.warn('[QP PDF] letterhead logo failed:', e?.message)
-	}
-	logoCache.set(file, uri)
-	return uri
-}
+// The letterhead table and the public/ image loader are shared with the examiner
+// order (lib/pdf/jkkn-letterhead.ts); LETTERHEAD is aliased so the rest of this
+// renderer reads unchanged.
+const LETTERHEAD = JKKN_LETTERHEAD
+const loadLogoDataUri = loadPublicImageDataUri
 
 function formatDuration(mins?: number | null): string {
 	if (!mins || mins <= 0) return '1 Hour'
@@ -683,7 +622,12 @@ export async function buildPaperPdfHtml(
 	id: string,
 	_origin: string,
 	variant: PdfVariant = 'single',
-	source: PaperSource = 'ia'
+	source: PaperSource = 'ia',
+	/**
+	 * Keep the set out of the download's filename. Set for the examiner portal,
+	 * where an examiner must not learn that parallel sets of their paper exist.
+	 */
+	hideSet = false
 ): Promise<BuildPaperPdfResult | null> {
 	const { data: paper, error } = await supabase
 		.from(PAPER_TABLE[source])
@@ -891,7 +835,7 @@ export async function buildPaperPdfHtml(
 				console.info(`[QP PDF] ${paper.course_code || id} fitted to ${how}`)
 			}
 		}
-		const filename = paperPdfFilename(paper, { variant })
+		const filename = paperPdfFilename(paper, { variant, hideSet })
 		return { buffer: best.buffer, filename }
 	} finally {
 		await browser.close()

@@ -57,6 +57,10 @@ automation/storage/
 automation/.env.automation
 automation/.venv/
 *.png
+# ...but public/ holds the brand assets the PDFs embed (logos, seals, the
+# principal's signature). Every one of them is tracked; a new one silently
+# ignored means a document renders without its letterhead or signature.
+!public/**/*.png
 
 #MCP
 /mcp-servers

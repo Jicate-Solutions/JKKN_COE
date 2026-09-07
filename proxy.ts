@@ -14,6 +14,9 @@ const publicRoutes = [
 	'/verify-email',
 	'/arts-examiner-registration',
 	'/engg-examiner-registration',
+	// Short alias for the same portal, and the URL printed on new Examiner
+	// Orders. The long path stays public because orders already issued carry it.
+	'/examiner',
 	'/',
 ]
 

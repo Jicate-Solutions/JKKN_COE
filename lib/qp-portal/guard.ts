@@ -14,7 +14,13 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
 import { readPortalSession } from './session'
 import { windowState, type WindowState } from './ist'
-import type { QpAssignment, QpPortalSession, QpLogAction } from '@/types/qp-examiner-assignment'
+import {
+	QP_PREVIEW_STAGES,
+	type QpAssignment,
+	type QpPortalSession,
+	type QpLogAction,
+	type QpSubmissionStage,
+} from '@/types/qp-examiner-assignment'
 
 // ── Audit log ───────────────────────────────────────────────────────────────
 
@@ -156,6 +162,16 @@ export interface AssignmentAccess {
 	canEdit: boolean
 	/** May the question content be released at all right now? */
 	canReadQuestions: boolean
+	/** Where the examiner is in the submit → check list → signature walk. */
+	stage: QpSubmissionStage
+	/**
+	 * May the examiner still work the check list / signature steps?
+	 *
+	 * Deliberately NOT window-gated: those steps expose no question content, and
+	 * a paper already handed over must not be left un-attested because the clock
+	 * ran out mid-wizard.
+	 */
+	canCompleteSubmission: boolean
 }
 
 export type AssignmentOk = AuthOk & { access: AssignmentAccess }
@@ -223,12 +239,26 @@ export async function requireAssignment(
 	}
 
 	const state = windowState(assignment.valid_from, assignment.valid_to)
-	const canEdit = state === 'open' && EDITABLE.has(assignment.status)
-	// Once accepted the paper is finished, but the examiner may still read back
-	// what they submitted while the window stands.
-	const canReadQuestions = state === 'open'
+	const stage: QpSubmissionStage = (assignment.submission_stage as QpSubmissionStage) || 'authoring'
+
+	// Editing stops the moment the content is handed over — the wizard's later
+	// steps attest to the paper, they do not revise it.
+	const canEdit = state === 'open' && EDITABLE.has(assignment.status) && stage === 'authoring'
+
+	// The paper stays PREVIEWABLE (never downloadable) through the check list and
+	// signature steps: an examiner cannot honestly confirm "marks distribution is
+	// correct" against a paper they can no longer see. Once the submission is
+	// completed the content is closed to them for good.
+	const canReadQuestions = state === 'open' && QP_PREVIEW_STAGES.includes(stage)
+
+	// The attestation steps outlive the window. See AssignmentAccess.
+	const canCompleteSubmission = stage === 'checklist' || stage === 'signature'
 
 	if (opts.needQuestions && !canReadQuestions) {
+		// A completed submission is refused for a different reason than a closed
+		// window, and the examiner is told which — "come back tomorrow" and "this
+		// is finished" are not the same message.
+		const done = stage === 'completed'
 		await logAccess(req, {
 			action: 'access_denied',
 			examiner_id: auth.examiner.id,
@@ -237,18 +267,29 @@ export async function requireAssignment(
 			paper_id: assignment.paper_id,
 			institutions_id: assignment.institutions_id,
 			denied: true,
-			reason: state === 'pending' ? 'window not yet open' : 'window closed',
-			detail: { valid_from: assignment.valid_from, valid_to: assignment.valid_to, attempted: opts.action || 'read' },
+			reason: done
+				? 'submission completed — question content is closed to the examiner'
+				: state === 'pending'
+					? 'window not yet open'
+					: 'window closed',
+			detail: {
+				valid_from: assignment.valid_from,
+				valid_to: assignment.valid_to,
+				submission_stage: stage,
+				attempted: opts.action || 'read',
+			},
 		})
 		return {
 			ok: false,
 			response: NextResponse.json(
 				{
-					error:
-						state === 'pending'
+					error: done
+						? 'You have completed this submission. The question paper is no longer available to view.'
+						: state === 'pending'
 							? 'This question paper is not open yet. It becomes available at the start of your assignment window.'
 							: 'The access period for this question paper has ended.',
 					window_state: state,
+					submission_stage: stage,
 					valid_from: assignment.valid_from,
 					valid_to: assignment.valid_to,
 				},
@@ -263,7 +304,9 @@ export async function requireAssignment(
 				? state === 'pending'
 					? 'window not yet open'
 					: 'window closed'
-				: `status is ${assignment.status}`
+				: stage !== 'authoring'
+					? `content already handed over (stage ${stage})`
+					: `status is ${assignment.status}`
 		await logAccess(req, {
 			action: 'access_denied',
 			examiner_id: auth.examiner.id,
@@ -295,5 +338,5 @@ export async function requireAssignment(
 		}
 	}
 
-	return { ...auth, access: { assignment, state, canEdit, canReadQuestions } }
+	return { ...auth, access: { assignment, state, canEdit, canReadQuestions, stage, canCompleteSubmission } }
 }

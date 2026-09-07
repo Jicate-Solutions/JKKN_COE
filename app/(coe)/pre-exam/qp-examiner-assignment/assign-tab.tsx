@@ -79,7 +79,10 @@ export function AssignTab({ institutionsId, institutionCode, session, onAssigned
 	const [blockedTotal, setBlockedTotal] = useState(0)
 	const [examinerLoading, setExaminerLoading] = useState(false)
 	const [examinerSearch, setExaminerSearch] = useState('')
-	const [examinerId, setExaminerId] = useState('')
+	// A subject may be set by several examiners in parallel. Each gets their OWN
+	// paper — the server allocates the next set — so they never share or see each
+	// other's questions.
+	const [examinerIds, setExaminerIds] = useState<string[]>([])
 	const [validFrom, setValidFrom] = useState(defaultWindow().from)
 	const [validTo, setValidTo] = useState(defaultWindow().to)
 	const [remuneration, setRemuneration] = useState('')
@@ -204,7 +207,7 @@ export function AssignTab({ institutionsId, institutionCode, session, onAssigned
 		const w = defaultWindow()
 		setValidFrom(w.from)
 		setValidTo(w.to)
-		setExaminerId('')
+		setExaminerIds([])
 		setRemuneration('')
 		setNotes('')
 		setSendEmail(true)
@@ -239,13 +242,21 @@ export function AssignTab({ institutionsId, institutionCode, session, onAssigned
 		)
 	}, [blocked, examinerSearch, kind])
 
-	const chosenExaminer = examiners.find(e => e.id === examinerId) || null
+	// Kept in the order they were picked, so the first gets the existing paper and
+	// the rest get freshly scaffolded sets.
+	const chosenExaminers = useMemo(
+		() => examinerIds.map(id => examiners.find(e => e.id === id)).filter(Boolean) as ExaminerOpt[],
+		[examinerIds, examiners]
+	)
+
+	const toggleExaminer = (id: string) =>
+		setExaminerIds(prev => (prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]))
 
 	// ── Confirm ───────────────────────────────────────────────────────────
 	const confirm = async () => {
 		if (!session?.id) return
-		if (!examinerId || !chosenExaminer) {
-			toast({ title: 'Select an examiner', variant: 'destructive' })
+		if (chosenExaminers.length === 0) {
+			toast({ title: 'Select at least one examiner', variant: 'destructive' })
 			return
 		}
 		if (!validFrom || !validTo) {
@@ -256,9 +267,14 @@ export function AssignTab({ institutionsId, institutionCode, session, onAssigned
 		setSaving(true)
 		const results = { ok: 0, failed: [] as string[], emailed: 0 }
 
-		// One request per paper: each is its own appointment with its own order.
+		// One request per (paper x examiner): every appointment is its own order.
+		// The FIRST examiner takes the paper that already exists; each one after
+		// that gets a freshly scaffolded set of the same subject, allocated by the
+		// server. They never share a paper and never see each other's questions.
 		for (const row of pickedRows) {
+			for (const [index, chosenExaminer] of chosenExaminers.entries()) {
 			try {
+				const examinerId = chosenExaminer.id
 				const payload = {
 					institutions_id: institutionsId,
 					institution_code: institutionCode,
@@ -266,6 +282,8 @@ export function AssignTab({ institutionsId, institutionCode, session, onAssigned
 					// The paper already exists with its format chosen — assignment only
 					// attaches an examiner to it.
 					paper_id: row.paper_id,
+					// Everyone after the first needs their own set of this subject.
+					create_additional_set: index > 0,
 					examiner_kind: kind,
 					examiner_id: kind === 'external' ? examinerId : chosenExaminer.already_mirrored ? examinerId : undefined,
 					staff:
@@ -301,11 +319,14 @@ export function AssignTab({ institutionsId, institutionCode, session, onAssigned
 					} catch (mailErr: any) {
 						// The assignment stands even when the mail does not — say so
 						// rather than making it look like the whole thing failed.
-						results.failed.push(`${row.course_code}: assigned, but the order e-mail failed (${mailErr.message})`)
+						results.failed.push(
+							`${row.course_code} → ${chosenExaminer.full_name}: assigned, but the order e-mail failed (${mailErr.message})`
+						)
 					}
 				}
 			} catch (e: any) {
-				results.failed.push(`${row.course_code}: ${e.message}`)
+				results.failed.push(`${row.course_code} → ${chosenExaminer.full_name}: ${e.message}`)
+			}
 			}
 		}
 
@@ -313,7 +334,10 @@ export function AssignTab({ institutionsId, institutionCode, session, onAssigned
 
 		if (results.ok > 0) {
 			toast({
-				title: `${results.ok} paper${results.ok > 1 ? 's' : ''} assigned to ${chosenExaminer.full_name}`,
+				title:
+					chosenExaminers.length === 1
+						? `${results.ok} paper${results.ok > 1 ? 's' : ''} assigned to ${chosenExaminers[0].full_name}`
+						: `${results.ok} appointment${results.ok > 1 ? 's' : ''} made across ${chosenExaminers.length} examiners`,
 				description: sendEmail
 					? `${results.emailed} examiner order${results.emailed === 1 ? '' : 's'} e-mailed.`
 					: 'No e-mail sent — use Send Order from the Assignments tab when you are ready.',
@@ -565,7 +589,7 @@ export function AssignTab({ institutionsId, institutionCode, session, onAssigned
 								value={kind}
 								onValueChange={v => {
 									setKind(v as QpExaminerKind)
-									setExaminerId('')
+									setExaminerIds([])
 								}}
 								className="mt-2"
 							>
@@ -584,7 +608,9 @@ export function AssignTab({ institutionsId, institutionCode, session, onAssigned
 						{/* Examiner picker */}
 						<div>
 							<div className="flex items-center justify-between">
-								<Label className="text-xs uppercase tracking-wide text-muted-foreground">Examiner</Label>
+								<Label className="text-xs uppercase tracking-wide text-muted-foreground">
+									Examiner{examinerIds.length > 1 ? `s (${examinerIds.length})` : ''}
+								</Label>
 								{examinerLoading && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
 							</div>
 							<div className="relative mt-2">
@@ -596,6 +622,20 @@ export function AssignTab({ institutionsId, institutionCode, session, onAssigned
 									className="h-9 pl-8"
 								/>
 							</div>
+
+							{/* Selecting more than one is the multi-setter case, and it is worth
+							    spelling out: each examiner is given their OWN paper. */}
+							{examinerIds.length > 1 && (
+								<div className="mt-2 flex gap-2 rounded-md border border-blue-200 bg-blue-50 p-2.5 text-xs text-blue-900">
+									<Info className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+									<span>
+										{examinerIds.length} examiners selected. Each gets their own separate question paper for{' '}
+										{pickedRows.length === 1 ? 'this subject' : `each of the ${pickedRows.length} subjects`} —
+										recorded as Set A, Set B and so on. They work independently and never see one another's
+										questions, or that the other sets exist.
+									</span>
+								</div>
+							)}
 							<div className="mt-2 rounded-md border divide-y max-h-64 overflow-y-auto">
 								{filteredExaminers.length === 0 && !examinerLoading && (
 									<div className="p-4 text-sm text-muted-foreground space-y-2">
@@ -657,10 +697,10 @@ export function AssignTab({ institutionsId, institutionCode, session, onAssigned
 									<button
 										type="button"
 										key={e.id}
-										onClick={() => setExaminerId(e.id)}
+										onClick={() => toggleExaminer(e.id)}
 										className={cn(
 											'w-full text-left px-3 py-2.5 hover:bg-muted/60 transition-colors',
-											examinerId === e.id && 'bg-primary/5 ring-1 ring-inset ring-primary/30'
+											examinerIds.includes(e.id) && 'bg-primary/5 ring-1 ring-inset ring-primary/30'
 										)}
 									>
 										<div className="flex items-center justify-between gap-2">
@@ -672,7 +712,9 @@ export function AssignTab({ institutionsId, institutionCode, session, onAssigned
 												</div>
 											</div>
 											<div className="shrink-0 text-right space-y-1">
-												{examinerId === e.id && <CheckCircle2 className="h-4 w-4 text-primary ml-auto" />}
+												{examinerIds.includes(e.id) && (
+													<CheckCircle2 className="h-4 w-4 text-primary ml-auto" />
+												)}
 												{!!e.active_assignments && (
 													<Badge variant="outline" className="text-[10px]">
 														{e.active_assignments} live
@@ -766,7 +808,7 @@ export function AssignTab({ institutionsId, institutionCode, session, onAssigned
 						<Button variant="outline" onClick={() => setSheetOpen(false)} disabled={saving}>
 							Cancel
 						</Button>
-						<Button onClick={confirm} disabled={saving || !examinerId}>
+						<Button onClick={confirm} disabled={saving || examinerIds.length === 0}>
 							{saving && <Loader2 className="h-4 w-4 mr-1.5 animate-spin" />}
 							Confirm assignment{pickedRows.length > 1 ? ` (${pickedRows.length})` : ''}
 						</Button>

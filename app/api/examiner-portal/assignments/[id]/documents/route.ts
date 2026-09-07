@@ -1,12 +1,16 @@
 // Examiner portal — the printable documents for one assignment.
 //
-// GET /api/examiner-portal/assignments/:id/documents?doc=order|claim|paper
+// GET /api/examiner-portal/assignments/:id/documents?doc=order|claim
 //
 //   order — the Examiner Order Copy (readable at any time; it IS the proof of
 //           appointment, so it must not vanish when the window closes)
-//   claim — the Claim Form, pre-filled from the portal profile
-//   paper — a preview of the question paper as it will print. Gated by the
-//           window, like the questions themselves.
+//   claim — the Claim Form, in whatever state the claim has reached
+//
+// THE QUESTION PAPER IS NOT DOWNLOADABLE, AT ANY STAGE. There was a `doc=paper`
+// branch here that rendered the whole paper to a PDF; it has been removed rather
+// than merely hidden in the UI, because a route that returns the paper as a file
+// defeats every other control — the examiner previews the paper inside the
+// portal and nowhere else. Nothing may reintroduce a file-shaped answer here.
 //
 // Every download is logged, which is what §10's "track download/view activity"
 // asks for.
@@ -16,56 +20,30 @@ import { getSupabaseServer } from '@/lib/supabase-server'
 import { requireAssignment, logAccess } from '@/lib/qp-portal/guard'
 import { loadAssignmentBundle, buildOrderData, buildClaimData } from '@/lib/qp-portal/assignment-service'
 import { generateExaminerOrderPdf, generateClaimFormPdf, orderFilename } from '@/lib/pdf/examiner-order'
-import { buildPaperPdfHtml } from '@/lib/ia/build-paper-pdf-html'
-import { contentDisposition } from '@/lib/ia/paper-filename'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
 export const maxDuration = 60
 
-type Doc = 'order' | 'claim' | 'paper'
+type Doc = 'order' | 'claim'
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
 	const { id } = await params
 	const doc = (new URL(req.url).searchParams.get('doc') || 'order') as Doc
 
-	if (!['order', 'claim', 'paper'].includes(doc)) {
+	// `paper` is answered with the same 400 as any other unknown value: the route
+	// must not hint that a downloadable paper ever existed here.
+	if (!['order', 'claim'].includes(doc)) {
 		return NextResponse.json({ error: `Unknown document "${doc}"` }, { status: 400 })
 	}
 
-	// The paper preview is question content; the order and claim are not.
-	const auth = await requireAssignment(req, id, {
-		needQuestions: doc === 'paper',
-		action: `download ${doc}`,
-	})
+	// Neither document carries question content, so neither is window-gated.
+	const auth = await requireAssignment(req, id, { action: `download ${doc}` })
 	if (!auth.ok) return auth.response
 
 	try {
 		const supabase = getSupabaseServer()
 		const { assignment } = auth.access
-
-		if (doc === 'paper') {
-			const result = await buildPaperPdfHtml(supabase, assignment.paper_id, new URL(req.url).origin)
-			if (!result) {
-				return NextResponse.json({ error: 'The question paper could not be rendered.' }, { status: 500 })
-			}
-			await logAccess(req, {
-				action: 'paper_pdf_download',
-				examiner_id: auth.examiner.id,
-				examiner_email: auth.examiner.email,
-				assignment_id: id,
-				paper_id: assignment.paper_id,
-				institutions_id: assignment.institutions_id,
-			})
-			return new NextResponse(new Uint8Array(result.buffer), {
-				status: 200,
-				headers: {
-					'Content-Type': 'application/pdf',
-					'Content-Disposition': contentDisposition(result.filename),
-					'Cache-Control': 'no-store, max-age=0',
-				},
-			})
-		}
 
 		const bundle = await loadAssignmentBundle(supabase, id)
 		if (!bundle) return NextResponse.json({ error: 'Assignment not found' }, { status: 404 })
@@ -116,53 +94,5 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 			{ error: `The document could not be generated: ${error?.message || error}` },
 			{ status: 500 }
 		)
-	}
-}
-
-// POST marks the claim as submitted (spec §6 "Claim Form").
-export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-	const { id } = await params
-	const auth = await requireAssignment(req, id, { action: 'submit claim' })
-	if (!auth.ok) return auth.response
-
-	try {
-		const supabase = getSupabaseServer()
-		const { assignment } = auth.access
-
-		// A claim only makes sense once the work is done and accepted.
-		if (!['submitted', 'accepted'].includes(assignment.status)) {
-			return NextResponse.json(
-				{ error: 'The claim form can be submitted once you have submitted the question paper.' },
-				{ status: 400 }
-			)
-		}
-
-		const now = new Date().toISOString()
-		const { error } = await supabase
-			.from('ia_qp_assignments')
-			.update({ claim_submitted_at: now, updated_at: now })
-			.eq('id', id)
-		if (error) {
-			console.error('[QP portal] claim submit failed:', error.message)
-			return NextResponse.json({ error: 'The claim could not be recorded.' }, { status: 500 })
-		}
-
-		await logAccess(req, {
-			action: 'claim_submit',
-			examiner_id: auth.examiner.id,
-			examiner_email: auth.examiner.email,
-			assignment_id: id,
-			paper_id: assignment.paper_id,
-			institutions_id: assignment.institutions_id,
-		})
-
-		return NextResponse.json({
-			success: true,
-			claim_submitted_at: now,
-			message: 'Claim recorded. Download the claim form for your records.',
-		})
-	} catch (error) {
-		console.error('[QP portal] claim POST failed:', error)
-		return NextResponse.json({ error: 'The claim could not be recorded.' }, { status: 500 })
 	}
 }

@@ -28,7 +28,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 
 	try {
 		const supabase = getSupabaseServer()
-		const { assignment, state, canEdit, canReadQuestions } = auth.access
+		const { assignment, state, canEdit, canReadQuestions, stage, canCompleteSubmission } = auth.access
 
 		const [paperRes, partsRes, outcomesRes, sessionRes] = await Promise.all([
 			supabase
@@ -91,7 +91,8 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 				subject_title: assignment.subject_title,
 				program_code: assignment.program_code,
 				semester: assignment.semester,
-				set_label: assignment.set_label,
+				// Omitted on purpose — see the list route: the examiner must not learn
+				// that parallel sets of this paper exist.
 				status: assignment.status,
 				valid_from: assignment.valid_from,
 				valid_to: assignment.valid_to,
@@ -102,7 +103,31 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 				accepted_at: assignment.accepted_at,
 				checklist: assignment.checklist || null,
 				declaration_accepted_at: assignment.declaration_accepted_at,
+				assigned_at: assignment.assigned_at,
+				order_issued_at: assignment.order_issued_at,
+
+				// Submission wizard
+				submission_stage: stage,
+				checklist_completed_at: assignment.checklist_completed_at,
+				signed_at: assignment.signed_at,
+				final_submitted_at: assignment.final_submitted_at,
+
+				// Claim. The bank snapshot IS returned here — it is the examiner's own
+				// account, on their own claim, and the Claim screen shows it back to
+				// them so they can see what was submitted.
+				claim_status: assignment.claim_status || 'pending',
 				claim_submitted_at: assignment.claim_submitted_at,
+				claim_account_holder: assignment.claim_account_holder,
+				claim_bank_name: assignment.claim_bank_name,
+				claim_account_number: assignment.claim_account_number,
+				claim_branch: assignment.claim_branch,
+				claim_ifsc: assignment.claim_ifsc,
+				claim_approved_at: assignment.claim_approved_at,
+				claim_remarks: assignment.claim_remarks,
+				payment_completed_at: assignment.payment_completed_at,
+				payment_reference: assignment.payment_reference,
+				payment_amount: assignment.payment_amount,
+
 				session_name: sessionRes.data?.session_name || null,
 				session_label: sessionRes.data?.month_year || null,
 			},
@@ -110,6 +135,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 			window_hint: windowHint(assignment.valid_from, assignment.valid_to),
 			can_edit: canEdit,
 			questions_released: canReadQuestions,
+			can_complete_submission: canCompleteSubmission,
 			paper: {
 				id: paper.id,
 				status: paper.status,

@@ -17,6 +17,11 @@ import { join } from 'path'
 import type { PdfInstitutionSettings } from '@/types/pdf-settings'
 import type { QpPortalContent } from '@/types/qp-examiner-assignment'
 import { formatIst, formatIstDate } from '@/lib/qp-portal/ist'
+import {
+	getJkknLetterhead,
+	isBoxedLetterhead,
+	loadPublicImageDataUri,
+} from '@/lib/pdf/jkkn-letterhead'
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -76,6 +81,16 @@ export interface ExaminerOrderData {
 		institution_code: string
 		address?: string | null
 		accreditation?: string | null
+		/** "(An Autonomous Institution)" — printed under the name. */
+		subtitle?: string | null
+		/** "Managed by ... Trust" — printed under the subtitle. */
+		trust_line?: string | null
+		/**
+		 * /public path to the college's own logo, from institution-header.ts.
+		 * Used when pdf_institution_settings carries no logo for this college —
+		 * which is the normal case, since only CAS has settings rows.
+		 */
+		logo_path?: string | null
 	}
 	examiner: {
 		full_name: string
@@ -115,14 +130,54 @@ export interface ExaminerOrderData {
 	pdf_settings: PdfInstitutionSettings | null
 }
 
+/** Images the renderer draws; all optional, all already data URIs. */
+export interface OrderAssets {
+	logoBase64: string | null
+	secondaryLogoBase64: string | null
+	/** Logo inside the college's framed letterhead block. */
+	letterheadLogoBase64?: string | null
+	/** Scanned signature of the issuing authority, printed above the sign line. */
+	authoritySignatureBase64?: string | null
+}
+
+/**
+ * The college's own framed letterhead — the block printed at the top of its
+ * question papers (logo at the left, coloured name / affiliation / address lines
+ * centred beside it). Returns '' for a college that has no boxed letterhead, and
+ * the caller falls back to the generic logo + name header.
+ */
+function boxedLetterheadHtml(institutionCode: string, logoBase64: string | null): string {
+	const lh = getJkknLetterhead(institutionCode)
+	if (!isBoxedLetterhead(lh)) return ''
+	return `<div class="lh">
+		${logoBase64 ? `<div class="lh-logo"><img src="${logoBase64}" alt="" /></div>` : ''}
+		<div class="lh-text">
+			${lh!.lines!.map(l => `<div class="${l.cls}">${escapeHtml(l.text)}</div>`).join('')}
+		</div>
+	</div>`
+}
+
+/** The `.lh*` rules for the framed letterhead, at full letter size. */
+const LETTERHEAD_CSS = `
+	/* Framed letterhead: logo at the left, the college's coloured name block centred.
+	   Mirrors the question paper (lib/ia/build-paper-pdf-html.ts) at letter size. */
+	.lh { display: flex; align-items: center; gap: 3mm; border: 0.8pt solid #000; padding: 1.5mm 2mm; }
+	.lh-logo img { height: 16mm; width: auto; }
+	.lh-text { flex: 1; text-align: center; }
+	.lh-name { color: #1a7a3c; font-weight: bold; font-size: 12.5pt; line-height: 1.15; }
+	.lh-trust { color: #e6007e; font-weight: bold; font-size: 9.5pt; }
+	.lh-approve { font-weight: bold; font-size: 8.5pt; }
+	.lh-naac { color: #e6007e; font-weight: bold; font-size: 8.5pt; }
+	.lh-addr { font-weight: bold; font-size: 8.5pt; }
+	.lh-web { font-size: 8pt; color: #1a4fd6; text-decoration: underline; }
+	.lh-office { text-align: center; font-weight: bold; font-size: 11pt; letter-spacing: 0.4px; margin-top: 4px; }
+`
+
 // ── Order HTML ──────────────────────────────────────────────────────────────
 
 export function buildExaminerOrderHtml(
 	data: ExaminerOrderData,
-	assets: { logoBase64: string | null; secondaryLogoBase64: string | null } = {
-		logoBase64: null,
-		secondaryLogoBase64: null,
-	}
+	assets: OrderAssets = { logoBase64: null, secondaryLogoBase64: null }
 ): string {
 	const ps = data.pdf_settings
 	const c = data.content
@@ -152,18 +207,28 @@ export function buildExaminerOrderHtml(
 		? `<img src="${assets.secondaryLogoBase64}" alt="" class="logo" />`
 		: ''
 
+	// The order is the college's own letterhead paper, so it prints the SAME framed
+	// block as its question papers rather than a second, near-miss version of the
+	// name and accreditation lines. A college that has written its own header_html
+	// still wins; one with no framed letterhead falls back to the generic block.
+	const boxed = boxedLetterheadHtml(data.institution.institution_code, assets.letterheadLogoBase64 ?? null)
+
 	const headerHtml =
 		customHeader ||
-		`<div class="head-row">
+		(boxed
+			? `${boxed}<div class="lh-office">OFFICE OF THE CONTROLLER OF EXAMINATIONS</div>`
+			: `<div class="head-row">
 			<div class="head-logo">${leftLogo}</div>
 			<div class="head-mid">
 				<div class="inst-name">${escapeHtml(data.institution.name.toUpperCase())}</div>
+				${data.institution.subtitle ? `<div class="inst-sub">${escapeHtml(data.institution.subtitle)}</div>` : ''}
+				${data.institution.trust_line ? `<div class="inst-trust">${escapeHtml(data.institution.trust_line)}</div>` : ''}
 				${data.institution.accreditation ? `<div class="inst-accr">${escapeHtml(data.institution.accreditation)}</div>` : ''}
 				${data.institution.address ? `<div class="inst-addr">${escapeHtml(data.institution.address)}</div>` : ''}
 				<div class="inst-office">OFFICE OF THE CONTROLLER OF EXAMINATIONS</div>
 			</div>
 			<div class="head-logo">${rightLogo}</div>
-		</div>`
+		</div>`)
 
 	const footerHtml = fillPlaceholders(ps?.footer_html, placeholderValues)
 
@@ -229,6 +294,19 @@ export function buildExaminerOrderHtml(
 	const signatureEnabled = ps?.signature_section_enabled ?? true
 	const signatoryDesignation = c.signatory_designation || 'Controller of Examinations'
 
+	// The signature block, following the BoS call letter: when a scanned signature
+	// is available it is drawn in place of the blank ruled space. The CET scan is
+	// the Principal's and already carries the name, the designation and the college
+	// beneath the squiggle, so printing a typed designation under it would
+	// contradict the stamp — the typed lines are dropped whenever an image is used.
+	const authoritySignature = assets.authoritySignatureBase64
+		? `<img class="sign-img" src="${assets.authoritySignatureBase64}" alt="" />`
+		: '<div class="sign-rule"></div>'
+	const signatoryLines = assets.authoritySignatureBase64
+		? ''
+		: `${c.signatory_name ? `<div class="sign-name">${escapeHtml(c.signatory_name)}</div>` : ''}
+					<div>${escapeHtml(signatoryDesignation)}</div>`
+
 	return `<!DOCTYPE html>
 <html><head><meta charset="utf-8" />
 <style>
@@ -251,6 +329,8 @@ export function buildExaminerOrderHtml(
 	.logo { width: 70px; height: 70px; object-fit: contain; }
 	.head-mid { flex: 1; text-align: center; }
 	.inst-name { font-size: ${headingSize}; font-weight: bold; color: ${primary}; line-height: 1.25; }
+	.inst-sub { font-size: 9.5pt; font-weight: bold; margin-top: 1px; }
+	.inst-trust { font-size: 8.5pt; margin-top: 1px; }
 	.inst-accr { font-size: 8.5pt; font-style: italic; margin-top: 2px; }
 	.inst-addr { font-size: 10pt; font-weight: bold; margin-top: 2px; }
 	.inst-office { font-size: 11pt; font-weight: bold; letter-spacing: 0.4px; margin-top: 5px; }
@@ -281,6 +361,10 @@ export function buildExaminerOrderHtml(
 	.sign-inner { min-width: 220px; }
 	.sign-rule { border-top: 1px solid #000; margin-bottom: 4px; padding-top: 34px; }
 	.sign-name { font-weight: bold; }
+	/* The scanned stamp carries its own name + designation, so it needs no rule.
+	   Sized as on the BoS call letter, which prints the same asset. */
+	.sign-img { display: block; margin: 2pt 0 0 auto; max-width: 210pt; max-height: 104pt; object-fit: contain; }
+${LETTERHEAD_CSS}
 	.footer-note { margin-top: 20px; font-size: 9.5pt; font-style: italic; text-align: center; }
 	.inst-footer { margin-top: 12px; font-size: 9pt; text-align: center; color: #444; }
 </style></head>
@@ -323,9 +407,8 @@ export function buildExaminerOrderHtml(
 	${
 		signatureEnabled
 			? `<div class="sign-block"><div class="sign-inner">
-					<div class="sign-rule"></div>
-					${c.signatory_name ? `<div class="sign-name">${escapeHtml(c.signatory_name)}</div>` : ''}
-					<div>${escapeHtml(signatoryDesignation)}</div>
+					${authoritySignature}
+					${signatoryLines}
 				</div></div>`
 			: ''
 	}
@@ -405,6 +488,9 @@ export function buildClaimFormHtml(
 	.logo { width: 70px; height: 70px; object-fit: contain; }
 	.head-mid { flex: 1; text-align: center; }
 	.inst-name { font-size: 14pt; font-weight: bold; color: ${primary}; }
+	.inst-sub { font-size: 9.5pt; font-weight: bold; margin-top: 1px; }
+	.inst-trust { font-size: 8.5pt; margin-top: 1px; }
+	.inst-accr { font-size: 8.5pt; font-style: italic; margin-top: 2px; }
 	.inst-addr { font-size: 10pt; font-weight: bold; margin-top: 2px; }
 	.inst-office { font-size: 10.5pt; font-weight: bold; margin-top: 4px; }
 	hr.rule { border: none; border-top: 2px solid ${primary}; margin: 8px 0 12px; }
@@ -521,21 +607,45 @@ async function renderPdf(html: string, ps: PdfInstitutionSettings | null): Promi
 	}
 }
 
-async function loadLogos(ps: PdfInstitutionSettings | null) {
+/**
+ * The letterhead marks.
+ *
+ * pdf_institution_settings wins when a college has configured one, but most have
+ * not — so the per-institution branding config (lib/utils/institution-header.ts,
+ * the same source the hall ticket and the mark reports use) is the fallback.
+ * Without it an order for a college with no settings row printed no logo at all.
+ */
+async function loadLogos(
+	ps: PdfInstitutionSettings | null,
+	fallbackLogoPath?: string | null
+) {
 	const [logoBase64, secondaryLogoBase64] = await Promise.all([
-		urlToBase64(ps?.logo_url),
+		urlToBase64(ps?.logo_url || fallbackLogoPath),
 		urlToBase64(ps?.secondary_logo_url),
 	])
 	return { logoBase64, secondaryLogoBase64 }
 }
 
+/**
+ * The framed letterhead's own logo and the issuing authority's scanned signature,
+ * both read straight off public/ so they survive into headless Chromium.
+ */
+function loadLetterheadAssets(institutionCode: string) {
+	const lh = getJkknLetterhead(institutionCode)
+	return {
+		letterheadLogoBase64: isBoxedLetterhead(lh) ? loadPublicImageDataUri(lh!.logoFile) : null,
+		authoritySignatureBase64: loadPublicImageDataUri(lh?.signatureFile),
+	}
+}
+
 export async function generateExaminerOrderPdf(data: ExaminerOrderData): Promise<Buffer> {
-	const assets = await loadLogos(data.pdf_settings)
+	const logos = await loadLogos(data.pdf_settings, data.institution.logo_path)
+	const assets: OrderAssets = { ...logos, ...loadLetterheadAssets(data.institution.institution_code) }
 	return renderPdf(buildExaminerOrderHtml(data, assets), data.pdf_settings)
 }
 
 export async function generateClaimFormPdf(data: ClaimFormData): Promise<Buffer> {
-	const assets = await loadLogos(data.pdf_settings)
+	const assets = await loadLogos(data.pdf_settings, data.institution.logo_path)
 	return renderPdf(buildClaimFormHtml(data, assets), data.pdf_settings)
 }
 

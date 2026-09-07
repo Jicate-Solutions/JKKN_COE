@@ -1883,7 +1883,13 @@ Clear them anyway?`)) {
 												const balanced = allocated === budget && subs.every(sb => sb.marks != null)
 												const splittable = canSplit(q)
 												return (
-												<div key={q.id} className="rounded border bg-background p-2">
+													// data-qp-image-scope: Ctrl+V anywhere in this question
+													// attaches the screenshot here — see QuestionImageField.
+													<div
+														key={q.id}
+														data-qp-image-scope
+														className="rounded border bg-background p-2"
+													>
 													<div className="mb-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
 														<span className="font-medium text-foreground">
 															{q.is_choice_alternative ? '(OR) ' : ''}Q{q.question_number}
@@ -1987,7 +1993,7 @@ Clear them anyway?`)) {
 																</Select>
 															</div>
 														)}
-														{(part?.capture_co ?? true) && !split && (
+														{!split && (
 															<div className="flex items-center gap-1">
 																<Label className="text-xs">CO <span className="text-red-500">*</span></Label>
 																<Select
@@ -2008,7 +2014,7 @@ Clear them anyway?`)) {
 																</Select>
 															</div>
 														)}
-														{(part?.capture_klevel ?? true) && !split && (
+														{!split && (
 															<div className="flex items-center gap-1">
 																<Label className="text-xs">K <span className="text-red-500">*</span></Label>
 																<Select
@@ -2047,7 +2053,11 @@ Clear them anyway?`)) {
 																</span>
 															</div>
 															{subs.map(sb => (
-																<div key={sb.id} className="rounded border bg-background p-2">
+																<div
+																	key={sb.id}
+																	data-qp-image-scope
+																	className="rounded border bg-background p-2"
+																>
 																	<div className="mb-1 flex flex-wrap items-center gap-2 text-xs">
 																		<span className="font-medium">{sb.label}.</span>
 																		<div className="flex items-center gap-1">
@@ -2067,7 +2077,7 @@ Clear them anyway?`)) {
 																				}
 																			/>
 																		</div>
-																		{(part?.capture_co ?? true) && (
+																		{(
 																			<div className="flex items-center gap-1">
 																				<Label className="text-xs">CO <span className="text-red-500">*</span></Label>
 																				<Select
@@ -2088,7 +2098,7 @@ Clear them anyway?`)) {
 																				</Select>
 																			</div>
 																		)}
-																		{(part?.capture_klevel ?? true) && (
+																		{(
 																			<div className="flex items-center gap-1">
 																				<Label className="text-xs">K <span className="text-red-500">*</span></Label>
 																				<Select

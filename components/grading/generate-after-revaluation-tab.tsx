@@ -28,8 +28,11 @@ import {
 	TrendingUp,
 	Minus,
 	AlertTriangle,
-	Users
+	Users,
+	ExternalLink
 } from 'lucide-react'
+import Link from 'next/link'
+import { Switch } from '@/components/ui/switch'
 import type { RevaluationLearnerRow, RevaluationResultRow, InstitutionOption, ProgramData, ExamSessionData, CourseOfferingData } from '@/types/final-marks'
 
 /**
@@ -40,6 +43,13 @@ import type { RevaluationLearnerRow, RevaluationResultRow, InstitutionOption, Pr
  * the original mark stays in total_marks_obtained) → preview old vs new
  * results → apply selected rows to final_marks (original values are
  * snapshotted into final_marks.original_* on first apply).
+ *
+ * Learners who applied for revaluation are identified by their latest
+ * revaluation_registrations row (Revaluation Management owns fee, payment
+ * and approval). Applying here closes that registration (→ Published).
+ * When a course has registrations, mark entry is limited to registered
+ * learners; a course with none falls back to all learners so the tab still
+ * works where the registration module is not in use.
  */
 export function GenerateAfterRevaluationTab() {
 	const { toast } = useToast()
@@ -80,6 +90,7 @@ export function GenerateAfterRevaluationTab() {
 	const [applying, setApplying] = useState(false)
 	const [selectedRows, setSelectedRows] = useState<Set<string>>(new Set())
 	const [confirmOpen, setConfirmOpen] = useState(false)
+	const [registeredOnly, setRegisteredOnly] = useState(false)
 
 	const institutionsRef = useRef(institutions)
 	useEffect(() => {
@@ -232,6 +243,8 @@ export function GenerateAfterRevaluationTab() {
 			}
 			const data = await res.json()
 			setLearners(data)
+			// Default to the registered view whenever the course has registrations
+			setRegisteredOnly((data as RevaluationLearnerRow[]).some(l => !!l.revaluation_registration_id))
 		} catch (e) {
 			console.error('Failed to fetch learners:', e)
 			toast({
@@ -326,7 +339,9 @@ export function GenerateAfterRevaluationTab() {
 			course_id: selectedCourse,
 			save_to_db: saveToDb,
 			selected_final_marks_ids: saveToDb ? [...selectedRows] : undefined,
-			applied_by: user?.id || null
+			applied_by: user?.id || null,
+			// Re-applies are named in the confirmation dialog, so the user has agreed
+			allow_reapply: saveToDb ? true : undefined
 		}
 
 		const res = await fetch('/api/grading/final-marks/revaluation', {
@@ -345,7 +360,13 @@ export function GenerateAfterRevaluationTab() {
 			const data = await runGenerate(false)
 			setPreviewResults(data.results || [])
 			setPreviewSummary(data.summary || null)
-			setSelectedRows(new Set((data.results || []).map((r: RevaluationResultRow) => r.final_marks_id)))
+			// Pre-select only rows that change and were not applied before —
+			// an already-applied row must be ticked deliberately
+			setSelectedRows(new Set(
+				((data.results || []) as RevaluationResultRow[])
+					.filter(r => !r.is_revaluation_applied && r.marks_difference !== 0)
+					.map(r => r.final_marks_id)
+			))
 			toast({
 				title: 'Preview Generated',
 				description: `Recalculated ${data.results?.length || 0} learner(s) with revaluation marks.`,
@@ -367,9 +388,10 @@ export function GenerateAfterRevaluationTab() {
 			setApplying(true)
 			const data = await runGenerate(true)
 			const errCount = data.errors?.length || 0
+			const regClosed = data.summary?.registrations_published || 0
 			toast({
-				title: errCount > 0 ? 'Partially Applied' : 'Revaluation Results Applied',
-				description: `Updated ${data.summary?.applied_count || 0} final marks record(s).${errCount > 0 ? ` ${errCount} failed.` : ' Original marks preserved in snapshot columns.'}`,
+				title: errCount > 0 ? 'Partially Applied' : 'Revaluation Applied',
+				description: `Updated ${data.summary?.applied_count || 0} final marks record(s)${regClosed > 0 ? `, closed ${regClosed} revaluation registration(s)` : ''}.${errCount > 0 ? ` ${errCount} failed.` : ' Original marks preserved.'} Regenerate Semester Results for these learners to refresh SGPA/CGPA.`,
 				variant: errCount > 0 ? 'destructive' : undefined,
 				className: errCount > 0 ? undefined : 'bg-green-50 border-green-200 text-green-800'
 			})
@@ -398,17 +420,58 @@ export function GenerateAfterRevaluationTab() {
 		})
 	}
 
+	const registeredCount = learners.filter(l => !!l.revaluation_registration_id).length
+	const courseHasRegistrations = registeredCount > 0
+
 	const filteredLearners = useMemo(() => {
 		const search = searchTerm.toLowerCase()
 		return learners.filter(l =>
-			l.register_no.toLowerCase().includes(search) ||
-			l.student_name.toLowerCase().includes(search)
+			(!registeredOnly || !!l.revaluation_registration_id) &&
+			(l.register_no.toLowerCase().includes(search) ||
+			l.student_name.toLowerCase().includes(search))
 		)
-	}, [learners, searchTerm])
+	}, [learners, searchTerm, registeredOnly])
+
+	// A mark may be entered for a registered learner whose application is live.
+	// Once a course has registrations, unregistered learners are read-only —
+	// they must be registered in Revaluation Management first.
+	const canEnterMark = (l: RevaluationLearnerRow) => {
+		if (l.registration_status === 'Rejected') return false
+		if (courseHasRegistrations && !l.revaluation_registration_id) return false
+		return true
+	}
 
 	const withRevalCount = learners.filter(l => l.revaluation_mark !== null).length
 	const appliedCount = learners.filter(l => l.is_revaluation_applied).length
 	const hasUnsavedEdits = Object.keys(editedMarks).length > 0
+
+	const selectedPreview = previewResults.filter(r => selectedRows.has(r.final_marks_id))
+	const selectedReapplies = selectedPreview.filter(r => r.is_revaluation_applied).length
+	const selectedUnregistered = selectedPreview.filter(r => !r.revaluation_registration_id).length
+
+	const registrationBadge = (status: string | null, paymentStatus: string | null, attempt: number | null) => {
+		if (!status) {
+			return <span className="text-xs text-muted-foreground">Not registered</span>
+		}
+		const tone =
+			status === 'Published'
+				? 'bg-green-100 text-green-700 border-green-300 dark:bg-green-900/20 dark:text-green-400 dark:border-green-700'
+				: status === 'Rejected'
+					? 'bg-red-100 text-red-700 border-red-300 dark:bg-red-900/20 dark:text-red-400 dark:border-red-700'
+					: status === 'Applied' || status === 'Payment Pending'
+						? 'bg-amber-100 text-amber-700 border-amber-300 dark:bg-amber-900/20 dark:text-amber-400 dark:border-amber-700'
+						: 'bg-blue-100 text-blue-700 border-blue-300 dark:bg-blue-900/20 dark:text-blue-400 dark:border-blue-700'
+		return (
+			<div className="flex flex-col items-center gap-0.5">
+				<Badge variant="outline" className={`text-xs ${tone}`}>
+					{status}{attempt && attempt > 1 ? ` #${attempt}` : ''}
+				</Badge>
+				{paymentStatus && paymentStatus !== 'Verified' && (
+					<span className="text-[10px] text-amber-600 dark:text-amber-400">Fee {paymentStatus.toLowerCase()}</span>
+				)}
+			</div>
+		)
+	}
 
 	return (
 		<div className="space-y-4">
@@ -523,10 +586,16 @@ export function GenerateAfterRevaluationTab() {
 							<div>
 								<CardTitle className="text-lg">Revaluation Mark Entry</CardTitle>
 								<CardDescription>
-									{learners.length} learner(s) • {withRevalCount} with revaluation mark • {appliedCount} applied
+									{learners.length} learner(s) • {registeredCount} registered for revaluation • {withRevalCount} with revaluation mark • {appliedCount} applied
 								</CardDescription>
 							</div>
 							<div className="flex items-center gap-2">
+								{courseHasRegistrations && (
+									<div className="flex items-center gap-1.5 mr-1">
+										<Switch id="registered-only" checked={registeredOnly} onCheckedChange={setRegisteredOnly} />
+										<Label htmlFor="registered-only" className="text-xs cursor-pointer">Registered only</Label>
+									</div>
+								)}
 								<div className="relative">
 									<Search className="absolute left-2 top-1/2 h-3 w-3 -translate-y-1/2 text-muted-foreground" />
 									<Input
@@ -548,6 +617,19 @@ export function GenerateAfterRevaluationTab() {
 						</div>
 					</CardHeader>
 					<CardContent className="p-4 pt-0">
+						{!learnersLoading && learners.length > 0 && !courseHasRegistrations && (
+							<div className="mb-3 rounded-md border border-amber-200 bg-amber-50 dark:border-amber-800 dark:bg-amber-900/20 px-3 py-2 text-xs text-amber-800 dark:text-amber-300 flex items-start gap-2">
+								<AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+								<span>
+									No revaluation registrations found for this course, so every learner is editable.
+									To track fee, payment and approval, register learners in{' '}
+									<Link href="/revaluation-management" className="underline font-medium inline-flex items-center gap-0.5">
+										Revaluation Management <ExternalLink className="h-3 w-3" />
+									</Link>
+									{' '}first.
+								</span>
+							</div>
+						)}
 						{learnersLoading ? (
 							<div className="flex items-center justify-center py-8">
 								<Loader2 className="h-6 w-6 animate-spin mr-2" />
@@ -571,10 +653,20 @@ export function GenerateAfterRevaluationTab() {
 												<TableHead className="text-xs text-center">Revaluation Mark (New)</TableHead>
 												<TableHead className="text-xs text-center">Current Grade</TableHead>
 												<TableHead className="text-xs text-center">Result Status</TableHead>
+												<TableHead className="text-xs text-center">Registration</TableHead>
 												<TableHead className="text-xs text-center">Revaluation</TableHead>
 											</TableRow>
 										</TableHeader>
 										<TableBody>
+											{filteredLearners.length === 0 && (
+												<TableRow>
+													<TableCell colSpan={9} className="text-center text-sm text-muted-foreground py-6">
+														{registeredOnly
+															? 'No registered learners match. Turn off "Registered only" to see everyone.'
+															: 'No learners match your search.'}
+													</TableCell>
+												</TableRow>
+											)}
 											{filteredLearners.map(l => (
 												<TableRow key={l.final_marks_id}>
 													<TableCell className="text-sm font-medium">{l.register_no}</TableCell>
@@ -592,12 +684,34 @@ export function GenerateAfterRevaluationTab() {
 															value={editedMarks[l.marks_entry_id] ?? (l.revaluation_mark !== null ? String(l.revaluation_mark) : '')}
 															onChange={(e) => handleMarkChange(l.marks_entry_id, e.target.value)}
 															placeholder="-"
+															disabled={!canEnterMark(l)}
+															title={!canEnterMark(l)
+																? (l.registration_status === 'Rejected'
+																	? 'Revaluation application was rejected'
+																	: 'Not registered for revaluation — register in Revaluation Management first')
+																: undefined}
 															className="h-8 w-20 text-center text-sm mx-auto"
 														/>
+														{l.registered_revaluation_mark !== null &&
+															l.revaluation_mark === null &&
+															editedMarks[l.marks_entry_id] === undefined &&
+															canEnterMark(l) && (
+															<button
+																type="button"
+																onClick={() => handleMarkChange(l.marks_entry_id, String(l.registered_revaluation_mark))}
+																className="mt-1 text-[10px] text-blue-600 dark:text-blue-400 underline"
+																title="Mark entered by the examiner in Revaluation Management"
+															>
+																Use {l.registered_revaluation_mark}
+															</button>
+														)}
 													</TableCell>
 													<TableCell className="text-sm text-center font-bold">{l.current_grade || '-'}</TableCell>
 													<TableCell className="text-center">
 														<Badge variant="outline" className="text-xs">{l.result_status}</Badge>
+													</TableCell>
+													<TableCell className="text-center">
+														{registrationBadge(l.registration_status, l.registration_payment_status, l.registration_attempt)}
 													</TableCell>
 													<TableCell className="text-center">
 														{l.is_revaluation_applied ? (
@@ -624,7 +738,7 @@ export function GenerateAfterRevaluationTab() {
 						{learners.length > 0 && (
 							<div className="flex items-center justify-between pt-4">
 								<p className="text-xs text-muted-foreground">
-									Original marks stay in marks_entry. Revaluation marks are stored in a separate column.
+									Original marks stay in marks_entry. Revaluation marks are stored in a separate column. Next: Generate Preview, then Apply Revaluation.
 								</p>
 								<Button onClick={handlePreview} disabled={withRevalCount === 0 || hasUnsavedEdits || generating}>
 									{generating ? (
@@ -694,7 +808,10 @@ export function GenerateAfterRevaluationTab() {
 							<div className="flex items-center justify-between">
 								<div>
 									<CardTitle className="text-lg">Preview: Old vs New Results</CardTitle>
-									<CardDescription>Select the learners to update, then apply to final marks</CardDescription>
+									<CardDescription>
+										Original → revaluation → final, per learner. Tick the learners to update, then Apply Revaluation.
+										Rows applied before are unticked by default.
+									</CardDescription>
 								</div>
 								<div className="text-sm text-muted-foreground">
 									{selectedRows.size} of {previewResults.length} selected
@@ -727,6 +844,8 @@ export function GenerateAfterRevaluationTab() {
 												<TableHead className="text-xs text-center">Grade: Old → New</TableHead>
 												<TableHead className="text-xs text-center">Result: Old → New</TableHead>
 												<TableHead className="text-xs text-center">Change</TableHead>
+												<TableHead className="text-xs text-center">Registration</TableHead>
+												<TableHead className="text-xs text-center">Status</TableHead>
 											</TableRow>
 										</TableHeader>
 										<TableBody>
@@ -778,6 +897,22 @@ export function GenerateAfterRevaluationTab() {
 															</Badge>
 														)}
 													</TableCell>
+													<TableCell className="text-center">
+														{registrationBadge(r.registration_status, null, null)}
+													</TableCell>
+													<TableCell className="text-center">
+														{r.is_revaluation_applied ? (
+															<Badge
+																variant="outline"
+																className="text-xs bg-purple-100 text-purple-700 border-purple-300 dark:bg-purple-900/20 dark:text-purple-400 dark:border-purple-700"
+																title="Applied once already — ticking this row re-applies it with the current revaluation mark"
+															>
+																Applied — re-apply
+															</Badge>
+														) : (
+															<span className="text-xs text-muted-foreground">New</span>
+														)}
+													</TableCell>
 												</TableRow>
 											))}
 										</TableBody>
@@ -799,7 +934,7 @@ export function GenerateAfterRevaluationTab() {
 									) : (
 										<>
 											<Save className="h-4 w-4 mr-1" />
-											Apply to Final Marks ({selectedRows.size})
+											Apply Revaluation ({selectedRows.size})
 										</>
 									)}
 								</Button>
@@ -814,10 +949,27 @@ export function GenerateAfterRevaluationTab() {
 				<AlertDialogContent>
 					<AlertDialogHeader>
 						<AlertDialogTitle>Apply Revaluation Results?</AlertDialogTitle>
-						<AlertDialogDescription>
-							This will update {selectedRows.size} final marks record(s) with the revaluation marks.
-							The original marks, percentage, grade and result will be preserved in snapshot columns.
-							Semester results for affected learners may need to be regenerated afterwards.
+						<AlertDialogDescription asChild>
+							<div className="space-y-2 text-sm text-muted-foreground">
+								<p>
+									This will update {selectedRows.size} final marks record(s) with the revaluation marks
+									and mark the matching revaluation registrations as Published.
+									The original marks, percentage, grade and result are preserved in snapshot columns.
+								</p>
+								{selectedReapplies > 0 && (
+									<p className="text-amber-700 dark:text-amber-400 flex items-start gap-1.5">
+										<AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+										<span>{selectedReapplies} of these were applied before and will be re-applied with the current revaluation mark.</span>
+									</p>
+								)}
+								{selectedUnregistered > 0 && (
+									<p className="text-amber-700 dark:text-amber-400 flex items-start gap-1.5">
+										<AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+										<span>{selectedUnregistered} have no revaluation registration (no fee or approval record).</span>
+									</p>
+								)}
+								<p>Regenerate Semester Results for the affected learners afterwards to refresh SGPA/CGPA.</p>
+							</div>
 						</AlertDialogDescription>
 					</AlertDialogHeader>
 					<AlertDialogFooter>

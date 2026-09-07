@@ -36,8 +36,8 @@ import {
 	EngineeringExaminerFormData,
 	DEFAULT_ENGINEERING_FORM,
 } from '@/types/examiner'
-import { ExaminerPortal } from './portal'
-import { PortalOtpSignIn } from './portal-otp-signin'
+import { ExaminerPortal } from '@/components/examiner-portal/portal'
+import { PortalOtpSignIn } from '@/components/examiner-portal/portal-otp-signin'
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -519,11 +519,11 @@ export default function EnggExaminerRegistrationPage() {
 									<p className="text-xs text-blue-600 font-medium">E-mail (Google Verified)</p>
 									<p className="text-sm font-semibold text-blue-900 mt-0.5">{String(ex.email)}</p>
 								</div>
-								<div className="grid grid-cols-2 gap-4">
+								<div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
 									<Field label="Salutation" value={ex.salutation} />
 									<Field label="Full Name" value={ex.full_name} />
 								</div>
-								<div className="grid grid-cols-2 gap-4">
+								<div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
 									<Field label="Gender" value={ex.gender} />
 									<Field label="Designation" value={ex.designation} />
 								</div>
@@ -538,7 +538,7 @@ export default function EnggExaminerRegistrationPage() {
 							<h3 className="font-semibold text-gray-900 flex items-center gap-2">
 								<Phone className="w-4 h-4 text-blue-600" /> Contact Details
 							</h3>
-							<div className="grid grid-cols-2 gap-4">
+							<div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
 								<Field label="Mobile" value={ex.mobile} />
 								<Field label="Personal Email" value={ex.personal_email} />
 							</div>
@@ -552,12 +552,12 @@ export default function EnggExaminerRegistrationPage() {
 							<h3 className="font-semibold text-gray-900 flex items-center gap-2">
 								<Building2 className="w-4 h-4 text-blue-600" /> Institutional Details
 							</h3>
-							<div className="grid grid-cols-2 gap-4">
+							<div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
 								<Field label="AICTE/AU Faculty Code" value={ex.aicte_faculty_code} />
 								<Field label="Working Institution" value={ex.institution_name} />
 							</div>
 							<Field label="Address & Pincode" value={ex.institution_address} />
-							<div className="grid grid-cols-2 gap-4">
+							<div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
 								<Field label="Institution COE Contact" value={ex.institution_coe_contact} />
 								<Field label="Institution COE Email" value={ex.institution_coe_email} />
 							</div>
@@ -570,7 +570,7 @@ export default function EnggExaminerRegistrationPage() {
 							<h3 className="font-semibold text-gray-900 flex items-center gap-2">
 								<Briefcase className="w-4 h-4 text-blue-600" /> Experience
 							</h3>
-							<div className="grid grid-cols-3 gap-4">
+							<div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
 								<Field label="Teaching Experience" value={`${ex.teaching_exp_years ?? 0} years`} />
 								<Field label="Industry Experience" value={`${ex.industry_exp_years ?? 0} years`} />
 								<Field label="Total Experience" value={`${ex.total_exp_years ?? 0} years`} />
@@ -585,7 +585,7 @@ export default function EnggExaminerRegistrationPage() {
 								<GraduationCap className="w-4 h-4 text-blue-600" /> Academic Profile
 							</h3>
 							<Field label="Department" value={ex.department} />
-							<div className="grid grid-cols-2 gap-4">
+							<div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
 								<Field label="UG Specialization" value={((ex.additional_data as Record<string, unknown>)?.specializations as Record<string, unknown>)?.ug} />
 								<Field label="PG Specialization" value={((ex.additional_data as Record<string, unknown>)?.specializations as Record<string, unknown>)?.pg} />
 							</div>

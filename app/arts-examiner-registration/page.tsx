@@ -381,11 +381,11 @@ export default function ArtsExaminerRegistrationPage() {
 									<p className="text-xs text-emerald-600 font-medium">E-mail (Google Verified)</p>
 									<p className="text-sm font-semibold text-emerald-900 mt-0.5">{String(ex.email)}</p>
 								</div>
-								<div className="grid grid-cols-2 gap-4">
+								<div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
 									<Field label="Full Name" value={ex.full_name} />
 									<Field label="Mobile" value={ex.mobile} />
 								</div>
-								<div className="grid grid-cols-2 gap-4">
+								<div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
 									<Field label="Designation" value={ex.designation} />
 									<Field label="Department" value={ex.department} />
 								</div>
@@ -410,7 +410,7 @@ export default function ArtsExaminerRegistrationPage() {
 							<h3 className="font-semibold text-gray-900 flex items-center gap-2">
 								<GraduationCap className="w-4 h-4 text-emerald-600" /> Board &amp; Experience
 							</h3>
-							<div className="grid grid-cols-2 gap-4">
+							<div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
 								<Field label="UG Experience" value={`${ex.ug_experience_years ?? 0} years`} />
 								<Field label="PG Experience" value={`${ex.pg_experience_years ?? 0} years`} />
 							</div>
@@ -778,7 +778,7 @@ export default function ArtsExaminerRegistrationPage() {
 									</div>
 
 									{(formData.ug_board_code !== 'None' || formData.pg_board_code !== 'None') && (
-										<div className="grid grid-cols-2 gap-3">
+										<div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
 											{formData.ug_board_code !== 'None' && (
 												<div className="space-y-1.5">
 													<Label className="text-sm">UG Experience (Years)</Label>

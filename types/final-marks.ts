@@ -443,6 +443,13 @@ export interface RevaluationLearnerRow {
 	revaluation_mark: number | null
 	revaluation_remarks: string | null
 	is_revaluation_applied: boolean
+	// Revaluation Management registration — how a learner is identified as
+	// having applied for revaluation (null = never applied for this course)
+	revaluation_registration_id: string | null
+	registration_status: string | null
+	registration_payment_status: string | null
+	registration_attempt: number | null
+	registered_revaluation_mark: number | null // examiner's mark from revaluation_marks (blind evaluation)
 }
 
 /**
@@ -478,6 +485,8 @@ export interface RevaluationResultRow {
 	fail_reason?: 'INTERNAL' | 'EXTERNAL' | 'TOTAL' | null
 	marks_difference: number
 	is_revaluation_applied: boolean
+	revaluation_registration_id: string | null
+	registration_status: string | null
 }
 
 /**
@@ -494,4 +503,5 @@ export interface GenerateRevaluationPayload {
 	save_to_db?: boolean
 	selected_final_marks_ids?: string[]
 	applied_by?: string | null
+	allow_reapply?: boolean // required to re-apply a row already flagged is_revaluation_applied
 }

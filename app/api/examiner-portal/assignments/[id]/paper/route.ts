@@ -94,21 +94,11 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
 				)
 			}
 
-			// The check-list and the declaration are part of submitting, not extras.
-			const checklist = body.checklist ?? assignment.checklist
-			if (!checklist || Object.keys(checklist).length === 0) {
-				return NextResponse.json(
-					{ error: 'CHECKLIST_REQUIRED', message: 'Complete the Question Paper Check List before submitting.' },
-					{ status: 400 }
-				)
-			}
-			const declarationAt = body.declaration_accepted ? new Date().toISOString() : assignment.declaration_accepted_at
-			if (!declarationAt) {
-				return NextResponse.json(
-					{ error: 'DECLARATION_REQUIRED', message: 'Accept the declaration before submitting.' },
-					{ status: 400 }
-				)
-			}
+			// The check list and the declaration are NOT preconditions any more.
+			// Submitting hands the content over and then walks the examiner through
+			// the check list and the signature — see the submission route. Demanding
+			// them up front asked the examiner to attest to a paper before the act
+			// of submitting it, and meant the same list was answered twice.
 		}
 
 		// ── Write the paper (optimistic concurrency) ─────────────────────────
@@ -144,6 +134,16 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
 		if (submitting) {
 			assignmentPatch.status = 'submitted'
 			assignmentPatch.submitted_at = new Date().toISOString()
+			// Hand-over opens the wizard: the examiner goes straight to the check
+			// list, then the signature. The content is already in either way, so an
+			// abandoned wizard still leaves the CoE a usable paper.
+			assignmentPatch.submission_stage = 'checklist'
+			// A resubmission (after a return) starts the attestation over, so the
+			// previous run's check list and signature cannot stand in for this one.
+			assignmentPatch.checklist_completed_at = null
+			assignmentPatch.submission_signature_path = null
+			assignmentPatch.signed_at = null
+			assignmentPatch.final_submitted_at = null
 			// A resubmission clears the previous return note so the portal stops
 			// showing stale revision remarks.
 			assignmentPatch.return_remarks = null
@@ -179,9 +179,12 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
 		return NextResponse.json({
 			success: true,
 			message: submitting
-				? 'Question paper submitted. The Office of the Controller of Examinations has been notified.'
+				? 'Question paper submitted. Complete the check list to finish.'
 				: 'Saved.',
 			status: updatedAssignment?.status || assignment.status,
+			// The portal reads this to open the next wizard step without the
+			// examiner having to go looking for it.
+			submission_stage: updatedAssignment?.submission_stage || assignment.submission_stage || 'authoring',
 			paper_status: submitting ? 'submitted' : paper.status,
 			updated_at: paperPatch.updated_at || paper.updated_at,
 			question_done: nextQuestions.filter((q: any) => String(q?.question_text || '').trim() !== '').length,

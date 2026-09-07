@@ -5,8 +5,15 @@
 // Required for every question slot:
 //   • question text (a split question: text on each sub-division; the parent stem
 //     stays optional)
-//   • CO and K-level — unless the template part switched that capture off
+//   • CO and K-level — ALWAYS, on every question
 //   • every MCQ option filled in
+//
+// CO and K-level used to be conditional on the template part's capture_co /
+// capture_klevel flags. They are now unconditional: a question paper is mapped to
+// course outcomes and Bloom levels for attainment reporting, and a single
+// unmapped question leaves a hole in it. The template flags no longer gate this,
+// and the editors show both selectors on every question so the rule is always
+// satisfiable.
 //
 // Pure — no node/browser APIs — so the page blocks the click and the API blocks a
 // stale tab with the same messages.
@@ -38,10 +45,10 @@ function optionIsEmpty(o: any): boolean {
  * Every reason this paper cannot be submitted yet, in question order.
  * Empty array = complete.
  */
-export function validatePaperComplete(questions: any[], parts?: PaperPart[]): string[] {
-	const partByLabel = new Map<string, PaperPart>(
-		(parts || []).filter(p => p?.part_label).map(p => [String(p.part_label), p])
-	)
+export function validatePaperComplete(questions: any[], _parts?: PaperPart[]): string[] {
+	// `_parts` is no longer consulted: CO and K-level are required on every
+	// question regardless of what the template part says. The parameter is kept so
+	// the existing call sites (page, portal and both API routes) stay valid.
 	const errors: string[] = []
 
 	const ordered = (Array.isArray(questions) ? questions : [])
@@ -49,24 +56,23 @@ export function validatePaperComplete(questions: any[], parts?: PaperPart[]): st
 		.sort((a: any, b: any) => (a?.display_order ?? 0) - (b?.display_order ?? 0))
 
 	for (const q of ordered) {
-		const part = partByLabel.get(String(q?.part_label ?? ''))
-		const captureCo = part?.capture_co ?? true
-		const captureK = part?.capture_klevel ?? true
 		const subs = readSubQuestions(q)
 
 		if (subs.length > 0) {
-			// Split question: the stem is optional, each sub-division is not.
+			// Split question: the stem is optional, each sub-division is not — and
+			// each carries its own CO and K-level, because the sub-divisions of one
+			// question routinely test different outcomes at different Bloom levels.
 			for (const sb of subs) {
 				const where = `Q${entryLabel(q, sb)}`
 				if (plainText(sb.question_text) === '') errors.push(`${where}: enter the question`)
-				if (captureCo && !sb.co_code) errors.push(`${where}: select CO`)
-				if (captureK && !sb.k_level) errors.push(`${where}: select K-level`)
+				if (!sb.co_code) errors.push(`${where}: select a Course Outcome (CO)`)
+				if (!sb.k_level) errors.push(`${where}: select a K-level`)
 			}
 		} else {
 			const where = `Q${entryLabel(q)}`
 			if (plainText(q?.question_text) === '') errors.push(`${where}: enter the question`)
-			if (captureCo && !q?.co_code) errors.push(`${where}: select CO`)
-			if (captureK && !q?.k_level) errors.push(`${where}: select K-level`)
+			if (!q?.co_code) errors.push(`${where}: select a Course Outcome (CO)`)
+			if (!q?.k_level) errors.push(`${where}: select a K-level`)
 		}
 
 		const options = Array.isArray(q?.options) ? q.options : []

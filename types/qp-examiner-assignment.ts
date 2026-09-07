@@ -45,6 +45,90 @@ export const QP_ASSIGNMENT_STATUS_LABELS: Record<QpAssignmentStatus, string> = {
 /** Statuses in which the examiner may still edit the paper (inside the window). */
 export const QP_EDITABLE_STATUSES: QpAssignmentStatus[] = ['assigned', 'in_progress', 'returned']
 
+/**
+ * Statuses in which the paper is IN — with the CoE, and closed to the examiner.
+ *
+ * Submitting hands the paper over: from here the examiner may no longer read the
+ * question content back, which is why this list gates question release in
+ * lib/qp-portal/guard.ts as well as edit rights.
+ */
+export const QP_SUBMITTED_STATUSES: QpAssignmentStatus[] = ['submitted', 'accepted']
+
+// ============================================================================
+// SUBMISSION WIZARD
+// ============================================================================
+
+/**
+ * Submitting a paper is three steps, and the examiner is walked through them
+ * without having to find the next page:
+ *
+ *   authoring  → still writing; this is the only stage that can edit questions
+ *   checklist  → content handed over, attesting to the CoE's check list
+ *   signature  → check list done, declaration to accept and signature to give
+ *   completed  → all three done; the paper is closed to the examiner for good
+ *
+ * The content is handed over at the FIRST step, so `status` is already
+ * 'submitted' from `checklist` onwards — an abandoned wizard still leaves the
+ * CoE a usable paper. The later stages add the attestation, not the paper.
+ */
+export type QpSubmissionStage = 'authoring' | 'checklist' | 'signature' | 'completed'
+
+export const QP_SUBMISSION_STAGE_LABELS: Record<QpSubmissionStage, string> = {
+	authoring: 'Question Paper Entry',
+	checklist: 'Check List',
+	signature: 'Signature',
+	completed: 'Submission Completed',
+}
+
+/** Wizard stages in order — drives the stepper and the "next step" redirect. */
+export const QP_SUBMISSION_STAGES: QpSubmissionStage[] = ['authoring', 'checklist', 'signature', 'completed']
+
+/**
+ * Stages in which question content may still be shown back to the examiner.
+ *
+ * The check list asks them to confirm things like "marks distribution is
+ * correct", which they cannot honestly attest to with the paper hidden — so the
+ * content stays visible, PREVIEW ONLY, until the submission is completed. It is
+ * never downloadable or printable at any stage.
+ */
+export const QP_PREVIEW_STAGES: QpSubmissionStage[] = ['authoring', 'checklist', 'signature']
+
+// ============================================================================
+// CLAIM
+// ============================================================================
+
+/**
+ * Where an examiner's remuneration claim has got to.
+ *
+ *   pending    the examiner still has to enter bank details and submit
+ *   submitted  with the CoE, under verification
+ *   approved   verified by the CoE, awaiting payment
+ *   paid       money sent
+ *
+ * A claim is only ACTIONABLE once the question paper has been submitted; that is
+ * derived from the assignment status, never stored, so the two cannot disagree.
+ */
+export type QpClaimStatus = 'pending' | 'submitted' | 'approved' | 'paid'
+
+export const QP_CLAIM_STATUS_LABELS: Record<QpClaimStatus, string> = {
+	pending: 'Claim Pending',
+	submitted: 'Claim Submitted',
+	approved: 'Claim Approved',
+	paid: 'Payment Completed',
+}
+
+/** Claim states the examiner can no longer change. */
+export const QP_CLAIM_LOCKED_STATUSES: QpClaimStatus[] = ['submitted', 'approved', 'paid']
+
+/** The bank details a claim is submitted with, snapshot onto the assignment. */
+export interface QpClaimBankDetails {
+	account_holder: string
+	bank_name: string
+	account_number: string
+	branch: string
+	ifsc: string
+}
+
 // ============================================================================
 // ASSIGNMENT
 // ============================================================================
@@ -78,7 +162,30 @@ export interface QpAssignment {
 	/** The setter's own check-list answers, keyed by clause id. */
 	checklist?: Record<string, string> | null
 	declaration_accepted_at?: string | null
+
+	// ── Submission wizard ──
+	submission_stage: QpSubmissionStage
+	checklist_completed_at?: string | null
+	/** Private-bucket path of the signature given for THIS submission. */
+	submission_signature_path?: string | null
+	signed_at?: string | null
+	final_submitted_at?: string | null
+
+	// ── Claim ──
+	claim_status: QpClaimStatus
 	claim_submitted_at?: string | null
+	/** Bank details AS SUBMITTED — a snapshot, never read live off the profile. */
+	claim_account_holder?: string | null
+	claim_bank_name?: string | null
+	claim_account_number?: string | null
+	claim_branch?: string | null
+	claim_ifsc?: string | null
+	claim_approved_at?: string | null
+	claim_approved_by?: string | null
+	claim_remarks?: string | null
+	payment_completed_at?: string | null
+	payment_reference?: string | null
+	payment_amount?: number | null
 
 	order_ref_no?: string | null
 	order_issued_at?: string | null
@@ -122,6 +229,17 @@ export interface QpAssignmentCreateInput {
 	 * course, programme, semester, set and template all come from this row.
 	 */
 	paper_id: string
+	/**
+	 * Appoint this examiner to a NEW set of the same subject when `paper_id` is
+	 * already taken, instead of failing with a clash. This is how a subject gets
+	 * two setters working independently: each is given their own paper, and those
+	 * become Set A and Set B on the CoE side — the examiner portal shows neither.
+	 *
+	 * Off by default, so an accidental double-assignment cannot quietly spawn
+	 * extra papers; the screen sets it only for the second and later examiner in
+	 * one deliberate multi-examiner appointment.
+	 */
+	create_additional_set?: boolean
 	examiner_kind: QpExaminerKind
 	/** External: an examiners.id. Internal: omit and send `staff` instead. */
 	examiner_id?: string
@@ -295,6 +413,9 @@ export type QpLogAction =
 	| 'claim_download'
 	| 'claim_submit'
 	| 'checklist_save'
+	| 'checklist_complete'
+	| 'submission_signed'
+	| 'submission_completed'
 	| 'declaration_accept'
 	| 'image_upload'
 	| 'profile_update'
@@ -329,6 +450,9 @@ export const QP_LOG_ACTION_LABELS: Record<string, string> = {
 	paper_view: 'Opened question paper',
 	paper_save: 'Saved question paper',
 	paper_submit: 'Submitted question paper',
+	checklist_complete: 'Completed the check list',
+	submission_signed: 'Signed the submission',
+	submission_completed: 'Completed the submission',
 	paper_pdf_download: 'Downloaded paper PDF',
 	order_download: 'Downloaded examiner order',
 	claim_download: 'Downloaded claim form',

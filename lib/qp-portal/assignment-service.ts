@@ -3,6 +3,7 @@
 // portal routes so both print exactly the same document from the same data.
 
 import { getPdfSettingsWithFallback } from '@/lib/pdf/settings-service'
+import { getInstitutionHeader } from '@/lib/utils/institution-header'
 import { getPortalContent, buildOrderRef } from './content'
 import type { ExaminerOrderData, ClaimFormData } from '@/lib/pdf/examiner-order'
 import type { QpAssignment, QpPortalContent } from '@/types/qp-examiner-assignment'
@@ -76,27 +77,45 @@ export async function loadAssignmentBundle(
 	}
 }
 
-/** Absolute URL of the examiner portal, for the order's "sign in here" box. */
+/**
+ * Absolute URL of the examiner portal, for the order's "sign in here" box.
+ *
+ * The short `/examiner` path, because this string is printed on the order and
+ * read out over the phone to setters who cannot find the e-mail. The old
+ * `/engg-examiner-registration` path serves the same page and stays public, so
+ * orders issued before this change keep working.
+ */
 export function portalUrl(): string {
 	const base = (process.env.NEXT_PUBLIC_SITE_URL || '').replace(/\/+$/, '')
-	return `${base || ''}/engg-examiner-registration`
+	return `${base || ''}/examiner`
 }
 
 /** Assemble everything the Examiner Order PDF needs. */
 export async function buildOrderData(bundle: AssignmentBundle): Promise<ExaminerOrderData> {
 	const { assignment, examiner, institution, session, examType, paper } = bundle
 
+	const institutionCode = institution.institution_code || assignment.institution_code || ''
+	const branding = getInstitutionHeader(institutionCode)
+
 	const [content, pdfSettings] = await Promise.all([
 		getPortalContent(assignment.institutions_id, 'order', assignment.examination_session_id),
-		getPdfSettingsWithFallback(institution.institution_code || assignment.institution_code || '', 'default'),
+		getPdfSettingsWithFallback(institutionCode, 'default'),
 	])
 
 	return {
 		institution: {
-			name: institution.name || 'Institution',
-			institution_code: institution.institution_code || assignment.institution_code || '',
-			address: institutionAddress(institution),
-			accreditation: institution.accredited_by || null,
+			// The letterhead comes from the per-institution branding config — the
+			// same source the hall ticket and the mark reports print from — because
+			// the `institutions` table carries only a code and a name. It has no
+			// accreditation, address or logo column, so an order built from the row
+			// alone printed a bare name and nothing else.
+			name: branding.name || institution.name || 'Institution',
+			institution_code: institutionCode,
+			address: branding.address || institutionAddress(institution) || null,
+			accreditation: branding.accreditation || institution.accredited_by || null,
+			subtitle: branding.subtitle || null,
+			trust_line: branding.trust_line || null,
+			logo_path: branding.logo_path || null,
 		},
 		examiner: {
 			full_name: examiner.full_name || '',

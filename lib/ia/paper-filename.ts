@@ -44,11 +44,19 @@ export interface PaperFilenameOptions {
 	variant?: 'single' | '2up'
 	/** Defaults to 'pdf'; pass '' for a bare name. */
 	ext?: string
+	/**
+	 * Leave the set out of the name. Used for the examiner portal: a subject may
+	 * be set by several examiners in parallel as Set A / Set B, and a file landing
+	 * in one examiner's downloads called "…_SetB" tells them the others exist.
+	 */
+	hideSet?: boolean
 }
 
 export function paperPdfFilename(paper: any, opts: PaperFilenameOptions = {}): string {
-	const { variant = 'single', ext = 'pdf' } = opts
-	const setLabel = sanitizeFilePart(String(paper?.set_label || '')).replace(/\s+/g, '')
+	const { variant = 'single', ext = 'pdf', hideSet = false } = opts
+	const setLabel = hideSet
+		? ''
+		: sanitizeFilePart(String(paper?.set_label || '')).replace(/\s+/g, '')
 
 	const parts = [
 		'QP',

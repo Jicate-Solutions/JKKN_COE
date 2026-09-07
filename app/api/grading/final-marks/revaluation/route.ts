@@ -15,6 +15,12 @@ import type { RevaluationLearnerRow, RevaluationResultRow } from '@/types/final-
  * - marks_entry.total_marks_obtained  = original external mark (never changed)
  * - marks_entry.revaluation_marks_obtained = new revaluation mark
  * - final_marks.original_*            = pre-revaluation snapshot (written once)
+ *
+ * Who has applied for revaluation is answered by revaluation_registrations
+ * (owned by the Revaluation Management module — fee, payment, approval).
+ * This route reads the latest registration per learner/course, surfaces the
+ * examiner's mark from revaluation_marks when one exists, and on apply marks
+ * the registration Published so both workflows converge on one final state.
  */
 
 const BATCH_SIZE = 200
@@ -66,6 +72,72 @@ async function fetchInBatches(
 		}
 	}
 	return rows
+}
+
+type RegistrationInfo = {
+	id: string
+	status: string
+	payment_status: string | null
+	attempt_number: number
+	registered_mark: number | null
+}
+
+/**
+ * Latest non-cancelled revaluation registration per exam_registration for the
+ * course, plus the examiner's mark from revaluation_marks when it has been
+ * entered. A learner with no row here never applied for revaluation.
+ */
+async function fetchLatestRegistrations(
+	supabase: any,
+	examRegIds: string[],
+	courseId: string
+): Promise<Map<string, RegistrationInfo>> {
+	const latest = new Map<string, RegistrationInfo>()
+	if (examRegIds.length === 0) return latest
+
+	// Rows for one exam_registration always land in the same batch, and each
+	// batch is ordered by attempt desc, so the first row seen is the latest.
+	const regs = await fetchInBatches(
+		supabase,
+		'revaluation_registrations',
+		'id, exam_registration_id, status, payment_status, attempt_number',
+		'exam_registration_id',
+		examRegIds,
+		(q) => q.eq('course_id', courseId).neq('status', 'Cancelled').order('attempt_number', { ascending: false })
+	)
+	for (const r of regs) {
+		if (latest.has(r.exam_registration_id)) continue
+		latest.set(r.exam_registration_id, {
+			id: r.id,
+			status: r.status,
+			payment_status: r.payment_status || null,
+			attempt_number: Number(r.attempt_number) || 1,
+			registered_mark: null
+		})
+	}
+	if (latest.size === 0) return latest
+
+	const revalMarks = await fetchInBatches(
+		supabase,
+		'revaluation_marks',
+		'revaluation_registration_id, total_marks_obtained, entry_status',
+		'revaluation_registration_id',
+		[...latest.values()].map(r => r.id),
+		(q) => q.eq('is_active', true)
+	)
+	// Only a submitted/verified/locked examiner mark counts — not a draft or a rejected one
+	const markByReg = new Map(
+		revalMarks
+			.filter((m: any) => m.entry_status !== 'Draft' && m.entry_status !== 'Rejected')
+			.map((m: any) => [m.revaluation_registration_id, m])
+	)
+	for (const info of latest.values()) {
+		const m = markByReg.get(info.id)
+		if (m && m.total_marks_obtained !== null && m.total_marks_obtained !== undefined) {
+			info.registered_mark = Number(m.total_marks_obtained)
+		}
+	}
+	return latest
 }
 
 /**
@@ -154,11 +226,15 @@ export async function GET(request: NextRequest) {
 		)
 		const examRegMap = new Map(examRegs.map((er: any) => [er.id, er]))
 
+		// 4. Who applied for revaluation (Revaluation Management registrations)
+		const registrationMap = await fetchLatestRegistrations(supabase, examRegIds, courseId)
+
 		const rows: RevaluationLearnerRow[] = finalMarks
 			.filter((fm: any) => marksEntryMap.has(fm.exam_registration_id))
 			.map((fm: any) => {
 				const me = marksEntryMap.get(fm.exam_registration_id)
 				const er = examRegMap.get(fm.exam_registration_id)
+				const reg = registrationMap.get(fm.exam_registration_id)
 				return {
 					final_marks_id: fm.id,
 					marks_entry_id: me.id,
@@ -179,7 +255,12 @@ export async function GET(request: NextRequest) {
 						? Number(me.revaluation_marks_obtained)
 						: null,
 					revaluation_remarks: me.revaluation_remarks || null,
-					is_revaluation_applied: fm.is_revaluation_applied === true
+					is_revaluation_applied: fm.is_revaluation_applied === true,
+					revaluation_registration_id: reg?.id || null,
+					registration_status: reg?.status || null,
+					registration_payment_status: reg?.payment_status || null,
+					registration_attempt: reg?.attempt_number ?? null,
+					registered_revaluation_mark: reg?.registered_mark ?? null
 				}
 			})
 
@@ -286,7 +367,8 @@ async function handleGenerate(supabase: any, body: any) {
 		grade_system_code,
 		save_to_db = false,
 		selected_final_marks_ids,
-		applied_by
+		applied_by,
+		allow_reapply = false
 	} = body
 
 	if (!institutions_id || !examination_session_id || !program_code || !course_id) {
@@ -415,6 +497,7 @@ async function handleGenerate(supabase: any, body: any) {
 		examRegIds
 	)
 	const examRegMap = new Map(examRegs.map((er: any) => [er.id, er]))
+	const registrationMap = await fetchLatestRegistrations(supabase, examRegIds, course_id)
 
 	// 6. Recalculate — internal unchanged, external = revaluation mark
 	const results: RevaluationResultRow[] = []
@@ -425,6 +508,7 @@ async function handleGenerate(supabase: any, body: any) {
 		if (!me) continue
 
 		const er = examRegMap.get(fm.exam_registration_id)
+		const reg = registrationMap.get(fm.exam_registration_id)
 		const registerNo = fm.register_number || er?.stu_register_no || 'N/A'
 		const studentName = er?.student_name || 'Unknown'
 
@@ -513,13 +597,17 @@ async function handleGenerate(supabase: any, body: any) {
 			new_is_pass: isPass,
 			fail_reason: failReason,
 			marks_difference: newTotal - (Number(fm.total_marks_obtained) || 0),
-			is_revaluation_applied: fm.is_revaluation_applied === true
+			is_revaluation_applied: fm.is_revaluation_applied === true,
+			revaluation_registration_id: reg?.id || null,
+			registration_status: reg?.status || null
 		})
 	}
 
 	// 7. Apply to final_marks if requested
 	let appliedCount = 0
 	let noChangeSkipped = 0
+	let reapplyBlocked = 0
+	let registrationsPublished = 0
 	const errors: Array<{ register_no: string; student_name: string; error: string }> = []
 
 	if (save_to_db && results.length > 0) {
@@ -532,6 +620,14 @@ async function handleGenerate(supabase: any, body: any) {
 
 		for (const row of results) {
 			if (selectedIds && !selectedIds.has(row.final_marks_id)) continue
+
+			// A row already applied once is re-applied only when the caller says so
+			// explicitly — the UI names the re-applies in its confirmation. Guards a
+			// double submit or a stale preview from silently re-writing a result.
+			if (row.is_revaluation_applied && !allow_reapply) {
+				reapplyBlocked++
+				continue
+			}
 
 			// Every row in `results` already carries a revaluation mark (the
 			// marks_entry fetch filters revaluation_marks_obtained IS NOT NULL).
@@ -644,6 +740,27 @@ async function handleGenerate(supabase: any, body: any) {
 				})
 			} else {
 				appliedCount++
+
+				// Applying to final_marks IS the publication of that revaluation —
+				// close the Revaluation Management registration so it does not sit
+				// open (or get published a second time from the other module).
+				const reg = registrationMap.get(row.exam_registration_id)
+				if (reg && reg.status !== 'Published') {
+					const { error: regErr } = await supabase
+						.from('revaluation_registrations')
+						.update({
+							status: 'Published',
+							published_by: appliedBy,
+							published_date: new Date().toISOString(),
+							updated_at: new Date().toISOString()
+						})
+						.eq('id', reg.id)
+					if (regErr) {
+						console.error('[Reval Final Marks] Registration publish error:', regErr)
+					} else {
+						registrationsPublished++
+					}
+				}
 			}
 		}
 	}
@@ -657,7 +774,10 @@ async function handleGenerate(supabase: any, body: any) {
 		already_applied: results.filter(r => r.is_revaluation_applied).length,
 		skipped: skipped.length,
 		applied_count: appliedCount,
-		no_change_skipped: noChangeSkipped
+		no_change_skipped: noChangeSkipped,
+		registered: results.filter(r => r.revaluation_registration_id).length,
+		reapply_blocked: reapplyBlocked,
+		registrations_published: registrationsPublished
 	}
 
 	return NextResponse.json({

@@ -74,20 +74,40 @@ export async function GET(req: NextRequest) {
 				subject_title: r.subject_title,
 				program_code: r.program_code,
 				semester: r.semester,
-				set_label: r.set_label,
+				// set_label is deliberately NOT sent. A subject may be set by several
+				// examiners in parallel as Set A / Set B; telling one of them which set
+				// they hold would reveal that the others exist.
 				status: r.status,
 				valid_from: r.valid_from,
 				valid_to: r.valid_to,
 				window_state: state,
 				window_hint: windowHint(r.valid_from, r.valid_to, now),
 				order_ref_no: r.order_ref_no,
+				order_issued_at: r.order_issued_at,
+				assigned_at: r.assigned_at,
 				remuneration: r.remuneration,
 				return_remarks: r.return_remarks,
 				submitted_at: r.submitted_at,
 				accepted_at: r.accepted_at,
-				claim_submitted_at: r.claim_submitted_at,
 				declaration_accepted_at: r.declaration_accepted_at,
 				has_checklist: !!r.checklist && Object.keys(r.checklist).length > 0,
+
+				// Submission wizard — the dashboard uses this to show "resume where
+				// you left off" rather than a bare Submitted badge.
+				submission_stage: r.submission_stage || 'authoring',
+				checklist_completed_at: r.checklist_completed_at,
+				signed_at: r.signed_at,
+				final_submitted_at: r.final_submitted_at,
+
+				// Claim. Bank details are NOT sent to the list — the Claim screen
+				// fetches them for one assignment at a time.
+				claim_status: r.claim_status || 'pending',
+				claim_submitted_at: r.claim_submitted_at,
+				claim_approved_at: r.claim_approved_at,
+				claim_remarks: r.claim_remarks,
+				payment_completed_at: r.payment_completed_at,
+				payment_reference: r.payment_reference,
+				payment_amount: r.payment_amount,
 				session_name: sessionById.get(r.examination_session_id)?.session_name || null,
 				session_label: sessionById.get(r.examination_session_id)?.month_year || null,
 				paper_status: progress.status,

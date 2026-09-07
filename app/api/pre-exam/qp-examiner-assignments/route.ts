@@ -15,6 +15,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
+import { scaffoldQuestions } from '@/lib/ia/paper-scaffold'
 import { istLocalToIso, windowState } from '@/lib/qp-portal/ist'
 import { getPortalContent } from '@/lib/qp-portal/content'
 import { nextOrderRef } from '@/lib/qp-portal/assignment-service'
@@ -25,6 +26,92 @@ import type { QpAssignmentCreateInput } from '@/types/qp-examiner-assignment'
 export const dynamic = 'force-dynamic'
 
 const VIEW_PERMISSION = 'page.pre_exam.qp_examiner_assignment.view'
+
+/** 1 → 'A', 2 → 'B'. Sets never run past Z in practice. */
+const setLetter = (n: number) => String.fromCharCode(64 + n)
+
+/**
+ * Give a subject one more paper, so a second (or third) examiner can set it
+ * independently.
+ *
+ * The new paper is scaffolded FRESH from the same format — never copied from the
+ * sibling. The point of parallel sets is that two examiners produce two
+ * different papers; seeding one with the other's questions would defeat that,
+ * and would also leak one examiner's work to another.
+ *
+ * The sibling that was created before anyone thought a second set was needed has
+ * `set_label` NULL. It is backfilled to 'A' here, so the CoE side reads
+ * "Set A / Set B" rather than "— / B". The examiner portal shows neither.
+ */
+async function allocateAdditionalSet(
+	supabase: any,
+	sibling: any,
+	userId: string | null
+): Promise<{ paper: any } | { error: string }> {
+	const { data: parts, error: partsErr } = await supabase
+		.from('ia_template_parts')
+		.select('*')
+		.eq('template_id', sibling.template_id)
+		.order('display_order', { ascending: true })
+	if (partsErr) return { error: `Could not read the question paper format: ${partsErr.message}` }
+
+	// Two concurrent creates can pick the same set_number; ese_papers_unique
+	// rejects the loser, so re-read and retry rather than failing the assignment.
+	for (let attempt = 0; attempt < 3; attempt++) {
+		const { data: siblings } = await supabase
+			.from('ese_question_papers')
+			.select('id, set_number, set_label')
+			.eq('examination_session_id', sibling.examination_session_id)
+			.eq('course_offering_id', sibling.course_offering_id)
+			.order('set_number', { ascending: false })
+
+		const highest = siblings?.[0]?.set_number || 1
+		const next = highest + 1
+
+		const { data: created, error } = await supabase
+			.from('ese_question_papers')
+			.insert({
+				institutions_id: sibling.institutions_id,
+				institution_code: sibling.institution_code,
+				examination_session_id: sibling.examination_session_id,
+				exam_type_id: sibling.exam_type_id,
+				course_offering_id: sibling.course_offering_id,
+				course_id: sibling.course_id,
+				course_code: sibling.course_code,
+				program_code: sibling.program_code,
+				semester: sibling.semester,
+				template_id: sibling.template_id,
+				template_version: sibling.template_version,
+				set_number: next,
+				set_label: setLetter(next),
+				subject_title: sibling.subject_title,
+				exam_date: sibling.exam_date,
+				duration_minutes: sibling.duration_minutes,
+				max_marks: sibling.max_marks,
+				status: 'draft',
+				created_by: userId,
+				questions: scaffoldQuestions(parts || []),
+			})
+			.select('*')
+			.single()
+
+		if (created) {
+			// Name the first set now that it is no longer the only one.
+			const first = (siblings || []).find((s: any) => s.set_number === 1)
+			if (first && !first.set_label) {
+				await supabase
+					.from('ese_question_papers')
+					.update({ set_label: setLetter(1) })
+					.eq('id', first.id)
+			}
+			return { paper: created }
+		}
+		if (error?.code !== '23505') {
+			return { error: error?.message || 'Could not create the additional question paper set' }
+		}
+	}
+	return { error: 'Could not allocate a new set — another assignment is being made for this subject. Try again.' }
+}
 
 // ── GET ─────────────────────────────────────────────────────────────────────
 
@@ -332,35 +419,79 @@ export async function POST(req: NextRequest) {
 			)
 		}
 
-		const paperId = paper.id as string
-		const setLabel = paper.set_label as string | null
-		const courseLabel = `${paper.course_code || 'This paper'}${setLabel ? ` (Set ${setLabel})` : ''}`
+		let targetPaper = paper
+		const courseLabelFor = (p: any) =>
+			`${p.course_code || 'This paper'}${p.set_label ? ` (Set ${p.set_label})` : ''}`
 
-		// One paper, one examiner (ia_qp_assignments_paper_unique). A cancelled row
-		// still holds the slot, so name that case rather than reporting a phantom
-		// examiner the CoE can see is no longer assigned.
+		// One paper, one examiner (ia_qp_assignments_paper_unique). Appointing a
+		// SECOND examiner to the same subject is a normal thing to want — two
+		// setters working independently, whose papers become Set A and Set B — and
+		// the way to do it is to give the second examiner their own paper rather
+		// than to share one. `create_additional_set` is the caller saying that is
+		// what they mean; without it a clash is still an error, so an accidental
+		// double-assignment cannot quietly spawn papers.
 		const { data: clash } = await supabase
 			.from('ia_qp_assignments')
 			.select('id, examiner_id, status')
-			.eq('paper_id', paperId)
+			.eq('paper_id', paper.id)
 			.maybeSingle()
+
 		if (clash) {
-			const { data: holder } = await supabase
-				.from('examiners')
-				.select('full_name')
-				.eq('id', clash.examiner_id)
+			const wantsAnotherSet = body.create_additional_set === true && clash.status !== 'cancelled'
+			if (!wantsAnotherSet) {
+				const { data: holder } = await supabase
+					.from('examiners')
+					.select('full_name')
+					.eq('id', clash.examiner_id)
+					.maybeSingle()
+				return NextResponse.json(
+					{
+						error:
+							clash.status === 'cancelled'
+								? `${courseLabelFor(paper)} has a cancelled assignment on record. Remove it from the Assignments tab before appointing someone else.`
+								: `${courseLabelFor(paper)} is already assigned to ${holder?.full_name || 'another examiner'}. Cancel that assignment first.`,
+						assignment_id: clash.id,
+					},
+					{ status: 409 }
+				)
+			}
+
+			// The same person must not be handed two sets of one subject — the whole
+			// point of a second set is a second author.
+			//
+			// limit(1) before maybeSingle: maybeSingle errors when more than one row
+			// comes back, and this query is not backed by a unique key, so a subject
+			// that somehow already has duplicates would turn a clear message into a
+			// 500.
+			const { data: already } = await supabase
+				.from('ia_qp_assignments')
+				.select('id, paper_id')
+				.eq('examiner_id', resolvedExaminerId)
+				.eq('examination_session_id', examination_session_id)
+				.eq('course_code', paper.course_code)
+				.neq('status', 'cancelled')
+				.limit(1)
 				.maybeSingle()
-			return NextResponse.json(
-				{
-					error:
-						clash.status === 'cancelled'
-							? `${courseLabel} has a cancelled assignment on record. Remove it from the Assignments tab before appointing someone else.`
-							: `${courseLabel} is already assigned to ${holder?.full_name || 'another examiner'}. Cancel that assignment first.`,
-					assignment_id: clash.id,
-				},
-				{ status: 409 }
-			)
+			if (already) {
+				return NextResponse.json(
+					{
+						error: `${examiner.full_name} already holds a set of ${paper.course_code}. One examiner sets one paper per subject.`,
+						assignment_id: already.id,
+					},
+					{ status: 409 }
+				)
+			}
+
+			const allocated = await allocateAdditionalSet(supabase, paper, perm.userId)
+			if ('error' in allocated) {
+				return NextResponse.json({ error: allocated.error }, { status: 500 })
+			}
+			targetPaper = allocated.paper
 		}
+
+		const paperId = targetPaper.id as string
+		const setLabel = targetPaper.set_label as string | null
+		const courseLabel = courseLabelFor(targetPaper)
 
 		// ── 4. The assignment + its order reference ─────────────────────────
 		const orderContent = await getPortalContent(institutions_id, 'order', examination_session_id)

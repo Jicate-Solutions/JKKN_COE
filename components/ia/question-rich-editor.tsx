@@ -9,7 +9,6 @@
 import { useEffect, useState, useCallback } from 'react'
 import { useEditor, EditorContent } from '@tiptap/react'
 import StarterKit from '@tiptap/starter-kit'
-import { Underline } from '@tiptap/extension-underline'
 import { Subscript } from '@tiptap/extension-subscript'
 import { Superscript } from '@tiptap/extension-superscript'
 import { TableKit } from '@tiptap/extension-table'
@@ -59,8 +58,11 @@ export function QuestionRichEditor({ value, onChange, onBlur, disabled, placehol
 		editable: !disabled,
 		immediatelyRender: false,
 		extensions: [
+			// Underline is NOT listed: StarterKit v3 already bundles it, and adding
+			// it again makes Tiptap warn "Duplicate extension names found:
+			// ['underline']" on every editor instance — dozens per paper. The
+			// toolbar's toggleUnderline is StarterKit's, and behaves identically.
 			StarterKit,
-			Underline,
 			Subscript,
 			Superscript,
 			TextStyle,

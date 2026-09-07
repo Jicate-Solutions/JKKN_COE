@@ -20,6 +20,7 @@ import { Loader2, Save, Split, X, Plus, AlertTriangle, CheckCircle2 } from 'luci
 import { cn } from '@/lib/utils'
 import { QuestionRichEditor } from '@/components/ia/question-rich-editor'
 import { QuestionImageField } from '@/components/ia/question-image-field'
+import { SyncBadge, type SyncState } from './sync-badge'
 import { K_LEVELS } from '@/types/ia-question-paper'
 import type { IaPaperQuestion, IaPaperSubQuestion } from '@/types/ia-question-paper'
 import {
@@ -53,7 +54,32 @@ interface Props {
 	baseUpdatedAt: string | null
 	readOnly: boolean
 	onSaved: (info: { question_done: number; question_total: number; updated_at: string | null }) => void
+	/**
+	 * Filled with the editor's Save Draft action so the parent can offer the same
+	 * button beside Submit. The alternative — duplicating the save call in the
+	 * parent — would mean two code paths that could drift apart.
+	 */
+	saveRef?: React.MutableRefObject<(() => Promise<boolean>) | null>
+	/** Lets the parent mirror the sync badge next to its Submit button. */
+	onSyncChange?: (info: { state: SyncState; dirty: boolean; savedAt: string | null }) => void
 }
+
+interface LocalDraft {
+	questions: IaPaperQuestion[]
+	savedAt: string
+	base: string | null
+}
+
+/**
+ * Autosave delay after the last keystroke. Short enough that an examiner never
+ * has to think about saving, long enough that typing a sentence is one request
+ * rather than thirty.
+ */
+const AUTOSAVE_DEBOUNCE_MS = 1_500
+/** How often to retry once a save has failed or the browser went offline. */
+const UNSYNCED_RETRY_MS = 15_000
+/** localStorage key prefix; one draft per assignment. */
+const LOCAL_DRAFT_PREFIX = 'jkkn.qp.draft.'
 
 /** Visible text of rich content — the completeness checks mirror the server's. */
 function plainText(value: unknown): string {
@@ -72,6 +98,8 @@ export function PortalPaperEditor({
 	baseUpdatedAt,
 	readOnly,
 	onSaved,
+	saveRef,
+	onSyncChange,
 }: Props) {
 	const { toast } = useToast()
 
@@ -79,13 +107,65 @@ export function PortalPaperEditor({
 	const [dirty, setDirty] = useState(false)
 	const [saving, setSaving] = useState(false)
 	const [savedAt, setSavedAt] = useState<string | null>(null)
+	const [syncState, setSyncState] = useState<SyncState>('idle')
+	const [syncError, setSyncError] = useState<string | null>(null)
+	/** A newer draft found in this browser than the server has — offered, not forced. */
+	const [recovery, setRecovery] = useState<LocalDraft | null>(null)
 	const baseRef = useRef<string | null>(baseUpdatedAt)
+
+	// Read inside event listeners that are registered once.
+	const dirtyRef = useRef(dirty)
+	dirtyRef.current = dirty
+	const syncStateRef = useRef(syncState)
+	syncStateRef.current = syncState
+
+	const draftKey = `${LOCAL_DRAFT_PREFIX}${assignmentId}`
+
+	const writeLocalDraft = useCallback(
+		(qs: IaPaperQuestion[]) => {
+			try {
+				window.localStorage.setItem(
+					draftKey,
+					JSON.stringify({ questions: qs, savedAt: new Date().toISOString(), base: baseRef.current })
+				)
+			} catch {
+				// Quota exceeded or storage disabled (private window). The server draft
+				// is the real one — never let a failed mirror break editing.
+			}
+		},
+		[draftKey]
+	)
+
+	const clearLocalDraft = useCallback(() => {
+		try {
+			window.localStorage.removeItem(draftKey)
+		} catch {
+			/* nothing to do */
+		}
+	}, [draftKey])
 
 	useEffect(() => {
 		setQuestions(initialQuestions)
 		baseRef.current = baseUpdatedAt
 		setDirty(false)
-	}, [initialQuestions, baseUpdatedAt])
+		setSyncState('idle')
+		setSyncError(null)
+
+		// Anything left in this browser that the server never received? That is
+		// work from a dropped connection or a closed tab, and it is offered back
+		// rather than applied silently — the server copy may be the newer one.
+		try {
+			const raw = window.localStorage.getItem(draftKey)
+			if (!raw) return
+			const parsed = JSON.parse(raw) as LocalDraft
+			if (!Array.isArray(parsed?.questions) || !parsed.savedAt) return
+			const serverAt = baseUpdatedAt ? new Date(baseUpdatedAt).getTime() : 0
+			if (new Date(parsed.savedAt).getTime() > serverAt) setRecovery(parsed)
+			else window.localStorage.removeItem(draftKey)
+		} catch {
+			/* an unreadable mirror is simply ignored */
+		}
+	}, [initialQuestions, baseUpdatedAt, draftKey])
 
 	const partByLabel = useMemo(
 		() => new Map(templateParts.map(p => [p.part_label, p])),
@@ -157,68 +237,169 @@ export function PortalPaperEditor({
 	}
 
 	// ── Save ──────────────────────────────────────────────────────────────
-	const save = useCallback(
-		async (opts: { silent?: boolean } = {}) => {
-			if (readOnly || saving) return false
+	//
+	// Saving a draft NEVER validates. An examiner must be able to stop half-way —
+	// empty questions, no CO, no K-level — and come back to it. Only Submit runs
+	// the completeness rules (lib/ia/validate-paper.ts).
+	//
+	// Two layers, because one is not enough:
+	//   • the server draft, which is the real one, and
+	//   • a local mirror in this browser, which survives the cases the server
+	//     never hears about — a dropped connection, a closed tab, a flat battery.
+
+	/** Always holds the latest questions, so timers never save a stale array. */
+	const questionsRef = useRef(questions)
+	questionsRef.current = questions
+
+	const savingRef = useRef(false)
+	/** Set while a save was requested but one was already in flight. */
+	const rerunRef = useRef(false)
+
+	const doSave = useCallback(
+		async (opts: { silent?: boolean } = {}): Promise<boolean> => {
+			if (readOnly) return false
+			if (savingRef.current) {
+				// Coalesce: finish the one in flight, then save again with the newer
+				// content rather than dropping this request on the floor.
+				rerunRef.current = true
+				return false
+			}
+			savingRef.current = true
 			setSaving(true)
+			setSyncState('saving')
+			const payload = questionsRef.current
 			try {
 				const res = await fetch(`/api/examiner-portal/assignments/${assignmentId}/paper`, {
 					method: 'PUT',
 					headers: { 'Content-Type': 'application/json' },
-					body: JSON.stringify({ questions, base_updated_at: baseRef.current }),
+					body: JSON.stringify({ questions: payload, base_updated_at: baseRef.current }),
 				})
 				const json = await res.json().catch(() => ({}))
-				if (!res.ok) {
-					throw new Error(json?.message || json?.error || `HTTP ${res.status}`)
-				}
+				if (!res.ok) throw new Error(json?.message || json?.error || `HTTP ${res.status}`)
+
 				baseRef.current = json.updated_at || baseRef.current
-				setDirty(false)
+				// Only clear the flag if nothing changed while the request was away.
+				if (questionsRef.current === payload) setDirty(false)
 				setSavedAt(new Date().toISOString())
+				setSyncState('saved')
+				setSyncError(null)
+				clearLocalDraft()
 				onSaved({
 					question_done: json.question_done ?? 0,
-					question_total: json.question_total ?? questions.length,
+					question_total: json.question_total ?? payload.length,
 					updated_at: json.updated_at || null,
 				})
-				if (!opts.silent) toast({ title: 'Saved' })
+				if (!opts.silent) toast({ title: 'Draft saved' })
 				return true
 			} catch (e: any) {
-				toast({ title: 'Could not save', description: e.message, variant: 'destructive' })
+				// The local mirror is what makes a failure survivable, so it is
+				// written before anything is said about the failure.
+				writeLocalDraft(payload)
+				setSyncState('unsynced')
+				setSyncError(e?.message || 'Could not reach the server')
+				if (!opts.silent) {
+					toast({
+						title: 'Not saved to the server',
+						description: `${e?.message || 'Network problem'} — your work is kept in this browser and will sync when the connection returns.`,
+						variant: 'destructive',
+					})
+				}
 				return false
 			} finally {
+				savingRef.current = false
 				setSaving(false)
+				if (rerunRef.current) {
+					rerunRef.current = false
+					// Space the retry so a flaky connection is not hammered.
+					setTimeout(() => void doSave({ silent: true }), 400)
+				}
 			}
 		},
-		[assignmentId, questions, readOnly, saving, toast, onSaved]
+		// questionsRef keeps this stable — it must NOT depend on `questions`, or
+		// every keystroke would rebuild the debounce timer and nothing would fire.
+		[assignmentId, readOnly, toast, onSaved, writeLocalDraft, clearLocalDraft]
 	)
 
-	// Auto-save every 45 s while there are unsaved edits. An examiner writing a
-	// long paper must not lose work to a closed tab or an expiring window.
+	// Hand the parent the same save action its Save Draft button triggers, and
+	// keep it told about the sync state so both badges agree.
+	useEffect(() => {
+		if (saveRef) saveRef.current = () => doSave()
+		return () => {
+			if (saveRef) saveRef.current = null
+		}
+	}, [saveRef, doSave])
+
+	useEffect(() => {
+		onSyncChange?.({ state: syncState, dirty, savedAt })
+	}, [syncState, dirty, savedAt, onSyncChange])
+
+	// ── Autosave: debounced on every edit ─────────────────────────────────
+	// Short, because the point is that an examiner never has to think about it.
 	useEffect(() => {
 		if (!dirty || readOnly) return
-		const t = setTimeout(() => {
-			save({ silent: true })
-		}, 45_000)
+		// The local mirror is written immediately — it costs nothing and it is the
+		// layer that survives a connection dropping mid-keystroke.
+		writeLocalDraft(questions)
+		const t = setTimeout(() => void doSave({ silent: true }), AUTOSAVE_DEBOUNCE_MS)
 		return () => clearTimeout(t)
-	}, [dirty, readOnly, save])
+	}, [questions, dirty, readOnly, doSave, writeLocalDraft])
 
-	// Warn before leaving with unsaved edits.
+	// Retry while offline / after a failure, until it lands.
 	useEffect(() => {
-		if (!dirty) return
+		if (syncState !== 'unsynced' || readOnly) return
+		const t = setInterval(() => void doSave({ silent: true }), UNSYNCED_RETRY_MS)
+		return () => clearInterval(t)
+	}, [syncState, readOnly, doSave])
+
+	// Save on the way out: switching tab, minimising, or closing. visibilitychange
+	// is the one event mobile browsers reliably fire before discarding a page.
+	useEffect(() => {
+		if (readOnly) return
+		const onHide = () => {
+			if (!dirtyRef.current) return
+			writeLocalDraft(questionsRef.current)
+			void doSave({ silent: true })
+		}
+		document.addEventListener('visibilitychange', () => {
+			if (document.visibilityState === 'hidden') onHide()
+		})
+		window.addEventListener('pagehide', onHide)
+		return () => {
+			window.removeEventListener('pagehide', onHide)
+		}
+	}, [readOnly, doSave, writeLocalDraft])
+
+	// The connection came back — push whatever is outstanding.
+	useEffect(() => {
+		const onOnline = () => {
+			if (dirtyRef.current || syncStateRef.current === 'unsynced') void doSave({ silent: true })
+		}
+		const onOffline = () => setSyncState(s => (s === 'saved' ? s : 'unsynced'))
+		window.addEventListener('online', onOnline)
+		window.addEventListener('offline', onOffline)
+		return () => {
+			window.removeEventListener('online', onOnline)
+			window.removeEventListener('offline', onOffline)
+		}
+	}, [doSave])
+
+	// Warn before leaving with edits that never reached the server.
+	useEffect(() => {
+		if (!dirty && syncState !== 'unsynced') return
 		const handler = (e: BeforeUnloadEvent) => {
 			e.preventDefault()
 			e.returnValue = ''
 		}
 		window.addEventListener('beforeunload', handler)
 		return () => window.removeEventListener('beforeunload', handler)
-	}, [dirty])
+	}, [dirty, syncState])
 
 	// ── Completeness (mirrors lib/ia/validate-paper.ts) ───────────────────
 	const problems = useMemo(() => {
 		const out: string[] = []
 		for (const q of questions) {
-			const part = partByLabel.get(q.part_label || '')
-			const captureCo = part?.capture_co ?? true
-			const captureK = part?.capture_klevel ?? true
+			// CO and K-level are required on every question — the template's
+			// capture flags no longer gate them (see lib/ia/validate-paper).
 			const label = `Q${q.question_number}${q.sub_label ? ` ${q.sub_label}` : ''}`
 			const subs = readSubQuestions(q)
 
@@ -226,8 +407,8 @@ export function PortalPaperEditor({
 				for (const sb of subs) {
 					const where = `${label} ${sb.label}`
 					if (!plainText(sb.question_text)) out.push(`${where}: enter the question`)
-					if (captureCo && !sb.co_code) out.push(`${where}: select CO`)
-					if (captureK && !sb.k_level) out.push(`${where}: select K-level`)
+					if (!sb.co_code) out.push(`${where}: select a Course Outcome (CO)`)
+					if (!sb.k_level) out.push(`${where}: select a K-level`)
 				}
 				const total = subTotal(subs)
 				if (q.marks != null && Math.abs(total - Number(q.marks)) > 0.001) {
@@ -235,8 +416,8 @@ export function PortalPaperEditor({
 				}
 			} else {
 				if (!plainText(q.question_text)) out.push(`${label}: enter the question`)
-				if (captureCo && !q.co_code) out.push(`${label}: select CO`)
-				if (captureK && !q.k_level) out.push(`${label}: select K-level`)
+				if (!q.co_code) out.push(`${label}: select a Course Outcome (CO)`)
+				if (!q.k_level) out.push(`${label}: select a K-level`)
 			}
 
 			for (const o of q.options || []) {
@@ -278,18 +459,60 @@ export function PortalPaperEditor({
 					)}
 				</div>
 				<div className="flex items-center gap-2">
-					{savedAt && !dirty && (
-						<span className="text-xs text-muted-foreground">
-							Saved {new Date(savedAt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}
-						</span>
-					)}
-					{dirty && <span className="text-xs text-amber-600">Unsaved changes</span>}
-					<Button size="sm" onClick={() => save()} disabled={readOnly || saving || !dirty}>
+					<SyncBadge state={syncState} dirty={dirty} savedAt={savedAt} error={syncError} />
+					<Button
+						size="sm"
+						variant="outline"
+						onClick={() => void doSave()}
+						disabled={readOnly || saving || (!dirty && syncState !== 'unsynced')}
+						title="Save your progress. Nothing is validated and the paper is not submitted."
+					>
 						{saving ? <Loader2 className="h-4 w-4 mr-1.5 animate-spin" /> : <Save className="h-4 w-4 mr-1.5" />}
-						Save
+						Save Draft
 					</Button>
 				</div>
 			</div>
+
+			{/* Work this browser is holding that the server never received. Offered
+			    rather than applied: the server copy may well be the newer one. */}
+			{recovery && !readOnly && (
+				<div className="mt-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+					<p className="font-medium flex items-center gap-1.5">
+						<AlertTriangle className="h-4 w-4" />
+						Unsaved work found in this browser
+					</p>
+					<p className="mt-1 text-xs">
+						Edits from{' '}
+						{new Date(recovery.savedAt).toLocaleString('en-IN', {
+							day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit',
+						})}{' '}
+						never reached the server — most likely the connection dropped or the tab closed.
+						Restoring replaces what is on screen with that version.
+					</p>
+					<div className="mt-2 flex gap-2">
+						<Button
+							size="sm"
+							onClick={() => {
+								setQuestions(recovery.questions)
+								setDirty(true)
+								setRecovery(null)
+							}}
+						>
+							Restore them
+						</Button>
+						<Button
+							size="sm"
+							variant="ghost"
+							onClick={() => {
+								clearLocalDraft()
+								setRecovery(null)
+							}}
+						>
+							Discard
+						</Button>
+					</div>
+				</div>
+			)}
 
 			{readOnly && (
 				<Card className="border-slate-200 bg-slate-50">
@@ -315,10 +538,17 @@ export function PortalPaperEditor({
 
 						{qs.map(q => {
 							const subs = readSubQuestions(q)
-							const captureCo = part?.capture_co ?? true
-							const captureK = part?.capture_klevel ?? true
+							// Both selectors always render: the rule requires them on every
+							// question, so hiding either would make a paper unsubmittable
+							// with no way for the examiner to fix it.
 							return (
-								<Card key={q.id} className={cn(q.is_choice_alternative && 'ml-4 border-dashed')}>
+								/* data-qp-image-scope: Ctrl+V anywhere inside this card attaches
+								   the screenshot to THIS question — see QuestionImageField. */
+								<Card
+									key={q.id}
+									data-qp-image-scope
+									className={cn(q.is_choice_alternative && 'ml-4 border-dashed')}
+								>
 									<CardContent className="p-3 space-y-3">
 										<div className="flex items-center justify-between gap-2">
 											<div className="flex items-center gap-2">
@@ -427,34 +657,46 @@ export function PortalPaperEditor({
 																	className="h-8 text-xs"
 																/>
 															</div>
-															{captureCo && (
-																<Select
-																	value={sb.co_code || ''}
-																	onValueChange={v => patchSub(q, sb.id, { co_code: v })}
-																	disabled={readOnly}
+															{/* CO and K-level are mandatory on every sub-division; an
+															    unset one is outlined so it is findable at a glance. */}
+															<Select
+																value={sb.co_code || ''}
+																onValueChange={v => patchSub(q, sb.id, { co_code: v })}
+																disabled={readOnly}
+															>
+																<SelectTrigger
+																	className={cn(
+																		'h-8 w-24 text-xs',
+																		!sb.co_code && !readOnly && 'border-destructive'
+																	)}
 																>
-																	<SelectTrigger className="h-8 w-24 text-xs"><SelectValue placeholder="CO" /></SelectTrigger>
-																	<SelectContent>
-																		{coOptions.map(c => (
-																			<SelectItem key={c} value={c}>{c}</SelectItem>
-																		))}
-																	</SelectContent>
-																</Select>
-															)}
-															{captureK && (
-																<Select
-																	value={sb.k_level || ''}
-																	onValueChange={v => patchSub(q, sb.id, { k_level: v })}
-																	disabled={readOnly}
+																	<SelectValue placeholder="CO *" />
+																</SelectTrigger>
+																<SelectContent>
+																	{coOptions.map(c => (
+																		<SelectItem key={c} value={c}>{c}</SelectItem>
+																	))}
+																</SelectContent>
+															</Select>
+															<Select
+																value={sb.k_level || ''}
+																onValueChange={v => patchSub(q, sb.id, { k_level: v })}
+																disabled={readOnly}
+															>
+																<SelectTrigger
+																	className={cn(
+																		'h-8 w-32 text-xs',
+																		!sb.k_level && !readOnly && 'border-destructive'
+																	)}
 																>
-																	<SelectTrigger className="h-8 w-32 text-xs"><SelectValue placeholder="K-level" /></SelectTrigger>
-																	<SelectContent>
-																		{K_LEVELS.map(k => (
-																			<SelectItem key={k.code} value={k.code}>{k.label}</SelectItem>
-																		))}
-																	</SelectContent>
-																</Select>
-															)}
+																	<SelectValue placeholder="K-level *" />
+																</SelectTrigger>
+																<SelectContent>
+																	{K_LEVELS.map(k => (
+																		<SelectItem key={k.code} value={k.code}>{k.label}</SelectItem>
+																	))}
+																</SelectContent>
+															</Select>
 														</div>
 													</div>
 												))}
@@ -479,43 +721,57 @@ export function PortalPaperEditor({
 											</div>
 										)}
 
-										{/* CO / K on the question itself */}
-										{subs.length === 0 && (captureCo || captureK) && (
+										{/* CO / K on the question itself — both mandatory. */}
+										{subs.length === 0 && (
 											<div className="flex flex-wrap gap-2">
-												{captureCo && (
-													<div>
-														<Label className="text-[11px] text-muted-foreground">Course Outcome</Label>
+												<div>
+													<Label className="text-[11px] text-muted-foreground">
+														Course Outcome <span className="text-destructive">*</span>
+													</Label>
 														<Select
 															value={q.co_code || ''}
 															onValueChange={v => patchQuestion(q.id, { co_code: v })}
 															disabled={readOnly}
 														>
-															<SelectTrigger className="h-8 w-28 text-xs mt-0.5"><SelectValue placeholder="CO" /></SelectTrigger>
-															<SelectContent>
-																{coOptions.map(c => (
-																	<SelectItem key={c} value={c}>{c}</SelectItem>
-																))}
-															</SelectContent>
-														</Select>
-													</div>
-												)}
-												{captureK && (
-													<div>
-														<Label className="text-[11px] text-muted-foreground">K-level</Label>
+														<SelectTrigger
+															className={cn(
+																'h-8 w-28 text-xs mt-0.5',
+																!q.co_code && !readOnly && 'border-destructive'
+															)}
+														>
+															<SelectValue placeholder="CO" />
+														</SelectTrigger>
+														<SelectContent>
+															{coOptions.map(c => (
+																<SelectItem key={c} value={c}>{c}</SelectItem>
+															))}
+														</SelectContent>
+													</Select>
+												</div>
+												<div>
+													<Label className="text-[11px] text-muted-foreground">
+														K-level <span className="text-destructive">*</span>
+													</Label>
 														<Select
 															value={q.k_level || ''}
 															onValueChange={v => patchQuestion(q.id, { k_level: v })}
 															disabled={readOnly}
 														>
-															<SelectTrigger className="h-8 w-36 text-xs mt-0.5"><SelectValue placeholder="K-level" /></SelectTrigger>
-															<SelectContent>
-																{K_LEVELS.map(k => (
-																	<SelectItem key={k.code} value={k.code}>{k.label}</SelectItem>
-																))}
-															</SelectContent>
-														</Select>
-													</div>
-												)}
+														<SelectTrigger
+															className={cn(
+																'h-8 w-36 text-xs mt-0.5',
+																!q.k_level && !readOnly && 'border-destructive'
+															)}
+														>
+															<SelectValue placeholder="K-level" />
+														</SelectTrigger>
+														<SelectContent>
+															{K_LEVELS.map(k => (
+																<SelectItem key={k.code} value={k.code}>{k.label}</SelectItem>
+															))}
+														</SelectContent>
+													</Select>
+												</div>
 											</div>
 										)}
 									</CardContent>
