@@ -93,6 +93,23 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 			)
 		}
 
+		// Format, not just presence — a claim with a malformed IFSC or a
+		// non-numeric account number cannot be paid and would bounce back from
+		// the CoE. Mirrors the profile route and the claim form.
+		bank.claim_account_number = String(bank.claim_account_number).replace(/\s+/g, '')
+		if (!/^\d{6,20}$/.test(bank.claim_account_number)) {
+			return NextResponse.json(
+				{ error: 'Enter a valid bank account number (6 to 20 digits).', missing: ['account number'] },
+				{ status: 400 }
+			)
+		}
+		if (!/^[A-Z]{4}0[A-Z0-9]{6}$/.test(String(bank.claim_ifsc))) {
+			return NextResponse.json(
+				{ error: 'That IFSC does not look right — it should be like SBIN0001234.', missing: ['IFSC code'] },
+				{ status: 400 }
+			)
+		}
+
 		const now = new Date().toISOString()
 		const { error } = await supabase
 			.from('ia_qp_assignments')

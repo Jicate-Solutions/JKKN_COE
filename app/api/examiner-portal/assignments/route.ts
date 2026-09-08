@@ -103,6 +103,13 @@ export async function GET(req: NextRequest) {
 				// fetches them for one assignment at a time.
 				claim_status: r.claim_status || 'pending',
 				claim_submitted_at: r.claim_submitted_at,
+				// The examiner's own account, on their own claim — returned so a later
+				// claim starts from the details they last submitted.
+				claim_account_holder: r.claim_account_holder || null,
+				claim_bank_name: r.claim_bank_name || null,
+				claim_account_number: r.claim_account_number || null,
+				claim_branch: r.claim_branch || null,
+				claim_ifsc: r.claim_ifsc || null,
 				claim_approved_at: r.claim_approved_at,
 				claim_remarks: r.claim_remarks,
 				payment_completed_at: r.payment_completed_at,

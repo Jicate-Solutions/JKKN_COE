@@ -167,37 +167,74 @@ export async function buildClaimData(
 		assignment.examination_session_id
 	)
 
-	let signatureBase64: string | null = null
-	if (examiner.signature_path) {
-		// The signature bucket is PRIVATE — download the bytes server-side rather
-		// than putting a URL in a document that gets e-mailed around.
+	// The signature bucket is PRIVATE — download the bytes server-side rather
+	// than putting a URL in a document that gets e-mailed around.
+	const downloadSignature = async (path: string | null | undefined): Promise<string | null> => {
+		if (!path) return null
 		try {
-			const { data, error } = await supabase.storage
-				.from(SIGNATURE_BUCKET)
-				.download(examiner.signature_path)
-			if (!error && data) {
-				const bytes = Buffer.from(await data.arrayBuffer())
-				const ext = examiner.signature_path.split('.').pop()?.toLowerCase() || 'png'
-				const mime = ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg' : `image/${ext}`
-				signatureBase64 = `data:${mime};base64,${bytes.toString('base64')}`
-			}
+			const { data, error } = await supabase.storage.from(SIGNATURE_BUCKET).download(path)
+			if (error || !data) return null
+			const bytes = Buffer.from(await data.arrayBuffer())
+			const ext = path.split('.').pop()?.toLowerCase() || 'png'
+			const mime = ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg' : `image/${ext}`
+			return `data:${mime};base64,${bytes.toString('base64')}`
 		} catch (e) {
 			console.warn('[QP portal] signature download failed:', e)
+			return null
 		}
 	}
+
+	// The signature the examiner gave for THIS submission (drawn or attached in
+	// the wizard) is what the claim should carry. The profile specimen is only a
+	// fallback for claims that predate the wizard.
+	const submissionSignature = await downloadSignature(assignment.submission_signature_path)
+	const signatureBase64 = submissionSignature ?? (await downloadSignature(examiner.signature_path))
+
+	// A submitted claim prints the account it was submitted with (the snapshot
+	// on the assignment), never the profile as it stands today.
+	const snap = assignment.claim_account_number ? assignment : null
+
+	// One claim form per examination session: every paper this examiner has
+	// CLAIMED in the same session joins this form, the current one included even
+	// while it is still pending (that is the form being previewed).
+	const { data: siblings } = await supabase
+		.from('ia_qp_assignments')
+		.select('id, course_code, subject_title, program_code, semester, set_label, remuneration, claim_status, claim_submitted_at')
+		.eq('examiner_id', assignment.examiner_id)
+		.eq('examination_session_id', assignment.examination_session_id)
+		.neq('status', 'cancelled')
+		.order('course_code', { ascending: true })
+	const claimContentRate = (claimContent as any)?.rate_per_paper ?? null
+	const papers = ((siblings || []) as any[])
+		.filter(r => r.id === assignment.id || ['submitted', 'approved', 'paid'].includes(r.claim_status))
+		.map(r => ({
+			course_code: r.course_code || '',
+			title: r.subject_title || '',
+			program_code: r.program_code || null,
+			semester: r.semester ?? null,
+			set_label: r.set_label || null,
+			rate: r.remuneration ?? claimContentRate ?? null,
+			claim_submitted_at: r.claim_submitted_at || null,
+		}))
 
 	return {
 		...base,
 		content: claimContent as QpPortalContent,
 		bank: {
-			account_holder: examiner.bank_account_holder || examiner.full_name || null,
-			bank_name: examiner.bank_name || null,
-			account_number: examiner.bank_account_number || null,
-			branch: examiner.bank_branch || null,
-			ifsc: examiner.bank_ifsc || null,
+			account_holder: snap?.claim_account_holder || examiner.bank_account_holder || examiner.full_name || null,
+			bank_name: snap?.claim_bank_name || examiner.bank_name || null,
+			account_number: snap?.claim_account_number || examiner.bank_account_number || null,
+			branch: snap?.claim_branch || examiner.bank_branch || null,
+			ifsc: snap?.claim_ifsc || examiner.bank_ifsc || null,
 		},
 		signatureBase64,
-		claim_date: assignment.claim_submitted_at || null,
+		signed_at: submissionSignature ? assignment.signed_at || null : null,
+		// The form is dated by the latest claim it covers.
+		claim_date:
+			papers.map(p => p.claim_submitted_at).filter(Boolean).sort().pop() ||
+			assignment.claim_submitted_at ||
+			null,
+		papers,
 	}
 }
 

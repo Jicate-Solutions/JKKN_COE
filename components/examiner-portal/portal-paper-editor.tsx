@@ -67,6 +67,8 @@ interface Props {
 	 * parent disable Submit instead of letting the server refuse the click.
 	 */
 	onValidityChange?: (problems: string[]) => void
+	/** Lets the parent read the questions as they are right now, unsaved edits included. */
+	questionsRef?: React.MutableRefObject<(() => IaPaperQuestion[]) | null>
 }
 
 interface LocalDraft {
@@ -106,6 +108,7 @@ export function PortalPaperEditor({
 	saveRef,
 	onSyncChange,
 	onValidityChange,
+	questionsRef: liveQuestionsRef,
 }: Props) {
 	const { toast } = useToast()
 
@@ -436,6 +439,13 @@ export function PortalPaperEditor({
 	useEffect(() => {
 		onValidityChange?.(problems)
 	}, [problems, onValidityChange])
+
+	useEffect(() => {
+		if (liveQuestionsRef) liveQuestionsRef.current = () => questionsRef.current
+		return () => {
+			if (liveQuestionsRef) liveQuestionsRef.current = null
+		}
+	}, [liveQuestionsRef])
 
 	const doneCount = questions.filter(q => {
 		const subs = readSubQuestions(q)

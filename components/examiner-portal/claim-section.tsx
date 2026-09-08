@@ -42,6 +42,12 @@ interface ClaimRow {
 	payment_completed_at: string | null
 	payment_reference: string | null
 	payment_amount: number | null
+	/** The account this claim was submitted with (null until submitted). */
+	claim_account_holder?: string | null
+	claim_bank_name?: string | null
+	claim_account_number?: string | null
+	claim_branch?: string | null
+	claim_ifsc?: string | null
 }
 
 interface Props {
@@ -67,12 +73,51 @@ const TONE: Record<QpClaimStatus, string> = {
 	paid: 'bg-emerald-100 text-emerald-800 border-emerald-300',
 }
 
-const BANK_FIELDS: { key: string; label: string; placeholder?: string }[] = [
-	{ key: 'account_holder', label: 'Bank account holder name' },
-	{ key: 'account_number', label: 'Bank account number' },
-	{ key: 'bank_name', label: 'Bank name' },
-	{ key: 'branch', label: 'Branch name' },
-	{ key: 'ifsc', label: 'IFSC code', placeholder: 'e.g. SBIN0001234' },
+// Every field is mandatory: all five are needed to actually pay someone.
+// `validate` returns the message to show, or null when the value is acceptable.
+// The same rules run on the server (claim route), so a stale tab gets the same
+// answer.
+const IFSC_RE = /^[A-Z]{4}0[A-Z0-9]{6}$/
+const ACCOUNT_RE = /^\d{6,20}$/
+
+const BANK_FIELDS: {
+	key: string
+	label: string
+	placeholder?: string
+	hint?: string
+	validate: (v: string) => string | null
+}[] = [
+	{
+		key: 'account_holder',
+		label: 'Bank account holder name',
+		placeholder: 'Name exactly as printed in the passbook',
+		validate: v => (v.trim().length < 2 ? 'Enter the account holder name as printed in the passbook.' : null),
+	},
+	{
+		key: 'account_number',
+		label: 'Bank account number',
+		placeholder: 'Digits only',
+		validate: v => (!ACCOUNT_RE.test(v.replace(/\s+/g, '')) ? 'Enter a valid account number (6 to 20 digits).' : null),
+	},
+	{
+		key: 'bank_name',
+		label: 'Bank name',
+		placeholder: 'e.g. State Bank of India',
+		validate: v => (v.trim().length < 2 ? 'Enter the bank name.' : null),
+	},
+	{
+		key: 'branch',
+		label: 'Branch name',
+		placeholder: 'e.g. Kumarapalayam',
+		validate: v => (v.trim().length < 2 ? 'Enter the branch name.' : null),
+	},
+	{
+		key: 'ifsc',
+		label: 'IFSC code',
+		placeholder: 'e.g. SBIN0001234',
+		hint: '11 characters: 4 letters, a zero, then 6 letters or digits.',
+		validate: v => (!IFSC_RE.test(v.trim().toUpperCase()) ? 'That IFSC does not look right — it should be like SBIN0001234.' : null),
+	},
 ]
 
 function subtitle(a: ClaimRow) {
@@ -86,6 +131,9 @@ export function ClaimSection({ assignments, bank, onSubmitClaim, onDownload, loa
 	const [form, setForm] = useState<Record<string, string>>({})
 	const [busy, setBusy] = useState(false)
 	const [error, setError] = useState<string | null>(null)
+	// Which fields the examiner has left; a message only appears after that, so
+	// an empty form is not red before anyone has typed.
+	const [touched, setTouched] = useState<Record<string, boolean>>({})
 
 	// A claim only exists once the submission is complete. Everything earlier is
 	// still question-paper work and has no place on this screen.
@@ -100,23 +148,50 @@ export function ClaimSection({ assignments, bank, onSubmitClaim, onDownload, loa
 		return m
 	}, [claimable])
 
+	// The account the examiner last submitted a claim with. The profile is kept
+	// in step by the claim route, but the claim snapshot is the authoritative
+	// "last details" — it is what the CoE actually paid against.
+	const lastClaimBank = useMemo(() => {
+		const last = assignments
+			.filter(a => a.claim_account_number && a.claim_submitted_at)
+			.sort((x, y) => String(y.claim_submitted_at).localeCompare(String(x.claim_submitted_at)))[0]
+		return last
+			? {
+					account_holder: last.claim_account_holder,
+					account_number: last.claim_account_number,
+					bank_name: last.claim_bank_name,
+					branch: last.claim_branch,
+					ifsc: last.claim_ifsc,
+				}
+			: null
+	}, [assignments])
+
 	const beginClaim = (a: ClaimRow) => {
 		setOpenForm(a.id)
 		setError(null)
+		setTouched({})
+		const src = lastClaimBank || bank
 		setForm({
-			account_holder: bank.account_holder || '',
-			account_number: bank.account_number || '',
-			bank_name: bank.bank_name || '',
-			branch: bank.branch || '',
-			ifsc: bank.ifsc || '',
+			account_holder: src.account_holder || '',
+			account_number: src.account_number || '',
+			bank_name: src.bank_name || '',
+			branch: src.branch || '',
+			ifsc: src.ifsc || '',
 		})
 	}
 
 	const submit = async (id: string) => {
+		// Show every message at once if someone reaches Submit with a gap left.
+		setTouched(Object.fromEntries(BANK_FIELDS.map(f => [f.key, true])))
+		if (!complete) return
 		setBusy(true)
 		setError(null)
 		try {
-			await onSubmitClaim(id, form)
+			await onSubmitClaim(id, {
+				...form,
+				account_number: String(form.account_number || '').replace(/\s+/g, ''),
+				ifsc: String(form.ifsc || '').trim().toUpperCase(),
+			})
 			setOpenForm(null)
 		} catch (e: any) {
 			setError(e?.message || 'The claim could not be submitted.')
@@ -125,7 +200,11 @@ export function ClaimSection({ assignments, bank, onSubmitClaim, onDownload, loa
 		}
 	}
 
-	const complete = BANK_FIELDS.every(f => String(form[f.key] || '').trim())
+	const fieldErrors = useMemo(
+		() => Object.fromEntries(BANK_FIELDS.map(f => [f.key, f.validate(String(form[f.key] || ''))])),
+		[form]
+	)
+	const complete = BANK_FIELDS.every(f => !fieldErrors[f.key])
 
 	const header = (a: ClaimRow) => (
 		<div className="min-w-0">
@@ -137,7 +216,12 @@ export function ClaimSection({ assignments, bank, onSubmitClaim, onDownload, loa
 	)
 
 	const downloadButton = (a: ClaimRow) => (
-		<Button variant="outline" size="sm" onClick={() => onDownload(a.id)}>
+		<Button
+			variant="outline"
+			size="sm"
+			onClick={() => onDownload(a.id)}
+			title="One claim form per examination session — every paper you have claimed in this session is listed on it."
+		>
 			<Download className="h-4 w-4 mr-1.5" />
 			Download claim form
 		</Button>
@@ -165,21 +249,50 @@ export function ClaimSection({ assignments, bank, onSubmitClaim, onDownload, loa
 
 							{openForm === a.id ? (
 								<div className="space-y-3 rounded-md border p-3.5 bg-slate-50">
+									<p className="text-xs text-muted-foreground">
+										All fields are mandatory. <span className="text-rose-600">*</span>
+									</p>
 									<div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-										{BANK_FIELDS.map(f => (
-											<div key={f.key} className={f.key === 'account_holder' ? 'sm:col-span-2' : ''}>
-												<Label className="text-xs">{f.label}</Label>
-												<Input
-													value={form[f.key] || ''}
-													placeholder={f.placeholder}
-													onChange={e => setForm(p => ({ ...p, [f.key]: e.target.value }))}
-													disabled={busy}
-													className="h-9 mt-1 bg-white"
-												/>
-											</div>
-										))}
+										{BANK_FIELDS.map(f => {
+											const message = touched[f.key] ? fieldErrors[f.key] : null
+											return (
+												<div key={f.key} className={f.key === 'account_holder' ? 'sm:col-span-2' : ''}>
+													<Label htmlFor={`claim-${f.key}`} className="text-xs">
+														{f.label} <span className="text-rose-600">*</span>
+													</Label>
+													<Input
+														id={`claim-${f.key}`}
+														value={form[f.key] || ''}
+														placeholder={f.placeholder}
+														required
+														aria-required
+														aria-invalid={!!message}
+														inputMode={f.key === 'account_number' ? 'numeric' : undefined}
+														autoCapitalize={f.key === 'ifsc' ? 'characters' : undefined}
+														maxLength={f.key === 'ifsc' ? 11 : f.key === 'account_number' ? 20 : 200}
+														onChange={e =>
+															setForm(p => ({
+																...p,
+																[f.key]: f.key === 'ifsc' ? e.target.value.toUpperCase() : e.target.value,
+															}))
+														}
+														onBlur={() => setTouched(p => ({ ...p, [f.key]: true }))}
+														disabled={busy}
+														className={cn('h-9 mt-1 bg-white', message && 'border-rose-500 focus-visible:ring-rose-500')}
+													/>
+													{message ? (
+														<p className="text-xs text-rose-600 mt-1">{message}</p>
+													) : f.hint ? (
+														<p className="text-xs text-muted-foreground mt-1">{f.hint}</p>
+													) : null}
+												</div>
+											)
+										})}
 									</div>
 									<p className="text-xs text-muted-foreground">
+										{lastClaimBank
+											? 'Pre-filled from your last claim — check them before submitting. '
+											: ''}
 										These details are recorded against this claim. Changing them later on your profile
 										will not alter a claim you have already submitted.
 									</p>

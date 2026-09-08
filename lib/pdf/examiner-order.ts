@@ -428,14 +428,36 @@ export interface ClaimFormData extends ExaminerOrderData {
 		branch?: string | null
 		ifsc?: string | null
 	}
-	/** Data URI of the examiner's stored signature, or null. */
+	/**
+	 * Data URI of the examiner's signature, or null. The signature given for THIS
+	 * submission (drawn or attached in the wizard) is preferred; the specimen on
+	 * the profile is the fallback.
+	 */
 	signatureBase64?: string | null
+	/** When the submission signature was given; printed under it. */
+	signed_at?: string | null
 	claim_date?: string | null
+	/**
+	 * Every paper this examiner has claimed in the SAME examination session,
+	 * the current one included. One claim form per session: a second paper
+	 * set later joins the same form rather than producing a second one.
+	 */
+	papers?: ClaimPaper[]
+}
+
+export interface ClaimPaper {
+	course_code: string
+	title: string
+	program_code?: string | null
+	semester?: number | null
+	set_label?: string | null
+	rate?: number | null
+	claim_submitted_at?: string | null
 }
 
 export function buildClaimFormHtml(
 	data: ClaimFormData,
-	assets: { logoBase64: string | null; secondaryLogoBase64: string | null } = {
+	assets: OrderAssets = {
 		logoBase64: null,
 		secondaryLogoBase64: null,
 	}
@@ -461,28 +483,89 @@ export function buildClaimFormHtml(
 		['IFSC', data.bank.ifsc || '—'],
 	]
 
+	const money = (v: number | null | undefined) => (v != null ? `Rs. ${Number(v).toFixed(2)}` : '—')
+
+	// The papers claimed in this session. A caller that did not gather siblings
+	// still gets a one-paper form.
+	const papers: ClaimPaper[] =
+		data.papers && data.papers.length > 0
+			? data.papers
+			: [
+					{
+						course_code: data.subject.course_code,
+						title: data.subject.title,
+						program_code: data.examination.program_code,
+						semester: data.examination.semester,
+						set_label: data.subject.set_label,
+						rate,
+					},
+				]
+	const total = papers.reduce((sum, p) => sum + Number(p.rate ?? rate ?? 0), 0)
+	const multi = papers.length > 1
+
 	const claimRows: [string, string][] = [
 		['Examination', data.examination.exam_type_name || 'End Semester Examinations'],
 		['Session', c.session_label || data.examination.session_name || '—'],
-		['Subject Code', data.subject.course_code],
-		['Subject Title', data.subject.title],
-		...((data.subject.set_label ? [['Set', data.subject.set_label]] : []) as [string, string][]),
-		['Number of Question Papers Set', '1'],
-		['Rate per Question Paper', rate != null ? `Rs. ${Number(rate).toFixed(2)}` : '—'],
-		['Total Amount Claimed', rate != null ? `Rs. ${Number(rate).toFixed(2)}` : '—'],
-		...((rateWords ? [['Amount in Words', rateWords]] : []) as [string, string][]),
+		...((multi
+			? []
+			: [
+					['Subject Code', data.subject.course_code],
+					['Subject Title', data.subject.title],
+					...(data.subject.set_label ? [['Set', data.subject.set_label]] : []),
+				]) as [string, string][]),
+		['Number of Question Papers Set', String(papers.length)],
+		...((multi ? [] : [['Rate per Question Paper', money(rate)]]) as [string, string][]),
+		['Total Amount Claimed', money(total)],
+		...((rateWords && !multi ? [['Amount in Words', rateWords]] : []) as [string, string][]),
 	]
 
 	const row = ([label, value]: [string, string]) =>
 		`<tr><th>${escapeHtml(label)}</th><td>${escapeHtml(value)}</td></tr>`
 
+	// With more than one paper, the papers get their own table between the
+	// session lines and the totals.
+	const papersTable = multi
+		? `<table class="grid papers">
+		<thead><tr>
+			<th class="n">S.No</th><th>Subject Code</th><th class="t">Subject Title</th><th>Programme / Sem</th><th class="r">Rate</th>
+		</tr></thead>
+		<tbody>${papers
+			.map(
+				(p, i) => `<tr>
+			<td class="n">${i + 1}</td>
+			<td>${escapeHtml(p.course_code)}${p.set_label ? ` (Set ${escapeHtml(p.set_label)})` : ''}</td>
+			<td class="t">${escapeHtml(p.title)}</td>
+			<td>${escapeHtml([p.program_code, p.semester ? `Sem ${p.semester}` : null].filter(Boolean).join(' / ') || '—')}</td>
+			<td class="r">${escapeHtml(money(p.rate ?? rate))}</td>
+		</tr>`
+			)
+			.join('')}</tbody>
+	</table>`
+		: ''
+
 	const notes = (c.body || []).map(cl => `<li>${escapeHtml(cl.text)}</li>`).join('')
+
+	// The claim goes out on the same letterhead as the order: the college's
+	// framed block when it has one, the generic logo + name header otherwise.
+	const boxed = boxedLetterheadHtml(data.institution.institution_code, assets.letterheadLogoBase64 ?? null)
+	const header = boxed
+		? `${boxed}<div class="lh-office">OFFICE OF THE CONTROLLER OF EXAMINATIONS</div>`
+		: `<div class="head-row">
+		<div class="head-logo">${leftLogo}</div>
+		<div class="head-mid">
+			<div class="inst-name">${escapeHtml(data.institution.name.toUpperCase())}</div>
+			${data.institution.address ? `<div class="inst-addr">${escapeHtml(data.institution.address)}</div>` : ''}
+			<div class="inst-office">OFFICE OF THE CONTROLLER OF EXAMINATIONS</div>
+		</div>
+		<div class="head-logo">${rightLogo}</div>
+	</div>`
 
 	return `<!DOCTYPE html>
 <html><head><meta charset="utf-8" />
 <style>
 	@page { size: A4 portrait; }
 	body { font-family: ${fontFamily}; font-size: 11pt; color: #000; margin: 0; line-height: 1.45; }
+	${LETTERHEAD_CSS}
 	.head-row { display: flex; align-items: center; gap: 10px; }
 	.head-logo { width: 74px; flex: 0 0 74px; text-align: center; }
 	.logo { width: 70px; height: 70px; object-fit: contain; }
@@ -498,25 +581,22 @@ export function buildClaimFormHtml(
 	table.grid { width: 100%; border-collapse: collapse; margin-bottom: 14px; }
 	table.grid th, table.grid td { border: 1px solid #111; padding: 5px 8px; font-size: 10.5pt; text-align: left; }
 	table.grid th { width: 40%; background: #f4f4f4; font-weight: bold; }
+	table.papers th { width: auto; text-align: left; }
+	table.papers th.n, table.papers td.n { width: 8%; text-align: center; }
+	table.papers th.t { width: 42%; }
+	table.papers th.r, table.papers td.r { width: 16%; text-align: right; white-space: nowrap; }
 	.section { font-weight: bold; margin: 0 0 6px; }
 	ol.notes { margin: 0 0 14px; padding-left: 20px; font-size: 10pt; }
 	.declare { margin: 14px 0; font-size: 10.5pt; text-align: justify; }
 	.sign-row { display: flex; justify-content: space-between; margin-top: 26px; }
 	.sign-cell { text-align: center; min-width: 200px; }
-	.sign-img { height: 46px; object-fit: contain; }
+	.sign-img { height: 56px; max-width: 220px; object-fit: contain; display: block; margin: 0 auto; }
 	.sign-rule { border-top: 1px solid #000; margin-top: 4px; padding-top: 4px; font-size: 10pt; }
-	.pad { padding-top: 46px; }
+	.pad { padding-top: 56px; }
+	.sign-when { font-size: 8.5pt; color: #444; margin-top: 2px; }
 </style></head>
 <body>
-	<div class="head-row">
-		<div class="head-logo">${leftLogo}</div>
-		<div class="head-mid">
-			<div class="inst-name">${escapeHtml(data.institution.name.toUpperCase())}</div>
-			${data.institution.address ? `<div class="inst-addr">${escapeHtml(data.institution.address)}</div>` : ''}
-			<div class="inst-office">OFFICE OF THE CONTROLLER OF EXAMINATIONS</div>
-		</div>
-		<div class="head-logo">${rightLogo}</div>
-	</div>
+	${header}
 	<hr class="rule" />
 
 	<div class="title">${escapeHtml(c.title || 'CLAIM FORM — QUESTION PAPER SETTING')}</div>
@@ -532,7 +612,9 @@ export function buildClaimFormHtml(
 	</table>
 
 	<div class="section">2. Work Claimed</div>
-	<table class="grid">${claimRows.map(row).join('')}</table>
+	<table class="grid">${claimRows.slice(0, 2).map(row).join('')}</table>
+	${papersTable}
+	<table class="grid">${claimRows.slice(2).map(row).join('')}</table>
 
 	<div class="section">3. Bank Details for Payment</div>
 	<table class="grid">${bankRows.map(row).join('')}</table>
@@ -556,6 +638,11 @@ export function buildClaimFormHtml(
 					: '<div class="pad"></div>'
 			}
 			<div class="sign-rule">Signature of the Examiner<br />${escapeHtml(data.examiner.full_name)}</div>
+			${
+				data.signatureBase64 && data.signed_at
+					? `<div class="sign-when">Signed digitally on ${escapeHtml(formatIstDate(data.signed_at))}</div>`
+					: ''
+			}
 		</div>
 	</div>
 	<div style="margin-top:16px;font-size:10pt;">Date: ${escapeHtml(
@@ -645,7 +732,8 @@ export async function generateExaminerOrderPdf(data: ExaminerOrderData): Promise
 }
 
 export async function generateClaimFormPdf(data: ClaimFormData): Promise<Buffer> {
-	const assets = await loadLogos(data.pdf_settings, data.institution.logo_path)
+	const logos = await loadLogos(data.pdf_settings, data.institution.logo_path)
+	const assets: OrderAssets = { ...logos, ...loadLetterheadAssets(data.institution.institution_code) }
 	return renderPdf(buildClaimFormHtml(data, assets), data.pdf_settings)
 }
 

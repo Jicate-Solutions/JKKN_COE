@@ -26,10 +26,6 @@ import Image from 'next/image'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import {
-	AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
-	AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
-} from '@/components/ui/alert-dialog'
 import { useToast } from '@/hooks/common/use-toast'
 import {
 	Loader2, LogOut, FileText, Clock, Lock, CheckCircle2, AlertTriangle, ArrowLeft,
@@ -50,6 +46,8 @@ import { SyncBadge, type SyncState } from './sync-badge'
 import { SubmissionWizard } from './submission-wizard'
 import { ClaimSection } from './claim-section'
 import { ProfileSection } from './profile-section'
+import { PaperPreviewDialog } from './paper-preview-dialog'
+import type { IaPaperQuestion } from '@/types/ia-question-paper'
 
 interface PortalExaminer {
 	id: string
@@ -199,6 +197,9 @@ export function ExaminerPortal({ examiner, onSignedOut }: Props) {
 	const [paperProblems, setPaperProblems] = useState<string[]>([])
 	// Bumped to remount the editor on the server copy after a failed submit.
 	const [editorEpoch, setEditorEpoch] = useState(0)
+	// The editor's live questions, read when the preview opens.
+	const liveQuestionsRef = useRef<(() => IaPaperQuestion[]) | null>(null)
+	const [previewQuestions, setPreviewQuestions] = useState<IaPaperQuestion[]>([])
 
 	// ── Load ──────────────────────────────────────────────────────────────
 	const loadAssignments = useCallback(async () => {
@@ -745,6 +746,7 @@ export function ExaminerPortal({ examiner, onSignedOut }: Props) {
 							saveRef={saveDraftRef}
 							onSyncChange={setDraftSync}
 							onValidityChange={setPaperProblems}
+							questionsRef={liveQuestionsRef}
 							assignmentId={a.id}
 							questions={detail.questions || []}
 							templateParts={detail.template_parts || []}
@@ -799,7 +801,10 @@ export function ExaminerPortal({ examiner, onSignedOut }: Props) {
 										Save Draft
 									</Button>
 									<Button
-										onClick={() => setSubmitOpen(true)}
+										onClick={() => {
+											setPreviewQuestions(liveQuestionsRef.current?.() || detail.questions || [])
+											setSubmitOpen(true)
+										}}
 										disabled={paperProblems.length > 0 || draftSync.state === 'saving'}
 										title={
 											paperProblems.length > 0
@@ -993,38 +998,17 @@ export function ExaminerPortal({ examiner, onSignedOut }: Props) {
 				</main>
 			</div>
 
-			<AlertDialog open={submitOpen} onOpenChange={setSubmitOpen}>
-				<AlertDialogContent>
-					<AlertDialogHeader>
-						<AlertDialogTitle>Submit this question paper?</AlertDialogTitle>
-						<AlertDialogDescription asChild>
-							<div className="space-y-2 text-sm">
-								<p>
-									The paper is handed to the Office of the Controller of Examinations and can no
-									longer be edited.
-								</p>
-								<p>
-									You will then be taken straight to the check list and your signature, which
-									complete the submission.
-								</p>
-							</div>
-						</AlertDialogDescription>
-					</AlertDialogHeader>
-					<AlertDialogFooter>
-						<AlertDialogCancel>Not yet</AlertDialogCancel>
-						<AlertDialogAction
-							onClick={e => {
-								e.preventDefault()
-								submitPaper()
-							}}
-							disabled={submitting}
-						>
-							{submitting && <Loader2 className="h-4 w-4 mr-1.5 animate-spin" />}
-							Submit
-						</AlertDialogAction>
-					</AlertDialogFooter>
-				</AlertDialogContent>
-			</AlertDialog>
+			<PaperPreviewDialog
+				open={submitOpen}
+				onOpenChange={setSubmitOpen}
+				title={a ? `${a.course_code} — ${a.subject_title}` : 'Question paper'}
+				subtitle={a ? contextLine(a) : undefined}
+				questions={previewQuestions}
+				templateParts={detail?.template_parts || []}
+				problems={paperProblems}
+				submitting={submitting}
+				onSubmit={submitPaper}
+			/>
 		</div>
 	)
 }

@@ -7,11 +7,14 @@
 // for actually signing — behaves the same as a laptop with no extra code.
 //
 // The specimen signature already on the examiner's profile can be adopted with
-// one click, so someone who has uploaded a scan is not made to draw again.
+// one click, so someone who has uploaded a scan is not made to draw again. An
+// image of the signature (a scan or a photo) can also be attached directly —
+// it is fitted onto the pad and leaves through the same PNG export, so the
+// server sees no difference between a drawn and an uploaded signature.
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
-import { Eraser, PenLine, ImageIcon } from 'lucide-react'
+import { Eraser, PenLine, ImageIcon, Upload } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 interface Props {
@@ -27,12 +30,19 @@ interface Props {
 const WIDTH = 900
 const HEIGHT = 300
 
+const ACCEPTED_TYPES = ['image/png', 'image/jpeg', 'image/webp']
+/** Raw upload cap. The pad re-encodes to a 900×300 PNG, so this only bounds decode work. */
+const MAX_UPLOAD_BYTES = 5 * 1024 * 1024
+
 export function SignaturePad({ onChange, savedSignatureUrl, disabled, className }: Props) {
 	const canvasRef = useRef<HTMLCanvasElement | null>(null)
 	const drawing = useRef(false)
 	const dirty = useRef(false)
 	const [hasInk, setHasInk] = useState(false)
-	const [usedSaved, setUsedSaved] = useState(false)
+	const [source, setSource] = useState<'drawn' | 'saved' | 'uploaded' | null>(null)
+	const [uploadError, setUploadError] = useState<string | null>(null)
+	const [dragOver, setDragOver] = useState(false)
+	const fileInputRef = useRef<HTMLInputElement | null>(null)
 
 	const ctx = useCallback(() => {
 		const c = canvasRef.current
@@ -94,6 +104,7 @@ export function SignaturePad({ onChange, savedSignatureUrl, disabled, className 
 		if (!dirty.current) {
 			dirty.current = true
 			setHasInk(true)
+			setSource('drawn')
 		}
 	}
 
@@ -115,8 +126,56 @@ export function SignaturePad({ onChange, savedSignatureUrl, disabled, className 
 		g.fillRect(0, 0, WIDTH, HEIGHT)
 		dirty.current = false
 		setHasInk(false)
-		setUsedSaved(false)
+		setSource(null)
+		setUploadError(null)
+		if (fileInputRef.current) fileInputRef.current.value = ''
 		onChange(null)
+	}
+
+	/** Paint an image onto a fresh white sheet, fitted and centred, then export. */
+	const placeImage = useCallback(
+		(img: HTMLImageElement, from: 'saved' | 'uploaded') => {
+			const g = ctx()
+			if (!g) return
+			g.fillStyle = '#ffffff'
+			g.fillRect(0, 0, WIDTH, HEIGHT)
+			// Fit inside the pad without distorting the signature. Small scans are
+			// enlarged a little so a phone photo does not end up as a thumbnail.
+			const scale = Math.min(WIDTH / img.width, HEIGHT / img.height, 2)
+			const w = img.width * scale
+			const h = img.height * scale
+			g.drawImage(img, (WIDTH - w) / 2, (HEIGHT - h) / 2, w, h)
+			dirty.current = true
+			setHasInk(true)
+			setSource(from)
+			setUploadError(null)
+			emit()
+		},
+		[ctx, emit]
+	)
+
+	/** Attach an image file of the signature (scan or photo). */
+	const loadFile = (file: File | null | undefined) => {
+		if (!file || disabled) return
+		if (!ACCEPTED_TYPES.includes(file.type)) {
+			setUploadError('Use a PNG, JPG or WebP image of your signature.')
+			return
+		}
+		if (file.size > MAX_UPLOAD_BYTES) {
+			setUploadError('That image is larger than 5 MB. Use a smaller scan or photo.')
+			return
+		}
+		const url = URL.createObjectURL(file)
+		const img = new window.Image()
+		img.onload = () => {
+			placeImage(img, 'uploaded')
+			URL.revokeObjectURL(url)
+		}
+		img.onerror = () => {
+			URL.revokeObjectURL(url)
+			setUploadError('That image could not be read. Try another file.')
+		}
+		img.src = url
 	}
 
 	/**
@@ -128,23 +187,9 @@ export function SignaturePad({ onChange, savedSignatureUrl, disabled, className 
 	 */
 	const useSaved = () => {
 		if (!savedSignatureUrl) return
-		const g = ctx()
-		if (!g) return
 		const img = new window.Image()
 		img.crossOrigin = 'anonymous'
-		img.onload = () => {
-			g.fillStyle = '#ffffff'
-			g.fillRect(0, 0, WIDTH, HEIGHT)
-			// Fit inside the pad without distorting the signature.
-			const scale = Math.min(WIDTH / img.width, HEIGHT / img.height, 1)
-			const w = img.width * scale
-			const h = img.height * scale
-			g.drawImage(img, (WIDTH - w) / 2, (HEIGHT - h) / 2, w, h)
-			dirty.current = true
-			setHasInk(true)
-			setUsedSaved(true)
-			emit()
-		}
+		img.onload = () => placeImage(img, 'saved')
 		img.onerror = () => {
 			// Leave the pad as it was; the examiner can still sign by hand.
 			console.warn('[Examiner portal] saved signature could not be loaded')
@@ -156,9 +201,20 @@ export function SignaturePad({ onChange, savedSignatureUrl, disabled, className 
 		<div className={cn('space-y-2', className)}>
 			<div
 				className={cn(
-					'relative rounded-md border-2 border-dashed bg-white',
-					disabled ? 'opacity-60' : 'border-slate-300'
+					'relative rounded-md border-2 border-dashed bg-white transition-colors',
+					disabled ? 'opacity-60' : dragOver ? 'border-emerald-500 bg-emerald-50/40' : 'border-slate-300'
 				)}
+				onDragOver={e => {
+					if (disabled) return
+					e.preventDefault()
+					setDragOver(true)
+				}}
+				onDragLeave={() => setDragOver(false)}
+				onDrop={e => {
+					e.preventDefault()
+					setDragOver(false)
+					loadFile(e.dataTransfer.files?.[0])
+				}}
 			>
 				<canvas
 					ref={canvasRef}
@@ -180,7 +236,7 @@ export function SignaturePad({ onChange, savedSignatureUrl, disabled, className 
 				{!hasInk && (
 					<div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center text-slate-400">
 						<PenLine className="h-5 w-5 mb-1" />
-						<span className="text-xs">Sign here</span>
+						<span className="text-xs">Sign here, or drop an image of your signature</span>
 					</div>
 				)}
 				{/* Signature rule, the way a printed form has one. */}
@@ -192,16 +248,40 @@ export function SignaturePad({ onChange, savedSignatureUrl, disabled, className 
 					<Eraser className="h-4 w-4 mr-1.5" />
 					Clear
 				</Button>
+				<Button
+					type="button"
+					variant="outline"
+					size="sm"
+					onClick={() => fileInputRef.current?.click()}
+					disabled={disabled}
+				>
+					<Upload className="h-4 w-4 mr-1.5" />
+					Attach signature image
+				</Button>
+				<input
+					ref={fileInputRef}
+					type="file"
+					accept={ACCEPTED_TYPES.join(',')}
+					className="hidden"
+					onChange={e => loadFile(e.target.files?.[0])}
+				/>
 				{savedSignatureUrl && (
 					<Button type="button" variant="outline" size="sm" onClick={useSaved} disabled={disabled}>
 						<ImageIcon className="h-4 w-4 mr-1.5" />
 						Use my saved signature
 					</Button>
 				)}
-				{usedSaved && (
+				{source === 'saved' && (
 					<span className="text-xs text-muted-foreground">Your specimen signature has been placed above.</span>
 				)}
+				{source === 'uploaded' && (
+					<span className="text-xs text-muted-foreground">Your signature image has been placed above.</span>
+				)}
 			</div>
+			{uploadError && <p className="text-xs text-rose-600">{uploadError}</p>}
+			<p className="text-xs text-muted-foreground">
+				PNG, JPG or WebP up to 5 MB. A clear signature on a plain white background scans best.
+			</p>
 		</div>
 	)
 }
