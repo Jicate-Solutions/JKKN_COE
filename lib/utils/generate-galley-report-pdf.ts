@@ -217,7 +217,7 @@ export function generateGalleyReportPDF(data: GalleyReportData): string {
 		doc.setFontSize(12)
 		const examBase = (data.session?.exam_type_name || 'END SEMESTER EXAMINATION').toUpperCase().trim()
 		const examLabel = examBase.includes('RESULT') ? examBase : `${examBase} RESULTS`
-		const revalSuffix = data.revaluation_view === 'before' ? ' (BEFORE REVALUATION)' : ''
+		const revalSuffix = data.revaluation_view === 'after' ? ' (AFTER REVALUATION)' : ''
 		const title = (sessionName ? `${examLabel} - ${sessionName.toUpperCase()}` : examLabel) + revalSuffix
 		doc.text(title, pageWidth / 2, currentY, { align: 'center' })
 
