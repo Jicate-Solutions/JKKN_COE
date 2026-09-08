@@ -160,6 +160,35 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
 			.single()
 		if (aErr) {
 			console.error('[QP portal] assignment update failed:', aErr.message)
+			if (submitting) {
+				// The paper was already stamped 'submitted' above. Undo that, so the
+				// paper and the assignment never disagree about whether the hand-over
+				// happened — otherwise the portal keeps offering Submit on a paper the
+				// CoE already sees as submitted, and the wizard never opens.
+				const { error: undoErr } = await supabase
+					.from('ese_question_papers')
+					.update({ status: paper.status, submitted_at: paper.submitted_at ?? null })
+					.eq('id', paper.id)
+				if (undoErr) console.error('[QP portal] paper submit rollback failed:', undoErr.message)
+				await logAccess(req, {
+					action: 'paper_submit',
+					examiner_id: auth.examiner.id,
+					examiner_email: auth.examiner.email,
+					assignment_id: assignment.id,
+					paper_id: assignment.paper_id,
+					institutions_id: assignment.institutions_id,
+					denied: true,
+					reason: `assignment update failed: ${aErr.message}`,
+				})
+				return NextResponse.json(
+					{
+						error: 'SUBMIT_FAILED',
+						message:
+							'The question paper could not be submitted because of a server problem. Your draft is safe and nothing has been handed over — please try again, and contact the Office of the Controller of Examinations if this continues.',
+					},
+					{ status: 500 }
+				)
+			}
 		}
 
 		await logAccess(req, {

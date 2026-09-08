@@ -324,7 +324,11 @@ export async function GET(request: Request) {
 
 		for (const reg of registrations) {
 			const offering = reg.course_offering_id ? offeringById.get(reg.course_offering_id) : undefined
-			const course_code = String(reg.course_code || offering?.course_code || '').trim()
+			// The offering names the paper actually being sat, so its code wins over the
+			// denormalised copy on the registration row. The copy can point at a
+			// duplicate master row of the same paper (24PHIIN01 - a Practical - for the
+			// Field Work paper 24PHIN01), which prices the paper at the wrong head.
+			const course_code = String(offering?.course_code || reg.course_code || '').trim()
 			if (!course_code) continue
 			rows.push({
 				...reg,
@@ -619,7 +623,8 @@ export async function POST(request: Request) {
 			if (semesterFilter != null && (offering?.semester ?? null) !== semesterFilter) continue
 			if (!inProgramFilter(String(reg.program_code || offering?.program_code || ''))) continue
 
-			const course_code = String(reg.course_code || offering?.course_code || '').trim()
+			// Offering code first - see the GET flattening above for why.
+			const course_code = String(offering?.course_code || reg.course_code || '').trim()
 			if (!course_code) continue
 
 			const target: Target = {

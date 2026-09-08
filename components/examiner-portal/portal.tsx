@@ -34,7 +34,7 @@ import { useToast } from '@/hooks/common/use-toast'
 import {
 	Loader2, LogOut, FileText, Clock, Lock, CheckCircle2, AlertTriangle, ArrowLeft,
 	ShieldCheck, ScrollText, Receipt, History, Send, RefreshCw, Save, LayoutDashboard,
-	Download, Eye, Menu, X, ListChecks, Wallet, BadgeCheck,
+	Download, Eye, Menu, X, ListChecks, Wallet, BadgeCheck, UserCircle,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { formatIst, windowHint } from '@/lib/qp-portal/ist'
@@ -49,6 +49,7 @@ import { PortalPaperEditor } from './portal-paper-editor'
 import { SyncBadge, type SyncState } from './sync-badge'
 import { SubmissionWizard } from './submission-wizard'
 import { ClaimSection } from './claim-section'
+import { ProfileSection } from './profile-section'
 
 interface PortalExaminer {
 	id: string
@@ -109,7 +110,7 @@ interface Props {
 	onSignedOut: () => void
 }
 
-type Section = 'dashboard' | 'orders' | 'papers' | 'claims'
+type Section = 'dashboard' | 'profile' | 'orders' | 'papers' | 'claims'
 
 const WINDOW_TONE: Record<QpWindowState, string> = {
 	pending: 'bg-slate-50 text-slate-700 border-slate-200',
@@ -119,6 +120,7 @@ const WINDOW_TONE: Record<QpWindowState, string> = {
 
 const NAV: { key: Section; label: string; icon: typeof LayoutDashboard }[] = [
 	{ key: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
+	{ key: 'profile', label: 'Profile', icon: UserCircle },
 	{ key: 'orders', label: 'Order Copy', icon: ScrollText },
 	{ key: 'papers', label: 'Question Paper', icon: FileText },
 	{ key: 'claims', label: 'Claim Form', icon: Receipt },
@@ -193,6 +195,10 @@ export function ExaminerPortal({ examiner, onSignedOut }: Props) {
 		savedAt: null,
 	})
 	const wizardRef = useRef<HTMLDivElement | null>(null)
+	// What the editor says still stands between this paper and Submit.
+	const [paperProblems, setPaperProblems] = useState<string[]>([])
+	// Bumped to remount the editor on the server copy after a failed submit.
+	const [editorEpoch, setEditorEpoch] = useState(0)
 
 	// ── Load ──────────────────────────────────────────────────────────────
 	const loadAssignments = useCallback(async () => {
@@ -224,6 +230,7 @@ export function ExaminerPortal({ examiner, onSignedOut }: Props) {
 		setOpenId(id)
 		setSection('papers')
 		setDetail(null)
+		setPaperProblems([])
 		setDetailLoading(true)
 		try {
 			setDetail(await portalFetch(`/api/examiner-portal/assignments/${id}`))
@@ -257,8 +264,23 @@ export function ExaminerPortal({ examiner, onSignedOut }: Props) {
 	// ── Actions ───────────────────────────────────────────────────────────
 	const submitPaper = async () => {
 		if (!openId) return
+		if (paperProblems.length > 0) {
+			setSubmitOpen(false)
+			toast({
+				title: 'The paper is not complete yet',
+				description: `${paperProblems.length} item${paperProblems.length > 1 ? 's' : ''} still to do — ${paperProblems.slice(0, 3).join(' · ')}${paperProblems.length > 3 ? ' …' : ''}`,
+				variant: 'destructive',
+			})
+			return
+		}
 		setSubmitting(true)
 		try {
+			// The server validates and submits ITS copy, so anything still only in
+			// this browser must land first.
+			if (draftSync.dirty || draftSync.state === 'unsynced') {
+				const saved = await saveDraftRef.current?.()
+				if (!saved) throw new Error('Your latest changes could not be saved. Check the connection and try again.')
+			}
 			const json = await portalFetch(`/api/examiner-portal/assignments/${openId}/paper`, {
 				method: 'PUT',
 				headers: { 'Content-Type': 'application/json' },
@@ -272,6 +294,12 @@ export function ExaminerPortal({ examiner, onSignedOut }: Props) {
 			requestAnimationFrame(() => wizardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }))
 		} catch (e: any) {
 			toast({ title: 'Not submitted', description: e.message, variant: 'destructive' })
+			// A refused submit may have touched the paper row (a rollback bumps its
+			// updated_at). Reload and remount the editor on the server copy so the
+			// next autosave does not run into a stale-base conflict. Safe: the draft
+			// was flushed above, so there is nothing in the editor to lose.
+			await reloadDetail()
+			setEditorEpoch(n => n + 1)
 		} finally {
 			setSubmitting(false)
 		}
@@ -713,8 +741,10 @@ export function ExaminerPortal({ examiner, onSignedOut }: Props) {
 						onContextMenu={e => e.preventDefault()}
 					>
 						<PortalPaperEditor
+							key={`${a.id}:${editorEpoch}`}
 							saveRef={saveDraftRef}
 							onSyncChange={setDraftSync}
+							onValidityChange={setPaperProblems}
 							assignmentId={a.id}
 							questions={detail.questions || []}
 							templateParts={detail.template_parts || []}
@@ -768,10 +798,25 @@ export function ExaminerPortal({ examiner, onSignedOut }: Props) {
 										)}
 										Save Draft
 									</Button>
-									<Button onClick={() => setSubmitOpen(true)}>
+									<Button
+										onClick={() => setSubmitOpen(true)}
+										disabled={paperProblems.length > 0 || draftSync.state === 'saving'}
+										title={
+											paperProblems.length > 0
+												? `${paperProblems.length} item${paperProblems.length > 1 ? 's' : ''} still to complete`
+												: undefined
+										}
+									>
 										<Send className="h-4 w-4 mr-1.5" />
 										Submit question paper
 									</Button>
+									{paperProblems.length > 0 && (
+										<span className="text-xs text-amber-700 flex items-center gap-1">
+											<AlertTriangle className="h-3.5 w-3.5" />
+											{paperProblems.length} item{paperProblems.length > 1 ? 's' : ''} still to complete —
+											see the list below the paper
+										</span>
+									)}
 								</div>
 							</CardContent>
 						</Card>
@@ -861,6 +906,8 @@ export function ExaminerPortal({ examiner, onSignedOut }: Props) {
 					{cards}
 				</div>
 			</div>
+		) : section === 'profile' ? (
+			<ProfileSection />
 		) : section === 'orders' ? (
 			orders
 		) : section === 'claims' ? (

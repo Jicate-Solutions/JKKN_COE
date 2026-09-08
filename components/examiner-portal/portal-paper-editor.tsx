@@ -62,6 +62,11 @@ interface Props {
 	saveRef?: React.MutableRefObject<(() => Promise<boolean>) | null>
 	/** Lets the parent mirror the sync badge next to its Submit button. */
 	onSyncChange?: (info: { state: SyncState; dirty: boolean; savedAt: string | null }) => void
+	/**
+	 * Every reason the paper cannot be submitted yet (empty = complete). Lets the
+	 * parent disable Submit instead of letting the server refuse the click.
+	 */
+	onValidityChange?: (problems: string[]) => void
 }
 
 interface LocalDraft {
@@ -100,6 +105,7 @@ export function PortalPaperEditor({
 	onSaved,
 	saveRef,
 	onSyncChange,
+	onValidityChange,
 }: Props) {
 	const { toast } = useToast()
 
@@ -426,6 +432,10 @@ export function PortalPaperEditor({
 		}
 		return out
 	}, [questions, partByLabel])
+
+	useEffect(() => {
+		onValidityChange?.(problems)
+	}, [problems, onValidityChange])
 
 	const doneCount = questions.filter(q => {
 		const subs = readSubQuestions(q)

@@ -614,6 +614,35 @@ export const PAPER_TABLE: Record<PaperSource, string> = {
 }
 
 /**
+ * The examination line of a CIA paper. A round keeps whatever name it was given
+ * in the Internal Mark Entry Setting — a standard "CIA-3" prints as
+ * "CONTINUOUS INTERNAL ASSESSMENT-III", while a round named "Model" prints as
+ * "MODEL EXAMINATION". The live setting wins so a round renamed after the papers
+ * were generated is honoured; the name copied onto the paper row is the fallback.
+ */
+async function ciaExamLine(supabase: any, paper: any): Promise<string> {
+	const round = Number(paper.cia_round) || 1
+	const roman = ['', 'I', 'II', 'III', 'IV', 'V', 'VI'][round] || String(round)
+	const standard = `CONTINUOUS INTERNAL ASSESSMENT-${roman}`
+
+	let name = String(paper.cia_round_name || '').trim()
+	if (paper.cia_setting_id) {
+		const { data: setting } = await supabase
+			.from('cia_entry_settings')
+			.select('cia_rounds')
+			.eq('id', paper.cia_setting_id)
+			.maybeSingle()
+		const rounds: any[] = Array.isArray(setting?.cia_rounds) ? setting!.cia_rounds : []
+		const live = rounds.find(r => Number(r?.round) === round)
+		if (live?.round_name) name = String(live.round_name).trim()
+	}
+
+	if (!name || /^cia\b/i.test(name)) return standard
+	const upper = name.toUpperCase()
+	return /\bEXAM/i.test(upper) ? upper : `${upper} EXAMINATION`
+}
+
+/**
  * Build the A4 PDF for one question paper. Same signature as the jsPDF builder so
  * the route swaps cleanly. Returns null if the paper isn't found.
  */
@@ -686,12 +715,10 @@ export async function buildPaperPdfHtml(
 		if (!grouped.has(key)) grouped.set(key, [])
 		grouped.get(key)!.push(q)
 	}
-	const roman = ['', 'I', 'II', 'III', 'IV', 'V', 'VI'][paper.cia_round || 1] || String(paper.cia_round || 1)
-
 	// The heading under the degree line. A CIA paper names its round; an
 	// end-semester paper names the examination and the session instead — printing
 	// "CONTINUOUS INTERNAL ASSESSMENT" on an ESE paper would be simply wrong.
-	let examLine = `CONTINUOUS INTERNAL ASSESSMENT-${roman}`
+	let examLine = await ciaExamLine(supabase, paper)
 	if (isEndSemester) {
 		const session: any = sessionRes?.data
 		let examName = 'END SEMESTER EXAMINATIONS'
