@@ -10,7 +10,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { Command, CommandEmpty, CommandInput, CommandItem, CommandList } from '@/components/ui/command'
 import { Check, ChevronsUpDown } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import type { QpAssignmentStatus, QpExaminerKind, QpWindowState } from '@/types/qp-examiner-assignment'
+import type { QpAssignmentStatus, QpExaminerKind, QpWindowState, QpAssignmentType } from '@/types/qp-examiner-assignment'
 
 // ── Types the page and its tabs share ───────────────────────────────────────
 
@@ -31,6 +31,21 @@ export interface SessionOpt {
 	session_status: string | null
 }
 
+/** One question slot of a paper, as the bulk template reads and writes it. */
+export interface PaperQuestionSlot {
+	id: string
+	part_label: string
+	question_number: number
+	sub_label: string | null
+	is_choice_alternative: boolean
+	question_text: string | null
+	co_code: string | null
+	k_level: string | null
+	marks: number | null
+	answer_key?: string | null
+	answer_key_image_url?: string | null
+}
+
 /**
  * One generated end-semester paper, as the Assign tab sees it.
  *
@@ -46,6 +61,9 @@ export interface PaperRow {
 	subject_title: string
 	program_code: string
 	semester: number
+	regulation_code: string | null
+	department_code: string | null
+	department_name: string | null
 	set_number: number
 	set_label: string | null
 	paper_status: string | null
@@ -59,6 +77,17 @@ export interface PaperRow {
 	question_count: number
 	/** A cancelled assignment still holds this paper's unique slot. */
 	cancelled_assignment_id: string | null
+	/** Every appointment ever made on this paper, oldest first, cancelled included. */
+	assignment_history: {
+		id: string
+		status: QpAssignmentStatus
+		examiner_kind: QpExaminerKind
+		examiner_name: string | null
+		examiner_email: string | null
+		assigned_at: string
+	}[]
+	/** Question slots — present only when fetched with include_questions=1. */
+	questions?: PaperQuestionSlot[]
 	assignment: {
 		id: string
 		status: QpAssignmentStatus
@@ -69,6 +98,10 @@ export interface PaperRow {
 		order_ref_no: string | null
 		examiner_name: string | null
 		examiner_email: string | null
+		assignment_type: QpAssignmentType
+		qp_willing: boolean | null
+		ak_willing: boolean | null
+		claim_amount: number | null
 	} | null
 }
 
@@ -126,6 +159,17 @@ export interface AssignmentRow {
 	submitted_at: string | null
 	accepted_at: string | null
 	claim_submitted_at: string | null
+	claim_status?: 'pending' | 'submitted' | 'approved' | 'paid' | null
+	assignment_type?: 'question_paper' | 'answer_key' | 'both' | null
+	qp_fee?: number | null
+	ak_fee?: number | null
+	submission_stage?: string | null
+	paper_version?: number | null
+	claim_version?: number | null
+	reopened_at?: string | null
+	reopen_reason?: string | null
+	claim_reopened_at?: string | null
+	claim_reopen_reason?: string | null
 	window_extensions: number
 	notes: string | null
 	paper_id: string

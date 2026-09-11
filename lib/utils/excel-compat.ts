@@ -380,7 +380,9 @@ export async function writeFile(wb: WorkbookCompat, filename: string): Promise<v
         if (rangeMatch) {
           const targetCol = rangeMatch[1]
           const startRow = parseInt(rangeMatch[2])
-          const endRow = Math.min(parseInt(rangeMatch[4]), startRow + 99) // Limit to 100 rows
+          // Honour the requested range up to a sane ceiling: per-row templates
+          // (one row per question slot) run well past 100 rows.
+          const endRow = Math.min(parseInt(rangeMatch[4]), startRow + 4999)
 
           // Get column index from letter (A=1, B=2, etc.)
           const colNum = targetCol.charCodeAt(0) - 64

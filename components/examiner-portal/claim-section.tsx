@@ -23,7 +23,8 @@ import {
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { formatIst } from '@/lib/qp-portal/ist'
-import { QP_CLAIM_STATUS_LABELS, type QpClaimStatus } from '@/types/qp-examiner-assignment'
+import { QP_CLAIM_STATUS_LABELS, type QpClaimStatus, type QpAssignmentType } from '@/types/qp-examiner-assignment'
+import { computeClaim, componentsForType, formatRupees } from '@/lib/qp-portal/fees'
 
 interface ClaimRow {
 	id: string
@@ -34,6 +35,13 @@ interface ClaimRow {
 	session_name: string | null
 	session_label: string | null
 	remuneration: number | null
+	/** Type, per-component fees, confirmed willingness and the accepted claim. */
+	assignment_type?: QpAssignmentType | null
+	qp_fee?: number | null
+	ak_fee?: number | null
+	qp_willing?: boolean | null
+	ak_willing?: boolean | null
+	claim_amount?: number | null
 	submission_stage: string
 	claim_status: QpClaimStatus
 	claim_submitted_at: string | null
@@ -42,6 +50,10 @@ interface ClaimRow {
 	payment_completed_at: string | null
 	payment_reference: string | null
 	payment_amount: number | null
+	claim_version?: number | null
+	claim_reopened_at?: string | null
+	claim_reopen_reason?: string | null
+	claim_reopen_remarks?: string | null
 	/** The account this claim was submitted with (null until submitted). */
 	claim_account_holder?: string | null
 	claim_bank_name?: string | null
@@ -119,6 +131,59 @@ const BANK_FIELDS: {
 		validate: v => (!IFSC_RE.test(v.trim().toUpperCase()) ? 'That IFSC does not look right — it should be like SBIN0001234.' : null),
 	},
 ]
+
+/** The amount this claim pays: the accepted components, never the order's potential figure. */
+function claimAmount(a: ClaimRow): number | null {
+	if (a.claim_amount != null) return Number(a.claim_amount)
+	if (a.assignment_type) {
+		return computeClaim({
+			assignment_type: a.assignment_type,
+			qp_fee: a.qp_fee,
+			ak_fee: a.ak_fee,
+			qp_willing: a.qp_willing,
+			ak_willing: a.ak_willing,
+		}).total
+	}
+	return a.remuneration ?? null
+}
+
+/** Question Paper Setting ₹1,250 ✓ / Answer Key ₹0 (declined) / Claim ₹1,250 */
+function ClaimBreakdown({ a }: { a: ClaimRow }) {
+	const type = a.assignment_type || 'question_paper'
+	const c = componentsForType(type)
+	const claim = computeClaim({
+		assignment_type: type,
+		qp_fee: a.qp_fee ?? (type !== 'answer_key' ? a.remuneration : null),
+		ak_fee: a.ak_fee,
+		qp_willing: a.qp_willing,
+		ak_willing: a.ak_willing,
+	})
+	const line = (label: string, willing: boolean | null | undefined, fee: number | null | undefined, paid: number) => (
+		<div className="flex items-center justify-between gap-3 text-xs">
+			<span className={cn('flex items-center gap-1.5', willing === false && 'text-muted-foreground line-through')}>
+				<span className={cn('inline-block h-3.5 w-3.5 rounded-sm border text-[10px] leading-3 text-center', willing !== false ? 'bg-emerald-600 border-emerald-600 text-white' : 'border-slate-300')}>
+					{willing !== false ? '✓' : ''}
+				</span>
+				{label}
+				{willing === false && <span className="no-underline text-[10px]">(declined)</span>}
+				{willing == null && <span className="text-[10px] text-amber-700">(not yet confirmed)</span>}
+			</span>
+			<span className={cn('font-medium', willing === false && 'text-muted-foreground')}>
+				{willing === false ? formatRupees(0) : formatRupees(fee ?? paid)}
+			</span>
+		</div>
+	)
+	return (
+		<div className="rounded-md border bg-slate-50 p-2.5 space-y-1">
+			{c.qp && line('Question Paper Setting', a.qp_willing, a.qp_fee ?? a.remuneration, claim.qp)}
+			{c.ak && line('Answer Key', a.ak_willing, a.ak_fee, claim.ak)}
+			<div className="flex items-center justify-between border-t pt-1 text-sm">
+				<span className="font-medium">Claim</span>
+				<span className="font-semibold text-emerald-700">{formatRupees(claimAmount(a) ?? claim.total)}</span>
+			</div>
+		</div>
+	)
+}
 
 function subtitle(a: ClaimRow) {
 	return [a.program_code, a.semester ? `Semester ${a.semester}` : null, a.session_label || a.session_name]
@@ -239,12 +304,28 @@ export function ClaimSection({ assignments, bank, onSubmitClaim, onDownload, loa
 						</Badge>
 					</div>
 
+					<ClaimBreakdown a={a} />
+
 					{status === 'pending' && (
 						<>
+							{a.claim_reopened_at && (
+								<div className="rounded-md border border-orange-200 bg-orange-50 p-3 text-sm">
+									<p className="font-medium text-orange-900">
+										Claim form reopened by the Office of the Controller of Examinations
+										{a.claim_version ? ` · V${a.claim_version} is on record` : ''}
+									</p>
+									<p className="text-orange-800 mt-1">Reason: {a.claim_reopen_reason}</p>
+									{a.claim_reopen_remarks && <p className="text-orange-800">{a.claim_reopen_remarks}</p>}
+									<p className="text-xs text-orange-700 mt-1">
+										Reopened on {formatIst(a.claim_reopened_at)}. Correct the details below and submit again — the
+										resubmission is saved as V{(a.claim_version || 0) + 1} and the earlier version is kept.
+									</p>
+								</div>
+							)}
 							<p className="text-sm text-muted-foreground">
 								<span className="font-medium text-foreground">Action required:</span> complete your bank
 								details to claim
-								{a.remuneration != null ? ` Rs. ${Number(a.remuneration).toFixed(2)}` : ''}.
+								{claimAmount(a) != null ? ` ${formatRupees(claimAmount(a))}` : ''}.
 							</p>
 
 							{openForm === a.id ? (
@@ -326,8 +407,13 @@ export function ClaimSection({ assignments, bank, onSubmitClaim, onDownload, loa
 								<p className="text-blue-800 mt-0.5">
 									Status: Under verification
 									{a.claim_submitted_at && ` · submitted ${formatIst(a.claim_submitted_at)}`}
+									{a.claim_version ? ` · version V${a.claim_version}` : ''}
 								</p>
 							</div>
+							<p className="text-xs text-slate-700 flex items-start gap-1.5">
+								<Lock className="h-3.5 w-3.5 shrink-0 mt-px" />
+								This submission has already been finalized. Any reopening and subsequent modification will be permanently recorded in the audit log.
+							</p>
 							<div className="flex flex-wrap gap-2">{downloadButton(a)}</div>
 						</>
 					)}

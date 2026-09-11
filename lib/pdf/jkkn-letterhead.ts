@@ -38,12 +38,17 @@ export interface JkknLetterhead {
 	/**
 	 * File under public/ carrying the signatory's scanned signature.
 	 *
-	 * The CET scan is the Principal's and has "Dr.C.KATHIRVEL … PRINCIPAL / J.K.K.
-	 * Natraja College … / KUMARAPALAYAM" baked into the image, so a renderer that
-	 * prints it must NOT also print a typed designation underneath — it would
-	 * contradict the stamp. Same asset and same rule as the BoS call letter.
+	 * The CET scan is the Controller of Examinations' signature with the office
+	 * stamp — "CONTROLLER OF EXAMINATIONS / J.K.K.NATTRAJA COLLEGE OF ENGINEERING
+	 * AND TECHNOLOGY / AN AUTONOMOUS INSTITUTION / KUMARAPALAYAM" — baked into the
+	 * image, so a renderer that prints it must NOT also print a typed designation
+	 * underneath. Used on every examiner order copy for the engineering college.
 	 */
 	signatureFile?: string
+	/** The Controller of Examinations, printed under the letterhead on the examiner order. */
+	coe?: { name: string; designation?: string; phone?: string; email?: string }
+	/** Sign-off printed at the foot of examiner e-mails, one entry per line. */
+	emailSignature?: string[]
 }
 
 /** Printed letterhead per COE institution_code. */
@@ -61,10 +66,23 @@ export const JKKN_LETTERHEAD: Record<string, JkknLetterhead> = {
 		style: 'boxed',
 		logoFile: 'jkkncet_logo.png',
 		registerCells: 12,
-		signatureFile: 'logo/engg/jkkncet_principal_sign.png',
+		signatureFile: 'logo/engg/jkkncet_coe_sign.png',
+		coe: {
+			name: 'Dr. C.KATHIRVEL, B.E., M.E., Ph.D.,',
+			designation: 'Controller of Examinations',
+			phone: '97897 22312',
+			email: 'dcoe@jkkn.ac.in',
+		},
+		emailSignature: [
+			'Office of the Controller of Examinations',
+			'V.Silambarasan., M.E., MBA., MIE.,(Ph.D).,',
+			'Deputy Controller of Examinations',
+			'J.K.K. Nattraja College of Engineering and Technology (An Autonomous Institution)',
+			'Cell: 9789722312',
+		],
 		lines: [
 			{ text: 'J.K.K.NATTRAJA COLLEGE OF ENGINEERING AND TECHNOLOGY', cls: 'lh-name' },
-			{ text: '(AUTONOMOUS)', cls: 'lh-name' },
+			{ text: '(AN AUTONOMOUS INSTITUTION)', cls: 'lh-name' },
 			{ text: '(MANAGED BY J.K.K.RANGAMMAL CHARITABLE TRUST)', cls: 'lh-trust' },
 			{ text: '(Approved by AICTE - New Delhi and Affiliated to Anna University - Chennai)', cls: 'lh-approve' },
 			{ text: 'Recognized by UGC under Section 2(f) & Accredited by NAAC', cls: 'lh-naac' },

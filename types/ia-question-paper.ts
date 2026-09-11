@@ -237,6 +237,14 @@ export interface IaPaperQuestion {
 	 * parent's CO / K-level are unused — each sub-division carries its own.
 	 */
 	sub_questions?: IaPaperSubQuestion[] | null
+	/**
+	 * The answer key for THIS question (rich HTML), written by the examiner when
+	 * their appointment includes the answer key and they accepted it. Never
+	 * printed on the question paper.
+	 */
+	answer_key?: string | null
+	/** Optional figure that goes with the answer key. */
+	answer_key_image?: IaQuestionImage | null
 	display_order: number
 }
 

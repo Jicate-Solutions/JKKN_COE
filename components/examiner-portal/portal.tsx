@@ -30,17 +30,21 @@ import { useToast } from '@/hooks/common/use-toast'
 import {
 	Loader2, LogOut, FileText, Clock, Lock, CheckCircle2, AlertTriangle, ArrowLeft,
 	ShieldCheck, ScrollText, Receipt, History, Send, RefreshCw, Save, LayoutDashboard,
-	Download, Eye, Menu, X, ListChecks, Wallet, BadgeCheck, UserCircle,
+	Download, Eye, Menu, X, ListChecks, Wallet, BadgeCheck, UserCircle, KeyRound, Pencil, BookOpen,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { formatIst, windowHint } from '@/lib/qp-portal/ist'
 import {
 	QP_LOG_ACTION_LABELS,
 	QP_CLAIM_STATUS_LABELS,
+	QP_ASSIGNMENT_TYPE_LABELS,
 	type QpWindowState,
 	type QpSubmissionStage,
 	type QpClaimStatus,
+	type QpAssignmentType,
 } from '@/types/qp-examiner-assignment'
+import { componentsForType, computeClaim, formatRupees } from '@/lib/qp-portal/fees'
+import { Checkbox } from '@/components/ui/checkbox'
 import { PortalPaperEditor } from './portal-paper-editor'
 import { SyncBadge, type SyncState } from './sync-badge'
 import { SubmissionWizard } from './submission-wizard'
@@ -81,6 +85,14 @@ interface AssignmentSummary {
 	order_issued_at: string | null
 	assigned_at: string | null
 	remuneration: number | null
+	/** What the examiner was appointed to do, the fee of each part, and what they accepted. */
+	assignment_type: QpAssignmentType
+	qp_fee: number | null
+	ak_fee: number | null
+	qp_willing: boolean | null
+	ak_willing: boolean | null
+	willingness_confirmed_at: string | null
+	claim_amount: number | null
 	return_remarks: string | null
 	submitted_at: string | null
 	accepted_at: string | null
@@ -167,6 +179,165 @@ function overallStatus(a: AssignmentSummary): { label: string; tone: string } {
 	if (a.window_state === 'closed') return { label: 'Window Closed', tone: 'bg-rose-50 text-rose-700 border-rose-200' }
 	if (a.window_state === 'pending') return { label: 'Assigned', tone: 'bg-slate-50 text-slate-700 border-slate-200' }
 	return { label: 'Question Paper Pending', tone: 'bg-amber-50 text-amber-700 border-amber-200' }
+}
+
+/**
+ * EXAMINER ASSIGNMENT — confirm the optional part of the appointment.
+ *
+ * Setting the question paper is the appointment itself and is never optional,
+ * so it is not offered as a choice. Only the Answer Key is: a setter appointed
+ * for "Both" may decline it, which locks the answer-key fields and drops its
+ * fee from the claim. The card is shown only when the appointment carries an
+ * answer key; a paper-only appointment has nothing to confirm.
+ */
+function WillingnessCard({
+	assignment,
+	locked,
+	onConfirm,
+}: {
+	assignment: any
+	/** True once the paper is handed over — the choice is then settled. */
+	locked: boolean
+	onConfirm: (qp: boolean, ak: boolean) => Promise<void>
+}) {
+	const type: QpAssignmentType = assignment?.assignment_type || 'question_paper'
+	const c = componentsForType(type)
+	const confirmed = !!assignment?.willingness_confirmed_at
+	const [editing, setEditing] = useState(!confirmed)
+	const [ak, setAk] = useState<boolean>(assignment?.ak_willing ?? true)
+	const [busy, setBusy] = useState(false)
+	const [error, setError] = useState<string | null>(null)
+
+	useEffect(() => {
+		setAk(assignment?.ak_willing ?? true)
+		setEditing(!assignment?.willingness_confirmed_at)
+	}, [assignment?.ak_willing, assignment?.willingness_confirmed_at])
+
+	// The paper is always set when the appointment carries it.
+	const qpAlways = c.qp
+	const claim = computeClaim({
+		assignment_type: type,
+		qp_fee: assignment?.qp_fee,
+		ak_fee: assignment?.ak_fee,
+		qp_willing: qpAlways,
+		ak_willing: c.ak ? ak : false,
+	})
+	const declinedAll = !qpAlways && (!c.ak || !ak)
+
+	const line = (
+		label: string,
+		fee: number | null | undefined,
+		on: boolean,
+		set: (v: boolean) => void,
+		willingText: string
+	) => (
+		<label
+			className={cn(
+				'flex items-start gap-3 rounded-md border p-3 transition-colors',
+				editing && !locked ? 'cursor-pointer hover:bg-muted/40' : '',
+				on ? 'border-emerald-300 bg-emerald-50/40' : 'border-slate-200 bg-slate-50/60'
+			)}
+		>
+			<Checkbox
+				checked={on}
+				onCheckedChange={v => set(v === true)}
+				disabled={!editing || locked || busy}
+				className="mt-0.5"
+			/>
+			<span className="flex-1 min-w-0">
+				<span className="flex items-center justify-between gap-3">
+					<span className={cn('text-sm font-medium', !on && 'text-muted-foreground')}>{label}</span>
+					<span className={cn('text-sm font-semibold', on ? 'text-emerald-700' : 'text-muted-foreground line-through')}>
+						{formatRupees(on ? fee ?? 0 : 0)}
+					</span>
+				</span>
+				<span className="block text-xs text-muted-foreground mt-0.5">
+					{on ? willingText : `I am not willing to prepare the ${label.toLowerCase()}`}
+				</span>
+			</span>
+		</label>
+	)
+
+	return (
+		<Card className={cn('border-2', confirmed && !editing ? 'border-emerald-200' : 'border-amber-300')}>
+			<CardContent className="p-4 space-y-3">
+				<div className="flex flex-wrap items-start justify-between gap-3">
+					<div>
+						<h2 className="font-semibold flex items-center gap-2 text-sm uppercase tracking-wide">
+							<ShieldCheck className="h-4 w-4" />
+							Examiner assignment
+						</h2>
+						<p className="text-xs text-muted-foreground mt-0.5">
+							{QP_ASSIGNMENT_TYPE_LABELS[type]}
+							{confirmed && !editing
+								? ` · confirmed ${formatIst(assignment.willingness_confirmed_at)}`
+								: c.qp
+									? ' · the question paper is part of your appointment. Confirm whether you will also prepare the answer key.'
+									: ' · confirm whether you will prepare the answer key.'}
+						</p>
+					</div>
+					{confirmed && !editing && !locked && (
+						<Button variant="outline" size="sm" onClick={() => setEditing(true)}>
+							<Pencil className="h-3.5 w-3.5 mr-1.5" />
+							Change
+						</Button>
+					)}
+				</div>
+
+				<div className="space-y-2">
+					{c.ak && line('Answer Key', assignment?.ak_fee, ak, setAk, 'I am willing to prepare the Answer Key')}
+				</div>
+
+				<div className="flex items-center justify-between border-t pt-2.5">
+					<span className="text-sm font-medium">{confirmed && !editing ? 'Claim' : 'Potential claim'}</span>
+					<span className={cn('text-lg font-semibold', declinedAll ? 'text-muted-foreground' : 'text-emerald-700')}>
+						{formatRupees(claim.total)}
+					</span>
+				</div>
+				{declinedAll && (
+					<p className="text-xs text-amber-700 flex items-start gap-1.5">
+						<AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-px" />
+						Answer key declined — there is no payable examiner claim, and nothing to enter for this paper.
+					</p>
+				)}
+				{c.ak && !ak && !declinedAll && (
+					<p className="text-xs text-muted-foreground">
+						The answer-key fields stay visible but locked, and no answer key is required from you.
+					</p>
+				)}
+				{error && <p className="text-sm text-rose-600">{error}</p>}
+
+				{editing && !locked && (
+					<div className="flex justify-end gap-2">
+						{confirmed && (
+							<Button variant="ghost" size="sm" onClick={() => setEditing(false)} disabled={busy}>
+								Cancel
+							</Button>
+						)}
+						<Button
+							size="sm"
+							disabled={busy}
+							onClick={async () => {
+								setBusy(true)
+								setError(null)
+								try {
+									await onConfirm(qpAlways, c.ak ? ak : false)
+									setEditing(false)
+								} catch (e: any) {
+									setError(e?.message || 'Your choice could not be saved.')
+								} finally {
+									setBusy(false)
+								}
+							}}
+						>
+							{busy && <Loader2 className="h-4 w-4 mr-1.5 animate-spin" />}
+							{confirmed ? 'Save' : 'Confirm and continue'}
+						</Button>
+					</div>
+				)}
+			</CardContent>
+		</Card>
+	)
 }
 
 export function ExaminerPortal({ examiner, onSignedOut }: Props) {
@@ -320,6 +491,27 @@ export function ExaminerPortal({ examiner, onSignedOut }: Props) {
 		[openId, toast]
 	)
 
+	const confirmWillingness = useCallback(
+		async (qp: boolean, ak: boolean) => {
+			if (!openId) return
+			// The editor is remounted below on a fresh server copy. Let any save
+			// still in flight land FIRST, or its late write bumps the paper's
+			// timestamp after the new instance has captured its base, and every
+			// autosave from then on is a 409.
+			await saveDraftRef.current?.()
+			const json = await portalFetch(`/api/examiner-portal/assignments/${openId}/willingness`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ qp_willing: qp, ak_willing: ak }),
+			})
+			toast({ title: 'Willingness recorded', description: json.message })
+			await reloadDetail()
+			// The editor's field locks follow the choice — remount it on the fresh copy.
+			setEditorEpoch(n => n + 1)
+		},
+		[openId, toast, reloadDetail]
+	)
+
 	const submitClaim = useCallback(
 		async (assignmentId: string, bank: Record<string, string>) => {
 			const json = await portalFetch(`/api/examiner-portal/assignments/${assignmentId}/claim`, {
@@ -345,6 +537,11 @@ export function ExaminerPortal({ examiner, onSignedOut }: Props) {
 	/** Only the order copy and the claim form are documents. The paper is not. */
 	const openDoc = (id: string, doc: 'order' | 'claim') => {
 		window.open(`/api/examiner-portal/assignments/${id}/documents?doc=${doc}`, '_blank', 'noopener')
+	}
+
+	/** The prescribed syllabus for the course — readable at any time. */
+	const openSyllabus = (id: string) => {
+		window.open(`/api/examiner-portal/assignments/${id}/syllabus`, '_blank', 'noopener')
 	}
 
 	// ── Summary ───────────────────────────────────────────────────────────
@@ -476,6 +673,19 @@ export function ExaminerPortal({ examiner, onSignedOut }: Props) {
 											Assigned: {formatIst(a.assigned_at || a.valid_from, false)} · Valid until:{' '}
 											{formatIst(a.valid_to, false)}
 										</p>
+										<p className="text-xs mt-1 flex flex-wrap items-center gap-x-2 gap-y-1">
+											<span className="inline-flex items-center gap-1 rounded bg-slate-100 px-1.5 py-0.5 text-slate-700">
+												{(a.assignment_type || 'question_paper') !== 'question_paper' && <KeyRound className="h-3 w-3" />}
+												{QP_ASSIGNMENT_TYPE_LABELS[(a.assignment_type as QpAssignmentType) || 'question_paper']}
+											</span>
+											{a.willingness_confirmed_at || (a.assignment_type || 'question_paper') === 'question_paper' ? (
+												<span className="text-emerald-700 font-medium">
+													Claim {formatRupees(a.claim_amount ?? a.remuneration)}
+												</span>
+											) : (
+												<span className="text-amber-700">Potential {formatRupees(a.remuneration)} · confirm answer key</span>
+											)}
+										</p>
 										{a.return_remarks && (
 											<p className="text-xs text-orange-700 mt-1 flex items-start gap-1">
 												<AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-px" />
@@ -509,6 +719,15 @@ export function ExaminerPortal({ examiner, onSignedOut }: Props) {
 									<Button variant="outline" size="sm" onClick={() => openDoc(a.id, 'order')}>
 										<ScrollText className="h-4 w-4 mr-1.5" />
 										Order copy
+									</Button>
+									<Button
+										variant="outline"
+										size="sm"
+										onClick={() => openSyllabus(a.id)}
+										title="The prescribed syllabus for this course — set the paper within it"
+									>
+										<BookOpen className="h-4 w-4 mr-1.5" />
+										Syllabus
 									</Button>
 								</div>
 							</CardContent>
@@ -588,6 +807,21 @@ export function ExaminerPortal({ examiner, onSignedOut }: Props) {
 	const released = !!detail?.questions_released
 	const stage: QpSubmissionStage = a?.submission_stage || 'authoring'
 
+	// Only the answer key is a choice. The question paper is the appointment
+	// itself: its fields open as soon as the window does. An appointment that
+	// carries an answer key waits for that one answer before anything is entered.
+	const aType: QpAssignmentType = a?.assignment_type || 'question_paper'
+	const aComponents = componentsForType(aType)
+	const willingnessPending = !!a && aComponents.ak && a.ak_willing == null
+	const qpWilling = aComponents.qp
+	const akWilling = aComponents.ak && a?.ak_willing === true
+	const declinedAll = !!a && !willingnessPending && !qpWilling && !akWilling
+	const answerKeyMode: 'hidden' | 'disabled' | 'required' = !aComponents.ak
+		? 'hidden'
+		: akWilling
+			? 'required'
+			: 'disabled'
+
 	const paperDetail = !a ? null : (
 		<div className="space-y-4">
 			<Button
@@ -635,9 +869,27 @@ export function ExaminerPortal({ examiner, onSignedOut }: Props) {
 						<div className="mt-3 rounded-md border border-orange-200 bg-orange-50 p-3 text-sm">
 							<p className="font-medium text-orange-900 flex items-center gap-1.5">
 								<AlertTriangle className="h-4 w-4" />
-								Returned for revision
+								{a.reopen_scope === 'answer_key'
+									? 'Answer key added to your appointment by the Office of the Controller of Examinations'
+									: 'Reopened for revision by the Office of the Controller of Examinations'}
+								{a.paper_version > 0 && (
+									<span className="font-normal text-orange-800">· your submission V{a.paper_version} is on record</span>
+								)}
 							</p>
 							<p className="text-orange-800 mt-1">{a.return_remarks}</p>
+							{a.reopened_at && (
+								<p className="text-xs text-orange-700 mt-1">Reopened on {formatIst(a.reopened_at)}. Your resubmission will be saved as V{(a.paper_version || 0) + 1}; V{a.paper_version || 1} is kept unchanged.</p>
+							)}
+						</div>
+					)}
+
+					{(stage === 'completed' || a.status === 'accepted' || a.status === 'submitted') && (
+						<div className="mt-3 rounded-md border border-slate-300 bg-slate-50 p-3 text-sm text-slate-800 flex items-start gap-2">
+							<Lock className="h-4 w-4 shrink-0 mt-0.5" />
+							<p>
+								<span className="font-medium">This submission has already been finalized. Any reopening and subsequent modification will be permanently recorded in the audit log.</span>
+								{a.paper_version > 0 && <> Submitted as version V{a.paper_version}.</>}
+							</p>
 						</div>
 					)}
 
@@ -652,6 +904,15 @@ export function ExaminerPortal({ examiner, onSignedOut }: Props) {
 						<Button variant="outline" size="sm" onClick={() => openDoc(a.id, 'order')}>
 							<ScrollText className="h-4 w-4 mr-1.5" />
 							Order copy
+						</Button>
+						<Button
+							variant="outline"
+							size="sm"
+							onClick={() => openSyllabus(a.id)}
+							title="The prescribed syllabus for this course — set the paper within it"
+						>
+							<BookOpen className="h-4 w-4 mr-1.5" />
+							Syllabus
 						</Button>
 						<Button
 							variant="ghost"
@@ -671,6 +932,16 @@ export function ExaminerPortal({ examiner, onSignedOut }: Props) {
 					</div>
 				</CardContent>
 			</Card>
+
+			{/* Step one, only when the appointment carries an answer key: will the
+			    examiner prepare it? The fields — and the claim — follow the answer. */}
+			{aComponents.ak && stage === 'authoring' && a.status !== 'cancelled' && (
+				<WillingnessCard
+					assignment={a}
+					locked={!['assigned', 'in_progress', 'returned'].includes(a.status)}
+					onConfirm={confirmWillingness}
+				/>
+			)}
 
 			{/* Instructions */}
 			{content?.instructions?.body?.length > 0 && stage === 'authoring' && (
@@ -705,7 +976,29 @@ export function ExaminerPortal({ examiner, onSignedOut }: Props) {
 			)}
 
 			{/* The paper itself */}
-			{!released ? (
+			{released && stage === 'authoring' && willingnessPending ? (
+				<Card className="border-2 border-amber-200">
+					<CardContent className="p-8 text-center space-y-2">
+						<ShieldCheck className="h-8 w-8 mx-auto text-amber-600" />
+						<p className="font-medium">Confirm your willingness first</p>
+						<p className="text-sm text-muted-foreground max-w-md mx-auto">
+							Tick the parts of this appointment you are willing to do, above. The paper opens as soon
+							as you confirm.
+						</p>
+					</CardContent>
+				</Card>
+			) : released && stage === 'authoring' && declinedAll ? (
+				<Card className="border-2 border-slate-200">
+					<CardContent className="p-8 text-center space-y-2">
+						<Lock className="h-8 w-8 mx-auto text-muted-foreground" />
+						<p className="font-medium">Nothing to enter for this paper</p>
+						<p className="text-sm text-muted-foreground max-w-md mx-auto">
+							You have declined both parts of this appointment. If that was a mistake, use Change above.
+							The Office of the Controller of Examinations has been informed through the audit log.
+						</p>
+					</CardContent>
+				</Card>
+			) : !released ? (
 				<Card className={cn('border-2', stage === 'completed' ? 'border-slate-200' : state === 'pending' ? 'border-slate-200' : 'border-rose-200')}>
 					<CardContent className="p-8 text-center space-y-2">
 						<Lock className="h-8 w-8 mx-auto text-muted-foreground" />
@@ -747,12 +1040,17 @@ export function ExaminerPortal({ examiner, onSignedOut }: Props) {
 							onSyncChange={setDraftSync}
 							onValidityChange={setPaperProblems}
 							questionsRef={liveQuestionsRef}
+							onConflict={() => {
+								void reloadDetail().then(() => setEditorEpoch(n => n + 1))
+							}}
 							assignmentId={a.id}
 							questions={detail.questions || []}
 							templateParts={detail.template_parts || []}
 							courseOutcomes={detail.course_outcomes || []}
 							baseUpdatedAt={detail.paper?.updated_at || null}
 							readOnly={!canEdit}
+							questionsEditable={qpWilling && a.reopen_scope !== 'answer_key'}
+							answerKeyMode={answerKeyMode}
 							onSaved={info => {
 								setAssignments(prev =>
 									prev.map(x =>

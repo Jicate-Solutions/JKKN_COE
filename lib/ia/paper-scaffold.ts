@@ -29,6 +29,9 @@ export interface IaQuestionObject {
 	 * Never scaffolded from the template — the paper author adds them.
 	 */
 	sub_questions?: IaSubQuestion[] | null
+	/** Answer key for this question (rich HTML). Never scaffolded; never printed. */
+	answer_key?: string | null
+	answer_key_image?: IaQuestionImageRef | null
 	display_order: number
 }
 
@@ -113,6 +116,9 @@ export function mergeAuthored(scaffold: IaQuestionObject[], existing: any[]): Ia
 			option_font: e.option_font ?? null,
 			// An attached figure survives a Rebuild, like authored text does.
 			image: readQuestionImage(e.image),
+			// So does the answer key — it is the examiner's work as much as the question.
+			answer_key: e.answer_key ?? null,
+			answer_key_image: readQuestionImage(e.answer_key_image),
 			correct_option: e.correct_option ?? null,
 			co_code: e.co_code ?? null,
 			k_level: e.k_level ?? null,

@@ -225,6 +225,21 @@ function drawWrappedCell(doc: jsPDF, text: string, x: number, y: number, cellWid
 	}
 }
 
+const ARTS_COLLEGE_TITLE = 'J.K.K.NATARAJA COLLEGE OF ARTS & SCIENCE (AUTONOMOUS)'
+
+/**
+ * Institution title printed on the PDF header.
+ * The `institutions` row for the arts college carries the informal name
+ * "JKKN College of Arts and Science (Autonomous)"; the printed header must use
+ * the official "J.K.K.NATARAJA COLLEGE OF ARTS & SCIENCE (AUTONOMOUS)".
+ */
+function resolveInstitutionTitle(institutionName?: string): string {
+	const name = (institutionName || '').trim().toUpperCase()
+	if (!name) return ARTS_COLLEGE_TITLE
+	if (/COLLEGE\s+OF\s+ARTS/.test(name)) return ARTS_COLLEGE_TITLE
+	return name
+}
+
 function drawHeader(
 	doc: jsPDF,
 	pageWidth: number,
@@ -247,7 +262,7 @@ function drawHeader(
 	doc.setFont('times', 'bold')
 	doc.setFontSize(12)
 	doc.setTextColor(0, 0, 0)
-	const institutionTitle = (opts.institution_name || 'J.K.K.NATARAJA COLLEGE OF ARTS & SCIENCE (AUTONOMOUS)').toUpperCase()
+	const institutionTitle = resolveInstitutionTitle(opts.institution_name)
 	doc.text(institutionTitle, pageWidth / 2, currentY + 4, { align: 'center' })
 
 	// Institution-specific subtitle (accreditation / management) and address
@@ -2905,6 +2920,167 @@ function generateExamDateWisePdf(opts: ReportPdfOptions, includePresent: boolean
 	return filename
 }
 
+// ── Final Registration Approval (A4 Landscape, one row per learner + totals) ──
+
+function generateFinalApprovalPdf(opts: ReportPdfOptions): string {
+	const doc = new jsPDF('landscape', 'mm', 'a4')
+	const pageWidth = doc.internal.pageSize.getWidth()
+	const pageHeight = doc.internal.pageSize.getHeight()
+	const margin = 6.35
+
+	const rows = [...opts.data].sort((a, b) => String(a.stu_register_no || '').localeCompare(String(b.stu_register_no || '')))
+	const showLateFine = rows.some(r => feeNum(r.late_fine) > 0)
+
+	const totals = { subjects: 0, exam: 0, application: 0, markStatement: 0, lateFine: 0, final: 0 }
+	for (const r of rows) {
+		totals.subjects += Number(r.total_subjects) || 0
+		totals.exam += feeNum(r.exam_fee)
+		totals.application += feeNum(r.application_fee)
+		totals.markStatement += feeNum(r.mark_statement_fee)
+		totals.lateFine += feeNum(r.late_fine)
+		totals.final += feeNum(r.final_amount)
+	}
+
+	// Columns: [label, width, align]
+	const columns: [string, number, 'left' | 'center' | 'right'][] = [
+		['S.No', 10, 'center'],
+		['Register No', 30, 'center'],
+		['Name of the Candidate', showLateFine ? 56 : 74, 'left'],
+		['Program', 22, 'center'],
+		['Sem', 12, 'center'],
+		['Total\nSubjects', 18, 'center'],
+		['Exam Fee', 24, 'right'],
+		['Application\nFee', 24, 'right'],
+		['Mark\nStatement Fee', 26, 'right'],
+	]
+	if (showLateFine) columns.push(['Late Fine', 20, 'right'])
+	columns.push(['Final\nAmount', 26, 'right'])
+	columns.push(['Status', 18, 'center'])
+
+	const usable = pageWidth - margin * 2
+	const natural = columns.reduce((sum, c) => sum + c[1], 0)
+	const scale = natural > usable ? usable / natural : 1
+	const widths = columns.map(c => c[1] * scale)
+
+	const headerHeight = 10
+	const rowHeight = 6.5
+	const footerSpace = 10
+
+	const drawTableHeader = (y: number): number => {
+		doc.setFont('times', 'bold')
+		doc.setFontSize(8)
+		let x = margin
+		columns.forEach(([label], i) => {
+			doc.rect(x, y, widths[i], headerHeight)
+			const lines = label.split('\n')
+			const lineY = y + headerHeight / 2 - (lines.length - 1) * 1.6 + 1.2
+			lines.forEach((line, li) => {
+				doc.text(line, x + widths[i] / 2, lineY + li * 3.2, { align: 'center' })
+			})
+			x += widths[i]
+		})
+		return y + headerHeight
+	}
+
+	const drawRow = (y: number, cells: string[], bold = false) => {
+		doc.setFont('times', bold ? 'bold' : 'normal')
+		doc.setFontSize(8)
+		let x = margin
+		cells.forEach((text, i) => {
+			doc.rect(x, y, widths[i], rowHeight)
+			drawWrappedCell(doc, text, x, y, widths[i], rowHeight, columns[i][2] === 'left' ? 'left' : 'center')
+			x += widths[i]
+		})
+	}
+
+	// Right-aligned money is drawn as centred text in these narrow columns - the
+	// widths are fixed, so the figures line up regardless.
+	let y = drawHeader(doc, pageWidth, margin, opts, 'FINAL REGISTRATION APPROVAL - STUDENT WISE')
+	y += 1
+	y = drawTableHeader(y)
+
+	let pageNum = 1
+	rows.forEach((r, idx) => {
+		if (y + rowHeight > pageHeight - margin - footerSpace) {
+			doc.addPage()
+			pageNum++
+			y = drawHeader(doc, pageWidth, margin, opts, 'FINAL REGISTRATION APPROVAL - STUDENT WISE') + 1
+			y = drawTableHeader(y)
+		}
+		const cells = [
+			String(idx + 1),
+			String(r.stu_register_no || ''),
+			String(r.student_name || ''),
+			String(r.program_code || ''),
+			r.learner_semester ? toRoman(r.learner_semester) : '',
+			String(Number(r.total_subjects) || 0),
+			formatFee(feeNum(r.exam_fee)),
+			formatFee(feeNum(r.application_fee)),
+			formatFee(feeNum(r.mark_statement_fee)),
+		]
+		if (showLateFine) cells.push(formatFee(feeNum(r.late_fine)))
+		cells.push(formatFee(feeNum(r.final_amount)))
+		cells.push(String(r.registration_status || 'Approved'))
+		drawRow(y, cells)
+		y += rowHeight
+	})
+
+	// Totals block (section 11 of the spec)
+	if (y + rowHeight * 2 > pageHeight - margin - footerSpace) {
+		doc.addPage()
+		pageNum++
+		y = drawHeader(doc, pageWidth, margin, opts, 'FINAL REGISTRATION APPROVAL - STUDENT WISE') + 1
+		y = drawTableHeader(y)
+	}
+	const totalCells = [
+		'',
+		'TOTAL',
+		`Total Students : ${rows.length}`,
+		'',
+		'',
+		String(totals.subjects),
+		formatFee(totals.exam),
+		formatFee(totals.application),
+		formatFee(totals.markStatement),
+	]
+	if (showLateFine) totalCells.push(formatFee(totals.lateFine))
+	totalCells.push(formatFee(totals.final))
+	totalCells.push('')
+	drawRow(y, totalCells, true)
+	y += rowHeight + 4
+
+	doc.setFont('times', 'normal')
+	doc.setFontSize(9)
+	const summaryLines = [
+		`Total Students : ${rows.length}`,
+		`Total Subjects : ${totals.subjects}`,
+		`Exam Fee : ${formatFee(totals.exam)}`,
+		`Application Fee : ${formatFee(totals.application)}`,
+		`Mark Statement Fee : ${formatFee(totals.markStatement)}`,
+		...(showLateFine ? [`Late Fine : ${formatFee(totals.lateFine)}`] : []),
+		`Final Amount : ${formatFee(totals.final)}`,
+	]
+	for (const line of summaryLines) {
+		if (y + 5 > pageHeight - margin - footerSpace) {
+			doc.addPage()
+			pageNum++
+			y = drawHeader(doc, pageWidth, margin, opts, 'FINAL REGISTRATION APPROVAL - STUDENT WISE') + 2
+		}
+		doc.text(line, margin, y)
+		y += 4.5
+	}
+
+	const totalPages = pageNum
+	for (let p = 1; p <= totalPages; p++) {
+		doc.setPage(p)
+		drawFooter(doc, pageWidth, margin, p, totalPages)
+	}
+
+	const filename = `exam-reg-final-approval-${opts.session_code}-${new Date().toISOString().slice(0, 10)}.pdf`
+	doc.save(filename)
+	return filename
+}
+
 // ── Student-wise Exam Registration / Application Form (A4 Portrait, 1 page per student) ──
 
 function generateStudentWiseFormPdf(opts: ReportPdfOptions): string {
@@ -3206,6 +3382,8 @@ export function generateExamRegistrationReportPdf(opts: ReportPdfOptions): strin
 		case 'student-wise-application':
 		case 'student-wise-registration':
 			return generateStudentWiseFormPdf(filteredOpts)
+		case 'student-final-approval':
+			return generateFinalApprovalPdf(filteredOpts)
 		case 'course-count-regular-arrear':
 			return generateCourseCountRegularArrearPdf(filteredOpts)
 		case 'course-count-year-wise':

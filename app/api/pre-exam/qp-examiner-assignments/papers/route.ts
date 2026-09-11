@@ -42,6 +42,9 @@ export async function GET(req: NextRequest) {
 		const sessionId = searchParams.get('examination_session_id')
 		const programCode = searchParams.get('program_code')
 		const semester = searchParams.get('semester')
+		// The bulk template needs every question slot of every paper; the screen
+		// does not, so the array is only shipped when asked for.
+		const includeQuestions = searchParams.get('include_questions') === '1'
 
 		if (!institutionsId || !sessionId) {
 			return NextResponse.json(
@@ -86,14 +89,59 @@ export async function GET(req: NextRequest) {
 			for (const t of data || []) templateById.set(t.id, t)
 		}
 
+		// ── Regulation + department ───────────────────────────────────────────
+		// Regulation lives on the course mapping the offering was built from;
+		// department on the course master. Both are labels for filtering and for
+		// the bulk template, so a miss is an empty string, never a failure.
+		const offeringIds = [...new Set(papers.map(p => p.course_offering_id).filter(Boolean))]
+		const mappingIdByOffering = new Map<string, string>()
+		for (let i = 0; i < offeringIds.length; i += 200) {
+			const { data } = await supabase
+				.from('course_offerings')
+				.select('id, course_id')
+				.in('id', offeringIds.slice(i, i + 200))
+			for (const o of data || []) if (o.course_id) mappingIdByOffering.set(o.id, o.course_id)
+		}
+		const mappingIds = [...new Set(mappingIdByOffering.values())]
+		const regulationByMapping = new Map<string, string | null>()
+		for (let i = 0; i < mappingIds.length; i += 200) {
+			const { data } = await supabase
+				.from('course_mapping')
+				.select('id, regulation_code')
+				.in('id', mappingIds.slice(i, i + 200))
+			for (const m of data || []) regulationByMapping.set(m.id, m.regulation_code || null)
+		}
+
+		const courseCodes = [...new Set(papers.map(p => p.course_code).filter(Boolean))]
+		const courseByCode = new Map<string, any>()
+		for (let i = 0; i < courseCodes.length; i += 200) {
+			const { data } = await supabase
+				.from('courses')
+				.select('course_code, regulation_code, offering_department_code')
+				.eq('institutions_id', institutionsId)
+				.in('course_code', courseCodes.slice(i, i + 200))
+			for (const c of data || []) courseByCode.set(c.course_code, c)
+		}
+		const deptCodes = [...new Set([...courseByCode.values()].map(c => c.offering_department_code).filter(Boolean))]
+		const deptNameByCode = new Map<string, string>()
+		if (deptCodes.length) {
+			const { data } = await supabase
+				.from('departments')
+				.select('department_code, department_name')
+				.eq('institutions_id', institutionsId)
+				.in('department_code', deptCodes)
+			for (const d of data || []) deptNameByCode.set(d.department_code, d.department_name)
+		}
+
 		// ── Assignments + their examiners ─────────────────────────────────────
 		const paperIds = papers.map(p => p.id)
 		const assignments: any[] = []
 		for (let i = 0; i < paperIds.length; i += 200) {
 			const { data } = await supabase
 				.from('ia_qp_assignments')
-				.select('id, paper_id, examiner_id, examiner_kind, status, valid_from, valid_to, order_ref_no')
+				.select('id, paper_id, examiner_id, examiner_kind, status, valid_from, valid_to, order_ref_no, assigned_at, assignment_type, qp_willing, ak_willing, claim_amount')
 				.in('paper_id', paperIds.slice(i, i + 200))
+				.order('assigned_at', { ascending: true })
 			assignments.push(...(data || []))
 		}
 		// A cancelled assignment frees the paper to be assigned again, so it must
@@ -101,9 +149,13 @@ export async function GET(req: NextRequest) {
 		// paper-unique constraint means the caller has to delete it first.
 		const liveByPaper = new Map<string, any>()
 		const cancelledByPaper = new Map<string, any>()
+		const historyByPaper = new Map<string, any[]>()
 		for (const a of assignments) {
 			if (a.status === 'cancelled') cancelledByPaper.set(a.paper_id, a)
 			else liveByPaper.set(a.paper_id, a)
+			const h = historyByPaper.get(a.paper_id) || []
+			h.push(a)
+			historyByPaper.set(a.paper_id, h)
 		}
 
 		const examinerIds = [...new Set(assignments.map(a => a.examiner_id).filter(Boolean))]
@@ -123,6 +175,11 @@ export async function GET(req: NextRequest) {
 			const examiner = live ? examinerById.get(live.examiner_id) : null
 			const qs = Array.isArray(p.questions) ? p.questions : []
 			const authoredCount = qs.filter((q: any) => String(q?.question_text || '').trim() !== '').length
+			const course = courseByCode.get(p.course_code)
+			const mappingId = mappingIdByOffering.get(p.course_offering_id)
+			const regulation =
+				(mappingId ? regulationByMapping.get(mappingId) : null) || course?.regulation_code || null
+			const departmentCode = course?.offering_department_code || null
 
 			return {
 				paper_id: p.id,
@@ -132,6 +189,9 @@ export async function GET(req: NextRequest) {
 				subject_title: p.subject_title,
 				program_code: p.program_code,
 				semester: p.semester,
+				regulation_code: regulation,
+				department_code: departmentCode,
+				department_name: departmentCode ? deptNameByCode.get(departmentCode) || departmentCode : null,
 				set_number: p.set_number,
 				set_label: p.set_label,
 				paper_status: p.status,
@@ -145,6 +205,40 @@ export async function GET(req: NextRequest) {
 				question_count: qs.length,
 				/** A cancelled assignment still occupies the paper-unique slot. */
 				cancelled_assignment_id: cancelledByPaper.get(p.id)?.id || null,
+				/**
+				 * Every appointment ever made on this paper, oldest first, cancelled
+				 * included — how the screen tells "reassigned" from "assigned".
+				 */
+				assignment_history: (historyByPaper.get(p.id) || []).map(a => {
+					const ex = examinerById.get(a.examiner_id)
+					return {
+						id: a.id,
+						status: a.status,
+						examiner_kind: a.examiner_kind,
+						examiner_name: ex?.full_name || null,
+						examiner_email: ex?.email || null,
+						assigned_at: a.assigned_at,
+					}
+				}),
+				/** Question slots, only with include_questions=1. */
+				questions: includeQuestions
+					? qs
+							.slice()
+							.sort((a: any, b: any) => (a?.display_order ?? 0) - (b?.display_order ?? 0))
+							.map((q: any) => ({
+								id: q.id,
+								part_label: q.part_label,
+								question_number: q.question_number,
+								sub_label: q.sub_label || null,
+								is_choice_alternative: !!q.is_choice_alternative,
+								question_text: q.question_text || null,
+								co_code: q.co_code || null,
+								k_level: q.k_level || null,
+								marks: q.marks ?? null,
+								answer_key: q.answer_key || null,
+								answer_key_image_url: q.answer_key_image?.url || null,
+							}))
+					: undefined,
 				assignment: live
 					? {
 							id: live.id,
@@ -156,6 +250,10 @@ export async function GET(req: NextRequest) {
 							order_ref_no: live.order_ref_no,
 							examiner_name: examiner?.full_name || null,
 							examiner_email: examiner?.email || null,
+							assignment_type: live.assignment_type || 'question_paper',
+							qp_willing: live.qp_willing ?? null,
+							ak_willing: live.ak_willing ?? null,
+							claim_amount: live.claim_amount ?? null,
 						}
 					: null,
 			}

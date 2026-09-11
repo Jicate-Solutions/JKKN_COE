@@ -10,16 +10,19 @@ export interface InstitutionHeader {
 	trust_line?: string       // Optional line 3 — e.g. "Managed by ... Trust"
 	accreditation: string     // Line 4 — accreditation + affiliation
 	address: string           // Line 5 — postal address
+	short_name?: string       // Letter-reference prefix, e.g. "JKKNCET" → JKKNCET/COE/QPS/001
 }
 
 const HEADERS: Record<string, InstitutionHeader> = {
 	CAS: {
+		short_name: 'JKKNCAS',
 		logo_path: '/jkkncas_logo.png',
 		name: 'J.K.K.NATARAJA COLLEGE OF ARTS & SCIENCE (AUTONOMOUS)',
 		accreditation: '(Accredited by NAAC, Approved by AICTE, Recognized by UGC Under Section 2(f) & 12(B), Affiliated to Periyar University)',
 		address: 'Komarapalayam - 638 183, Namakkal District, Tamil Nadu',
 	},
 	CET: {
+		short_name: 'JKKNCET',
 		logo_path: '/jkkncet_logo.png',
 		name: 'J.K.K. NATTRAJA COLLEGE OF ENGINEERING & TECHNOLOGY',
 		subtitle: '(An Autonomous Institution)',

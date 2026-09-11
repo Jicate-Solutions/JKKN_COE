@@ -98,7 +98,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 	try {
 		// ── Step 1: the check list ──────────────────────────────────────────
 		if (step === 'checklist') {
-			const answers = (body.checklist || {}) as Record<string, string>
+			const answers = (body.checklist || {}) as Record<string, unknown>
 
 			// Completeness is judged against the CoE's OWN clause list, not against
 			// whatever the client happened to send — a request carrying one answer
@@ -108,8 +108,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 				'checklist',
 				assignment.examination_session_id
 			)
-			const clauses: { id: string }[] = (content as any)?.body || []
-			const unanswered = clauses.filter(c => !String(answers[c.id] || '').trim())
+			const clauses: { id: string; text: string; detail_label?: string }[] = (content as any)?.body || []
 
 			if (clauses.length === 0) {
 				return NextResponse.json(
@@ -117,19 +116,49 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 					{ status: 409 }
 				)
 			}
+
+			// Every item is answered YES or NO; an item that asks for a detail
+			// (tables / charts, data book, graph paper) must carry it when YES.
+			// Only answers to real clauses are stored, so junk keys cannot land, and
+			// the clause text is stored WITH the answer so the record still reads
+			// correctly after the CoE edits the list.
+			const clean: Record<string, { question: string; answer: 'YES' | 'NO'; detail?: string }> = {}
+			const unanswered: string[] = []
+			const missingDetail: string[] = []
+			for (const c of clauses) {
+				const raw = answers[c.id]
+				const o = (typeof raw === 'string' ? { answer: raw } : raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>
+				const answer = String(o.answer || '').trim().toUpperCase()
+				if (answer !== 'YES' && answer !== 'NO') {
+					unanswered.push(c.id)
+					continue
+				}
+				const detail = String(o.detail || '').trim().slice(0, 200)
+				if (c.detail_label && answer === 'YES' && !detail) {
+					missingDetail.push(c.id)
+					continue
+				}
+				clean[c.id] = { question: c.text, answer, ...(detail ? { detail } : {}) }
+			}
+
 			if (unanswered.length > 0) {
 				return NextResponse.json(
 					{
-						error: `Answer every check list item — ${unanswered.length} still to go.`,
-						unanswered: unanswered.map(c => c.id),
+						error: `Answer YES or NO to every check list item — ${unanswered.length} still to go.`,
+						unanswered,
 					},
 					{ status: 400 }
 				)
 			}
-
-			// Keep only answers to real clauses, so junk keys cannot be stored.
-			const clean: Record<string, string> = {}
-			for (const c of clauses) clean[c.id] = String(answers[c.id]).slice(0, 20)
+			if (missingDetail.length > 0) {
+				return NextResponse.json(
+					{
+						error: `Fill in the detail asked for on the item${missingDetail.length > 1 ? 's' : ''} you answered YES — ${missingDetail.length} still to go.`,
+						unanswered: missingDetail,
+					},
+					{ status: 400 }
+				)
+			}
 
 			const { error } = await supabase
 				.from('ia_qp_assignments')
@@ -149,6 +178,10 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
 			await logAccess(req, {
 				action: 'checklist_complete',
+				module: 'checklist',
+				performed_by_role: 'examiner',
+				version: assignment.paper_version || null,
+				new_value: clean,
 				examiner_id: auth.examiner.id,
 				examiner_email: auth.examiner.email,
 				assignment_id: id,
@@ -213,6 +246,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
 			await logAccess(req, {
 				action: 'submission_signed',
+				module: 'signature',
+				performed_by_role: 'examiner',
+				version: assignment.paper_version || null,
 				examiner_id: auth.examiner.id,
 				examiner_email: auth.examiner.email,
 				assignment_id: id,
@@ -253,6 +289,11 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
 		await logAccess(req, {
 			action: 'submission_completed',
+			module: 'paper',
+			performed_by_role: 'examiner',
+			version: assignment.paper_version || null,
+			old_value: { submission_stage: 'signature' },
+			new_value: { submission_stage: 'completed' },
 			examiner_id: auth.examiner.id,
 			examiner_email: auth.examiner.email,
 			assignment_id: id,

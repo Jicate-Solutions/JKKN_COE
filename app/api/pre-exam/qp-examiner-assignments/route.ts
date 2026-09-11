@@ -21,7 +21,8 @@ import { getPortalContent } from '@/lib/qp-portal/content'
 import { nextOrderRef } from '@/lib/qp-portal/assignment-service'
 import { requireUserPermission } from '@/lib/auth/check-user-permission'
 import { isEndSemesterExamType, endSemesterMismatchMessage } from '@/lib/qp-portal/exam-type'
-import type { QpAssignmentCreateInput } from '@/types/qp-examiner-assignment'
+import { resolveQpFeeRates, computeClaim, componentsForType } from '@/lib/qp-portal/fees'
+import { QP_ASSIGNMENT_TYPES, type QpAssignmentCreateInput, type QpAssignmentType } from '@/types/qp-examiner-assignment'
 
 export const dynamic = 'force-dynamic'
 
@@ -252,6 +253,30 @@ export async function POST(req: NextRequest) {
 			return NextResponse.json({ error: 'examiner_kind must be internal or external' }, { status: 400 })
 		}
 
+		// ── Assignment type + fees ──────────────────────────────────────────
+		// The fees come from Fee Details (exam_fee_master) by the W.E.F. date in
+		// force today, never from a constant. They are copied onto the row so a
+		// later rate change cannot restate an order already issued.
+		const assignmentType: QpAssignmentType = body.assignment_type || 'question_paper'
+		if (!QP_ASSIGNMENT_TYPES.includes(assignmentType)) {
+			return NextResponse.json(
+				{ error: 'assignment_type must be question_paper, answer_key or both' },
+				{ status: 400 }
+			)
+		}
+		const components = componentsForType(assignmentType)
+		const rates = await resolveQpFeeRates(supabase, institutions_id)
+		// Willingness may be recorded up front (a signed form uploaded in bulk);
+		// a component the type does not carry is never "willing".
+		const qpWilling: boolean | null = components.qp
+			? typeof body.qp_willing === 'boolean' ? body.qp_willing : null
+			: false
+		const akWilling: boolean | null = components.ak
+			? typeof body.ak_willing === 'boolean' ? body.ak_willing : null
+			: false
+		const willingnessGiven =
+			(!components.qp || qpWilling !== null) && (!components.ak || akWilling !== null)
+
 		// ── Window ──────────────────────────────────────────────────────────
 		const validFrom = istLocalToIso(body.valid_from)
 		const validTo = istLocalToIso(body.valid_to)
@@ -430,14 +455,49 @@ export async function POST(req: NextRequest) {
 		// than to share one. `create_additional_set` is the caller saying that is
 		// what they mean; without it a clash is still an error, so an accidental
 		// double-assignment cannot quietly spawn papers.
+		// One examiner, one live appointment per course per session — whichever
+		// paper / set it is. The same subject may go to several examiners (each
+		// with their own set), never twice to the same person.
+		{
+			const { data: dup } = await supabase
+				.from('ia_qp_assignments')
+				.select('id, paper_id, set_label, status')
+				.eq('institutions_id', institutions_id)
+				.eq('examination_session_id', examination_session_id)
+				.eq('course_code', paper.course_code)
+				.eq('examiner_id', resolvedExaminerId)
+				.neq('status', 'cancelled')
+				.limit(1)
+				.maybeSingle()
+			if (dup) {
+				return NextResponse.json(
+					{
+						error:
+							dup.paper_id === paper.id
+								? `${examiner.full_name} is already appointed to ${courseLabelFor(paper)}.`
+								: `${examiner.full_name} already holds ${paper.course_code}${dup.set_label ? ` (Set ${dup.set_label})` : ''} in this session. One examiner sets one paper per subject; appoint a different examiner for an additional set.`,
+						assignment_id: dup.id,
+					},
+					{ status: 409 }
+				)
+			}
+		}
+
+		// A cancelled appointment is history, not a holder: it stays on record (with
+		// its audit trail) and the paper can be given to someone else. Needs the
+		// partial unique index from 20260911_qp_assignment_cancelled_reassign.sql —
+		// until that is applied the insert below fails on the old UNIQUE(paper_id)
+		// and is reported as such.
 		const { data: clash } = await supabase
 			.from('ia_qp_assignments')
 			.select('id, examiner_id, status')
 			.eq('paper_id', paper.id)
+			.neq('status', 'cancelled')
+			.limit(1)
 			.maybeSingle()
 
 		if (clash) {
-			const wantsAnotherSet = body.create_additional_set === true && clash.status !== 'cancelled'
+			const wantsAnotherSet = body.create_additional_set === true
 			if (!wantsAnotherSet) {
 				const { data: holder } = await supabase
 					.from('examiners')
@@ -446,10 +506,7 @@ export async function POST(req: NextRequest) {
 					.maybeSingle()
 				return NextResponse.json(
 					{
-						error:
-							clash.status === 'cancelled'
-								? `${courseLabelFor(paper)} has a cancelled assignment on record. Remove it from the Assignments tab before appointing someone else.`
-								: `${courseLabelFor(paper)} is already assigned to ${holder?.full_name || 'another examiner'}. Cancel that assignment first.`,
+						error: `${courseLabelFor(paper)} is already assigned to ${holder?.full_name || 'another examiner'}. Cancel that assignment first, or appoint this examiner to an additional set.`,
 						assignment_id: clash.id,
 					},
 					{ status: 409 }
@@ -497,6 +554,20 @@ export async function POST(req: NextRequest) {
 		const orderContent = await getPortalContent(institutions_id, 'order', examination_session_id)
 		const now = new Date().toISOString()
 
+		// The QP fee falls back to the Order document's rate when Fee Details has
+		// no QP_SETTING row yet — that is where the rate lived before this change.
+		const qpFee = components.qp ? (rates.qp ?? orderContent.rate_per_paper ?? null) : null
+		const akFee = components.ak ? rates.ak : null
+		// Potential claim = every component of the type; printed on the order.
+		const potential =
+			remuneration != null && remuneration !== undefined
+				? Number(remuneration)
+				: computeClaim({ assignment_type: assignmentType, qp_fee: qpFee, ak_fee: akFee, qp_willing: true, ak_willing: true }).total
+		// The claim proper is known only once willingness is; until then null.
+		const claimAmount = willingnessGiven
+			? computeClaim({ assignment_type: assignmentType, qp_fee: qpFee, ak_fee: akFee, qp_willing: qpWilling, ak_willing: akWilling }).total
+			: null
+
 		const basePayload = {
 			institutions_id,
 			institution_code: institutionCode,
@@ -519,7 +590,14 @@ export async function POST(req: NextRequest) {
 			status: 'assigned',
 			// The rate is copied now so a later change to the portal content cannot
 			// silently restate this examiner's claim.
-			remuneration: remuneration ?? orderContent.rate_per_paper ?? null,
+			remuneration: potential,
+			assignment_type: assignmentType,
+			qp_fee: qpFee,
+			ak_fee: akFee,
+			qp_willing: qpWilling,
+			ak_willing: akWilling,
+			willingness_confirmed_at: willingnessGiven ? now : null,
+			claim_amount: claimAmount,
 			notes: notes || null,
 			assigned_by: perm.userId,
 			assigned_at: now,
@@ -533,7 +611,7 @@ export async function POST(req: NextRequest) {
 		let inserted: any = null
 		let lastError: string | null = null
 		for (let attempt = 0; attempt < 2 && !inserted; attempt++) {
-			const orderRef = await nextOrderRef(supabase, institutions_id, orderContent.letter_ref)
+			const orderRef = await nextOrderRef(supabase, institutions_id, orderContent.letter_ref, institutionCode)
 			const { data, error } = await supabase
 				.from('ia_qp_assignments')
 				.insert({ ...basePayload, order_ref_no: orderRef })
@@ -553,10 +631,27 @@ export async function POST(req: NextRequest) {
 				.single()
 			if (error || !data) {
 				console.error('[QP assign] insert failed:', error?.message || lastError)
-				return NextResponse.json(
-					{ error: error?.message || lastError || 'Could not create the assignment' },
-					{ status: 500 }
-				)
+				const msg = String(error?.message || lastError || '')
+				// The pre-20260911 UNIQUE(paper_id) is still in place: a cancelled
+				// appointment on this paper blocks the insert. Say so, with the fix.
+				if (msg.includes('ia_qp_assignments_examiner_course_live_unique')) {
+					return NextResponse.json(
+						{ error: `${examiner.full_name} already holds a live appointment for ${paper.course_code} in this session.` },
+						{ status: 409 }
+					)
+				}
+				if (msg.includes('ia_qp_assignments_paper_unique')) {
+					return NextResponse.json(
+						{
+							error:
+								`${courseLabelFor(paper)} still has a cancelled appointment on record and the database ` +
+								'still enforces one appointment per paper. Run supabase/migrations/20260911_qp_assignment_cancelled_reassign.sql ' +
+								'in the SQL Editor, then appoint again.',
+						},
+						{ status: 409 }
+					)
+				}
+				return NextResponse.json({ error: msg || 'Could not create the assignment' }, { status: 500 })
 			}
 			inserted = data
 		}

@@ -30,6 +30,7 @@ import {
 import { useToast } from '@/hooks/common/use-toast'
 import {
 	Loader2, Search, RefreshCw, FileText, AlertTriangle, Download, Trash2, Wand2, Info,
+	BookOpen,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { apiFetch, SearchableSelect, type SessionOpt } from './shared'
@@ -617,8 +618,22 @@ export function GenerateTab({ institutionsId, institutionCode, session, onGenera
 												</TableCell>
 
 												<TableCell className="text-right">
+													<div className="flex justify-end gap-1">
+														{r.course_id && (
+															<Button
+																variant="ghost"
+																size="icon"
+																className="h-7 w-7"
+																title="Syllabus for this course"
+																onClick={() =>
+																	window.open(`/api/courses/${r.course_id}/syllabus-pdf`, '_blank', 'noopener')
+																}
+															>
+																<BookOpen className="h-3.5 w-3.5" />
+															</Button>
+														)}
 													{r.paper_id && (
-														<div className="flex justify-end gap-1">
+														<>
 															<Button
 																variant="ghost"
 																size="icon"
@@ -641,8 +656,9 @@ export function GenerateTab({ institutionsId, institutionCode, session, onGenera
 																	<Trash2 className="h-3.5 w-3.5" />
 																</Button>
 															)}
-														</div>
+														</>
 													)}
+													</div>
 												</TableCell>
 											</TableRow>
 										)

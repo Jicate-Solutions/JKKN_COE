@@ -34,6 +34,18 @@ export interface LogInput {
 	denied?: boolean
 	reason?: string | null
 	detail?: Record<string, unknown> | null
+
+	// ── Audit fields (20260910) ──
+	/** CoE user when the actor is staff; null when the examiner acted. */
+	performed_by_user_id?: string | null
+	performed_by_email?: string | null
+	performed_by_role?: 'examiner' | 'coe' | 'system' | null
+	module?: 'session' | 'paper' | 'checklist' | 'signature' | 'claim' | 'assignment' | 'profile' | 'document' | null
+	record_id?: string | null
+	old_value?: unknown
+	new_value?: unknown
+	/** Paper / claim version this event belongs to. */
+	version?: number | null
 }
 
 /** Client IP as seen behind the proxy, and the raw user agent. */
@@ -67,6 +79,14 @@ export async function logAccess(req: NextRequest, input: LogInput): Promise<void
 			detail: input.detail || null,
 			ip_address: ip,
 			user_agent: userAgent,
+			performed_by_user_id: input.performed_by_user_id || null,
+			performed_by_email: input.performed_by_email || input.examiner_email || null,
+			performed_by_role: input.performed_by_role || (input.examiner_id ? 'examiner' : null),
+			module: input.module || null,
+			record_id: input.record_id || input.assignment_id || null,
+			old_value: input.old_value ?? null,
+			new_value: input.new_value ?? null,
+			version: input.version ?? null,
 		})
 		if (error) console.error('[QP portal] access log write failed:', error.message)
 	} catch (e) {

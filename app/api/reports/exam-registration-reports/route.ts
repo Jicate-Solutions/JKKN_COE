@@ -191,6 +191,106 @@ async function fetchLearnerProfilesCached(
 	}
 }
 
+/**
+ * Final Registration Approval report - one row per learner from
+ * exam_registration_fee_details. Rows carry `program_code` and
+ * `learner_semester` so the page's programme / semester filters work unchanged.
+ */
+async function buildFinalApprovalReport(
+	supabase: ReturnType<typeof getSupabaseServer>,
+	institutions_id: string,
+	examination_session_id: string
+) {
+	const [{ data: institution }, { data: session }, { data: localPrograms }] = await Promise.all([
+		supabase.from('institutions').select('id, institution_code, name').eq('id', institutions_id).single(),
+		supabase.from('examination_sessions').select('id, session_code, session_name').eq('id', examination_session_id).single(),
+		supabase.from('programs').select('program_code, program_name, program_order').eq('institutions_id', institutions_id),
+	])
+
+	if (!institution || !session) {
+		return NextResponse.json({ error: 'Institution or Session not found' }, { status: 404 })
+	}
+
+	let rows: any[]
+	try {
+		rows = await fetchAllPaginated(async (from, to) => {
+			const res = await supabase
+				.from('exam_registration_fee_details')
+				.select('id, student_id, stu_register_no, student_name, regulation_code, program_code, semester, total_subjects, exam_fee, application_fee, mark_statement_fee, late_fine, final_amount, fee_paid, payment_status, registration_status, approved_at')
+				.eq('institutions_id', institutions_id)
+				.eq('examination_session_id', examination_session_id)
+				.order('stu_register_no', { ascending: true })
+				.order('id', { ascending: true })
+				.range(from, to)
+			if (res.error) throw res.error
+			return res
+		})
+	} catch (e: any) {
+		const message = e?.message || ''
+		if (/exam_registration_fee_details/i.test(message) && /(does not exist|schema cache)/i.test(message)) {
+			return NextResponse.json(
+				{ error: 'Final approval is not set up yet. Run supabase/migrations/20260912_exam_registration_final_approval.sql in the Supabase SQL Editor.' },
+				{ status: 503 }
+			)
+		}
+		console.error('[ExamReports] final-approval fetch error:', e)
+		return NextResponse.json({ error: 'Failed to fetch final approved registrations' }, { status: 500 })
+	}
+
+	const programByCode = new Map<string, { program_name: string | null; program_order: number | null }>()
+	for (const p of localPrograms || []) {
+		const code = String(p.program_code || '').trim().toUpperCase()
+		if (code && !programByCode.has(code)) programByCode.set(code, { program_name: p.program_name || null, program_order: p.program_order ?? null })
+	}
+
+	const num = (v: any) => {
+		const n = Number(v)
+		return Number.isFinite(n) ? n : 0
+	}
+
+	const data = rows.map(r => {
+		const programCode = String(r.program_code || '').trim().toUpperCase() || null
+		const program = programCode ? programByCode.get(programCode) : undefined
+		return {
+			id: r.id,
+			student_id: r.student_id,
+			stu_register_no: r.stu_register_no,
+			student_name: r.student_name || '',
+			program_code: programCode,
+			program_name: program?.program_name || null,
+			regulation_code: r.regulation_code || null,
+			learner_semester: Number(r.semester) || 0,
+			total_subjects: Number(r.total_subjects) || 0,
+			exam_fee: num(r.exam_fee),
+			application_fee: num(r.application_fee),
+			mark_statement_fee: num(r.mark_statement_fee),
+			late_fine: num(r.late_fine),
+			final_amount: num(r.final_amount),
+			fee_paid: !!r.fee_paid,
+			payment_status: r.payment_status || null,
+			registration_status: r.registration_status || 'Approved',
+			approved_at: r.approved_at || null,
+			// Mirrors the shape the programme filter / options read on every report
+			course_offering: {
+				program_code: programCode,
+				program_name: program?.program_name || null,
+				program_order: program?.program_order ?? 999,
+				semester: Number(r.semester) || 0,
+			},
+		}
+	})
+
+	return NextResponse.json({
+		report_type: 'student-final-approval',
+		institution_name: institution.name,
+		institution_code: institution.institution_code,
+		session_name: session.session_name,
+		session_code: session.session_code,
+		generated_at: new Date().toISOString(),
+		data,
+	})
+}
+
 export async function GET(request: Request) {
 	try {
 		const supabase = getSupabaseServer()
@@ -211,6 +311,14 @@ export async function GET(request: Request) {
 				{ error: 'institutions_id, examination_session_id, and report_type are required' },
 				{ status: 400 }
 			)
+		}
+
+		// ── Final Registration Approval report ──
+		// Learner-wise, read straight from exam_registration_fee_details - the
+		// consolidated row the Final Approval page writes per learner per session.
+		// It never touches the paper rows, so it needs none of the phases below.
+		if (report_type === 'student-final-approval') {
+			return buildFinalApprovalReport(supabase, institutions_id, examination_session_id)
 		}
 
 		// ── Phase 1: Fetch institution, session, and registrations in parallel ──

@@ -75,6 +75,21 @@ function fillPlaceholders(html: string | null | undefined, values: Record<string
 
 // ── Input ───────────────────────────────────────────────────────────────────
 
+export interface OrderCourseRow {
+	semester?: number | null
+	program_code?: string | null
+	program_name?: string | null
+	regulation?: string | null
+	course_code: string
+	title: string
+	set_label?: string | null
+	max_marks?: number | null
+	assignment_type?: string | null
+	valid_to?: string | null
+	qp_fee?: number | null
+	ak_fee?: number | null
+}
+
 export interface ExaminerOrderData {
 	institution: {
 		name: string
@@ -101,6 +116,17 @@ export interface ExaminerOrderData {
 		email: string
 		kind: 'internal' | 'external'
 	}
+	/** courses.regulation_code, e.g. "R-2021". */
+	regulation?: string | null
+	/** Programme name from the course master, e.g. "B.E. Computer Science and Engineering". */
+	program_name?: string | null
+	/** The issuing officer, printed under the letterhead. */
+	coe?: {
+		name?: string | null
+		designation?: string | null
+		phone?: string | null
+		email?: string | null
+	}
 	examination: {
 		/** exam_types.examination_name, e.g. "End Semester Examinations". */
 		exam_type_name?: string | null
@@ -118,12 +144,22 @@ export interface ExaminerOrderData {
 		max_marks?: number | null
 		duration_minutes?: number | null
 	}
+	/**
+	 * Every course this order covers, one table row each. Absent = the single
+	 * `subject`. A combined order (one examiner, several papers in a session)
+	 * lists them all and goes out as one letter.
+	 */
+	courses?: OrderCourseRow[]
 	assignment: {
 		order_ref_no?: string | null
 		order_date: string
 		valid_from: string
 		valid_to: string
 		remuneration?: number | null
+		/** question_paper | answer_key | both — and the fee of each component. */
+		assignment_type?: string | null
+		qp_fee?: number | null
+		ak_fee?: number | null
 		portal_url: string
 	}
 	content: QpPortalContent
@@ -174,6 +210,32 @@ const LETTERHEAD_CSS = `
 `
 
 // ── Order HTML ──────────────────────────────────────────────────────────────
+
+/**
+ * The appointment's components and fees. Kept for callers that print the
+ * particulars as label/value rows (the order itself now prints a fee line).
+ */
+export function assignmentRows(a: ExaminerOrderData['assignment']): [string, string][] {
+	const money = (v: number | null | undefined) => `Rs. ${Number(v || 0).toFixed(2)}`
+	const type = a.assignment_type || 'question_paper'
+	const rows: [string, string][] = []
+	if (type === 'both') {
+		rows.push(['Assignment', 'Question Paper Setting and Answer Key'])
+		rows.push(['Question Paper Setting', `${money(a.qp_fee)} per question paper`])
+		rows.push(['Answer Key', `${money(a.ak_fee)} per question paper`])
+		rows.push([
+			'Potential Claim',
+			`${money(a.remuneration ?? Number(a.qp_fee || 0) + Number(a.ak_fee || 0))} — payable for the parts you accept in the portal`,
+		])
+	} else if (type === 'answer_key') {
+		rows.push(['Assignment', 'Answer Key'])
+		rows.push(['Remuneration', `${money(a.remuneration ?? a.ak_fee)} per answer key`])
+	} else {
+		rows.push(['Assignment', 'Question Paper Setting'])
+		if (a.remuneration || a.qp_fee) rows.push(['Remuneration', `${money(a.remuneration ?? a.qp_fee)} per question paper`])
+	}
+	return rows
+}
 
 export function buildExaminerOrderHtml(
 	data: ExaminerOrderData,
@@ -246,83 +308,117 @@ export function buildExaminerOrderHtml(
 		data.examiner.address,
 	]
 		.filter(Boolean)
-		.map(line => `<div>${escapeHtml(line as string)}</div>`)
+		.map(line => `<div>${escapeHtml(String(line).toUpperCase())}</div>`)
 		.join('')
 
-	const sessionText =
-		c.session_label || data.examination.session_name || data.examination.exam_type_name || '—'
+	const sessionText = (c.session_label || data.examination.session_name || '—').toUpperCase()
+	const examName = data.examination.exam_type_name || 'End Semester Examinations'
+	const type = data.assignment.assignment_type || 'question_paper'
+	const roleCaps =
+		type === 'both' ? 'QUESTION PAPER SETTER AND ANSWER KEY PREPARER' : type === 'answer_key' ? 'ANSWER KEY PREPARER' : 'QUESTION PAPER SETTER'
+	const subjectLine =
+		type === 'both'
+			? 'Question Paper Setting and Answer Key Appointment Order'
+			: type === 'answer_key'
+				? 'Answer Key Preparation Appointment Order'
+				: 'Question Paper Setting Appointment Order'
 
-	const duration = data.subject.duration_minutes
-		? `${(data.subject.duration_minutes / 60).toFixed(data.subject.duration_minutes % 60 === 0 ? 0 : 1)} hours`
-		: '—'
+	const romanSem = (n: number | null | undefined) =>
+		n ? (['I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X'][n - 1] ?? String(n)) : '—'
+	const courseRows: OrderCourseRow[] =
+		data.courses && data.courses.length > 0
+			? data.courses
+			: [
+					{
+						semester: data.examination.semester,
+						program_code: data.examination.program_code,
+						program_name: data.program_name,
+						regulation: data.regulation,
+						course_code: data.subject.course_code,
+						title: data.subject.title,
+						set_label: data.subject.set_label,
+						max_marks: data.subject.max_marks,
+						assignment_type: data.assignment.assignment_type || 'question_paper',
+						qp_fee: data.assignment.qp_fee ?? null,
+						ak_fee: data.assignment.ak_fee ?? null,
+					},
+				]
+	const multi = courseRows.length > 1
+	const noIst = (v: string) => v.replace(/\s*IST$/, '')
 
-	const particulars: [string, string][] = [
-		['Examination', data.examination.exam_type_name || 'End Semester Examinations'],
-		['Session', sessionText],
-		[
-			'Programme / Semester',
-			[data.examination.program_code, data.examination.semester ? `Semester ${data.examination.semester}` : null]
-				.filter(Boolean)
-				.join(' — ') || '—',
-		],
-		['Subject Code', data.subject.course_code],
-		['Subject Title', data.subject.title],
-		...((data.subject.set_label ? [['Question Paper Set', data.subject.set_label]] : []) as [string, string][]),
-		[
-			'Maximum Marks / Duration',
-			`${data.subject.max_marks ?? '—'} marks · ${duration}`,
-		],
-		['Examiner Type', data.examiner.kind === 'internal' ? 'Internal Examiner' : 'External Examiner'],
-		['Question Paper Available From', formatIst(data.assignment.valid_from)],
-		['Submission Deadline', formatIst(data.assignment.valid_to)],
-		...((data.assignment.remuneration
-			? [['Remuneration', `Rs. ${Number(data.assignment.remuneration).toFixed(2)} per question paper`]]
-			: []) as [string, string][]),
+	const money = (v: number | null | undefined) => `Rs. ${Number(v || 0).toFixed(2)}`
+	// The rates, one line: "Question Paper Setting Rs. 1250.00 + Answer Key
+	// Rs. 750.00". Each component appears once if ANY course on the order
+	// carries it, at the (institution-wide) per-paper rate.
+	// Only what THIS examiner is appointed for: no Answer Key line for a
+	// paper-only appointment. On a combined order where only some papers carry
+	// the answer key, those papers are named so the line is not read as all.
+	const hasQp = (r: OrderCourseRow) => (r.assignment_type || 'question_paper') !== 'answer_key'
+	const hasAk = (r: OrderCourseRow) => (r.assignment_type || 'question_paper') !== 'question_paper'
+	const qpCourses = courseRows.filter(hasQp)
+	const akCourses = courseRows.filter(hasAk)
+	const qpRate = qpCourses.map(r => r.qp_fee).find(v => v != null) ?? data.assignment.qp_fee ?? null
+	const akRate = akCourses.map(r => r.ak_fee).find(v => v != null) ?? data.assignment.ak_fee ?? null
+	const only = (list: OrderCourseRow[]) =>
+		multi && list.length > 0 && list.length < courseRows.length ? ` (${list.map(r => r.course_code).join(', ')} only)` : ''
+	const feeParts = [
+		qpCourses.length && qpRate != null ? `Question Paper Setting ${money(qpRate)}${only(qpCourses)}` : null,
+		akCourses.length && akRate != null ? `Answer Key ${money(akRate)}${only(akCourses)}` : null,
+	].filter(Boolean)
+	const feeLine = feeParts.length ? `Remuneration: ${feeParts.join(' + ')}` : ''
+
+	// Instructions: the two fixed portal points first (acceptance and the dates),
+	// then the CoE's own clauses, then the fee line.
+	const instructions: string[] = [
+		`The question paper setter is requested to record his / her acceptance of this appointment in the Examiner Portal (<span class="mono">${escapeHtml(
+			data.assignment.portal_url
+		)}</span>) by signing in with the registered e-mail address <strong>${escapeHtml(data.examiner.email)}</strong>.`,
+		`${multi ? 'Each question paper' : 'The question paper'} must be entered in the Examiner Portal in the prescribed format and submitted online.
+			<div class="dates">
+				<div><span>Question paper${multi ? 's' : ''} available from</span><span>: ${escapeHtml(noIst(formatIst(data.assignment.valid_from)))}</span></div>
+				<div><span>Last date for receipt of the question paper${multi ? 's' : ''}</span><span>: ${escapeHtml(noIst(formatIst(data.assignment.valid_to)))}</span></div>
+			</div>`,
+		...(c.body || []).map(
+			clause => `${escapeHtml(clause.text)}${clause.note ? ` <span class="note">(${escapeHtml(clause.note)})</span>` : ''}`
+		),
+		...(feeLine ? [escapeHtml(feeLine)] : []),
 	]
 
-	const particularRows = particulars
-		.map(
-			([label, value]) =>
-				`<tr><th>${escapeHtml(label)}</th><td>${escapeHtml(value)}</td></tr>`
-		)
-		.join('')
-
-	const terms = (c.body || [])
-		.map(clause => `<li>${escapeHtml(clause.text)}${clause.note ? ` <span class="note">(${escapeHtml(clause.note)})</span>` : ''}</li>`)
-		.join('')
-
 	const signatureEnabled = ps?.signature_section_enabled ?? true
-	const signatoryDesignation = c.signatory_designation || 'Controller of Examinations'
+	const signatoryDesignation = (c.signatory_designation || 'Controller of Examinations').toUpperCase()
 
-	// The signature block, following the BoS call letter: when a scanned signature
-	// is available it is drawn in place of the blank ruled space. The CET scan is
-	// the Principal's and already carries the name, the designation and the college
-	// beneath the squiggle, so printing a typed designation under it would
-	// contradict the stamp — the typed lines are dropped whenever an image is used.
+	// The signature block: a scanned signature when available, else a ruled
+	// space. The CET scan already carries name and designation, so the typed
+	// designation is dropped whenever an image is used.
 	const authoritySignature = assets.authoritySignatureBase64
 		? `<img class="sign-img" src="${assets.authoritySignatureBase64}" alt="" />`
-		: '<div class="sign-rule"></div>'
-	const signatoryLines = assets.authoritySignatureBase64
-		? ''
-		: `${c.signatory_name ? `<div class="sign-name">${escapeHtml(c.signatory_name)}</div>` : ''}
-					<div>${escapeHtml(signatoryDesignation)}</div>`
+		: '<div class="sign-space"></div>'
+	const signatoryLines = assets.authoritySignatureBase64 ? '' : `<div class="sign-title">${escapeHtml(signatoryDesignation)}</div>`
+
+	const coe = data.coe || {}
+	const coeRow =
+		coe.name || coe.phone || coe.email
+			? `<div class="coe-row">
+			<div>
+				${coe.name ? `<div class="coe-name">${escapeHtml(coe.name)}</div>` : ''}
+				<div>${escapeHtml(coe.designation || 'Controller of Examinations')}</div>
+			</div>
+			<div class="coe-contact">
+				${coe.phone ? `<div>Cell : ${escapeHtml(coe.phone)}</div>` : ''}
+				${coe.email ? `<div>E-mail : ${escapeHtml(coe.email)}</div>` : ''}
+			</div>
+		</div>`
+			: ''
 
 	return `<!DOCTYPE html>
 <html><head><meta charset="utf-8" />
 <style>
 	@page { size: ${s(ps, 'paper_size', 'A4')} ${s(ps, 'orientation', 'portrait')}; }
 	* { box-sizing: border-box; }
-	body {
-		font-family: ${fontFamily};
-		font-size: ${bodySize};
-		color: #000;
-		margin: 0;
-		line-height: 1.5;
-	}
-	.watermark {
-		position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
-		z-index: -1;
-	}
+	/* One page: the letter format is dense by design — letterhead, officer line,
+	   reference, address, subject, one table, numbered points, signature, enclosures. */
+	body { font-family: ${fontFamily}; font-size: 10.5pt; color: #000; margin: 0; line-height: 1.4; }
+	.watermark { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; z-index: -1; }
 	.watermark img { max-width: 60%; max-height: 60%; }
 	.head-row { display: flex; align-items: center; gap: 10px; }
 	.head-logo { width: 74px; flex: 0 0 74px; text-align: center; }
@@ -334,84 +430,117 @@ export function buildExaminerOrderHtml(
 	.inst-accr { font-size: 8.5pt; font-style: italic; margin-top: 2px; }
 	.inst-addr { font-size: 10pt; font-weight: bold; margin-top: 2px; }
 	.inst-office { font-size: 11pt; font-weight: bold; letter-spacing: 0.4px; margin-top: 5px; }
-	hr.rule { border: none; border-top: 2px solid ${primary}; margin: 8px 0 12px; }
-	.refrow { display: flex; justify-content: space-between; font-size: 10.5pt; margin-bottom: 14px; }
-	.order-title {
-		text-align: center; font-weight: bold; font-size: 12.5pt;
-		text-decoration: underline; text-underline-offset: 3px; margin: 4px 0 14px;
-	}
-	.subtitle { text-align: center; font-size: 10.5pt; margin: -8px 0 14px; }
-	.addressee { margin-bottom: 12px; }
-	.addressee .to { font-weight: bold; }
-	.addressee .name { font-weight: bold; }
-	p.intro { margin: 0 0 12px; text-align: justify; }
-	table.particulars { width: 100%; border-collapse: collapse; margin-bottom: 14px; }
-	table.particulars th, table.particulars td {
-		border: 1px solid ${border}; padding: 5px 8px; font-size: 10.5pt; vertical-align: top;
-	}
-	table.particulars th { width: 34%; text-align: left; background: #f4f4f4; font-weight: bold; }
-	.terms-title { font-weight: bold; margin: 0 0 6px; }
-	ol.terms { margin: 0 0 14px; padding-left: 20px; }
-	ol.terms li { margin-bottom: 5px; text-align: justify; }
-	ol.terms .note { font-style: italic; font-size: 9.5pt; }
-	.portal-box {
-		border: 1px dashed ${border}; padding: 8px 10px; font-size: 10pt; margin-bottom: 16px;
-	}
-	.sign-block { margin-top: 26px; display: flex; justify-content: flex-end; text-align: center; }
-	.sign-inner { min-width: 220px; }
-	.sign-rule { border-top: 1px solid #000; margin-bottom: 4px; padding-top: 34px; }
-	.sign-name { font-weight: bold; }
-	/* The scanned stamp carries its own name + designation, so it needs no rule.
-	   Sized as on the BoS call letter, which prints the same asset. */
-	.sign-img { display: block; margin: 2pt 0 0 auto; max-width: 210pt; max-height: 104pt; object-fit: contain; }
 ${LETTERHEAD_CSS}
-	.footer-note { margin-top: 20px; font-size: 9.5pt; font-style: italic; text-align: center; }
-	.inst-footer { margin-top: 12px; font-size: 9pt; text-align: center; color: #444; }
+	hr.rule { border: none; border-top: 1.5px solid #000; margin: 5px 0 4px; }
+	.coe-row { display: flex; justify-content: space-between; align-items: flex-start; font-size: 9.5pt; font-weight: bold; padding-bottom: 3px; border-bottom: 1px solid #000; }
+	.coe-contact { text-align: right; }
+	.refrow { display: flex; justify-content: space-between; font-size: 10pt; font-weight: bold; margin: 5px 0 10px; }
+	.addressee { margin: 0 0 8px; }
+	.addressee .to { font-weight: bold; }
+	.addressee .block { margin-left: 28px; font-weight: bold; font-size: 9.5pt; line-height: 1.3; }
+	.salute { margin: 0 0 6px; }
+	.sub { display: flex; gap: 10px; margin: 0 0 10px 40px; }
+	.sub .k { font-weight: bold; flex: 0 0 34px; }
+	.sub .v { flex: 1; text-align: justify; }
+	p.body { margin: 0 0 8px; text-align: justify; text-indent: 28px; }
+	table.courses { width: 100%; border-collapse: collapse; margin: 6px 0 10px; font-size: 9.5pt; }
+	table.courses th, table.courses td { border: 1px solid #000; padding: 4px 5px; text-align: center; vertical-align: middle; }
+	table.courses th { font-weight: normal; }
+	table.courses td.l { text-align: left; }
+	ol.points { margin: 0 0 6px; padding-left: 18px; }
+	ol.points li { margin-bottom: 3px; text-align: justify; }
+	ol.points .note { font-style: italic; font-size: 9pt; }
+	.mono { font-family: ${fontFamily}; font-weight: bold; }
+	.dates { margin: 3px 0 0 40px; }
+	.dates div { display: flex; }
+	.dates span:first-child { flex: 0 0 300px; }
+	.close { margin: 6px 0 0; }
+	.sign-row { display: flex; justify-content: space-between; align-items: flex-end; margin-top: 4px; }
+	.encl { font-size: 9.5pt; display: flex; gap: 14px; }
+	.encl .k { font-weight: bold; }
+	.encl ol { margin: 0; padding-left: 16px; }
+	.sign-inner { text-align: center; min-width: 210px; }
+	.sign-space { height: 40px; }
+	.sign-title { font-weight: bold; font-size: 10pt; }
+	.sign-img { display: block; margin: 0 auto; max-width: 190pt; max-height: 72pt; object-fit: contain; }
+	.footer-note { margin-top: 8px; font-size: 8.5pt; font-style: italic; text-align: center; color: #333; }
+	.inst-footer { margin-top: 6px; font-size: 8.5pt; text-align: center; color: #444; }
 </style></head>
 <body>
 	${watermark}
 	${headerHtml}
 	<hr class="rule" />
+	${coeRow}
 
 	<div class="refrow">
-		<div>${c.letter_ref || data.assignment.order_ref_no ? `Ref: ${escapeHtml(data.assignment.order_ref_no || c.letter_ref || '')}` : ''}</div>
-		<div>Date: ${escapeHtml(formatIstDate(data.assignment.order_date))}</div>
+		<div>Ref.No : ${escapeHtml(data.assignment.order_ref_no || c.letter_ref || '—')}</div>
+		<div>Date : ${escapeHtml(formatIstDate(data.assignment.order_date))}</div>
 	</div>
-
-	<div class="order-title">${escapeHtml(c.title || 'ORDER OF APPOINTMENT — QUESTION PAPER SETTER')}</div>
-	${c.subtitle ? `<div class="subtitle">${escapeHtml(c.subtitle)}</div>` : ''}
 
 	<div class="addressee">
 		<div class="to">To</div>
-		<div class="name">${escapeHtml(data.examiner.full_name)}</div>
-		${addressee}
+		<div class="block">
+			<div>${escapeHtml(data.examiner.full_name.toUpperCase())}</div>
+			${addressee}
+		</div>
 	</div>
 
-	<p class="intro">${escapeHtml(
+	<div class="salute">Sir/Madam</div>
+
+	<div class="sub">
+		<div class="k">Sub:</div>
+		<div class="v">${escapeHtml(examName)} — ${escapeHtml(sessionText)} — ${escapeHtml(subjectLine)} — Reg.</div>
+	</div>
+
+	<p class="body">${escapeHtml(
 		c.intro_text ||
-			`You are hereby appointed as the ${data.examiner.kind === 'internal' ? 'Internal' : 'External'} Question Paper Setter for the subject detailed below for the ${data.examination.exam_type_name || 'End Semester Examinations'}, ${sessionText}. The particulars of the assignment are as follows.`
+			`We wish to inform that you are appointed as ${roleCaps} for the ${examName} to be held in ${sessionText} under the autonomous scheme of this college. The ${multi ? 'details of the courses' : 'course details'} are as mentioned below.`
 	)}</p>
 
-	<table class="particulars">${particularRows}</table>
+	<table class="courses">
+		<thead><tr>
+			<th>S.No</th><th>Sem</th><th>Programme</th><th>Regulation</th><th>Course Code</th><th>Name of the Course</th><th>Max.<br />Marks</th><th>No. of<br />Q.P Set</th>
+		</tr></thead>
+		<tbody>${courseRows
+			.map(
+				(r, i) => `<tr>
+			<td>${i + 1}</td>
+			<td>${escapeHtml(romanSem(r.semester))}</td>
+			<td>${escapeHtml(r.program_code || r.program_name || '—')}</td>
+			<td>${escapeHtml(r.regulation || '—')}</td>
+			<td>${escapeHtml(r.course_code)}${r.set_label ? `<br />(Set ${escapeHtml(r.set_label)})` : ''}</td>
+			<td class="l">${escapeHtml(r.title)}</td>
+			<td>${escapeHtml(String(r.max_marks ?? '—'))}</td>
+			<td>1</td>
+		</tr>`
+			)
+			.join('')}</tbody>
+	</table>
 
-	${terms ? `<div class="terms-title">Instructions to the Examiner</div><ol class="terms">${terms}</ol>` : ''}
+	<ol class="points">${instructions.map(i => `<li>${i}</li>`).join('')}</ol>
 
-	<div class="portal-box">
-		The question paper is to be entered and submitted online through the Examiner Portal at
-		<strong>${escapeHtml(data.assignment.portal_url)}</strong>, using your registered e-mail address
-		<strong>${escapeHtml(data.examiner.email)}</strong>. Access opens and closes automatically at the
-		times shown above (Indian Standard Time).
-		${c.contact_email ? `For any clarification, write to <strong>${escapeHtml(c.contact_email)}</strong>.` : ''}
-	</div>
+	<p class="close">We eagerly look forward to your kind co-operation for the smooth and successful conduct of the examinations.</p>
 
-	${
-		signatureEnabled
-			? `<div class="sign-block"><div class="sign-inner">
+	<div class="sign-row">
+		<div class="encl">
+			<div class="k">Encl.:</div>
+			<ol>
+				<li>Syllabus</li>
+				<li>Claim form</li>
+				<li>Guidelines</li>
+				<li>Q.P. Check List</li>
+			</ol>
+			<div style="align-self:flex-end;font-size:8.5pt;color:#333;">— all available in the Examiner Portal</div>
+		</div>
+		${
+			signatureEnabled
+				? `<div class="sign-inner">
 					${authoritySignature}
 					${signatoryLines}
-				</div></div>`
-			: ''
-	}
+				</div>`
+				: ''
+		}
+	</div>
 
 	${c.footer_note ? `<div class="footer-note">${escapeHtml(c.footer_note)}</div>` : ''}
 	${footerHtml ? `<div class="inst-footer">${footerHtml}</div>` : ''}
@@ -452,6 +581,8 @@ export interface ClaimPaper {
 	semester?: number | null
 	set_label?: string | null
 	rate?: number | null
+	/** "Question Paper + Answer Key" / "Question Paper" / "Answer Key" — what was accepted. */
+	work?: string | null
 	claim_submitted_at?: string | null
 }
 
@@ -467,7 +598,11 @@ export function buildClaimFormHtml(
 	const fontFamily = s(ps, 'font_family', "'Times New Roman', Times, serif")
 	const primary = s(ps, 'primary_color', '#1a365d')
 
-	const rate = c.rate_per_paper ?? data.assignment.remuneration ?? null
+	// The accepted claim for THIS paper wins over the content's flat rate and the
+	// order's potential figure — an examiner who declined the answer key is paid
+	// for the paper alone.
+	const thisPaper = (data.papers || []).find(p => p.course_code === data.subject.course_code)
+	const rate = thisPaper?.rate ?? c.rate_per_paper ?? data.assignment.remuneration ?? null
 	const rateWords = c.rate_in_words || ''
 
 	const leftLogo = assets.logoBase64 ? `<img src="${assets.logoBase64}" class="logo" alt="" />` : ''
@@ -514,7 +649,12 @@ export function buildClaimFormHtml(
 					...(data.subject.set_label ? [['Set', data.subject.set_label]] : []),
 				]) as [string, string][]),
 		['Number of Question Papers Set', String(papers.length)],
-		...((multi ? [] : [['Rate per Question Paper', money(rate)]]) as [string, string][]),
+		...((multi
+			? []
+			: [
+					['Work Accepted', thisPaper?.work || 'Question Paper'],
+					['Amount for this Question Paper', money(rate)],
+				]) as [string, string][]),
 		['Total Amount Claimed', money(total)],
 		...((rateWords && !multi ? [['Amount in Words', rateWords]] : []) as [string, string][]),
 	]
@@ -527,7 +667,7 @@ export function buildClaimFormHtml(
 	const papersTable = multi
 		? `<table class="grid papers">
 		<thead><tr>
-			<th class="n">S.No</th><th>Subject Code</th><th class="t">Subject Title</th><th>Programme / Sem</th><th class="r">Rate</th>
+			<th class="n">S.No</th><th>Subject Code</th><th class="t">Subject Title</th><th>Programme / Sem</th><th>Work</th><th class="r">Amount</th>
 		</tr></thead>
 		<tbody>${papers
 			.map(
@@ -536,14 +676,13 @@ export function buildClaimFormHtml(
 			<td>${escapeHtml(p.course_code)}${p.set_label ? ` (Set ${escapeHtml(p.set_label)})` : ''}</td>
 			<td class="t">${escapeHtml(p.title)}</td>
 			<td>${escapeHtml([p.program_code, p.semester ? `Sem ${p.semester}` : null].filter(Boolean).join(' / ') || '—')}</td>
+			<td>${escapeHtml(p.work || 'Question Paper')}</td>
 			<td class="r">${escapeHtml(money(p.rate ?? rate))}</td>
 		</tr>`
 			)
 			.join('')}</tbody>
 	</table>`
 		: ''
-
-	const notes = (c.body || []).map(cl => `<li>${escapeHtml(cl.text)}</li>`).join('')
 
 	// The claim goes out on the same letterhead as the order: the college's
 	// framed block when it has one, the generic logo + name header otherwise.
@@ -564,7 +703,9 @@ export function buildClaimFormHtml(
 <html><head><meta charset="utf-8" />
 <style>
 	@page { size: A4 portrait; }
-	body { font-family: ${fontFamily}; font-size: 11pt; color: #000; margin: 0; line-height: 1.45; }
+	/* One page. Everything below is sized so the framed letterhead, three
+	   tables, the certification and the office box fit A4 with 15mm margins. */
+	body { font-family: ${fontFamily}; font-size: 10pt; color: #000; margin: 0; line-height: 1.35; }
 	${LETTERHEAD_CSS}
 	.head-row { display: flex; align-items: center; gap: 10px; }
 	.head-logo { width: 74px; flex: 0 0 74px; text-align: center; }
@@ -576,30 +717,38 @@ export function buildClaimFormHtml(
 	.inst-accr { font-size: 8.5pt; font-style: italic; margin-top: 2px; }
 	.inst-addr { font-size: 10pt; font-weight: bold; margin-top: 2px; }
 	.inst-office { font-size: 10.5pt; font-weight: bold; margin-top: 4px; }
-	hr.rule { border: none; border-top: 2px solid ${primary}; margin: 8px 0 12px; }
-	.title { text-align: center; font-weight: bold; font-size: 12.5pt; text-decoration: underline; margin: 4px 0 14px; }
-	table.grid { width: 100%; border-collapse: collapse; margin-bottom: 14px; }
-	table.grid th, table.grid td { border: 1px solid #111; padding: 5px 8px; font-size: 10.5pt; text-align: left; }
+	hr.rule { border: none; border-top: 2px solid ${primary}; margin: 5px 0 8px; }
+	.title { text-align: center; font-weight: bold; font-size: 12pt; text-decoration: underline; margin: 2px 0 8px; }
+	table.grid { width: 100%; border-collapse: collapse; margin-bottom: 8px; }
+	table.grid th, table.grid td { border: 1px solid #111; padding: 3px 7px; font-size: 9.5pt; text-align: left; }
 	table.grid th { width: 40%; background: #f4f4f4; font-weight: bold; }
+	table.grid + table.papers, table.papers + table.grid { margin-top: -4px; }
 	table.papers th { width: auto; text-align: left; }
 	table.papers th.n, table.papers td.n { width: 8%; text-align: center; }
 	table.papers th.t { width: 42%; }
 	table.papers th.r, table.papers td.r { width: 16%; text-align: right; white-space: nowrap; }
-	.section { font-weight: bold; margin: 0 0 6px; }
-	ol.notes { margin: 0 0 14px; padding-left: 20px; font-size: 10pt; }
-	.declare { margin: 14px 0; font-size: 10.5pt; text-align: justify; }
-	.sign-row { display: flex; justify-content: space-between; margin-top: 26px; }
+	.section { font-weight: bold; margin: 0 0 3px; font-size: 10pt; }
+	.declare { margin: 6px 0 4px; font-size: 9.5pt; text-align: justify; }
+	.sign-row { display: flex; justify-content: space-between; align-items: flex-end; margin-top: 4px; }
+	.date-cell { font-size: 9.5pt; padding-bottom: 6px; }
 	.sign-cell { text-align: center; min-width: 200px; }
-	.sign-img { height: 56px; max-width: 220px; object-fit: contain; display: block; margin: 0 auto; }
-	.sign-rule { border-top: 1px solid #000; margin-top: 4px; padding-top: 4px; font-size: 10pt; }
-	.pad { padding-top: 56px; }
-	.sign-when { font-size: 8.5pt; color: #444; margin-top: 2px; }
+	.sign-img { height: 44px; max-width: 200px; object-fit: contain; display: block; margin: 0 auto; }
+	.sign-rule { border-top: 1px solid #000; margin-top: 3px; padding-top: 3px; font-size: 9.5pt; }
+	.pad { padding-top: 44px; }
+	.sign-when { font-size: 8pt; color: #444; margin-top: 1px; }
+	/* Office box — the CoE's own verification, on the same sheet. */
+	.office { border: 1px solid #000; margin-top: 10px; padding: 6px 9px 8px; page-break-inside: avoid; }
+	.office-title { text-align: center; font-weight: bold; font-size: 10pt; margin-bottom: 4px; }
+	.office-text { margin: 0; font-size: 9.5pt; text-align: justify; }
+	.office-verified { text-align: center; font-weight: bold; font-size: 9.5pt; margin-top: 6px; }
+	.office-signs { display: flex; justify-content: space-between; margin-top: 30px; font-size: 9.5pt; }
+	.office-sign { min-width: 170px; text-align: center; border-top: 1px solid #000; padding-top: 3px; }
 </style></head>
 <body>
 	${header}
 	<hr class="rule" />
 
-	<div class="title">${escapeHtml(c.title || 'CLAIM FORM — QUESTION PAPER SETTING')}</div>
+	<div class="title">${escapeHtml(c.title || 'Claim Form — Question Paper Setting With Answer Key')}</div>
 
 	<div class="section">1. Examiner Particulars</div>
 	<table class="grid">
@@ -612,14 +761,16 @@ export function buildClaimFormHtml(
 	</table>
 
 	<div class="section">2. Work Claimed</div>
-	<table class="grid">${claimRows.slice(0, 2).map(row).join('')}</table>
+	${
+		multi
+			? `<table class="grid">${claimRows.slice(0, 2).map(row).join('')}</table>
 	${papersTable}
-	<table class="grid">${claimRows.slice(2).map(row).join('')}</table>
+	<table class="grid">${claimRows.slice(2).map(row).join('')}</table>`
+			: `<table class="grid">${claimRows.map(row).join('')}</table>`
+	}
 
 	<div class="section">3. Bank Details for Payment</div>
 	<table class="grid">${bankRows.map(row).join('')}</table>
-
-	${notes ? `<div class="section">4. Notes</div><ol class="notes">${notes}</ol>` : ''}
 
 	<div class="declare">${escapeHtml(
 		c.footer_note ||
@@ -627,10 +778,7 @@ export function buildClaimFormHtml(
 	)}</div>
 
 	<div class="sign-row">
-		<div class="sign-cell">
-			<div class="pad"></div>
-			<div class="sign-rule">Controller of Examinations</div>
-		</div>
+		<div class="date-cell">Date: ${escapeHtml(formatIstDate(data.claim_date || new Date().toISOString()))}</div>
 		<div class="sign-cell">
 			${
 				data.signatureBase64
@@ -645,9 +793,19 @@ export function buildClaimFormHtml(
 			}
 		</div>
 	</div>
-	<div style="margin-top:16px;font-size:10pt;">Date: ${escapeHtml(
-		formatIstDate(data.claim_date || new Date().toISOString())
-	)}</div>
+
+	<div class="office">
+		<div class="office-title">For Office Use Only</div>
+		<p class="office-text">
+			Certified that the claim mentioned above has been verified and found correct and the bill may be
+			passed for payment.
+		</p>
+		<div class="office-verified">Verified By</div>
+		<div class="office-signs">
+			<div class="office-sign">DCoE</div>
+			<div class="office-sign">CONTROLLER OF EXAMINATIONS</div>
+		</div>
+	</div>
 </body></html>`
 }
 

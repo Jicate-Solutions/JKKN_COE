@@ -10,10 +10,15 @@
 // draft is still safe, because it is held in this browser and pushed when the
 // connection returns, and the badge says so rather than just showing an error.
 
-import { CheckCircle2, Loader2, CloudOff, Clock } from 'lucide-react'
+import { CheckCircle2, Loader2, CloudOff, Clock, AlertTriangle } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
-export type SyncState = 'idle' | 'saving' | 'saved' | 'unsynced'
+/**
+ * 'unsynced'  the server could not be reached (or answered 5xx) — retried
+ * 'conflict'  the server holds a newer copy than this editor's base and an
+ *             automatic rebase did not settle it — needs a reload, not a retry
+ */
+export type SyncState = 'idle' | 'saving' | 'saved' | 'unsynced' | 'conflict'
 
 /** "just now", "2 min ago", "14:05" — the useful precision at each distance. */
 export function savedAgo(iso: string | null): string {
@@ -41,6 +46,22 @@ export function SyncBadge({ state, dirty, savedAt, error, className }: Props) {
 			<span className={cn('flex items-center gap-1 text-xs text-muted-foreground', className)}>
 				<Loader2 className="h-3.5 w-3.5 animate-spin" />
 				Saving…
+			</span>
+		)
+	}
+
+	if (state === 'conflict') {
+		return (
+			<span
+				className={cn('flex items-center gap-1 text-xs text-rose-700', className)}
+				title={
+					error
+						? `${error}. Your edits are kept in this browser — reload the server copy and re-apply them.`
+						: 'Reload the server copy and re-apply your edits.'
+				}
+			>
+				<AlertTriangle className="h-3.5 w-3.5" />
+				Changed elsewhere — reload
 			</span>
 		)
 	}

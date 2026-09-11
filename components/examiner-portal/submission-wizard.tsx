@@ -21,14 +21,23 @@ import {
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { formatIst } from '@/lib/qp-portal/ist'
-import { QP_SUBMISSION_STAGE_LABELS, type QpSubmissionStage } from '@/types/qp-examiner-assignment'
+import {
+	QP_SUBMISSION_STAGE_LABELS,
+	readChecklistAnswers,
+	type QpSubmissionStage,
+} from '@/types/qp-examiner-assignment'
+import { Input } from '@/components/ui/input'
 import { SignaturePad } from './signature-pad'
 
 interface Clause {
 	id: string
 	text: string
 	note?: string | null
+	/** When set, a YES answer needs a short detail, prompted with this label. */
+	detail_label?: string | null
 }
+
+type Draft = { answer?: 'YES' | 'NO'; detail?: string }
 
 interface Props {
 	assignmentId: string
@@ -63,17 +72,32 @@ export function SubmissionWizard({
 
 	// Answers start from whatever is already stored, so a resumed check list is
 	// not blank.
-	const [answers, setAnswers] = useState<Record<string, string>>(() => assignment?.checklist || {})
+	const fromStored = (raw: unknown): Record<string, Draft> =>
+		Object.fromEntries(
+			Object.entries(readChecklistAnswers(raw)).map(([id, a]) => [id, { answer: a.answer, detail: a.detail || '' }])
+		)
+	const [answers, setAnswers] = useState<Record<string, Draft>>(() => fromStored(assignment?.checklist))
 	const [declarationAccepted, setDeclarationAccepted] = useState(false)
 	const [signature, setSignature] = useState<string | null>(null)
 	const [busy, setBusy] = useState(false)
 	const [error, setError] = useState<string | null>(null)
 
 	useEffect(() => {
-		setAnswers(assignment?.checklist || {})
+		setAnswers(fromStored(assignment?.checklist))
+		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [assignment?.checklist])
 
-	const allAnswered = clauses.length > 0 && clauses.every(c => !!answers[c.id])
+	const itemDone = (c: Clause) => {
+		const a = answers[c.id]
+		if (!a?.answer) return false
+		if (c.detail_label && a.answer === 'YES' && !String(a.detail || '').trim()) return false
+		return true
+	}
+	const allAnswered = clauses.length > 0 && clauses.every(itemDone)
+	const setAnswer = (id: string, answer: 'YES' | 'NO') =>
+		setAnswers(prev => ({ ...prev, [id]: { ...prev[id], answer } }))
+	const setDetail = (id: string, detail: string) =>
+		setAnswers(prev => ({ ...prev, [id]: { ...prev[id], detail } }))
 	const alreadySigned = !!assignment?.signed_at
 
 	const run = async (body: Record<string, unknown>) => {
@@ -178,7 +202,7 @@ export function SubmissionWizard({
 							{content?.checklist?.title || 'Question Paper Check List'}
 						</h2>
 						<p className="text-sm text-muted-foreground mt-0.5">
-							Your question paper has been submitted. Confirm each item below to continue.
+							Your question paper has been submitted. Answer YES or NO to each item below to continue.
 						</p>
 					</div>
 
@@ -189,30 +213,66 @@ export function SubmissionWizard({
 						</p>
 					) : (
 						<div className="rounded-md border divide-y">
-							{clauses.map(c => (
-								<label
-									key={c.id}
-									className="flex items-start gap-3 px-3.5 py-3 cursor-pointer hover:bg-slate-50"
-								>
-									<Checkbox
-										checked={answers[c.id] === 'YES'}
-										onCheckedChange={v =>
-											setAnswers(prev => {
-												const next = { ...prev }
-												if (v === true) next[c.id] = 'YES'
-												else delete next[c.id]
-												return next
-											})
-										}
-										disabled={busy}
-										className="mt-0.5"
-									/>
-									<span className="text-sm">
-										{c.text}
-										{c.note && <span className="text-muted-foreground italic"> ({c.note})</span>}
-									</span>
-								</label>
-							))}
+							{clauses.map((c, i) => {
+								const a = answers[c.id] || {}
+								const needsDetail = !!c.detail_label && a.answer === 'YES'
+								const detailMissing = needsDetail && !String(a.detail || '').trim()
+								return (
+									<div key={c.id} className="px-3.5 py-3 space-y-2">
+										<div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
+											<span className="text-sm flex-1 min-w-[200px]">
+												<span className="text-muted-foreground mr-1.5">{i + 1}.</span>
+												{c.text}
+												{c.note && <span className="text-muted-foreground italic"> ({c.note})</span>}
+											</span>
+											<div
+												role="radiogroup"
+												aria-label={c.text}
+												className="inline-flex rounded-md border overflow-hidden shrink-0"
+											>
+												{(['YES', 'NO'] as const).map(opt => {
+													const on = a.answer === opt
+													return (
+														<button
+															key={opt}
+															type="button"
+															role="radio"
+															aria-checked={on}
+															disabled={busy}
+															onClick={() => setAnswer(c.id, opt)}
+															className={cn(
+																'px-3.5 py-1 text-xs font-medium transition-colors',
+																opt === 'NO' && 'border-l',
+																on
+																	? opt === 'YES'
+																		? 'bg-emerald-600 text-white'
+																		: 'bg-slate-700 text-white'
+																	: 'bg-white text-slate-700 hover:bg-slate-50'
+															)}
+														>
+															{opt}
+														</button>
+													)
+												})}
+											</div>
+										</div>
+										{needsDetail && (
+											<div className="pl-5">
+												<Input
+													value={a.detail || ''}
+													onChange={e => setDetail(c.id, e.target.value)}
+													placeholder={c.detail_label || 'Specify'}
+													maxLength={200}
+													disabled={busy}
+													aria-invalid={detailMissing}
+													className={cn('h-8 text-sm', detailMissing && 'border-amber-400')}
+												/>
+												<p className="text-[11px] text-muted-foreground mt-1">{c.detail_label}</p>
+											</div>
+										)}
+									</div>
+								)
+							})}
 						</div>
 					)}
 
@@ -220,7 +280,7 @@ export function SubmissionWizard({
 
 					<div className="flex flex-wrap items-center justify-between gap-3">
 						<p className="text-xs text-muted-foreground">
-							{clauses.filter(c => answers[c.id]).length} of {clauses.length} confirmed
+							{clauses.filter(itemDone).length} of {clauses.length} answered
 						</p>
 						<Button
 							onClick={() => run({ step: 'checklist', checklist: answers })}

@@ -24,10 +24,12 @@ import { useToast } from '@/hooks/common/use-toast'
 import { useInstitutionFilter } from '@/hooks/use-institution-filter'
 import {
 	FileText, UserCheck, Clock, CheckCircle2, AlertTriangle, Building2, Loader2,
+	UserPlus, ClipboardList, Palette, Mail,
 } from 'lucide-react'
 import { GenerateTab } from './generate-tab'
 import { AssignTab } from './assign-tab'
 import { AssignmentsTab } from './assignments-tab'
+import { EmailTab } from './email-tab'
 import { ContentTab } from './content-tab'
 import { apiFetch, SearchableSelect, type InstitutionOpt, type SessionOpt, type AssignmentRow } from './shared'
 
@@ -265,18 +267,49 @@ export default function QpExaminerAssignmentPage() {
 						</Card>
 					) : (
 						<Tabs defaultValue="generate" className="flex-1">
-							<TabsList>
-								<TabsTrigger value="generate">Generate Papers</TabsTrigger>
-								<TabsTrigger value="assign">Assign Examiner</TabsTrigger>
-								<TabsTrigger value="assignments">
+							{/* Each step of the flow keeps its own colour, so the active tab
+							    reads as "where am I" at a glance. */}
+							<TabsList className="h-auto flex-wrap gap-1 bg-slate-100 p-1">
+								<TabsTrigger
+									value="generate"
+									className="gap-1.5 px-3.5 py-1.5 text-slate-600 data-[state=active]:bg-blue-600 data-[state=active]:text-white data-[state=active]:shadow-md hover:text-blue-700"
+								>
+									<FileText className="h-3.5 w-3.5" />
+									Generate Papers
+								</TabsTrigger>
+								<TabsTrigger
+									value="assign"
+									className="gap-1.5 px-3.5 py-1.5 text-slate-600 data-[state=active]:bg-emerald-600 data-[state=active]:text-white data-[state=active]:shadow-md hover:text-emerald-700"
+								>
+									<UserPlus className="h-3.5 w-3.5" />
+									Assign Examiner
+								</TabsTrigger>
+								<TabsTrigger
+									value="assignments"
+									className="gap-1.5 px-3.5 py-1.5 text-slate-600 data-[state=active]:bg-amber-500 data-[state=active]:text-white data-[state=active]:shadow-md hover:text-amber-700"
+								>
+									<ClipboardList className="h-3.5 w-3.5" />
 									Assignments
 									{counts.submitted > 0 && (
-										<Badge variant="outline" className="ml-1.5 text-[10px] px-1 py-0 bg-amber-50 text-amber-700 border-amber-200">
+										<span className="ml-0.5 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-white/90 px-1 text-[10px] font-semibold text-amber-700 ring-1 ring-amber-300">
 											{counts.submitted}
-										</Badge>
+										</span>
 									)}
 								</TabsTrigger>
-								<TabsTrigger value="content">Order Design</TabsTrigger>
+								<TabsTrigger
+									value="content"
+									className="gap-1.5 px-3.5 py-1.5 text-slate-600 data-[state=active]:bg-violet-600 data-[state=active]:text-white data-[state=active]:shadow-md hover:text-violet-700"
+								>
+									<Palette className="h-3.5 w-3.5" />
+									Order Design
+								</TabsTrigger>
+								<TabsTrigger
+									value="email"
+									className="gap-1.5 px-3.5 py-1.5 text-slate-600 data-[state=active]:bg-sky-600 data-[state=active]:text-white data-[state=active]:shadow-md hover:text-sky-700"
+								>
+									<Mail className="h-3.5 w-3.5" />
+									E-mail Orders
+								</TabsTrigger>
 							</TabsList>
 
 							<TabsContent value="generate" className="pt-4">
@@ -308,6 +341,10 @@ export default function QpExaminerAssignmentPage() {
 
 							<TabsContent value="content" className="pt-4">
 								<ContentTab institutionsId={effectiveInstitutionId} session={session} />
+							</TabsContent>
+
+							<TabsContent value="email" className="pt-4">
+								<EmailTab institutionsId={effectiveInstitutionId} session={session} />
 							</TabsContent>
 						</Tabs>
 					)}

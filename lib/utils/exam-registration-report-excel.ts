@@ -308,6 +308,60 @@ function exportStudentExamRegistrationExcel(opts: ExcelExportOptions): ExcelRepo
 	return { rows, merges }
 }
 
+// ── Final Registration Approval (one row per learner + totals row) ──
+
+function exportFinalApprovalExcel(opts: ExcelExportOptions): ExcelReportResult {
+	const sorted = [...opts.data].sort((a, b) => String(a.stu_register_no || '').localeCompare(String(b.stu_register_no || '')))
+	const showLateFine = sorted.some(r => feeNum(r.late_fine) > 0)
+
+	const totals = { subjects: 0, exam: 0, application: 0, markStatement: 0, lateFine: 0, final: 0 }
+	const rows = sorted.map((row, idx) => {
+		totals.subjects += Number(row.total_subjects) || 0
+		totals.exam += feeNum(row.exam_fee)
+		totals.application += feeNum(row.application_fee)
+		totals.markStatement += feeNum(row.mark_statement_fee)
+		totals.lateFine += feeNum(row.late_fine)
+		totals.final += feeNum(row.final_amount)
+		const out: Record<string, any> = {
+			'S.No': idx + 1,
+			'Register No': row.stu_register_no || '',
+			'Name of the Candidate': row.student_name || '',
+			'Program': row.program_code || '',
+			'Regulation': row.regulation_code || '',
+			'Sem': row.learner_semester ? toRoman(row.learner_semester) : '',
+			'Total Subjects': Number(row.total_subjects) || 0,
+			'Exam Fee': feeNum(row.exam_fee),
+			'Application Fee': feeNum(row.application_fee),
+			'Mark Statement Fee': feeNum(row.mark_statement_fee),
+		}
+		if (showLateFine) out['Late Fine'] = feeNum(row.late_fine)
+		out['Final Amount'] = feeNum(row.final_amount)
+		out['Status'] = row.registration_status || 'Approved'
+		return out
+	})
+
+	if (rows.length > 0) {
+		const totalRow: Record<string, any> = {
+			'S.No': '',
+			'Register No': 'TOTAL',
+			'Name of the Candidate': `Total Students : ${rows.length}`,
+			'Program': '',
+			'Regulation': '',
+			'Sem': '',
+			'Total Subjects': totals.subjects,
+			'Exam Fee': totals.exam,
+			'Application Fee': totals.application,
+			'Mark Statement Fee': totals.markStatement,
+		}
+		if (showLateFine) totalRow['Late Fine'] = totals.lateFine
+		totalRow['Final Amount'] = totals.final
+		totalRow['Status'] = ''
+		rows.push(totalRow)
+	}
+
+	return { rows, merges: [] }
+}
+
 // ── Report 2A: Course Count Regular/Arrear ──
 
 function exportCourseCountRegularArrearExcel(opts: ExcelExportOptions): ExcelReportResult {
@@ -726,7 +780,14 @@ export async function exportExamRegistrationReportExcel(opts: ExcelExportOptions
 	const wb = XLSX.utils.book_new()
 
 	const isRegistrationType = opts.report_type === 'student-exam-registration' || opts.report_type === 'student-exam-registration-summary' || opts.report_type === 'student-wise-registration'
-	if (opts.report_type === 'student-fee-details' || opts.report_type === 'student-exam-registration' || opts.report_type === 'student-exam-registration-summary' || opts.report_type === 'student-wise-application' || opts.report_type === 'student-wise-registration') {
+	if (opts.report_type === 'student-final-approval') {
+		// One learner per row, straight from exam_registration_fee_details
+		const result = exportFinalApprovalExcel(opts)
+		if (result.rows.length === 0) return
+		const ws = XLSX.utils.json_to_sheet(result.rows)
+		applySheetFormatting(ws, result)
+		XLSX.utils.book_append_sheet(wb, ws, 'Final Approval')
+	} else if (opts.report_type === 'student-fee-details' || opts.report_type === 'student-exam-registration' || opts.report_type === 'student-exam-registration-summary' || opts.report_type === 'student-wise-application' || opts.report_type === 'student-wise-registration') {
 		// Student-wise reports — format to be customised; reuse program-wise layout for now
 		const buildSheet = isRegistrationType
 			? exportStudentExamRegistrationExcel
@@ -1043,6 +1104,7 @@ export async function exportExamRegistrationReportExcel(opts: ExcelExportOptions
 	}
 
 	const reportNames: Record<string, string> = {
+		'student-final-approval': 'final-approval',
 		'student-fee-details': 'fee-details',
 		'student-exam-registration': 'student-registration',
 		'student-exam-registration-summary': 'subject-summary',

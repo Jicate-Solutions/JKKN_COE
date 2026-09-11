@@ -64,7 +64,10 @@ const UNMAPPED_SEMESTER = 0
 // Reports that print one block PER LEARNER listing every paper applied for in the
 // session. A semester selection scopes the learner cohort on these, not the rows -
 // see the semester branch in filteredReportData.
-const STUDENT_REPORT_TYPES = ['student-fee-details', 'student-exam-registration', 'student-exam-registration-summary', 'student-wise-application', 'student-wise-registration']
+const STUDENT_REPORT_TYPES = ['student-fee-details', 'student-exam-registration', 'student-exam-registration-summary', 'student-wise-application', 'student-wise-registration', 'student-final-approval']
+
+const rupees = new Intl.NumberFormat('en-IN', { maximumFractionDigits: 2 })
+const money = (value: number | null | undefined) => value == null ? '-' : `₹${rupees.format(value)}`
 
 const ROMAN = ['', 'I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X']
 function toRoman(n: number): string { return ROMAN[n] || String(n) }
@@ -84,6 +87,7 @@ const REPORT_OPTIONS: { value: ReportType; label: string; description: string; g
 	{ value: 'student-fee-details', label: 'Student Exam Application', description: 'Learner-wise exam application with courses and fee columns', group: 'exam-reg-app', section: 'Program wise Report' },
 	{ value: 'student-wise-registration', label: 'Student Exam Registration', description: 'Student-wise regular exam registration (regular papers only)', group: 'exam-reg-app', section: 'Student wise Report' },
 	{ value: 'student-wise-application', label: 'Student Exam Application', description: 'Student-wise exam application with courses and fee columns', group: 'exam-reg-app', section: 'Student wise Report' },
+	{ value: 'student-final-approval', label: 'Final Registration Approval', description: 'Student-wise final approved registrations with subject count, fee heads and totals (one row per learner)', group: 'exam-reg-app', section: 'Student wise Report' },
 	{ value: 'course-count-regular-arrear', label: 'Regular / Arrear Count', description: 'Course-wise student count split by Regular and Arrear', group: 'registration' },
 	{ value: 'course-count-year-wise', label: 'Board & Semester Wise Course List', description: 'Course-wise learner count split by the semester the LEARNER is in', group: 'registration' },
 	{ value: 'course-count-program-year-wise', label: 'Board & Program Wise Registration List', description: 'Course-wise count with Program Code, split by the semester the LEARNER is in', group: 'registration' },
@@ -526,7 +530,7 @@ export default function ExamRegistrationReportsPage() {
 			// Exam date-wise reports: single combined file (no UG/PG split)
 			const isDateWiseReport = selectedReportType === 'exam-date-wise-registration' || selectedReportType === 'exam-date-wise-attendance' || selectedReportType === 'board-wise-exam-timetable' || selectedReportType === 'exam-date-wise-summary' || selectedReportType === 'qp-packing-list'
 				// Student-wise forms: one page per student — single combined file for ALL students (no UG/PG split)
-				const isStudentWiseForm = selectedReportType === 'student-wise-registration' || selectedReportType === 'student-wise-application'
+				const isStudentWiseForm = selectedReportType === 'student-wise-registration' || selectedReportType === 'student-wise-application' || selectedReportType === 'student-final-approval'
 
 			if (isDateWiseReport || isStudentWiseForm) {
 				const file = generateExamRegistrationReportPdf(baseOpts)
@@ -623,6 +627,11 @@ export default function ExamRegistrationReportsPage() {
 		}
 
 		switch (selectedReportType) {
+			case 'student-final-approval': {
+				// Already one row per learner - just order by register number
+				return [...reportData2].sort((a: any, b: any) => String(a.stu_register_no || '').localeCompare(String(b.stu_register_no || '')))
+			}
+
 			case 'student-fee-details':
 			case 'student-exam-registration':
 			case 'student-exam-registration-summary':
@@ -1364,6 +1373,77 @@ export default function ExamRegistrationReportsPage() {
 											</TableBody>
 										</Table>
 									)}
+
+									{selectedReportType === 'student-final-approval' && (() => {
+										const totals = previewData.reduce((t: any, r: any) => ({
+											subjects: t.subjects + (Number(r.total_subjects) || 0),
+											exam_fee: t.exam_fee + (Number(r.exam_fee) || 0),
+											application_fee: t.application_fee + (Number(r.application_fee) || 0),
+											mark_statement_fee: t.mark_statement_fee + (Number(r.mark_statement_fee) || 0),
+											late_fine: t.late_fine + (Number(r.late_fine) || 0),
+											final_amount: t.final_amount + (Number(r.final_amount) || 0),
+										}), { subjects: 0, exam_fee: 0, application_fee: 0, mark_statement_fee: 0, late_fine: 0, final_amount: 0 })
+										const showLateFine = totals.late_fine > 0
+										return (
+											<Table>
+												<TableHeader>
+													<TableRow>
+														<TableHead className="text-center w-12">S.No</TableHead>
+														<TableHead>Register Number</TableHead>
+														<TableHead>Learner Name</TableHead>
+														<TableHead className="text-center">Program</TableHead>
+														<TableHead className="text-center w-14">Sem</TableHead>
+														<TableHead className="text-center">Total Subjects</TableHead>
+														<TableHead className="text-right">Exam Fee</TableHead>
+														<TableHead className="text-right">Application Fee</TableHead>
+														<TableHead className="text-right">Mark Statement Fee</TableHead>
+														{showLateFine && <TableHead className="text-right">Late Fine</TableHead>}
+														<TableHead className="text-right">Final Amount</TableHead>
+														<TableHead className="text-center">Status</TableHead>
+													</TableRow>
+												</TableHeader>
+												<TableBody>
+													{paginatedData.length === 0 ? (
+														<TableRow>
+															<TableCell colSpan={showLateFine ? 12 : 11} className="text-center py-8 text-muted-foreground">No data</TableCell>
+														</TableRow>
+													) : (
+														paginatedData.map((row: any, idx: number) => (
+															<TableRow key={row.id || idx}>
+																<TableCell className="text-center text-xs">{(currentPage - 1) * pageSize + idx + 1}</TableCell>
+																<TableCell className="text-xs font-medium">{row.stu_register_no}</TableCell>
+																<TableCell className="text-xs">{row.student_name || '-'}</TableCell>
+																<TableCell className="text-center text-xs">{row.program_code || '-'}</TableCell>
+																<TableCell className="text-center text-xs">{row.learner_semester ? toRoman(row.learner_semester) : '-'}</TableCell>
+																<TableCell className="text-center text-xs font-semibold">{row.total_subjects}</TableCell>
+																<TableCell className="text-right text-xs tabular-nums">{money(row.exam_fee)}</TableCell>
+																<TableCell className="text-right text-xs tabular-nums">{money(row.application_fee)}</TableCell>
+																<TableCell className="text-right text-xs tabular-nums">{money(row.mark_statement_fee)}</TableCell>
+																{showLateFine && <TableCell className="text-right text-xs tabular-nums">{money(row.late_fine)}</TableCell>}
+																<TableCell className="text-right text-xs font-semibold tabular-nums">{money(row.final_amount)}</TableCell>
+																<TableCell className="text-center">
+																	<Badge variant="outline" className="text-[10px] bg-emerald-100 text-emerald-700 border-emerald-200">{row.registration_status || 'Approved'}</Badge>
+																</TableCell>
+															</TableRow>
+														))
+													)}
+													{previewData.length > 0 && (
+														<TableRow className="bg-muted/40 font-semibold">
+															<TableCell colSpan={3} className="text-xs">Total Learners : {previewData.length}</TableCell>
+															<TableCell colSpan={2} />
+															<TableCell className="text-center text-xs">{totals.subjects}</TableCell>
+															<TableCell className="text-right text-xs tabular-nums">{money(totals.exam_fee)}</TableCell>
+															<TableCell className="text-right text-xs tabular-nums">{money(totals.application_fee)}</TableCell>
+															<TableCell className="text-right text-xs tabular-nums">{money(totals.mark_statement_fee)}</TableCell>
+															{showLateFine && <TableCell className="text-right text-xs tabular-nums">{money(totals.late_fine)}</TableCell>}
+															<TableCell className="text-right text-xs tabular-nums">{money(totals.final_amount)}</TableCell>
+															<TableCell />
+														</TableRow>
+													)}
+												</TableBody>
+											</Table>
+										)
+									})()}
 
 									{selectedReportType === 'course-count-regular-arrear' && (
 										<Table>

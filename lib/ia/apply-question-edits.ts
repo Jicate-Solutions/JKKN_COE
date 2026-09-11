@@ -64,6 +64,9 @@ export function applyQuestionEdits(current: any[], incoming: any[]): ApplyQuesti
 		// Normalized on the way in — only a usable http(s) URL is ever stored.
 		if (has(q, 'image')) next.image = readQuestionImage(q.image)
 		if (has(q, 'correct_option')) next.correct_option = q.correct_option ?? null
+		// The answer key travels with the question but is never printed with it.
+		if (has(q, 'answer_key')) next.answer_key = q.answer_key ?? null
+		if (has(q, 'answer_key_image')) next.answer_key_image = readQuestionImage(q.answer_key_image)
 
 		// Sub-divisions are author-defined and normalized on the way in (labels
 		// relabelled i/ii, junk dropped). Objective questions have nothing to split.

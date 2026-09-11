@@ -6,6 +6,8 @@ export type ReportType =
 	| 'student-exam-registration-summary'
 	| 'student-wise-application'
 	| 'student-wise-registration'
+	/** Learner-wise final approved registrations (exam_registration_fee_details) */
+	| 'student-final-approval'
 	| 'course-count-regular-arrear'
 	| 'course-count-year-wise'
 	| 'course-count-program-year-wise'

@@ -4,11 +4,14 @@
 
 import { getPdfSettingsWithFallback } from '@/lib/pdf/settings-service'
 import { getInstitutionHeader } from '@/lib/utils/institution-header'
+import { getJkknLetterhead } from '@/lib/pdf/jkkn-letterhead'
 import { getPortalContent, buildOrderRef } from './content'
 import type { ExaminerOrderData, ClaimFormData } from '@/lib/pdf/examiner-order'
 import type { QpAssignment, QpPortalContent } from '@/types/qp-examiner-assignment'
 
 export interface AssignmentBundle {
+	/** courses row for assignment.course_id — regulation, programme name. */
+	course?: Record<string, any> | null
 	assignment: QpAssignment
 	examiner: Record<string, any>
 	institution: Record<string, any>
@@ -40,7 +43,7 @@ export async function loadAssignmentBundle(
 		.maybeSingle()
 	if (error || !assignment) return null
 
-	const [examinerRes, institutionRes, sessionRes, paperRes] = await Promise.all([
+	const [examinerRes, institutionRes, sessionRes, paperRes, courseRes] = await Promise.all([
 		supabase.from('examiners').select('*').eq('id', assignment.examiner_id).maybeSingle(),
 		supabase.from('institutions').select('*').eq('id', assignment.institutions_id).maybeSingle(),
 		assignment.examination_session_id
@@ -55,6 +58,13 @@ export async function loadAssignmentBundle(
 			.select('id, status, max_marks, duration_minutes, subject_title, course_code, set_label, semester, program_code, questions')
 			.eq('id', assignment.paper_id)
 			.maybeSingle(),
+		assignment.course_id
+			? supabase
+					.from('courses')
+					.select('id, course_code, course_name, regulation_code, program_code, program_nam')
+					.eq('id', assignment.course_id)
+					.maybeSingle()
+			: Promise.resolve({ data: null }),
 	])
 
 	// exam_type_id may sit on the assignment or be inherited from the session.
@@ -74,6 +84,7 @@ export async function loadAssignmentBundle(
 		session: sessionRes.data || null,
 		examType: examTypeRes.data || null,
 		paper: paperRes.data || null,
+		course: courseRes.data || null,
 	}
 }
 
@@ -92,10 +103,11 @@ export function portalUrl(): string {
 
 /** Assemble everything the Examiner Order PDF needs. */
 export async function buildOrderData(bundle: AssignmentBundle): Promise<ExaminerOrderData> {
-	const { assignment, examiner, institution, session, examType, paper } = bundle
+	const { assignment, examiner, institution, session, examType, paper, course } = bundle
 
 	const institutionCode = institution.institution_code || assignment.institution_code || ''
 	const branding = getInstitutionHeader(institutionCode)
+	const letterhead = getJkknLetterhead(institutionCode)
 
 	const [content, pdfSettings] = await Promise.all([
 		getPortalContent(assignment.institutions_id, 'order', assignment.examination_session_id),
@@ -126,6 +138,16 @@ export async function buildOrderData(bundle: AssignmentBundle): Promise<Examiner
 			email: examiner.email || '',
 			kind: assignment.examiner_kind === 'internal' ? 'internal' : 'external',
 		},
+		regulation: course?.regulation_code || null,
+		program_name: course?.program_nam || null,
+		// The Order document's signatory fields win; the college's letterhead
+		// config supplies the Controller's details otherwise.
+		coe: {
+			name: content.signatory_name || letterhead?.coe?.name || null,
+			designation: content.signatory_designation || letterhead?.coe?.designation || 'Controller of Examinations',
+			phone: letterhead?.coe?.phone || institution.phone || null,
+			email: content.contact_email || letterhead?.coe?.email || institution.email || null,
+		},
 		examination: {
 			exam_type_name: examType?.examination_name || 'End Semester Examinations',
 			session_name: session?.session_name || null,
@@ -146,10 +168,73 @@ export async function buildOrderData(bundle: AssignmentBundle): Promise<Examiner
 			valid_from: assignment.valid_from,
 			valid_to: assignment.valid_to,
 			remuneration: assignment.remuneration ?? null,
+			assignment_type: assignment.assignment_type || 'question_paper',
+			qp_fee: assignment.qp_fee ?? null,
+			ak_fee: assignment.ak_fee ?? null,
 			portal_url: portalUrl(),
 		},
 		content: content as QpPortalContent,
 		pdf_settings: pdfSettings,
+	}
+}
+
+/**
+ * One order for several appointments of the SAME examiner in one session: the
+ * first appointment supplies the letterhead, addressee and content; every
+ * appointment becomes a row in the course table. The window printed is the
+ * earliest opening and the latest deadline; the reference lists every order
+ * number covered.
+ */
+export async function buildCombinedOrderData(bundles: AssignmentBundle[]): Promise<ExaminerOrderData> {
+	if (bundles.length === 0) throw new Error('buildCombinedOrderData: no assignments')
+	const base = await buildOrderData(bundles[0])
+	if (bundles.length === 1) return base
+
+	const courses = bundles.map(b => ({
+		semester: b.assignment.semester ?? b.paper?.semester ?? null,
+		program_code: b.assignment.program_code || b.paper?.program_code || null,
+		program_name: b.course?.program_nam || null,
+		regulation: b.course?.regulation_code || null,
+		course_code: b.assignment.course_code || b.paper?.course_code || '',
+		title: b.assignment.subject_title || b.paper?.subject_title || '',
+		set_label: b.assignment.set_label || b.paper?.set_label || null,
+		max_marks: b.paper?.max_marks ?? null,
+		assignment_type: b.assignment.assignment_type || 'question_paper',
+		valid_to: b.assignment.valid_to,
+		qp_fee: b.assignment.qp_fee ?? null,
+		ak_fee: b.assignment.ak_fee ?? null,
+	}))
+	// One letter, one reference: the combined reference every covered appointment
+	// shares once the letter has been issued. Before that (a preview, or the
+	// column not yet migrated) the lowest of the covered numbers stands in.
+	const shared = bundles.map(b => b.assignment.combined_order_ref_no).filter(Boolean) as string[]
+	const combinedRef =
+		shared.length === bundles.length && new Set(shared).size === 1 ? shared[0] : null
+	const refs = combinedRef
+		? [combinedRef]
+		: ([...new Set(bundles.map(b => b.assignment.order_ref_no).filter(Boolean))] as string[]).sort().slice(0, 1)
+	const validFrom = bundles.map(b => b.assignment.valid_from).sort()[0]
+	const validTo = bundles.map(b => b.assignment.valid_to).sort().slice(-1)[0]
+	const types = new Set(bundles.map(b => b.assignment.assignment_type || 'question_paper'))
+	const combinedType = types.has('both') || (types.has('question_paper') && types.has('answer_key')) ? 'both' : [...types][0]
+	const sum = (k: 'qp_fee' | 'ak_fee') => bundles.reduce((t, b) => t + Number(b.assignment[k] || 0), 0)
+
+	return {
+		...base,
+		courses,
+		assignment: {
+			...base.assignment,
+			order_ref_no: compactOrderRefs(refs) || base.assignment.order_ref_no,
+			valid_from: validFrom,
+			valid_to: validTo,
+			assignment_type: combinedType,
+			// Fees on a combined order: per-paper rates are the same for every
+			// paper of one examiner, so the first appointment's rates stand; the
+			// total remuneration is the sum across papers.
+			remuneration: bundles.reduce((t, b) => t + Number(b.assignment.remuneration || 0), 0),
+			qp_fee: base.assignment.qp_fee ?? (sum('qp_fee') / bundles.length || null),
+			ak_fee: base.assignment.ak_fee ?? (sum('ak_fee') / bundles.length || null),
+		},
 	}
 }
 
@@ -199,7 +284,7 @@ export async function buildClaimData(
 	// while it is still pending (that is the form being previewed).
 	const { data: siblings } = await supabase
 		.from('ia_qp_assignments')
-		.select('id, course_code, subject_title, program_code, semester, set_label, remuneration, claim_status, claim_submitted_at')
+		.select('id, course_code, subject_title, program_code, semester, set_label, remuneration, claim_amount, assignment_type, qp_willing, ak_willing, claim_status, claim_submitted_at')
 		.eq('examiner_id', assignment.examiner_id)
 		.eq('examination_session_id', assignment.examination_session_id)
 		.neq('status', 'cancelled')
@@ -213,7 +298,11 @@ export async function buildClaimData(
 			program_code: r.program_code || null,
 			semester: r.semester ?? null,
 			set_label: r.set_label || null,
-			rate: r.remuneration ?? claimContentRate ?? null,
+			// The claim pays what the examiner ACCEPTED (claim_amount); the order's
+			// potential figure (remuneration) is only the fallback for rows that
+			// predate willingness, and the content rate for rows with neither.
+			rate: r.claim_amount ?? r.remuneration ?? claimContentRate ?? null,
+			work: describeAcceptedWork(r),
 			claim_submitted_at: r.claim_submitted_at || null,
 		}))
 
@@ -236,6 +325,25 @@ export async function buildClaimData(
 			null,
 		papers,
 	}
+}
+
+/**
+ * "Question Paper + Answer Key", "Question Paper", "Answer Key" — the work the
+ * examiner accepted, for the claim form's particulars. Rows from before
+ * willingness existed read as question-paper work.
+ */
+export function describeAcceptedWork(r: {
+	assignment_type?: string | null
+	qp_willing?: boolean | null
+	ak_willing?: boolean | null
+}): string {
+	const type = r.assignment_type || 'question_paper'
+	const qp = type !== 'answer_key' && r.qp_willing !== false
+	const ak = type !== 'question_paper' && r.ak_willing === true
+	if (qp && ak) return 'Question Paper + Answer Key'
+	if (ak) return 'Answer Key'
+	if (qp) return 'Question Paper'
+	return 'Declined'
 }
 
 export const SIGNATURE_BUCKET = 'examiner-signatures'
@@ -264,15 +372,83 @@ export async function ensureSignatureBucket(supabase: any): Promise<void> {
  * (institutions_id, order_ref_no) is the real guard; this only picks a free
  * number, and the caller retries once on a collision.
  */
+/**
+ * The reference prefix when the Order document has no letter_ref of its own:
+ * the college's short name in front of the office code — JKKNCET/COE/QPS.
+ */
+export function defaultLetterRef(institutionCode: string | null | undefined): string {
+	const short = getInstitutionHeader(institutionCode || undefined).short_name
+	return short ? `${short}/COE/QPS` : 'COE/QPS'
+}
+
 export async function nextOrderRef(
 	supabase: any,
 	institutionsId: string,
-	letterRef: string | null | undefined
+	letterRef: string | null | undefined,
+	institutionCode?: string | null
 ): Promise<string> {
-	const { count } = await supabase
+	const prefix = (letterRef || defaultLetterRef(institutionCode)).replace(/\/+$/, '')
+	// Single orders and combined orders draw from ONE running sequence, so no two
+	// letters of the institution ever carry the same number. The next number is
+	// one past the highest already issued under this prefix (a count would
+	// repeat a number after a deletion, or ignore combined letters).
+	const seqOf = (ref: unknown) => {
+		const r = String(ref || '')
+		if (!r.startsWith(`${prefix}/`)) return 0
+		const n = Number(r.slice(prefix.length + 1))
+		return Number.isFinite(n) ? n : 0
+	}
+	let max = 0
+	const { data: singles } = await supabase
 		.from('ia_qp_assignments')
-		.select('id', { count: 'exact', head: true })
+		.select('order_ref_no')
 		.eq('institutions_id', institutionsId)
 		.not('order_ref_no', 'is', null)
-	return buildOrderRef(letterRef, (count || 0) + 1)
+		.range(0, 9999)
+	for (const r of singles || []) max = Math.max(max, seqOf(r.order_ref_no))
+	// The combined column arrives with 20260911_qp_assignment_combined_ref; before
+	// that migration the query errors and is simply skipped.
+	const { data: combined, error } = await supabase
+		.from('ia_qp_assignments')
+		.select('combined_order_ref_no')
+		.eq('institutions_id', institutionsId)
+		.not('combined_order_ref_no', 'is', null)
+		.range(0, 9999)
+	if (!error) for (const r of combined || []) max = Math.max(max, seqOf(r.combined_order_ref_no))
+	// Numbers issued under an older prefix (before the short name was added)
+	// still count, so the sequence continues rather than restarting at 001.
+	if (max === 0) {
+		const { count } = await supabase
+			.from('ia_qp_assignments')
+			.select('id', { count: 'exact', head: true })
+			.eq('institutions_id', institutionsId)
+			.not('order_ref_no', 'is', null)
+		max = count || 0
+	}
+	return buildOrderRef(prefix, max + 1)
+}
+
+/**
+ * Several order numbers on one combined order, written once:
+ * "JKKNCET/COE/QPS/001, 004 & 006". Numbers under a different prefix are
+ * listed in full after it.
+ */
+export function compactOrderRefs(refs: string[]): string {
+	const clean = [...new Set(refs.filter(Boolean))]
+	if (clean.length <= 1) return clean[0] || ''
+	const groups = new Map<string, string[]>()
+	for (const r of clean) {
+		const i = r.lastIndexOf('/')
+		const prefix = i > 0 ? r.slice(0, i) : ''
+		const num = i > 0 ? r.slice(i + 1) : r
+		if (!groups.has(prefix)) groups.set(prefix, [])
+		groups.get(prefix)!.push(num)
+	}
+	return [...groups.entries()]
+		.map(([prefix, nums]) => {
+			const sorted = nums.sort()
+			const list = sorted.length > 1 ? `${sorted.slice(0, -1).join(', ')} & ${sorted.slice(-1)[0]}` : sorted[0]
+			return prefix ? `${prefix}/${list}` : list
+		})
+		.join('; ')
 }

@@ -41,11 +41,34 @@ function optionIsEmpty(o: any): boolean {
 	return plainText(o?.text_html) === '' && plainText(o?.text) === ''
 }
 
+export interface ValidatePaperOptions {
+	/**
+	 * Demand an answer key on every question. Set when the examiner's appointment
+	 * includes the answer key AND they accepted it — never merely because the
+	 * assignment type says "Both" (spec §6).
+	 */
+	requireAnswerKey?: boolean
+	/**
+	 * Skip the question-content rules. Set for an answer-key-only appointment,
+	 * where the questions are someone else's and read-only to this examiner.
+	 */
+	skipQuestions?: boolean
+}
+
+/** Does this question carry an answer key — text, or at least a figure? */
+export function hasAnswerKey(q: any): boolean {
+	return plainText(q?.answer_key) !== '' || !!q?.answer_key_image?.url
+}
+
 /**
  * Every reason this paper cannot be submitted yet, in question order.
  * Empty array = complete.
  */
-export function validatePaperComplete(questions: any[], _parts?: PaperPart[]): string[] {
+export function validatePaperComplete(
+	questions: any[],
+	_parts?: PaperPart[],
+	opts: ValidatePaperOptions = {}
+): string[] {
 	// `_parts` is no longer consulted: CO and K-level are required on every
 	// question regardless of what the template part says. The parameter is kept so
 	// the existing call sites (page, portal and both API routes) stay valid.
@@ -56,6 +79,12 @@ export function validatePaperComplete(questions: any[], _parts?: PaperPart[]): s
 		.sort((a: any, b: any) => (a?.display_order ?? 0) - (b?.display_order ?? 0))
 
 	for (const q of ordered) {
+		// The answer key belongs to the question as a whole, split or not.
+		if (opts.requireAnswerKey && !hasAnswerKey(q)) {
+			errors.push(`Q${entryLabel(q)}: enter the answer key`)
+		}
+		if (opts.skipQuestions) continue
+
 		const subs = readSubQuestions(q)
 
 		if (subs.length > 0) {

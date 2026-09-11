@@ -23,12 +23,21 @@ import {
 } from '@/components/ui/alert-dialog'
 import { useToast } from '@/hooks/common/use-toast'
 import {
-	Loader2, MoreHorizontal, RefreshCw, Search, FileText, Mail, CheckCircle2, Undo2, CalendarClock,
-	ShieldAlert, Ban, Download, ExternalLink,
+	Loader2, MoreHorizontal, RefreshCw, Search, FileText, Mail, CheckCircle2, CalendarClock,
+	ShieldAlert, Ban, Download, ExternalLink, Unlock, Lock, History as HistoryIcon, Eye, ChevronDown, BookOpen, KeyRound,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { formatRupees } from '@/lib/qp-portal/fees'
 import { formatIst, isoToIstLocal } from '@/lib/qp-portal/ist'
-import { QP_LOG_ACTION_LABELS } from '@/types/qp-examiner-assignment'
+import {
+	QP_ASSIGNMENT_TYPE_LABELS,
+	QP_LOG_ACTION_LABELS,
+	QP_VERSION_STATUS_LABELS,
+	readChecklistAnswers,
+	type QpAssignmentType,
+	type QpPaperVersion,
+	type QpClaimVersion,
+} from '@/types/qp-examiner-assignment'
 import { apiFetch, StatusBadge, WindowBadge, KindBadge, SearchableSelect, type AssignmentRow, type SessionOpt } from './shared'
 
 interface Props {
@@ -47,6 +56,51 @@ interface LogRow {
 	ip_address: string | null
 	user_agent: string | null
 	created_at: string
+	performed_by_email?: string | null
+	performed_by_role?: string | null
+	module?: string | null
+	old_value?: unknown
+	new_value?: unknown
+	version?: number | null
+}
+
+interface HistoryData {
+	paper_versions: QpPaperVersion[]
+	claim_versions: QpClaimVersion[]
+}
+
+const FINALISED_WARNING =
+	'This submission has already been finalized. Any reopening and subsequent modification will be permanently recorded in the audit log.'
+
+const VERSION_TONE: Record<string, string> = {
+	current: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+	reopened: 'bg-orange-50 text-orange-700 border-orange-200',
+	superseded: 'bg-slate-100 text-slate-600 border-slate-200',
+}
+
+/** Question label the way the portal prints it. */
+function qLabel(q: any): string {
+	return `Q${q?.question_number ?? ''}${q?.sub_label ? ` ${q.sub_label}` : ''}`
+}
+
+/** Flatten a question (and its sub-divisions) to comparable plain text. */
+function qText(q: any): string {
+	const subs = Array.isArray(q?.sub_questions) ? q.sub_questions : []
+	const stem = plainText(q?.question_text)
+	if (subs.length === 0) return stem
+	return [stem, ...subs.map((sb: any) => `(${sb.label}) ${plainText(sb.question_text)}`)].filter(Boolean).join(' ')
+}
+
+function ValueBlock({ label, value }: { label: string; value: unknown }) {
+	if (value === null || value === undefined) return null
+	return (
+		<div className="min-w-0">
+			<p className="text-[10px] uppercase tracking-wide text-muted-foreground">{label}</p>
+			<pre className="text-[11px] whitespace-pre-wrap break-words bg-slate-50 border rounded p-1.5 max-h-40 overflow-y-auto">
+				{typeof value === 'string' ? value : JSON.stringify(value, null, 1)}
+			</pre>
+		</div>
+	)
 }
 
 /** Plain-text preview of a question's rich HTML, for the review list. */
@@ -76,15 +130,67 @@ export function AssignmentsTab({ institutionsId, session, refreshKey, onChanged 
 	const [detailLoading, setDetailLoading] = useState(false)
 	const [logs, setLogs] = useState<LogRow[]>([])
 	const [logSummary, setLogSummary] = useState<any>(null)
+	const [history, setHistory] = useState<HistoryData>({ paper_versions: [], claim_versions: [] })
+	const [viewVersion, setViewVersion] = useState<number | null>(null)
 
 	// ── Actions ───────────────────────────────────────────────────────────
 	// The Return / Change-period sheets act on their own row, which may have been
 	// reached straight from the row menu without the detail sheet ever opening.
 	const [actionRow, setActionRow] = useState<AssignmentRow | null>(null)
 	const [busy, setBusy] = useState<string | null>(null)
-	const [returnOpen, setReturnOpen] = useState(false)
-	const [returnRemarks, setReturnRemarks] = useState('')
+	// Authorised reopen: one sheet for both the paper and the claim.
+	const [reopenOpen, setReopenOpen] = useState(false)
+	const [reopenTarget, setReopenTarget] = useState<'paper' | 'claim'>('paper')
+	const [reopenReason, setReopenReason] = useState('')
+	const [reopenRemarks, setReopenRemarks] = useState('')
 	const [returnNewTo, setReturnNewTo] = useState('')
+	const openReopen = (row: AssignmentRow | null, target: 'paper' | 'claim') => {
+		if (!row) return
+		setActionRow(row)
+		setReopenTarget(target)
+		setReopenReason('')
+		setReopenRemarks('')
+		setReturnNewTo('')
+		setReopenOpen(true)
+	}
+	const canReopenPaper = (r: AssignmentRow | null | undefined) => !!r && ['submitted', 'accepted'].includes(String(r.status))
+	const canReopenClaim = (r: AssignmentRow | null | undefined) =>
+		!!r && ['submitted', 'approved'].includes(String(r.claim_status || 'pending'))
+	// Change the appointment type (add / drop the answer key) — audited, e-mailed.
+	const [typeOpen, setTypeOpen] = useState(false)
+	const [typeNew, setTypeNew] = useState<QpAssignmentType>('both')
+	const [typeReason, setTypeReason] = useState('')
+	const [typeRemarks, setTypeRemarks] = useState('')
+	const [typeEmail, setTypeEmail] = useState(true)
+	const [typeNewTo, setTypeNewTo] = useState('')
+	const openChangeType = (row: AssignmentRow | null) => {
+		if (!row) return
+		setActionRow(row)
+		const cur = (row.assignment_type || 'question_paper') as QpAssignmentType
+		setTypeNew(cur === 'both' ? 'question_paper' : 'both')
+		setTypeReason('')
+		setTypeRemarks('')
+		setTypeEmail(true)
+		setTypeNewTo('')
+		setTypeOpen(true)
+	}
+	const canChangeType = (r: AssignmentRow | null | undefined) =>
+		!!r && r.status !== 'cancelled' && String(r.claim_status || 'pending') !== 'paid'
+	const everSubmitted = (r: AssignmentRow | null | undefined) =>
+		!!r &&
+		(['submitted', 'accepted'].includes(String(r.status)) ||
+			(!!r.submission_stage && r.submission_stage !== 'authoring') ||
+			!!r.submitted_at ||
+			(r.paper_version || 0) > 0)
+
+	/** Cancel exists only until the examiner has submitted the paper; after that the record stays. */
+	const canCancel = (r: AssignmentRow | null | undefined) =>
+		!!r &&
+		r.status !== 'cancelled' &&
+		!['submitted', 'accepted'].includes(String(r.status)) &&
+		(!r.submission_stage || r.submission_stage === 'authoring') &&
+		!r.submitted_at &&
+		!(r.paper_version && r.paper_version > 0)
 	const [windowOpen, setWindowOpen] = useState(false)
 	const [windowFrom, setWindowFrom] = useState('')
 	const [windowTo, setWindowTo] = useState('')
@@ -135,15 +241,19 @@ export function AssignmentsTab({ institutionsId, session, refreshKey, onChanged 
 		setDetail(null)
 		setLogs([])
 		setLogSummary(null)
+		setHistory({ paper_versions: [], claim_versions: [] })
+		setViewVersion(null)
 		setDetailLoading(true)
 		try {
-			const [d, l] = await Promise.all([
+			const [d, l, h] = await Promise.all([
 				apiFetch(`/api/pre-exam/qp-examiner-assignments/${row.id}`),
 				apiFetch(`/api/pre-exam/qp-examiner-assignments/${row.id}/logs`),
+				apiFetch(`/api/pre-exam/qp-examiner-assignments/${row.id}/history?questions=1`).catch(() => null),
 			])
 			setDetail(d)
 			setLogs(l.data || [])
 			setLogSummary(l.summary || null)
+			if (h) setHistory({ paper_versions: h.paper_versions || [], claim_versions: h.claim_versions || [] })
 			setWindowFrom(isoToIstLocal(d.valid_from))
 			setWindowTo(isoToIstLocal(d.valid_to))
 		} catch (e: any) {
@@ -164,8 +274,17 @@ export function AssignmentsTab({ institutionsId, session, refreshKey, onChanged 
 			await load()
 			onChanged()
 			if (openRow?.id === id) {
-				const refreshed = await apiFetch(`/api/pre-exam/qp-examiner-assignments/${id}`)
+				const [refreshed, l, h] = await Promise.all([
+					apiFetch(`/api/pre-exam/qp-examiner-assignments/${id}`),
+					apiFetch(`/api/pre-exam/qp-examiner-assignments/${id}/logs`).catch(() => null),
+					apiFetch(`/api/pre-exam/qp-examiner-assignments/${id}/history?questions=1`).catch(() => null),
+				])
 				setDetail(refreshed)
+				if (l) {
+					setLogs(l.data || [])
+					setLogSummary(l.summary || null)
+				}
+				if (h) setHistory({ paper_versions: h.paper_versions || [], claim_versions: h.claim_versions || [] })
 			}
 			return true
 		} catch (e: any) {
@@ -388,17 +507,22 @@ export function AssignmentsTab({ institutionsId, session, refreshKey, onChanged 
 																Accept the paper
 															</DropdownMenuItem>
 														)}
-														{r.status === 'submitted' && (
-															<DropdownMenuItem
-																onClick={() => {
-																	setActionRow(r)
-																	setReturnRemarks('')
-																	setReturnNewTo('')
-																	setReturnOpen(true)
-																}}
-															>
-																<Undo2 className="h-4 w-4 mr-2" />
-																Return for revision
+														{canReopenPaper(r) && (
+															<DropdownMenuItem onClick={() => openReopen(r, 'paper')}>
+																<Unlock className="h-4 w-4 mr-2" />
+																Reopen question paper
+															</DropdownMenuItem>
+														)}
+														{canReopenClaim(r) && (
+															<DropdownMenuItem onClick={() => openReopen(r, 'claim')}>
+																<Unlock className="h-4 w-4 mr-2" />
+																Reopen claim form
+															</DropdownMenuItem>
+														)}
+														{canChangeType(r) && (
+															<DropdownMenuItem onClick={() => openChangeType(r)}>
+																<KeyRound className="h-4 w-4 mr-2" />
+																Change assignment type
 															</DropdownMenuItem>
 														)}
 														<DropdownMenuItem
@@ -413,7 +537,7 @@ export function AssignmentsTab({ institutionsId, session, refreshKey, onChanged 
 															Change access period
 														</DropdownMenuItem>
 														<DropdownMenuSeparator />
-														{r.status !== 'cancelled' && (
+														{canCancel(r) && (
 															<DropdownMenuItem
 																className="text-rose-600"
 																onClick={() => setConfirmCancel(r)}
@@ -461,7 +585,15 @@ export function AssignmentsTab({ institutionsId, session, refreshKey, onChanged 
 								<TabsTrigger value="overview">Overview</TabsTrigger>
 								<TabsTrigger value="paper">Question paper</TabsTrigger>
 								<TabsTrigger value="checklist">Check list</TabsTrigger>
-								<TabsTrigger value="audit">Access log</TabsTrigger>
+								<TabsTrigger value="history">
+									History
+									{history.paper_versions.length + history.claim_versions.length > 0 && (
+										<span className="ml-1.5 rounded-full bg-slate-200 text-slate-700 text-[10px] px-1.5 leading-4">
+											{history.paper_versions.length + history.claim_versions.length}
+										</span>
+									)}
+								</TabsTrigger>
+								<TabsTrigger value="audit">Audit log</TabsTrigger>
 							</TabsList>
 
 							{/* Overview */}
@@ -506,8 +638,47 @@ export function AssignmentsTab({ institutionsId, session, refreshKey, onChanged 
 										<dd>{detail.accepted_at ? formatIst(detail.accepted_at) : '—'}</dd>
 									</div>
 									<div>
-										<dt className="text-xs text-muted-foreground">Remuneration</dt>
-										<dd>{detail.remuneration != null ? `₹ ${Number(detail.remuneration).toFixed(2)}` : '—'}</dd>
+										<dt className="text-xs text-muted-foreground">Assignment</dt>
+										<dd>
+											{QP_ASSIGNMENT_TYPE_LABELS[(detail.assignment_type as QpAssignmentType) || 'question_paper']}
+											<div className="text-xs text-muted-foreground">
+												{detail.assignment_type !== 'answer_key' && <>QP {formatRupees(detail.qp_fee)}</>}
+												{detail.assignment_type === 'both' && ' · '}
+												{detail.assignment_type !== 'question_paper' && <>Answer key {formatRupees(detail.ak_fee)}</>}
+											</div>
+										</dd>
+									</div>
+									<div>
+										<dt className="text-xs text-muted-foreground">Willingness</dt>
+										<dd>
+											{detail.willingness_confirmed_at ? (
+												<>
+													{detail.assignment_type !== 'answer_key' && (
+														<Badge variant="outline" className={cn('mr-1', detail.qp_willing !== false ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-rose-50 text-rose-700 border-rose-200')}>
+															QP {detail.qp_willing !== false ? 'accepted' : 'declined'}
+														</Badge>
+													)}
+													{detail.assignment_type !== 'question_paper' && (
+														<Badge variant="outline" className={detail.ak_willing ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-rose-50 text-rose-700 border-rose-200'}>
+															Answer key {detail.ak_willing ? 'accepted' : 'declined'}
+														</Badge>
+													)}
+													<div className="text-xs text-muted-foreground">{formatIst(detail.willingness_confirmed_at)}</div>
+												</>
+											) : (
+												<span className="text-muted-foreground">Not yet confirmed by the examiner</span>
+											)}
+										</dd>
+									</div>
+									<div>
+										<dt className="text-xs text-muted-foreground">Claim</dt>
+										<dd>
+											{detail.claim_amount != null ? (
+												formatRupees(detail.claim_amount)
+											) : (
+												<span className="text-muted-foreground">Potential {formatRupees(detail.remuneration)} — awaiting willingness</span>
+											)}
+										</dd>
 									</div>
 									<div>
 										<dt className="text-xs text-muted-foreground">Claim submitted</dt>
@@ -527,6 +698,17 @@ export function AssignmentsTab({ institutionsId, session, refreshKey, onChanged 
 										<Download className="h-4 w-4 mr-1.5" />
 										Order PDF
 									</Button>
+									{detail.course_id && (
+										<Button
+											variant="outline"
+											size="sm"
+											title="The syllabus this paper must be set within"
+											onClick={() => window.open(`/api/courses/${detail.course_id}/syllabus-pdf`, '_blank', 'noopener')}
+										>
+											<BookOpen className="h-4 w-4 mr-1.5" />
+											Syllabus
+										</Button>
+									)}
 									<Button
 										variant="outline"
 										size="sm"
@@ -537,31 +719,46 @@ export function AssignmentsTab({ institutionsId, session, refreshKey, onChanged 
 										{detail.order_email_sent_at ? 'Re-send order' : 'E-mail the order'}
 									</Button>
 									{detail.status === 'submitted' && (
-										<>
-											<Button
-												size="sm"
-												onClick={() => runAction(detail.id, { action: 'accept' }, 'Question paper accepted')}
-												disabled={busy === detail.id}
-											>
-												<CheckCircle2 className="h-4 w-4 mr-1.5" />
-												Accept
-											</Button>
-											<Button
-												variant="outline"
-												size="sm"
-												onClick={() => {
-													setActionRow(openRow)
-													setReturnRemarks('')
-													setReturnNewTo('')
-													setReturnOpen(true)
-												}}
-											>
-												<Undo2 className="h-4 w-4 mr-1.5" />
-												Return for revision
-											</Button>
-										</>
+										<Button
+											size="sm"
+											onClick={() => runAction(detail.id, { action: 'accept' }, 'Question paper accepted')}
+											disabled={busy === detail.id}
+										>
+											<CheckCircle2 className="h-4 w-4 mr-1.5" />
+											Accept
+										</Button>
+									)}
+									{canReopenPaper(detail) && (
+										<Button variant="outline" size="sm" onClick={() => openReopen(detail, 'paper')}>
+											<Unlock className="h-4 w-4 mr-1.5" />
+											Reopen question paper
+										</Button>
+									)}
+									{canReopenClaim(detail) && (
+										<Button variant="outline" size="sm" onClick={() => openReopen(detail, 'claim')}>
+											<Unlock className="h-4 w-4 mr-1.5" />
+											Reopen claim form
+										</Button>
+									)}
+									{canChangeType(detail) && (
+										<Button variant="outline" size="sm" onClick={() => openChangeType(detail)}>
+											<KeyRound className="h-4 w-4 mr-1.5" />
+											Change assignment type
+										</Button>
 									)}
 								</div>
+
+								{(['submitted', 'accepted'].includes(String(detail.status)) ||
+									['submitted', 'approved', 'paid'].includes(String(detail.claim_status || ''))) && (
+									<div className="rounded-md border border-slate-300 bg-slate-50 p-3 text-xs text-slate-800 flex items-start gap-2">
+										<Lock className="h-3.5 w-3.5 shrink-0 mt-px" />
+										<span>
+											{FINALISED_WARNING}
+											{detail.paper_version > 0 && <> Paper version V{detail.paper_version}.</>}
+											{detail.claim_version > 0 && <> Claim version V{detail.claim_version}.</>}
+										</span>
+									</div>
+								)}
 							</TabsContent>
 
 							{/* Question paper */}
@@ -631,20 +828,26 @@ export function AssignmentsTab({ institutionsId, session, refreshKey, onChanged 
 							<TabsContent value="checklist" className="pt-4 space-y-4">
 								{detail.checklist && Object.keys(detail.checklist).length > 0 ? (
 									<div className="rounded-md border divide-y">
-										{Object.entries(detail.checklist as Record<string, string>).map(([k, v]) => (
-											<div key={k} className="px-3 py-2 flex items-center justify-between gap-3 text-sm">
-												<span className="text-muted-foreground truncate">{k}</span>
-												<Badge
-													variant="outline"
-													className={cn(
-														'shrink-0',
-														String(v).toUpperCase() === 'YES'
-															? 'bg-emerald-50 text-emerald-700 border-emerald-200'
-															: 'bg-amber-50 text-amber-700 border-amber-200'
-													)}
-												>
-													{String(v)}
-												</Badge>
+										{Object.entries(readChecklistAnswers(detail.checklist)).map(([k, a], i) => (
+											<div key={k} className="px-3 py-2 text-sm">
+												<div className="flex items-start justify-between gap-3">
+													<span className="text-muted-foreground">
+														<span className="mr-1.5">{i + 1}.</span>
+														{a.question}
+													</span>
+													<Badge
+														variant="outline"
+														className={cn(
+															'shrink-0',
+															a.answer === 'YES'
+																? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+																: 'bg-amber-50 text-amber-700 border-amber-200'
+														)}
+													>
+														{a.answer}
+													</Badge>
+												</div>
+												{a.detail && <p className="mt-1 pl-5 text-xs text-foreground">{a.detail}</p>}
 											</div>
 										))}
 									</div>
@@ -657,6 +860,154 @@ export function AssignmentsTab({ institutionsId, session, refreshKey, onChanged 
 								<div className="text-sm">
 									<span className="text-muted-foreground">Declaration accepted: </span>
 									{detail.declaration_accepted_at ? formatIst(detail.declaration_accepted_at) : 'Not yet'}
+								</div>
+							</TabsContent>
+
+							{/* Version history */}
+							<TabsContent value="history" className="pt-4 space-y-5">
+								<p className="text-xs text-muted-foreground">
+									Every submission is kept as a numbered version. Nothing is overwritten: a reopened
+									version stays on record next to the resubmission that superseded it.
+								</p>
+
+								<div>
+									<h3 className="text-sm font-semibold flex items-center gap-1.5 mb-2">
+										<HistoryIcon className="h-4 w-4" />
+										Question paper versions
+									</h3>
+									{history.paper_versions.length === 0 ? (
+										<p className="text-sm text-muted-foreground border rounded-md p-4 text-center">
+											No submission has been made yet.
+										</p>
+									) : (
+										<div className="rounded-md border divide-y">
+											{history.paper_versions.map(v => {
+												const prev = history.paper_versions.find(x => x.version === v.version - 1)
+												const prevById = new Map<string, any>((prev?.questions || []).map((q: any) => [String(q.id), q]))
+												const open = viewVersion === v.version
+												const changed = (v.questions || []).filter(
+													(q: any) => prev && prevById.has(String(q.id)) && qText(prevById.get(String(q.id))) !== qText(q)
+												).length
+												return (
+													<div key={v.id} className="text-sm">
+														<div className="px-3 py-2.5 flex flex-wrap items-start justify-between gap-2">
+															<div className="min-w-0">
+																<div className="flex items-center gap-2">
+																	<span className="font-semibold">V{v.version}</span>
+																	<Badge variant="outline" className={cn('text-[10px]', VERSION_TONE[v.status])}>
+																		{QP_VERSION_STATUS_LABELS[v.status] || v.status}
+																	</Badge>
+																	{prev && (
+																		<span className="text-[11px] text-muted-foreground">
+																			{changed} question{changed === 1 ? '' : 's'} changed from V{prev.version}
+																		</span>
+																	)}
+																</div>
+																<p className="text-xs text-muted-foreground mt-0.5">
+																	Submitted {formatIst(v.submitted_at)} by the examiner
+																	{v.submitted_ip ? ` · ${v.submitted_ip}` : ''} · {v.question_done ?? '—'} / {v.question_total ?? '—'} questions
+																</p>
+																{v.reopened_at && (
+																	<p className="text-xs text-orange-700 mt-0.5">
+																		Reopened {formatIst(v.reopened_at)} by {v.reopened_by_email || 'CoE'} — {v.reopen_reason}
+																		{v.reopen_remarks ? ` (${v.reopen_remarks})` : ''}
+																	</p>
+																)}
+															</div>
+															<Button
+																variant="ghost"
+																size="sm"
+																className="h-7 text-xs"
+																onClick={() => setViewVersion(open ? null : v.version)}
+															>
+																<Eye className="h-3.5 w-3.5 mr-1" />
+																{open ? 'Hide' : 'View questions'}
+																<ChevronDown className={cn('h-3.5 w-3.5 ml-1 transition-transform', open && 'rotate-180')} />
+															</Button>
+														</div>
+														{open && (
+															<div className="border-t bg-slate-50/60 px-3 py-2 space-y-1.5 max-h-[360px] overflow-y-auto">
+																{(v.questions || [])
+																	.slice()
+																	.sort((a: any, b: any) => (a?.display_order ?? 0) - (b?.display_order ?? 0))
+																	.map((q: any) => {
+																		const before = prevById.get(String(q.id))
+																		const isChanged = !!before && qText(before) !== qText(q)
+																		return (
+																			<div
+																				key={q.id}
+																				className={cn(
+																					'rounded border bg-white px-2.5 py-1.5 text-xs',
+																					isChanged && 'border-amber-300 bg-amber-50/60'
+																				)}
+																			>
+																				<div className="flex items-start gap-2">
+																					<span className="font-semibold shrink-0">{qLabel(q)}</span>
+																					<span className="flex-1 break-words">{qText(q) || <em className="text-muted-foreground">blank</em>}</span>
+																					<span className="text-[10px] text-muted-foreground shrink-0">
+																						{[q.marks != null ? `${q.marks}m` : null, q.co_code, q.k_level].filter(Boolean).join(' · ')}
+																					</span>
+																				</div>
+																				{isChanged && (
+																					<p className="mt-1 text-[11px] text-amber-800">
+																						<span className="font-medium">V{prev!.version}:</span> {qText(before)}
+																					</p>
+																				)}
+																			</div>
+																		)
+																	})}
+															</div>
+														)}
+													</div>
+												)
+											})}
+										</div>
+									)}
+								</div>
+
+								<div>
+									<h3 className="text-sm font-semibold flex items-center gap-1.5 mb-2">
+										<HistoryIcon className="h-4 w-4" />
+										Claim form versions
+									</h3>
+									{history.claim_versions.length === 0 ? (
+										<p className="text-sm text-muted-foreground border rounded-md p-4 text-center">
+											No claim has been submitted yet.
+										</p>
+									) : (
+										<div className="rounded-md border divide-y">
+											{history.claim_versions.map(v => {
+												const d = (v.data || {}) as Record<string, any>
+												return (
+													<div key={v.id} className="px-3 py-2.5 text-sm">
+														<div className="flex items-center gap-2">
+															<span className="font-semibold">V{v.version}</span>
+															<Badge variant="outline" className={cn('text-[10px]', VERSION_TONE[v.status])}>
+																{QP_VERSION_STATUS_LABELS[v.status] || v.status}
+															</Badge>
+														</div>
+														<p className="text-xs text-muted-foreground mt-0.5">
+															Submitted {formatIst(v.submitted_at)} by the examiner{v.submitted_ip ? ` · ${v.submitted_ip}` : ''}
+														</p>
+														<dl className="mt-1.5 grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-1 text-xs">
+															<div><dt className="text-muted-foreground">Account holder</dt><dd>{d.account_holder || '—'}</dd></div>
+															<div><dt className="text-muted-foreground">Bank</dt><dd>{d.bank_name || '—'}</dd></div>
+															<div><dt className="text-muted-foreground">Branch</dt><dd>{d.branch || '—'}</dd></div>
+															<div><dt className="text-muted-foreground">Account number</dt><dd>{d.account_number || '—'}</dd></div>
+															<div><dt className="text-muted-foreground">IFSC</dt><dd>{d.ifsc || '—'}</dd></div>
+															<div><dt className="text-muted-foreground">Rate</dt><dd>{d.rate != null ? `₹ ${Number(d.rate).toFixed(2)}` : '—'}</dd></div>
+														</dl>
+														{v.reopened_at && (
+															<p className="text-xs text-orange-700 mt-1.5">
+																Reopened {formatIst(v.reopened_at)} by {v.reopened_by_email || 'CoE'} — {v.reopen_reason}
+																{v.reopen_remarks ? ` (${v.reopen_remarks})` : ''}
+															</p>
+														)}
+													</div>
+												)
+											})}
+										</div>
+									)}
 								</div>
 							</TabsContent>
 
@@ -685,24 +1036,50 @@ export function AssignmentsTab({ institutionsId, session, refreshKey, onChanged 
 											No activity recorded yet.
 										</div>
 									)}
-									{logs.map(l => (
-										<div key={l.id} className="px-3 py-2 text-sm">
-											<div className="flex items-center justify-between gap-2">
-												<span className={cn('font-medium', l.denied && 'text-rose-600')}>
-													{l.denied && <ShieldAlert className="inline h-3.5 w-3.5 mr-1 -mt-0.5" />}
-													{QP_LOG_ACTION_LABELS[l.action] || l.action}
-												</span>
-												<span className="text-xs text-muted-foreground shrink-0">
-													{formatIst(l.created_at)}
-												</span>
+									{logs.map(l => {
+										const hasValues = l.old_value != null || l.new_value != null
+										return (
+											<div key={l.id} className="px-3 py-2 text-sm">
+												<div className="flex items-center justify-between gap-2">
+													<span className={cn('font-medium flex items-center gap-1.5 flex-wrap', l.denied && 'text-rose-600')}>
+														{l.denied && <ShieldAlert className="inline h-3.5 w-3.5 -mt-0.5" />}
+														{QP_LOG_ACTION_LABELS[l.action] || l.action}
+														{l.version != null && (
+															<Badge variant="outline" className="text-[10px] px-1 py-0">V{l.version}</Badge>
+														)}
+														{l.module && (
+															<span className="text-[10px] uppercase tracking-wide text-muted-foreground">{l.module}</span>
+														)}
+													</span>
+													<span className="text-xs text-muted-foreground shrink-0">
+														{formatIst(l.created_at)}
+													</span>
+												</div>
+												<div className="text-[11px] text-muted-foreground mt-0.5">
+													{l.performed_by_role === 'coe' ? 'CoE' : l.performed_by_role === 'system' ? 'System' : 'Examiner'}
+													{l.performed_by_email ? ` · ${l.performed_by_email}` : ''}
+													{l.ip_address ? ` · ${l.ip_address}` : ''}
+													{l.user_agent ? ` · ${l.user_agent.slice(0, 60)}` : ''}
+												</div>
+												{l.reason && (
+													<div className={cn('text-xs mt-0.5', l.denied ? 'text-rose-600' : 'text-orange-700')}>
+														Reason: {l.reason}
+													</div>
+												)}
+												{hasValues && (
+													<details className="mt-1">
+														<summary className="text-[11px] text-muted-foreground cursor-pointer select-none">
+															Old / new values
+														</summary>
+														<div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-1">
+															<ValueBlock label="Old value" value={l.old_value} />
+															<ValueBlock label="New value" value={l.new_value} />
+														</div>
+													</details>
+												)}
 											</div>
-											{l.reason && <div className="text-xs text-rose-600 mt-0.5">{l.reason}</div>}
-											<div className="text-[11px] text-muted-foreground mt-0.5">
-												{l.ip_address}
-												{l.user_agent ? ` · ${l.user_agent.slice(0, 60)}` : ''}
-											</div>
-										</div>
-									))}
+										)
+									})}
 								</div>
 							</TabsContent>
 						</Tabs>
@@ -710,55 +1087,217 @@ export function AssignmentsTab({ institutionsId, session, refreshKey, onChanged 
 				</SheetContent>
 			</Sheet>
 
-			{/* ── Return for revision ───────────────────────────────────────── */}
-			<Sheet open={returnOpen} onOpenChange={o => { setReturnOpen(o); if (!o) setActionRow(null) }}>
+			{/* ── Authorised reopen (question paper / claim form) ────────────── */}
+			<Sheet open={reopenOpen} onOpenChange={o => { setReopenOpen(o); if (!o) setActionRow(null) }}>
 				<SheetContent className="w-full sm:max-w-lg">
 					<SheetHeader>
-						<SheetTitle>Return the question paper for revision</SheetTitle>
+						<SheetTitle className="flex items-center gap-2">
+							<Unlock className="h-4 w-4" />
+							{reopenTarget === 'paper' ? 'Reopen the question paper' : 'Reopen the claim form'}
+						</SheetTitle>
 					</SheetHeader>
 					<div className="space-y-4 py-4">
+						<div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900 flex items-start gap-2">
+							<ShieldAlert className="h-4 w-4 shrink-0 mt-px" />
+							<span>
+								{FINALISED_WARNING} Your identity, the date and time, and the reason below are written to the
+								audit log and shown to the examiner.
+								{reopenTarget === 'paper' && actionRow?.paper_version
+									? ` Version V${actionRow.paper_version} stays on record; the resubmission becomes V${actionRow.paper_version + 1}.`
+									: ''}
+								{reopenTarget === 'claim' && actionRow?.claim_version
+									? ` Version V${actionRow.claim_version} stays on record; the resubmission becomes V${actionRow.claim_version + 1}.`
+									: ''}
+							</span>
+						</div>
 						<p className="text-sm text-muted-foreground">
-							The examiner will see these remarks in the portal and can edit the paper again. If the
-							access period has already closed, set a new closing date so they can actually work on it.
+							{reopenTarget === 'paper'
+								? 'The paper goes back to the examiner for editing. The check list and signature are collected again when they resubmit. Set a new closing date if the access period has already ended.'
+								: 'The claim goes back to the examiner to correct the bank details and submit again. A paid claim cannot be reopened.'}
 						</p>
 						<div>
-							<Label htmlFor="return_remarks" className="text-xs">What must be revised</Label>
+							<Label htmlFor="reopen_reason" className="text-xs">
+								Reason for reopening <span className="text-rose-600">*</span>
+							</Label>
 							<Textarea
-								id="return_remarks"
-								value={returnRemarks}
-								onChange={e => setReturnRemarks(e.target.value)}
-								rows={4}
-								placeholder="e.g. Part B question 12 is outside the syllabus; CO tagging on Part A is incomplete."
+								id="reopen_reason"
+								value={reopenReason}
+								onChange={e => setReopenReason(e.target.value)}
+								rows={3}
+								placeholder={
+									reopenTarget === 'paper'
+										? 'e.g. Q8 is outside the syllabus — replace with a question from Unit III.'
+										: 'e.g. IFSC entered does not match the bank branch.'
+								}
 								className="mt-1"
 							/>
 						</div>
 						<div>
-							<Label htmlFor="return_to" className="text-xs">New closing date &amp; time (IST) — optional</Label>
-							<Input
-								id="return_to"
-								type="datetime-local"
-								value={returnNewTo}
-								onChange={e => setReturnNewTo(e.target.value)}
-								className="h-9 mt-1"
+							<Label htmlFor="reopen_remarks" className="text-xs">Remarks — optional</Label>
+							<Textarea
+								id="reopen_remarks"
+								value={reopenRemarks}
+								onChange={e => setReopenRemarks(e.target.value)}
+								rows={2}
+								placeholder="Anything else the examiner should know."
+								className="mt-1"
 							/>
 						</div>
+						{reopenTarget === 'paper' && (
+							<div>
+								<Label htmlFor="return_to" className="text-xs">New closing date &amp; time (IST) — optional</Label>
+								<Input
+									id="return_to"
+									type="datetime-local"
+									value={returnNewTo}
+									onChange={e => setReturnNewTo(e.target.value)}
+									className="h-9 mt-1"
+								/>
+							</div>
+						)}
 					</div>
 					<div className="flex justify-end gap-2 border-t pt-4">
-						<Button variant="outline" onClick={() => setReturnOpen(false)}>Cancel</Button>
+						<Button variant="outline" onClick={() => setReopenOpen(false)}>Cancel</Button>
 						<Button
 							onClick={async () => {
 								if (!actionRow) return
 								const ok = await runAction(
 									actionRow.id,
-									{ action: 'return', remarks: returnRemarks, valid_to: returnNewTo || undefined },
-									'Returned to the examiner'
+									reopenTarget === 'paper'
+										? { action: 'reopen_paper', reason: reopenReason, remarks: reopenRemarks, valid_to: returnNewTo || undefined }
+										: { action: 'reopen_claim', reason: reopenReason, remarks: reopenRemarks },
+									reopenTarget === 'paper' ? 'Question paper reopened' : 'Claim form reopened'
 								)
-								if (ok) setReturnOpen(false)
+								if (ok) setReopenOpen(false)
 							}}
-							disabled={!returnRemarks.trim() || busy === actionRow?.id}
+							disabled={!reopenReason.trim() || busy === actionRow?.id}
 						>
 							{busy === actionRow?.id && <Loader2 className="h-4 w-4 mr-1.5 animate-spin" />}
-							Return for revision
+							<Unlock className="h-4 w-4 mr-1.5" />
+							{reopenTarget === 'paper' ? 'Reopen question paper' : 'Reopen claim form'}
+						</Button>
+					</div>
+				</SheetContent>
+			</Sheet>
+
+			{/* ── Change assignment type ───────────────────────────────────────── */}
+			<Sheet open={typeOpen} onOpenChange={o => { setTypeOpen(o); if (!o) setActionRow(null) }}>
+				<SheetContent className="w-full sm:max-w-lg">
+					<SheetHeader>
+						<SheetTitle className="flex items-center gap-2">
+							<KeyRound className="h-4 w-4" />
+							Change the assignment type
+						</SheetTitle>
+					</SheetHeader>
+					{actionRow && (() => {
+						const cur = (actionRow.assignment_type || 'question_paper') as QpAssignmentType
+						const qpFee = Number(actionRow.qp_fee ?? 0)
+						const akFee = Number(actionRow.ak_fee ?? 0)
+						const amount = (t: QpAssignmentType) => (t === 'question_paper' ? qpFee : t === 'answer_key' ? akFee : qpFee + akFee)
+						const submitted = everSubmitted(actionRow)
+						const claimApplied = ['submitted', 'approved'].includes(String(actionRow.claim_status || 'pending'))
+						const addsAk = typeNew !== 'question_paper' && cur === 'question_paper'
+						const removes =
+							(cur !== 'question_paper' && typeNew === 'question_paper') ||
+							(cur !== 'answer_key' && typeNew === 'answer_key')
+						return (
+							<div className="space-y-4 py-4">
+								<p className="text-sm text-muted-foreground">
+									Currently <span className="font-medium text-foreground">{QP_ASSIGNMENT_TYPE_LABELS[cur]}</span>.
+									Fees come from Fee Details; the order is rebuilt and, if ticked, e-mailed again.
+								</p>
+								<div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+									{(['question_paper', 'answer_key', 'both'] as QpAssignmentType[]).map(t => {
+										const on = typeNew === t
+										const isCurrent = t === cur
+										return (
+											<button
+												key={t}
+												type="button"
+												disabled={isCurrent}
+												onClick={() => setTypeNew(t)}
+												className={cn(
+													'rounded-md border p-3 text-left transition-colors',
+													isCurrent ? 'opacity-50 cursor-not-allowed' : 'hover:bg-muted/40',
+													on && !isCurrent ? 'border-emerald-500 bg-emerald-50/50' : 'border-slate-200'
+												)}
+											>
+												<div className="text-sm font-medium">{QP_ASSIGNMENT_TYPE_LABELS[t]}</div>
+												<div className="text-xs text-muted-foreground">{isCurrent ? 'current' : `₹${amount(t).toLocaleString('en-IN')}`}</div>
+											</button>
+										)
+									})}
+								</div>
+
+								<div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900 space-y-1">
+									<p className="font-medium">What this does</p>
+									{addsAk && submitted && (
+										<p>
+											The question paper is already submitted. The appointment is reopened for the answer key only: the
+											examiner confirms the answer key, enters it under each question and submits again. The questions stay
+											locked. Version V{actionRow.paper_version || 1} stays on record.
+										</p>
+									)}
+									{addsAk && !submitted && <p>The examiner will be asked to confirm the answer key on the portal before entering the paper.</p>}
+									{claimApplied && <p>The claim has already been applied: it is reopened so the examiner can resubmit it with the added fee.</p>}
+									{removes && submitted && <p className="text-rose-700">A component that has already been submitted cannot be removed; the server will refuse it.</p>}
+									<p>The change, your identity, the time and the reason are written to the audit log.</p>
+								</div>
+
+								<div>
+									<Label htmlFor="type_reason" className="text-xs">
+										Reason <span className="text-rose-600">*</span>
+									</Label>
+									<Textarea
+										id="type_reason"
+										value={typeReason}
+										onChange={e => setTypeReason(e.target.value)}
+										rows={3}
+										placeholder="e.g. Answer key required for this course as per the Board of Studies decision."
+										className="mt-1"
+									/>
+								</div>
+								<div>
+									<Label htmlFor="type_remarks" className="text-xs">Remarks for the examiner — optional</Label>
+									<Textarea id="type_remarks" value={typeRemarks} onChange={e => setTypeRemarks(e.target.value)} rows={2} className="mt-1" />
+								</div>
+								{addsAk && submitted && (
+									<div>
+										<Label htmlFor="type_to" className="text-xs">New closing date &amp; time (IST) — needed if the period has closed</Label>
+										<Input id="type_to" type="datetime-local" value={typeNewTo} onChange={e => setTypeNewTo(e.target.value)} className="h-9 mt-1" />
+									</div>
+								)}
+								<label className="flex items-center gap-2 text-sm cursor-pointer">
+									<input type="checkbox" checked={typeEmail} onChange={e => setTypeEmail(e.target.checked)} />
+									E-mail the updated order to the examiner now
+								</label>
+							</div>
+						)
+					})()}
+					<div className="flex justify-end gap-2 border-t pt-4">
+						<Button variant="outline" onClick={() => setTypeOpen(false)}>Cancel</Button>
+						<Button
+							onClick={async () => {
+								if (!actionRow) return
+								const ok = await runAction(
+									actionRow.id,
+									{
+										action: 'change_type',
+										assignment_type: typeNew,
+										reason: typeReason,
+										remarks: typeRemarks,
+										send_email: typeEmail,
+										valid_to: typeNewTo || undefined,
+									},
+									'Assignment type changed'
+								)
+								if (ok) setTypeOpen(false)
+							}}
+							disabled={!typeReason.trim() || busy === actionRow?.id || typeNew === ((actionRow?.assignment_type || 'question_paper') as QpAssignmentType)}
+						>
+							{busy === actionRow?.id && <Loader2 className="h-4 w-4 mr-1.5 animate-spin" />}
+							<KeyRound className="h-4 w-4 mr-1.5" />
+							Change to {QP_ASSIGNMENT_TYPE_LABELS[typeNew]}
 						</Button>
 					</div>
 				</SheetContent>
@@ -794,10 +1333,10 @@ export function AssignmentsTab({ institutionsId, session, refreshKey, onChanged 
 								className="h-9 mt-1"
 							/>
 						</div>
-						{actionRow?.status === 'submitted' && (
-							<div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
-								This paper has already been submitted. Reopening the window will also put it back into
-								the examiner&apos;s hands for editing.
+						{['submitted', 'accepted'].includes(String(actionRow?.status)) && (
+							<div className="rounded-md border border-slate-300 bg-slate-50 p-3 text-xs text-slate-800">
+								This paper has already been finalised. Changing the period does not unlock it — use
+								<span className="font-medium"> Reopen question paper</span>, which records the reason.
 							</div>
 						)}
 					</div>
@@ -808,11 +1347,7 @@ export function AssignmentsTab({ institutionsId, session, refreshKey, onChanged 
 								if (!actionRow) return
 								const ok = await runAction(
 									actionRow.id,
-									{
-										action: actionRow.status === 'submitted' ? 'reopen' : 'window',
-										valid_from: windowFrom,
-										valid_to: windowTo,
-									},
+									{ action: 'window', valid_from: windowFrom, valid_to: windowTo },
 									'Access period updated'
 								)
 								if (ok) setWindowOpen(false)

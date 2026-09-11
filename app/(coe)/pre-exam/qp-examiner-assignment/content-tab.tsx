@@ -144,6 +144,16 @@ export function ContentTab({ institutionsId, session }: Props) {
 
 	const setClause = (id: string, text: string) =>
 		patch({ body: doc.body.map(c => (c.id === id ? { ...c, text } : c)) })
+	const setClauseDetail = (id: string, detail_label: string) =>
+		patch({
+			body: doc.body.map(c => {
+				if (c.id !== id) return c
+				const next = { ...c }
+				if (detail_label.trim()) next.detail_label = detail_label
+				else delete next.detail_label
+				return next
+			}),
+		})
 	const addClause = () => patch({ body: [...doc.body, { id: nextClauseId(), text: '' }] })
 	const removeClause = (id: string) => patch({ body: doc.body.filter(c => c.id !== id) })
 	const moveClause = (id: string, delta: number) => {
@@ -452,12 +462,21 @@ export function ContentTab({ institutionsId, session }: Props) {
 												</button>
 											</div>
 											<span className="pt-2 text-xs text-muted-foreground w-5 text-right">{i + 1}.</span>
-											<Textarea
-												value={c.text}
-												onChange={e => setClause(c.id, e.target.value)}
-												rows={2}
-												className="flex-1"
-											/>
+											<div className="flex-1 space-y-1.5">
+												<Textarea
+													value={c.text}
+													onChange={e => setClause(c.id, e.target.value)}
+													rows={2}
+												/>
+												{active === 'checklist' && (
+													<Input
+														value={c.detail_label || ''}
+														onChange={e => setClauseDetail(c.id, e.target.value)}
+														placeholder="Optional — ask for a detail when answered YES, e.g. “If Yes, name of the book”"
+														className="h-8 text-xs"
+													/>
+												)}
+											</div>
 											<Button
 												variant="ghost"
 												size="icon"

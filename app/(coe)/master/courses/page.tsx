@@ -71,6 +71,7 @@ import {
   MoreHorizontal,
   Loader2,
   CheckCircle,
+  BookOpen,
 } from 'lucide-react'
 import { Switch } from '@/components/ui/switch'
 import { Badge } from '@/components/ui/badge'
@@ -1981,6 +1982,12 @@ export default function CoursesPage() {
                                     <DropdownMenuItem onClick={() => openEdit(course)}>
                                       <Eye className="h-3.5 w-3.5 mr-2" />
                                       View / Edit
+                                    </DropdownMenuItem>
+                                    <DropdownMenuItem
+                                      onClick={() => window.open(`/api/courses/${course.id}/syllabus-pdf`, '_blank', 'noopener')}
+                                    >
+                                      <BookOpen className="h-3.5 w-3.5 mr-2" />
+                                      Syllabus
                                     </DropdownMenuItem>
                                     <DropdownMenuSeparator />
                                     <DropdownMenuItem

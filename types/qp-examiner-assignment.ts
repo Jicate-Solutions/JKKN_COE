@@ -22,6 +22,36 @@ export type QpAssignmentStatus =
 
 export type QpExaminerKind = 'internal' | 'external'
 
+// ============================================================================
+// ASSIGNMENT TYPE + WILLINGNESS
+// ============================================================================
+
+/**
+ * What the examiner is appointed to do. Each component carries its own fee from
+ * exam_fee_master (see lib/qp-portal/fees.ts), and the examiner confirms in the
+ * portal which components they are willing to do before authoring — the claim
+ * is the sum of the ACCEPTED components, never the type's total by itself.
+ */
+export type QpAssignmentType = 'question_paper' | 'answer_key' | 'both'
+
+export const QP_ASSIGNMENT_TYPE_LABELS: Record<QpAssignmentType, string> = {
+	question_paper: 'Question Paper Setting',
+	answer_key: 'Answer Key',
+	both: 'Question Paper Setting + Answer Key',
+}
+
+export const QP_ASSIGNMENT_TYPES: QpAssignmentType[] = ['question_paper', 'answer_key', 'both']
+
+/** Accepts "Both", "question paper", "QP+AK" … from a spreadsheet cell. */
+export function parseAssignmentType(raw: unknown): QpAssignmentType | null {
+	const v = String(raw ?? '').trim().toLowerCase().replace(/[\s_\-+&/]+/g, ' ')
+	if (!v) return null
+	if (v === 'both' || v.includes('both') || (v.includes('question') && v.includes('answer'))) return 'both'
+	if (v.includes('answer') || v === 'ak') return 'answer_key'
+	if (v.includes('question') || v === 'qp' || v.includes('paper')) return 'question_paper'
+	return null
+}
+
 export type QpPortalDocType =
 	| 'instructions'
 	| 'checklist'
@@ -157,7 +187,20 @@ export interface QpAssignment {
 	valid_to: string
 
 	status: QpAssignmentStatus
+	/** The potential claim as printed on the order — never changes after issue. */
 	remuneration?: number | null
+
+	// ── Assignment type, fees and willingness (20260911) ──
+	assignment_type: QpAssignmentType
+	/** Fees resolved from exam_fee_master at appointment; null = none configured. */
+	qp_fee?: number | null
+	ak_fee?: number | null
+	/** Confirmed by the examiner in the portal. null = not yet confirmed. */
+	qp_willing?: boolean | null
+	ak_willing?: boolean | null
+	willingness_confirmed_at?: string | null
+	/** Sum of the accepted components' fees — what the claim form pays. */
+	claim_amount?: number | null
 
 	/** The setter's own check-list answers, keyed by clause id. */
 	checklist?: Record<string, string> | null
@@ -187,9 +230,30 @@ export interface QpAssignment {
 	payment_reference?: string | null
 	payment_amount?: number | null
 
+	// ── Type change + reopen scope (20260911) ──
+	/** While returned: 'full' = questions editable, 'answer_key' = only the answer key. */
+	reopen_scope?: 'full' | 'answer_key' | null
+	type_changed_at?: string | null
+	type_changed_by?: string | null
+	type_change_reason?: string | null
+
+	// ── Versions + authorised reopen (20260910) ──
+	paper_version?: number
+	claim_version?: number
+	reopened_at?: string | null
+	reopened_by?: string | null
+	reopen_reason?: string | null
+	claim_reopened_at?: string | null
+	claim_reopened_by?: string | null
+	claim_reopen_reason?: string | null
+	claim_reopen_remarks?: string | null
+
 	order_ref_no?: string | null
 	order_issued_at?: string | null
 	order_email_sent_at?: string | null
+	/** One reference for the combined order copy covering all of this examiner's papers in the session. */
+	combined_order_ref_no?: string | null
+	combined_order_issued_at?: string | null
 
 	submitted_at?: string | null
 	accepted_at?: string | null
@@ -246,8 +310,20 @@ export interface QpAssignmentCreateInput {
 	staff?: QpInternalStaffInput
 	valid_from: string
 	valid_to: string
+	/**
+	 * Manual override of the potential claim printed on the order. Normally
+	 * omitted: the server resolves the fees from exam_fee_master by type.
+	 */
 	remuneration?: number | null
 	notes?: string | null
+	/** Defaults to 'question_paper' when omitted. */
+	assignment_type?: QpAssignmentType
+	/**
+	 * Willingness recorded up front (e.g. from a signed paper form uploaded in
+	 * bulk). Omitted = the examiner confirms in the portal.
+	 */
+	qp_willing?: boolean | null
+	ak_willing?: boolean | null
 }
 
 /** MyJKKN staff details mirrored into `examiners` when assigning internally. */
@@ -294,6 +370,46 @@ export interface QpContentClause {
 	id: string
 	text: string
 	note?: string
+	/**
+	 * Check list only. When set, a YES answer must be accompanied by a short
+	 * free-text detail, and this is the prompt for it — e.g. "Name of the
+	 * table / chart required".
+	 */
+	detail_label?: string
+}
+
+/** One answered check list item, stored on ia_qp_assignments.checklist. */
+export interface QpChecklistAnswer {
+	/** The clause text at the time of answering, so the record outlives edits to the list. */
+	question: string
+	answer: 'YES' | 'NO'
+	detail?: string | null
+}
+
+/**
+ * Read a stored check list, accepting both the current shape
+ * ({ id: { question, answer, detail } }) and the original ({ id: 'YES' }).
+ */
+export function readChecklistAnswers(raw: unknown): Record<string, QpChecklistAnswer> {
+	const out: Record<string, QpChecklistAnswer> = {}
+	if (!raw || typeof raw !== 'object') return out
+	for (const [id, v] of Object.entries(raw as Record<string, unknown>)) {
+		if (typeof v === 'string') {
+			const a = v.toUpperCase()
+			if (a === 'YES' || a === 'NO') out[id] = { question: id, answer: a }
+		} else if (v && typeof v === 'object') {
+			const o = v as Record<string, unknown>
+			const a = String(o.answer || '').toUpperCase()
+			if (a === 'YES' || a === 'NO') {
+				out[id] = {
+					question: typeof o.question === 'string' ? o.question : id,
+					answer: a,
+					detail: typeof o.detail === 'string' && o.detail ? o.detail : null,
+				}
+			}
+		}
+	}
+	return out
 }
 
 export interface QpPortalContent {
@@ -324,9 +440,11 @@ export interface QpPortalContent {
 }
 
 /** Sensible starting text so a fresh institution is never a blank portal. */
+export type QpDefaultClause = string | { text: string; detail_label?: string }
+
 export const QP_CONTENT_DEFAULTS: Record<
 	QpPortalDocType,
-	{ title: string; body: string[]; footer?: string }
+	{ title: string; body: QpDefaultClause[]; footer?: string }
 > = {
 	instructions: {
 		title: 'Instructions to the Question Paper Setter',
@@ -355,14 +473,26 @@ export const QP_CONTENT_DEFAULTS: Record<
 	checklist: {
 		title: 'Question Paper Setter Check List',
 		body: [
-			'The question paper is fully within the prescribed syllabus.',
-			'The paper follows the approved format — parts, number of questions and marks.',
-			'Questions are distributed across all units of the syllabus.',
-			'Course Outcomes and K-levels are correctly tagged against every question.',
-			'The questions are original and have not appeared in an earlier question paper.',
-			'The language is clear and free of ambiguity and printing errors.',
-			'The time allotted is adequate for the questions set.',
-			'All figures, tables and data required to answer the questions are supplied.',
+			'Is the question paper prepared as per the prescribed format?',
+			'Is the regulation, programme, branch, semester, course code and name of the given question paper verified?',
+			'Is the question paper set within the syllabus?',
+			"Is the question paper in accordance with Bloom's Taxonomy?",
+			'Are the grammar, spellings and sentence formations checked?',
+			'Are the units, symbols and diagrams available in the question paper checked?',
+			'Are the repetitions of questions checked?',
+			'Are the bank account details in the claim form provided correctly?',
+			{
+				text: 'List of tables / charts permitted is clearly specified.',
+				detail_label: 'If Yes, name of the table / chart required',
+			},
+			{
+				text: 'Data book required.',
+				detail_label: 'If Yes, name of the book',
+			},
+			{
+				text: 'Requires graph paper.',
+				detail_label: 'If Yes, mention the type of graph required',
+			},
 		],
 	},
 	declaration: {
@@ -375,21 +505,19 @@ export const QP_CONTENT_DEFAULTS: Record<
 		],
 	},
 	claim: {
-		title: 'Claim Form — Question Paper Setting',
-		body: [
-			'Remuneration is payable per question paper set and accepted, at the rate notified by the Office of the Controller of Examinations.',
-			'Payment is made by bank transfer to the account details recorded in your portal profile.',
-			'Income tax is deducted at source where applicable.',
-		],
+		title: 'Claim Form — Question Paper Setting With Answer Key',
+		// No numbered notes: the printed form is a single page and carries only
+		// the particulars, the bank details, the certification and the office box.
+		body: [],
 		footer: 'I certify that the above particulars are true and that I have set the question paper(s) claimed for.',
 	},
 	order: {
 		title: 'ORDER OF APPOINTMENT — QUESTION PAPER SETTER',
+		// The order itself prints the portal acceptance, the dates and the fee
+		// line as fixed points; these are the CoE's own clauses that follow them.
 		body: [
-			'You are requested to set the question paper for the subject shown above for the examination indicated, strictly in accordance with the prescribed syllabus and the approved question paper format.',
-			'The question paper must be entered and submitted through the Examiner Portal within the period shown above. Access closes automatically at the end of the period.',
-			'The assignment and the contents of the question paper are strictly confidential and must not be disclosed to any person.',
-			'Remuneration will be paid on acceptance of the question paper, on submission of the claim form available in the portal.',
+			'The question paper must be set strictly in accordance with the prescribed syllabus and the approved question paper format, and access to the portal closes automatically at the end of the period shown above.',
+			'The question paper setter is requested to keep the details of the question paper setting STRICTLY CONFIDENTIAL.',
 		],
 		footer: 'This is a computer-generated order and is valid without a physical signature.',
 	},
@@ -418,6 +546,7 @@ export type QpLogAction =
 	| 'submission_completed'
 	| 'declaration_accept'
 	| 'image_upload'
+	| 'willingness_confirmed'
 	| 'profile_update'
 	| 'access_denied'
 	| 'window_extended'
@@ -454,18 +583,70 @@ export const QP_LOG_ACTION_LABELS: Record<string, string> = {
 	submission_signed: 'Signed the submission',
 	submission_completed: 'Completed the submission',
 	paper_pdf_download: 'Downloaded paper PDF',
+	syllabus_view: 'Opened the syllabus',
 	order_download: 'Downloaded examiner order',
 	claim_download: 'Downloaded claim form',
 	claim_submit: 'Submitted claim form',
 	checklist_save: 'Saved check list',
 	declaration_accept: 'Accepted declaration',
 	image_upload: 'Uploaded a figure',
+	willingness_confirmed: 'Confirmed willingness (claim recalculated)',
 	profile_update: 'Updated portal profile',
 	access_denied: 'Access refused',
 	window_extended: 'Window changed by CoE',
 	assignment_accepted: 'Paper accepted by CoE',
 	assignment_returned: 'Paper returned by CoE',
+	paper_reopened: 'Question paper reopened by CoE',
+	assignment_type_changed: 'Appointment type changed by CoE',
+	willingness_confirmed: 'Confirmed willingness',
+	claim_reopened: 'Claim form reopened by CoE',
+	claim_resubmit: 'Claim form resubmitted',
+	paper_resubmit: 'Question paper resubmitted',
+	assignment_cancelled: 'Assignment cancelled by CoE',
+	assignment_deleted: 'Assignment deleted by CoE',
+	assignment_updated: 'Assignment updated by CoE',
 	order_emailed: 'Examiner order e-mailed',
+}
+
+// ============================================================================
+// VERSION HISTORY (ia_qp_paper_versions / ia_qp_claim_versions)
+// ============================================================================
+
+export type QpVersionStatus = 'current' | 'reopened' | 'superseded'
+
+export const QP_VERSION_STATUS_LABELS: Record<QpVersionStatus, string> = {
+	current: 'Current',
+	reopened: 'Reopened',
+	superseded: 'Superseded',
+}
+
+export interface QpVersionBase {
+	id: string
+	assignment_id: string
+	version: number
+	status: QpVersionStatus
+	submitted_at: string
+	submitted_by_examiner_id?: string | null
+	submitted_ip?: string | null
+	submitted_user_agent?: string | null
+	reopened_at?: string | null
+	reopened_by?: string | null
+	reopened_by_email?: string | null
+	reopen_reason?: string | null
+	reopen_remarks?: string | null
+	created_at?: string
+}
+
+export interface QpPaperVersion extends QpVersionBase {
+	paper_id: string
+	questions?: any[]
+	default_font?: string | null
+	question_total?: number | null
+	question_done?: number | null
+}
+
+export interface QpClaimVersion extends QpVersionBase {
+	data: Record<string, unknown>
 }
 
 // ============================================================================

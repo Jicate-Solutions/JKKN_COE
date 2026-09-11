@@ -19,7 +19,8 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
-import { requireAssignment, logAccess } from '@/lib/qp-portal/guard'
+import { requireAssignment, logAccess, requestOrigin } from '@/lib/qp-portal/guard'
+import { snapshotClaimVersion } from '@/lib/qp-portal/versioning'
 import { QP_CLAIM_LOCKED_STATUSES, type QpClaimStatus } from '@/types/qp-examiner-assignment'
 
 export const dynamic = 'force-dynamic'
@@ -141,14 +142,81 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 			})
 			.eq('id', auth.examiner.id)
 
+		// ── Version history ──────────────────────────────────────────────────
+		const origin = requestOrigin(req)
+		const isResubmit = !!assignment.claim_reopened_at || (assignment.claim_version || 0) > 0
+		let version: number | null = assignment.claim_version ?? null
+		const snap = await snapshotClaimVersion(supabase, {
+			assignmentId: id,
+			institutionsId: assignment.institutions_id,
+			examinerId: auth.examiner.id,
+			data: {
+				account_holder: bank.claim_account_holder,
+				bank_name: bank.claim_bank_name,
+				account_number: bank.claim_account_number,
+				branch: bank.claim_branch,
+				ifsc: bank.claim_ifsc,
+				// The ACCEPTED amount, not the order's potential figure.
+				rate: assignment.claim_amount ?? assignment.remuneration ?? null,
+				assignment_type: assignment.assignment_type || 'question_paper',
+				qp_fee: assignment.qp_willing === false ? 0 : assignment.qp_fee ?? null,
+				ak_fee: assignment.ak_willing === false ? 0 : assignment.ak_fee ?? null,
+				qp_willing: assignment.qp_willing ?? null,
+				ak_willing: assignment.ak_willing ?? null,
+				course_code: assignment.course_code,
+				subject_title: assignment.subject_title,
+				examination_session_id: assignment.examination_session_id,
+				submitted_at: now,
+				...(isResubmit
+					? {
+							resubmission_of_version: assignment.claim_version || null,
+							reopen_reason: assignment.claim_reopen_reason || null,
+						}
+					: {}),
+			},
+			actor: { ip: origin.ip, userAgent: origin.userAgent },
+		})
+		if ('error' in snap) console.error('[QP portal] claim version snapshot failed:', snap.error)
+		else version = snap.version
+
+		// A resubmission closes the reopen: the reason stays on the version row
+		// and in the audit log, the assignment no longer shows as reopened.
+		if (assignment.claim_reopened_at) {
+			await supabase
+				.from('ia_qp_assignments')
+				.update({ claim_reopened_at: null, claim_reopened_by: null, claim_reopen_reason: null, claim_reopen_remarks: null })
+				.eq('id', id)
+		}
+
 		await logAccess(req, {
-			action: 'claim_submit',
+			action: isResubmit ? 'claim_resubmit' : 'claim_submit',
 			examiner_id: auth.examiner.id,
 			examiner_email: auth.examiner.email,
 			assignment_id: id,
 			paper_id: assignment.paper_id,
 			institutions_id: assignment.institutions_id,
-			// The account number is deliberately absent from the audit detail.
+			module: 'claim',
+			performed_by_role: 'examiner',
+			version,
+			old_value: isResubmit
+				? {
+						claim_status: 'pending',
+						reopened_from_version: assignment.claim_version || null,
+						account_holder: assignment.claim_account_holder,
+						bank_name: assignment.claim_bank_name,
+						branch: assignment.claim_branch,
+						ifsc: assignment.claim_ifsc,
+					}
+				: { claim_status: 'pending' },
+			// The account number is deliberately absent from the audit line.
+			new_value: {
+				claim_status: 'submitted',
+				version,
+				account_holder: bank.claim_account_holder,
+				bank_name: bank.claim_bank_name,
+				branch: bank.claim_branch,
+				ifsc: bank.claim_ifsc,
+			},
 			detail: { bank_name: bank.claim_bank_name, ifsc: bank.claim_ifsc },
 		})
 
@@ -156,6 +224,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 			success: true,
 			claim_status: 'submitted',
 			claim_submitted_at: now,
+			claim_version: version,
 			message: 'Claim submitted to the Office of the Controller of Examinations for verification.',
 		})
 	} catch (error) {

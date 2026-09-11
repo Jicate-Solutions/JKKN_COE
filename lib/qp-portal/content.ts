@@ -30,6 +30,9 @@ export function readClauses(raw: unknown): QpContentClause[] {
 					id: typeof o.id === 'string' && o.id ? o.id : `c${i + 1}`,
 					text,
 					...(typeof o.note === 'string' && o.note ? { note: o.note } : {}),
+					...(typeof o.detail_label === 'string' && o.detail_label.trim()
+						? { detail_label: o.detail_label.trim() }
+						: {}),
 				}
 			}
 			return null
@@ -47,7 +50,11 @@ function defaultsFor(docType: QpPortalDocType, institutionsId: string): QpPortal
 		doc_type: docType,
 		title: d.title,
 		subtitle: null,
-		body: d.body.map((text, i) => ({ id: `d${i + 1}`, text })),
+		body: d.body.map((item, i) =>
+			typeof item === 'string'
+				? { id: `d${i + 1}`, text: item }
+				: { id: `d${i + 1}`, text: item.text, ...(item.detail_label ? { detail_label: item.detail_label } : {}) }
+		),
 		footer_note: d.footer || null,
 		intro_text: null,
 		session_label: null,

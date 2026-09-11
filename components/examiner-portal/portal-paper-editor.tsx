@@ -16,7 +16,7 @@ import { Badge } from '@/components/ui/badge'
 import { Card, CardContent } from '@/components/ui/card'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { useToast } from '@/hooks/common/use-toast'
-import { Loader2, Save, Split, X, Plus, AlertTriangle, CheckCircle2 } from 'lucide-react'
+import { Loader2, Save, Split, X, Plus, AlertTriangle, CheckCircle2, KeyRound } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { QuestionRichEditor } from '@/components/ia/question-rich-editor'
 import { QuestionImageField } from '@/components/ia/question-image-field'
@@ -52,7 +52,20 @@ interface Props {
 	templateParts: TemplatePart[]
 	courseOutcomes: CourseOutcome[]
 	baseUpdatedAt: string | null
+	/** Nothing at all may change — submitted, or the window has closed. */
 	readOnly: boolean
+	/**
+	 * May the QUESTION fields be edited? False when the appointment does not
+	 * include setting the paper (answer-key-only), or the examiner declined it.
+	 * The answer-key fields are governed separately by `answerKeyMode`.
+	 */
+	questionsEditable?: boolean
+	/**
+	 * hidden    the appointment has no answer-key component
+	 * disabled  it has one, but the examiner declined it — shown, locked, not required
+	 * required  accepted — editable and mandatory on every question
+	 */
+	answerKeyMode?: 'hidden' | 'disabled' | 'required'
 	onSaved: (info: { question_done: number; question_total: number; updated_at: string | null }) => void
 	/**
 	 * Filled with the editor's Save Draft action so the parent can offer the same
@@ -69,6 +82,8 @@ interface Props {
 	onValidityChange?: (problems: string[]) => void
 	/** Lets the parent read the questions as they are right now, unsaved edits included. */
 	questionsRef?: React.MutableRefObject<(() => IaPaperQuestion[]) | null>
+	/** Called when a conflict cannot be settled automatically; the parent reloads the server copy. */
+	onConflict?: () => void
 }
 
 interface LocalDraft {
@@ -88,6 +103,76 @@ const UNSYNCED_RETRY_MS = 15_000
 /** localStorage key prefix; one draft per assignment. */
 const LOCAL_DRAFT_PREFIX = 'jkkn.qp.draft.'
 
+/**
+ * The parts of a question array that a save can change, in a stable order, so
+ * two copies can be compared without caring about key order or extra fields.
+ */
+function canonicalQuestions(qs: any[]): string {
+	return JSON.stringify(
+		[...(qs || [])]
+			.sort((a, b) => (a?.display_order ?? 0) - (b?.display_order ?? 0))
+			.map(q => [
+				q?.id,
+				plainText(q?.question_text),
+				q?.co_code ?? null,
+				q?.k_level ?? null,
+				q?.marks ?? null,
+				(q?.options || []).map((o: any) => [o?.key, plainText(o?.text_html ?? o?.text)]),
+				(q?.sub_questions || []).map((s: any) => [s?.label, plainText(s?.question_text), s?.marks ?? null, s?.co_code ?? null, s?.k_level ?? null]),
+				q?.image?.url ?? null,
+				plainText(q?.answer_key),
+				q?.answer_key_image?.url ?? null,
+			])
+	)
+}
+
+/** The fields a save can change on one question, compared and merged one by one. */
+const MERGE_FIELDS = [
+	'question_text', 'co_code', 'k_level', 'marks', 'options', 'sub_questions', 'image', 'answer_key', 'answer_key_image',
+] as const
+
+function fieldKey(q: any, f: (typeof MERGE_FIELDS)[number]): string {
+	switch (f) {
+		case 'question_text':
+		case 'answer_key':
+			return plainText(q?.[f])
+		case 'options':
+			return JSON.stringify((q?.options || []).map((o: any) => [o?.key, plainText(o?.text_html ?? o?.text)]))
+		case 'sub_questions':
+			return JSON.stringify((q?.sub_questions || []).map((s: any) => [s?.label, plainText(s?.question_text), s?.marks ?? null, s?.co_code ?? null, s?.k_level ?? null, s?.image?.url ?? null]))
+		case 'image':
+		case 'answer_key_image':
+			return String(q?.[f]?.url ?? '')
+		default:
+			return JSON.stringify(q?.[f] ?? null)
+	}
+}
+
+/**
+ * Three-way merge of a question list: for each field, if THIS editor changed it
+ * since its base, ours stays; otherwise the server's value is taken. So a tab
+ * that changed nothing adopts the server copy wholesale, two live tabs each
+ * keep only their own edits, and a forgotten tab can never roll a paper back.
+ */
+function mergeQuestions(base: any[], ours: any[], theirs: any[]): any[] {
+	const baseById = new Map<string, any>((base || []).map(q => [String(q?.id), q]))
+	const oursById = new Map<string, any>((ours || []).map(q => [String(q?.id), q]))
+	return [...(theirs || [])]
+		.sort((a, b) => (a?.display_order ?? 0) - (b?.display_order ?? 0))
+		.map(t => {
+			const id = String(t?.id)
+			const o = oursById.get(id)
+			if (!o) return t
+			const b = baseById.get(id)
+			const merged: any = { ...t }
+			for (const f of MERGE_FIELDS) {
+				const weChanged = b ? fieldKey(o, f) !== fieldKey(b, f) : fieldKey(o, f) !== fieldKey(t, f)
+				if (weChanged) merged[f] = o[f]
+			}
+			return merged
+		})
+}
+
 /** Visible text of rich content — the completeness checks mirror the server's. */
 function plainText(value: unknown): string {
 	return String(value ?? '')
@@ -104,13 +189,22 @@ export function PortalPaperEditor({
 	courseOutcomes,
 	baseUpdatedAt,
 	readOnly,
+	questionsEditable = true,
+	answerKeyMode = 'hidden',
 	onSaved,
 	saveRef,
 	onSyncChange,
 	onValidityChange,
 	questionsRef: liveQuestionsRef,
+	onConflict,
 }: Props) {
 	const { toast } = useToast()
+
+	// The question fields lock independently of the answer-key fields: an
+	// examiner who declined the paper (or was appointed for the key only) still
+	// saves, previews and submits — they just cannot touch the questions.
+	const qLocked = readOnly || !questionsEditable
+	const akEditable = !readOnly && answerKeyMode === 'required'
 
 	const [questions, setQuestions] = useState<IaPaperQuestion[]>(initialQuestions)
 	const [dirty, setDirty] = useState(false)
@@ -118,9 +212,20 @@ export function PortalPaperEditor({
 	const [savedAt, setSavedAt] = useState<string | null>(null)
 	const [syncState, setSyncState] = useState<SyncState>('idle')
 	const [syncError, setSyncError] = useState<string | null>(null)
+	/**
+	 * Whether the last failure is worth retrying on a timer. A dropped
+	 * connection or a 5xx is; a 4xx is the server saying "not like this" and
+	 * will fail identically until the input changes — so it waits for the next
+	 * edit instead of hammering the route every 15 s.
+	 */
+	const [retryable, setRetryable] = useState(true)
+	/** One automatic rebase per conflict; a second conflict is handed to the person. */
+	const conflictRetriesRef = useRef(0)
 	/** A newer draft found in this browser than the server has — offered, not forced. */
 	const [recovery, setRecovery] = useState<LocalDraft | null>(null)
 	const baseRef = useRef<string | null>(baseUpdatedAt)
+	/** The questions as the server last confirmed them — what a merge measures our edits against. */
+	const baseQuestionsRef = useRef<IaPaperQuestion[]>(initialQuestions)
 
 	// Read inside event listeners that are registered once.
 	const dirtyRef = useRef(dirty)
@@ -156,6 +261,7 @@ export function PortalPaperEditor({
 	useEffect(() => {
 		setQuestions(initialQuestions)
 		baseRef.current = baseUpdatedAt
+		baseQuestionsRef.current = initialQuestions
 		setDirty(false)
 		setSyncState('idle')
 		setSyncError(null)
@@ -284,9 +390,18 @@ export function PortalPaperEditor({
 					body: JSON.stringify({ questions: payload, base_updated_at: baseRef.current }),
 				})
 				const json = await res.json().catch(() => ({}))
-				if (!res.ok) throw new Error(json?.message || json?.error || `HTTP ${res.status}`)
+				if (!res.ok) {
+					const err: any = new Error(json?.message || json?.error || `HTTP ${res.status}`)
+					err.status = res.status
+					err.code = json?.error
+					err.body = json
+					throw err
+				}
 
+				conflictRetriesRef.current = 0
+				setRetryable(true)
 				baseRef.current = json.updated_at || baseRef.current
+				baseQuestionsRef.current = payload
 				// Only clear the flag if nothing changed while the request was away.
 				if (questionsRef.current === payload) setDirty(false)
 				setSavedAt(new Date().toISOString())
@@ -301,9 +416,74 @@ export function PortalPaperEditor({
 				if (!opts.silent) toast({ title: 'Draft saved' })
 				return true
 			} catch (e: any) {
+				const status: number = Number(e?.status) || 0
+
+				// ── Stale base: rebase, do not loop ───────────────────────────
+				// The server's copy moved on (typically this examiner's previous
+				// editor instance landing an autosave late). Adopt the new base; if
+				// the server already holds exactly what we were sending, we are in
+				// sync; otherwise resend ONCE on the new base — same examiner, same
+				// paper, so our newer edits win. A second conflict goes to the person.
+				if (status === 409 && e?.code === 'CONFLICT' && e?.body?.current_updated_at) {
+					const serverQs = Array.isArray(e.body.current_questions) ? e.body.current_questions : null
+					if (serverQs) {
+						// Rebase: keep only what THIS editor changed since its base, take
+						// the rest from the server. A tab that changed nothing ends up
+						// identical to the server and sends nothing more.
+						const merged = mergeQuestions(baseQuestionsRef.current, questionsRef.current, serverQs) as IaPaperQuestion[]
+						baseRef.current = e.body.current_updated_at
+						baseQuestionsRef.current = serverQs as IaPaperQuestion[]
+						setQuestions(merged)
+						questionsRef.current = merged
+						if (canonicalQuestions(merged) === canonicalQuestions(serverQs)) {
+							conflictRetriesRef.current = 0
+							setDirty(false)
+							setSavedAt(new Date().toISOString())
+							setSyncState('saved')
+							setSyncError(null)
+							clearLocalDraft()
+							return true
+						}
+						if (conflictRetriesRef.current < 3) {
+							conflictRetriesRef.current++
+							rerunRef.current = true // `finally` re-runs the save on the merged copy
+							return false
+						}
+					}
+					conflictRetriesRef.current = 0
+					writeLocalDraft(payload)
+					setSyncState('conflict')
+					setSyncError(e?.message || 'This paper was changed elsewhere')
+					if (!opts.silent) {
+						toast({
+							title: 'Changed elsewhere',
+							description: 'The server holds a newer copy of this paper. Reload it, then re-apply your edits — they are kept in this browser.',
+							variant: 'destructive',
+						})
+					}
+					return false
+				}
+
+				// ── Stale copy: the payload would blank questions written since ──
+				// Resending can only erase work; the person has to reload and re-apply.
+				if (status === 409 && e?.code === 'WOULD_CLEAR') {
+					writeLocalDraft(payload)
+					setSyncState('conflict')
+					setSyncError('The server holds newer content for this paper')
+					if (!opts.silent) {
+						toast({
+							title: 'Newer content on the server',
+							description: e?.message || 'Reload the paper before saving.',
+							variant: 'destructive',
+						})
+					}
+					return false
+				}
+
 				// The local mirror is what makes a failure survivable, so it is
 				// written before anything is said about the failure.
 				writeLocalDraft(payload)
+				setRetryable(status === 0 || status >= 500 || status === 408 || status === 429)
 				setSyncState('unsynced')
 				setSyncError(e?.message || 'Could not reach the server')
 				if (!opts.silent) {
@@ -329,10 +509,23 @@ export function PortalPaperEditor({
 		[assignmentId, readOnly, toast, onSaved, writeLocalDraft, clearLocalDraft]
 	)
 
-	// Hand the parent the same save action its Save Draft button triggers, and
-	// keep it told about the sync state so both badges agree.
+	// Hand the parent a FLUSH, not just a save: it first waits for any save
+	// already in flight, so a parent that is about to remount this editor (after
+	// a willingness change, a failed submit …) never captures a base that a late
+	// autosave from this instance then invalidates — the exact race that turned
+	// every later save into a 409.
 	useEffect(() => {
-		if (saveRef) saveRef.current = () => doSave()
+		if (saveRef) {
+			saveRef.current = async () => {
+				let waited = 0
+				while (savingRef.current && waited < 20_000) {
+					await new Promise(r => setTimeout(r, 100))
+					waited += 100
+				}
+				if (!dirtyRef.current && syncStateRef.current !== 'unsynced' && syncStateRef.current !== 'conflict') return true
+				return doSave()
+			}
+		}
 		return () => {
 			if (saveRef) saveRef.current = null
 		}
@@ -353,12 +546,14 @@ export function PortalPaperEditor({
 		return () => clearTimeout(t)
 	}, [questions, dirty, readOnly, doSave, writeLocalDraft])
 
-	// Retry while offline / after a failure, until it lands.
+	// Retry while offline / after a 5xx, until it lands. A 4xx is not retried
+	// on a timer: the same payload would be refused the same way. The next edit
+	// (autosave) or Save Draft tries again with new input.
 	useEffect(() => {
-		if (syncState !== 'unsynced' || readOnly) return
+		if (syncState !== 'unsynced' || readOnly || !retryable) return
 		const t = setInterval(() => void doSave({ silent: true }), UNSYNCED_RETRY_MS)
 		return () => clearInterval(t)
-	}, [syncState, readOnly, doSave])
+	}, [syncState, readOnly, retryable, doSave])
 
 	// Save on the way out: switching tab, minimising, or closing. visibilitychange
 	// is the one event mobile browsers reliably fire before discarding a page.
@@ -369,11 +564,13 @@ export function PortalPaperEditor({
 			writeLocalDraft(questionsRef.current)
 			void doSave({ silent: true })
 		}
-		document.addEventListener('visibilitychange', () => {
+		const onVisibility = () => {
 			if (document.visibilityState === 'hidden') onHide()
-		})
+		}
+		document.addEventListener('visibilitychange', onVisibility)
 		window.addEventListener('pagehide', onHide)
 		return () => {
+			document.removeEventListener('visibilitychange', onVisibility)
 			window.removeEventListener('pagehide', onHide)
 		}
 	}, [readOnly, doSave, writeLocalDraft])
@@ -412,6 +609,14 @@ export function PortalPaperEditor({
 			const label = `Q${q.question_number}${q.sub_label ? ` ${q.sub_label}` : ''}`
 			const subs = readSubQuestions(q)
 
+			// The answer key is demanded only when ACCEPTED — never merely because
+			// the appointment says "Both".
+			if (answerKeyMode === 'required' && !plainText(q.answer_key) && !q.answer_key_image?.url) {
+				out.push(`${label}: enter the answer key`)
+			}
+			// An answer-key-only appointment does not re-check questions it cannot edit.
+			if (!questionsEditable) continue
+
 			if (subs.length > 0) {
 				for (const sb of subs) {
 					const where = `${label} ${sb.label}`
@@ -434,7 +639,7 @@ export function PortalPaperEditor({
 			}
 		}
 		return out
-	}, [questions, partByLabel])
+	}, [questions, partByLabel, questionsEditable, answerKeyMode])
 
 	useEffect(() => {
 		onValidityChange?.(problems)
@@ -454,9 +659,16 @@ export function PortalPaperEditor({
 			: !!plainText(q.question_text)
 	}).length
 
-	const coOptions = courseOutcomes.length
-		? courseOutcomes.map(c => c.co_code)
-		: ['CO1', 'CO2', 'CO3', 'CO4', 'CO5']
+	// CO1–CO5 are always offered, in order. The course's own outcome rows are
+	// merged in (they may add CO6 or carry descriptions) but never shrink the
+	// list: an incomplete or oddly ordered outcome master must not stop an
+	// examiner tagging a question to CO4 or CO5.
+	const coOptions = useMemo(() => {
+		const codes = new Set<string>(['CO1', 'CO2', 'CO3', 'CO4', 'CO5'])
+		for (const c of courseOutcomes) if (c?.co_code) codes.add(String(c.co_code).trim().toUpperCase())
+		const num = (v: string) => Number((v.match(/\d+/) || ['0'])[0])
+		return [...codes].sort((a, b) => num(a) - num(b) || a.localeCompare(b))
+	}, [courseOutcomes])
 
 	return (
 		<div className="space-y-4">
@@ -480,6 +692,11 @@ export function PortalPaperEditor({
 				</div>
 				<div className="flex items-center gap-2">
 					<SyncBadge state={syncState} dirty={dirty} savedAt={savedAt} error={syncError} />
+					{syncState === 'conflict' && onConflict && (
+						<Button size="sm" variant="outline" className="border-rose-300 text-rose-700" onClick={onConflict}>
+							Reload server copy
+						</Button>
+					)}
 					<Button
 						size="sm"
 						variant="outline"
@@ -534,13 +751,22 @@ export function PortalPaperEditor({
 				</div>
 			)}
 
-			{readOnly && (
+			{readOnly ? (
 				<Card className="border-slate-200 bg-slate-50">
 					<CardContent className="p-3 text-sm text-slate-700">
 						This paper is read-only — it has been submitted, or the entry period has ended.
 					</CardContent>
 				</Card>
-			)}
+			) : !questionsEditable ? (
+				<Card className="border-slate-200 bg-slate-50">
+					<CardContent className="p-3 text-sm text-slate-700">
+						The questions are read-only for you —{' '}
+						{answerKeyMode === 'required'
+							? 'your appointment is for the answer key. Enter the answer key under each question below.'
+							: 'you have not accepted setting this question paper.'}
+					</CardContent>
+				</Card>
+			) : null}
 
 			{/* Parts */}
 			{[...grouped.entries()].map(([label, qs]) => {
@@ -583,7 +809,7 @@ export function PortalPaperEditor({
 													<span className="text-xs text-muted-foreground">{q.marks} marks</span>
 												)}
 											</div>
-											{!readOnly && canSplit(q) && subs.length === 0 && (
+											{!qLocked && canSplit(q) && subs.length === 0 && (
 												<Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => splitQuestion(q)}>
 													<Split className="h-3.5 w-3.5 mr-1" />
 													Split into (i)/(ii)
@@ -599,13 +825,13 @@ export function PortalPaperEditor({
 											<QuestionRichEditor
 												value={q.question_text || ''}
 												onChange={html => patchQuestion(q.id, { question_text: html })}
-												disabled={readOnly}
+												disabled={qLocked}
 												placeholder={subs.length > 0 ? 'Optional shared text…' : 'Enter the question…'}
 											/>
 										</div>
 
 										{/* Figure */}
-										{!readOnly && (
+										{!qLocked && (
 											<QuestionImageField
 												paperId={assignmentId}
 												uploadUrl={`/api/examiner-portal/assignments/${assignmentId}/image`}
@@ -624,7 +850,7 @@ export function PortalPaperEditor({
 															<QuestionRichEditor
 																value={o.text_html || o.text || ''}
 																onChange={html => patchOption(q.id, o.key, html)}
-																disabled={readOnly}
+																disabled={qLocked}
 																variant="compact"
 																placeholder={`Option ${o.key}`}
 															/>
@@ -641,7 +867,7 @@ export function PortalPaperEditor({
 													<div key={sb.id} className="space-y-2">
 														<div className="flex items-center justify-between">
 															<span className="text-xs font-medium">{sb.label}.</span>
-															{!readOnly && (
+															{!qLocked && (
 																<Button
 																	variant="ghost"
 																	size="icon"
@@ -656,7 +882,7 @@ export function PortalPaperEditor({
 														<QuestionRichEditor
 															value={sb.question_text || ''}
 															onChange={html => patchSub(q, sb.id, { question_text: html })}
-															disabled={readOnly}
+															disabled={qLocked}
 															variant="compact"
 															placeholder="Enter this sub-division…"
 														/>
@@ -672,7 +898,7 @@ export function PortalPaperEditor({
 																			marks: e.target.value === '' ? null : Number(e.target.value),
 																		})
 																	}
-																	disabled={readOnly}
+																	disabled={qLocked}
 																	placeholder="Marks"
 																	className="h-8 text-xs"
 																/>
@@ -682,12 +908,12 @@ export function PortalPaperEditor({
 															<Select
 																value={sb.co_code || ''}
 																onValueChange={v => patchSub(q, sb.id, { co_code: v })}
-																disabled={readOnly}
+																disabled={qLocked}
 															>
 																<SelectTrigger
 																	className={cn(
 																		'h-8 w-24 text-xs',
-																		!sb.co_code && !readOnly && 'border-destructive'
+																		!sb.co_code && !qLocked && 'border-destructive'
 																	)}
 																>
 																	<SelectValue placeholder="CO *" />
@@ -701,12 +927,12 @@ export function PortalPaperEditor({
 															<Select
 																value={sb.k_level || ''}
 																onValueChange={v => patchSub(q, sb.id, { k_level: v })}
-																disabled={readOnly}
+																disabled={qLocked}
 															>
 																<SelectTrigger
 																	className={cn(
 																		'h-8 w-32 text-xs',
-																		!sb.k_level && !readOnly && 'border-destructive'
+																		!sb.k_level && !qLocked && 'border-destructive'
 																	)}
 																>
 																	<SelectValue placeholder="K-level *" />
@@ -731,7 +957,7 @@ export function PortalPaperEditor({
 													>
 														Sub-division marks: {subTotal(subs)} / {q.marks ?? '—'}
 													</span>
-													{!readOnly && subs.length < MAX_SUB_QUESTIONS && (
+													{!qLocked && subs.length < MAX_SUB_QUESTIONS && (
 														<Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => addSub(q)}>
 															<Plus className="h-3.5 w-3.5 mr-1" />
 															Add sub-division
@@ -751,12 +977,12 @@ export function PortalPaperEditor({
 														<Select
 															value={q.co_code || ''}
 															onValueChange={v => patchQuestion(q.id, { co_code: v })}
-															disabled={readOnly}
+															disabled={qLocked}
 														>
 														<SelectTrigger
 															className={cn(
 																'h-8 w-28 text-xs mt-0.5',
-																!q.co_code && !readOnly && 'border-destructive'
+																!q.co_code && !qLocked && 'border-destructive'
 															)}
 														>
 															<SelectValue placeholder="CO" />
@@ -775,12 +1001,12 @@ export function PortalPaperEditor({
 														<Select
 															value={q.k_level || ''}
 															onValueChange={v => patchQuestion(q.id, { k_level: v })}
-															disabled={readOnly}
+															disabled={qLocked}
 														>
 														<SelectTrigger
 															className={cn(
 																'h-8 w-36 text-xs mt-0.5',
-																!q.k_level && !readOnly && 'border-destructive'
+																!q.k_level && !qLocked && 'border-destructive'
 															)}
 														>
 															<SelectValue placeholder="K-level" />
@@ -792,6 +1018,52 @@ export function PortalPaperEditor({
 														</SelectContent>
 													</Select>
 												</div>
+											</div>
+										)}
+
+										{/* Answer key — belongs to THIS question, never printed on the paper. */}
+										{answerKeyMode !== 'hidden' && (
+											<div
+												className={cn(
+													'rounded-md border p-2.5 space-y-2',
+													answerKeyMode === 'required'
+														? 'border-amber-200 bg-amber-50/40'
+														: 'border-slate-200 bg-slate-50 opacity-75'
+												)}
+											>
+												<div className="flex flex-wrap items-center justify-between gap-2">
+													<Label className="text-xs font-semibold flex items-center gap-1.5">
+														<KeyRound className="h-3.5 w-3.5 text-amber-700" />
+														Answer Key
+														{answerKeyMode === 'required' && <span className="text-destructive">*</span>}
+													</Label>
+													{answerKeyMode === 'disabled' && (
+														<span className="text-[11px] text-muted-foreground">
+															Not accepted — no answer key is required from you
+														</span>
+													)}
+													{akEditable && !plainText(q.answer_key) && !q.answer_key_image?.url && (
+														<span className="text-[11px] text-amber-700">Required for this question</span>
+													)}
+												</div>
+												<QuestionRichEditor
+													value={q.answer_key || ''}
+													onChange={html => patchQuestion(q.id, { answer_key: html })}
+													disabled={!akEditable}
+													placeholder="Enter the answer key / marking scheme for this question…"
+												/>
+												{akEditable ? (
+													<QuestionImageField
+														paperId={assignmentId}
+														uploadUrl={`/api/examiner-portal/assignments/${assignmentId}/image`}
+														value={(q.answer_key_image as any) || null}
+														onChange={img => patchQuestion(q.id, { answer_key_image: img as any })}
+														label="Attach image to the answer key"
+													/>
+												) : q.answer_key_image?.url ? (
+													// eslint-disable-next-line @next/next/no-img-element
+													<img src={q.answer_key_image.url} alt="" draggable={false} className="max-w-full max-h-64 rounded border" />
+												) : null}
 											</div>
 										)}
 									</CardContent>
@@ -823,10 +1095,16 @@ export function PortalPaperEditor({
 }
 
 /** Exposed so the portal shell can gate its Submit button on the same rules. */
-export function paperProblemCount(questions: IaPaperQuestion[], parts: TemplatePart[]): number {
+export function paperProblemCount(
+	questions: IaPaperQuestion[],
+	parts: TemplatePart[],
+	opts: { questionsEditable?: boolean; requireAnswerKey?: boolean } = {}
+): number {
 	const byLabel = new Map(parts.map(p => [p.part_label, p]))
 	let n = 0
 	for (const q of questions) {
+		if (opts.requireAnswerKey && !plainText(q.answer_key) && !q.answer_key_image?.url) n++
+		if (opts.questionsEditable === false) continue
 		const part = byLabel.get(q.part_label || '')
 		const subs = readSubQuestions(q)
 		if (subs.length > 0) {

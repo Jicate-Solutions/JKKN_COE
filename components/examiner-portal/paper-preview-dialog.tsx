@@ -207,6 +207,18 @@ export function PaperPreviewDialog({
 												</>
 											)}
 
+											{/* The answer key, when one is written. Shown here so the
+											    examiner reads it back before handing the paper over. */}
+											{(plainText(q.answer_key) || q.answer_key_image) && (
+												<div className="rounded-md border border-amber-200 bg-amber-50/50 p-2.5 space-y-1">
+													<p className="text-[11px] font-semibold uppercase tracking-wide text-amber-800">
+														Answer key
+													</p>
+													<Rich html={q.answer_key} empty="" />
+													<Figure raw={q.answer_key_image} />
+												</div>
+											)}
+
 											{Array.isArray(q.options) && q.options.length > 0 && (
 												<ol className="space-y-1 pl-1">
 													{q.options.map(o => (

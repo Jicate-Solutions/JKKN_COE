@@ -565,3 +565,166 @@ export async function fetchMyJKKNLearnerProfileById(id: string): Promise<MyJKKNL
 	const response = await fetchFromMyJKKN<{ data: MyJKKNLearnerProfile }>(`/api-management/learners/profiles/${id}`)
 	return response.data
 }
+
+// =====================================================
+// BoS SYLLABUS PDF (api-management/academic/syllabus — spec 2026-09-10)
+// =====================================================
+
+export type SyllabusPdfFormat = 'official' | 'v35' | 'obe' | 'meeting_summary'
+
+export interface SyllabusPdfResult {
+	bytes: ArrayBuffer
+	contentType: string
+	etag: string | null
+	syllabusId: string | null
+	version: string | null
+	academicModel: string | null
+}
+
+/**
+ * The one-shot syllabus PDF: resolve by COE course id (preferred) or by course
+ * code + MyJKKN institution id, and return the bytes. Binary, so it does not
+ * go through fetchFromMyJKKN's JSON path.
+ *
+ * Throws MyJKKNApiError with the upstream status: 404 not published, 409
+ * ambiguous (several regulations — pass regulationId), 422 format not
+ * supported for that academic model, 503 renderer unavailable.
+ */
+export async function fetchMyJKKNSyllabusPdf(q: {
+	courseId?: string
+	courseCode?: string
+	institutionId?: string
+	regulationId?: string
+	format?: SyllabusPdfFormat
+	ifNoneMatch?: string | null
+}): Promise<SyllabusPdfResult> {
+	const apiKey = getApiKey()
+	if (!apiKey) throw new MyJKKNApiError('MYJKKN_API_KEY not configured in environment', 500)
+	if (!q.courseId && !(q.courseCode && q.institutionId)) {
+		throw new MyJKKNApiError('Pass courseId, or courseCode with institutionId', 400)
+	}
+
+	const url = new URL(`${getBaseUrl()}/api-management/academic/syllabus/pdf`)
+	if (q.courseId) url.searchParams.set('course_id', q.courseId)
+	if (q.courseCode) url.searchParams.set('course_code', q.courseCode)
+	if (q.institutionId) url.searchParams.set('institution_id', q.institutionId)
+	if (q.regulationId) url.searchParams.set('regulation_id', q.regulationId)
+	url.searchParams.set('format', q.format || 'official')
+	url.searchParams.set('disposition', 'inline')
+	return fetchSyllabusPdfUrl(url, apiKey, q.ifNoneMatch)
+}
+
+/** 3.2 — the bytes of one known learning pathway row (after a 409, or from metadata). */
+export async function fetchMyJKKNSyllabusPdfById(
+	syllabusId: string,
+	q: { format?: SyllabusPdfFormat; ifNoneMatch?: string | null; includeArchived?: boolean } = {}
+): Promise<SyllabusPdfResult> {
+	const apiKey = getApiKey()
+	if (!apiKey) throw new MyJKKNApiError('MYJKKN_API_KEY not configured in environment', 500)
+	const url = new URL(`${getBaseUrl()}/api-management/academic/syllabus/${encodeURIComponent(syllabusId)}/pdf`)
+	url.searchParams.set('format', q.format || 'official')
+	url.searchParams.set('disposition', 'inline')
+	if (q.includeArchived) url.searchParams.set('include_archived', 'true')
+	return fetchSyllabusPdfUrl(url, apiKey, q.ifNoneMatch)
+}
+
+async function fetchSyllabusPdfUrl(url: URL, apiKey: string, ifNoneMatch?: string | null): Promise<SyllabusPdfResult> {
+	// Chromium on the MyJKKN side takes 3–5 s cold; allow more than a JSON call.
+	const controller = new AbortController()
+	const timeout = setTimeout(() => controller.abort(), Math.max(MYJKKN_FETCH_TIMEOUT_MS, 45000))
+	try {
+		const response = await fetch(url.toString(), {
+			method: 'GET',
+			headers: {
+				Authorization: `Bearer ${apiKey}`,
+				Accept: 'application/pdf',
+				...(ifNoneMatch ? { 'If-None-Match': ifNoneMatch } : {}),
+			},
+			cache: 'no-store',
+			signal: controller.signal,
+		})
+
+		if (response.status === 304) {
+			throw new MyJKKNApiError('Not modified', 304)
+		}
+		if (!response.ok) {
+			const body = await response.json().catch(() => ({}))
+			const message = body?.error?.message || body?.message || body?.error || `Syllabus API error ${response.status}`
+			throw new MyJKKNApiError(String(message), response.status, body)
+		}
+		const contentType = response.headers.get('content-type') || 'application/pdf'
+		if (!contentType.toLowerCase().includes('pdf')) {
+			// An HTML 200 is the app shell: the academic/syllabus routes are not
+			// deployed on this host yet. Surface it as a gateway problem, not a miss.
+			throw new MyJKKNApiError(`Syllabus endpoint returned ${contentType}, not a PDF — routes not deployed?`, 502)
+		}
+		return {
+			bytes: await response.arrayBuffer(),
+			contentType,
+			etag: response.headers.get('etag'),
+			syllabusId: response.headers.get('x-syllabus-id'),
+			version: response.headers.get('x-syllabus-version'),
+			academicModel: response.headers.get('x-academic-model'),
+		}
+	} catch (error) {
+		if (error instanceof MyJKKNApiError) throw error
+		if (error instanceof Error && error.name === 'AbortError') {
+			throw new MyJKKNApiError('Syllabus PDF request timed out', 504)
+		}
+		throw new MyJKKNApiError((error as Error)?.message || 'Syllabus PDF request failed', 502)
+	} finally {
+		clearTimeout(timeout)
+	}
+}
+
+// ── 3.1 metadata + the COE-side names from spec §5 ──────────────────────────
+
+export interface SyllabusApiMeta {
+	id: string
+	course_id: string | null
+	course_code: string
+	course_name: string | null
+	institution_id: string
+	board_id?: string | null
+	regulation_id: string | null
+	academic_model: string
+	stream?: string | null
+	course_credits?: number | null
+	version_number: number
+	is_latest: boolean
+	is_archived: boolean
+	last_modified_at: string
+	formats: SyllabusPdfFormat[]
+	pdf_path: string
+	pdf_url: string | null
+}
+
+/** 3.1 — resolve a course to its learning pathway rows (newest first). */
+export async function fetchMyJKKNSyllabusMeta(q: {
+	courseId?: string
+	courseCode?: string
+	institutionId?: string
+	regulationId?: string
+	version?: number
+	includeArchived?: boolean
+}): Promise<{ data: SyllabusApiMeta[]; count: number }> {
+	return fetchFromMyJKKN<{ data: SyllabusApiMeta[]; count: number }>('/api-management/academic/syllabus', {
+		course_id: q.courseId,
+		course_code: q.courseCode,
+		institution_id: q.institutionId,
+		regulation_id: q.regulationId,
+		version: q.version,
+		include_archived: q.includeArchived ? 'true' : undefined,
+	})
+}
+
+export const fetchCourseSyllabusMeta = (courseId: string) => fetchMyJKKNSyllabusMeta({ courseId })
+
+export async function fetchCourseSyllabusPdf(
+	courseId: string,
+	format: SyllabusPdfFormat = 'official'
+): Promise<{ bytes: ArrayBuffer; filename: string; etag: string | null }> {
+	const pdf = await fetchMyJKKNSyllabusPdf({ courseId, format })
+	const slug = (pdf.syllabusId || courseId).replace(/[^A-Za-z0-9]+/g, '_')
+	return { bytes: pdf.bytes, filename: `${slug}-syllabus-${format}-v${pdf.version || '1'}.pdf`, etag: pdf.etag }
+}

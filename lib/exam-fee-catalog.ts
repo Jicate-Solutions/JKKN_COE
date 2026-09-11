@@ -151,6 +151,22 @@ const DEBIT_CATEGORIES: FeeCategory[] = [
 				bases: ['FLAT', 'PER_PAPER'],
 				levelApplies: false,
 			},
+			// The two components of an End-Semester question paper setter's
+			// appointment. The examiner assignment screen reads these — by the
+			// applicable W.E.F. date — for the potential claim, and the portal
+			// claim is the sum of whichever components the examiner accepts.
+			{
+				code: 'QP_SETTING',
+				label: 'Question Paper Setting (per paper)',
+				bases: ['PER_PAPER', 'FLAT'],
+				levelApplies: false,
+			},
+			{
+				code: 'ANSWER_KEY',
+				label: 'Answer Key (per paper)',
+				bases: ['PER_PAPER', 'FLAT'],
+				levelApplies: false,
+			},
 		],
 	},
 	{
