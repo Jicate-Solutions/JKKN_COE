@@ -13,6 +13,7 @@
 // module exists to prevent.
 
 import type { SupabaseClient } from '@supabase/supabase-js'
+import { isQuestionAuthored } from '@/lib/ia/sub-questions'
 
 export interface Actor {
 	userId?: string | null
@@ -39,7 +40,7 @@ export interface ClaimVersionInput {
 	actor: Actor
 }
 
-const done = (q: any) => String(q?.question_text || '').trim() !== ''
+const done = (q: any) => isQuestionAuthored(q)
 
 /** Supersede whatever version is current and insert the next one. */
 export async function snapshotPaperVersion(
@@ -212,6 +213,15 @@ export function diffQuestions(before: any[], after: any[]): QuestionChange[] {
 			(q.sub_questions || []).map((s: any) => [s.label, plain(s.question_text), s.marks, s.co_code, s.k_level])
 		)
 		if (oSubs !== nSubs) push('sub_questions', clip(oSubs), clip(nSubs))
+
+		// Per-sub-division answer keys, logged as their own change.
+		const oSubKeys = JSON.stringify(
+			(prev.sub_questions || []).map((s: any) => [s.label, plain(s.answer_key), s.answer_key_image?.url || null])
+		)
+		const nSubKeys = JSON.stringify(
+			(q.sub_questions || []).map((s: any) => [s.label, plain(s.answer_key), s.answer_key_image?.url || null])
+		)
+		if (oSubKeys !== nSubKeys) push('answer_key', clip(oSubKeys), clip(nSubKeys))
 
 		if ((prev.image?.url || null) !== (q.image?.url || null)) push('image', prev.image?.url || null, q.image?.url || null)
 

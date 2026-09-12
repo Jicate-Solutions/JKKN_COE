@@ -193,11 +193,11 @@ function boxedLetterheadHtml(institutionCode: string, logoBase64: string | null)
 	</div>`
 }
 
-/** The `.lh*` rules for the framed letterhead, at full letter size. */
+/** The `.lh*` rules for the letterhead, at full letter size. */
 const LETTERHEAD_CSS = `
-	/* Framed letterhead: logo at the left, the college's coloured name block centred.
-	   Mirrors the question paper (lib/ia/build-paper-pdf-html.ts) at letter size. */
-	.lh { display: flex; align-items: center; gap: 3mm; border: 0.8pt solid #000; padding: 1.5mm 2mm; }
+	/* Letterhead: logo at the left, the college's coloured name block centred — no frame,
+	   unlike the question paper (lib/ia/build-paper-pdf-html.ts), which keeps its box. */
+	.lh { display: flex; align-items: center; gap: 3mm; padding: 1.5mm 0; }
 	.lh-logo img { height: 16mm; width: auto; }
 	.lh-text { flex: 1; text-align: center; }
 	.lh-name { color: #1a7a3c; font-weight: bold; font-size: 12.5pt; line-height: 1.15; }
@@ -206,7 +206,6 @@ const LETTERHEAD_CSS = `
 	.lh-naac { color: #e6007e; font-weight: bold; font-size: 8.5pt; }
 	.lh-addr { font-weight: bold; font-size: 8.5pt; }
 	.lh-web { font-size: 8pt; color: #1a4fd6; text-decoration: underline; }
-	.lh-office { text-align: center; font-weight: bold; font-size: 11pt; letter-spacing: 0.4px; margin-top: 4px; }
 `
 
 // ── Order HTML ──────────────────────────────────────────────────────────────
@@ -278,7 +277,7 @@ export function buildExaminerOrderHtml(
 	const headerHtml =
 		customHeader ||
 		(boxed
-			? `${boxed}<div class="lh-office">OFFICE OF THE CONTROLLER OF EXAMINATIONS</div>`
+			? boxed
 			: `<div class="head-row">
 			<div class="head-logo">${leftLogo}</div>
 			<div class="head-mid">
@@ -397,14 +396,13 @@ export function buildExaminerOrderHtml(
 
 	const coe = data.coe || {}
 	const coeRow =
-		coe.name || coe.phone || coe.email
+		coe.name || coe.email
 			? `<div class="coe-row">
 			<div>
 				${coe.name ? `<div class="coe-name">${escapeHtml(coe.name)}</div>` : ''}
 				<div>${escapeHtml(coe.designation || 'Controller of Examinations')}</div>
 			</div>
 			<div class="coe-contact">
-				${coe.phone ? `<div>Cell : ${escapeHtml(coe.phone)}</div>` : ''}
 				${coe.email ? `<div>E-mail : ${escapeHtml(coe.email)}</div>` : ''}
 			</div>
 		</div>`
@@ -469,7 +467,6 @@ ${LETTERHEAD_CSS}
 <body>
 	${watermark}
 	${headerHtml}
-	<hr class="rule" />
 	${coeRow}
 
 	<div class="refrow">
@@ -688,7 +685,7 @@ export function buildClaimFormHtml(
 	// framed block when it has one, the generic logo + name header otherwise.
 	const boxed = boxedLetterheadHtml(data.institution.institution_code, assets.letterheadLogoBase64 ?? null)
 	const header = boxed
-		? `${boxed}<div class="lh-office">OFFICE OF THE CONTROLLER OF EXAMINATIONS</div>`
+		? boxed
 		: `<div class="head-row">
 		<div class="head-logo">${leftLogo}</div>
 		<div class="head-mid">
@@ -746,9 +743,8 @@ export function buildClaimFormHtml(
 </style></head>
 <body>
 	${header}
-	<hr class="rule" />
 
-	<div class="title">${escapeHtml(c.title || 'Claim Form — Question Paper Setting With Answer Key')}</div>
+	<div class="title">${escapeHtml(c.title || 'Claim Form — Question Paper Setting')}</div>
 
 	<div class="section">1. Examiner Particulars</div>
 	<table class="grid">
@@ -802,7 +798,7 @@ export function buildClaimFormHtml(
 		</p>
 		<div class="office-verified">Verified By</div>
 		<div class="office-signs">
-			<div class="office-sign">DCoE</div>
+			<div class="office-sign">Deputy COE</div>
 			<div class="office-sign">CONTROLLER OF EXAMINATIONS</div>
 		</div>
 	</div>

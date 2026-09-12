@@ -9,6 +9,7 @@
 //   • one level only — a sub-division cannot itself be split
 //   • sub marks must sum EXACTLY to the parent question's marks
 //   • each sub-division carries its own CO + K-level; the parent's are hidden
+//   • each sub-division carries its own answer key; the parent's is not used
 //   • the parent keeps an optional stem ("For the circuit shown below:")
 //   • objective questions (those with options) cannot be split
 //
@@ -35,6 +36,10 @@ export interface IaSubQuestion {
 	k_level: string | null
 	/** Optional figure, printed centred under this sub-division. */
 	image?: IaQuestionImageRef | null
+	/** Answer key for THIS sub-division (rich HTML); a split question is keyed per sub-division. */
+	answer_key?: string | null
+	/** Optional figure that goes with this sub-division's answer key. */
+	answer_key_image?: IaQuestionImageRef | null
 	display_order: number
 }
 
@@ -86,6 +91,8 @@ export function readSubQuestions(q: any): IaSubQuestion[] {
 			co_code: s?.co_code || null,
 			k_level: s?.k_level || null,
 			image: readQuestionImage(s?.image),
+			answer_key: s?.answer_key ?? null,
+			answer_key_image: readQuestionImage(s?.answer_key_image),
 			display_order: i + 1,
 		}))
 }
@@ -215,4 +222,33 @@ export function flattenEntryQuestions(questions: any[]): FlatEntryQuestion[] {
 		}
 	}
 	return out
+}
+
+// ── "Entered" ────────────────────────────────────────────────────────────────
+
+const authoredText = (v: unknown) =>
+	String(v ?? '')
+		.replace(/<[^>]*>/g, '')
+		.replace(/&nbsp;/g, ' ')
+		.trim() !== ''
+
+/**
+ * Whether a question slot counts as entered. A plain question needs its text;
+ * a SPLIT question (i / ii …) needs text in every sub-division — its stem is
+ * optional, so counting the stem alone reported a finished split question as
+ * missing ("16 / 20" with Q11 b complete).
+ */
+export function isQuestionAuthored(q: any): boolean {
+	const subs = readSubQuestions(q)
+	return subs.length > 0 ? subs.every(sb => authoredText(sb.question_text)) : authoredText(q?.question_text)
+}
+
+/** How many of the paper's question slots are entered (see isQuestionAuthored). */
+export function countAuthored(questions: any[] | null | undefined): number {
+	return (Array.isArray(questions) ? questions : []).filter(isQuestionAuthored).length
+}
+
+/** Whether anything at all has been written into the paper. */
+export function anyAuthored(questions: any[] | null | undefined): boolean {
+	return (Array.isArray(questions) ? questions : []).some(isQuestionAuthored)
 }

@@ -16,16 +16,20 @@ import { Badge } from '@/components/ui/badge'
 import { Card, CardContent } from '@/components/ui/card'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { useToast } from '@/hooks/common/use-toast'
-import { Loader2, Save, Split, X, Plus, AlertTriangle, CheckCircle2, KeyRound } from 'lucide-react'
+import {
+	Split, X, Plus, AlertTriangle, CheckCircle2, KeyRound, Lock, Eye, Info, ChevronDown, ChevronUp,
+} from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { QuestionRichEditor } from '@/components/ia/question-rich-editor'
 import { QuestionImageField } from '@/components/ia/question-image-field'
-import { SyncBadge, type SyncState } from './sync-badge'
+import { type SyncState } from './sync-badge'
 import { K_LEVELS } from '@/types/ia-question-paper'
 import type { IaPaperQuestion, IaPaperSubQuestion } from '@/types/ia-question-paper'
 import {
 	readSubQuestions, relabelSubs, subTotal, canSplit, newId, romanLabel, MAX_SUB_QUESTIONS,
 } from '@/lib/ia/sub-questions'
+import { validatePaperDetailed, problemAnchor, partAnchor, hasOwnAnswerKey, type PaperProblem } from '@/lib/ia/validate-paper'
+import { TONE, FIELD_INVALID } from './tones'
 
 interface TemplatePart {
 	id: string
@@ -37,6 +41,7 @@ interface TemplatePart {
 	marks_per_question: number
 	capture_co: boolean
 	capture_klevel: boolean
+	has_choice?: boolean | null
 	display_order: number
 }
 
@@ -76,10 +81,18 @@ interface Props {
 	/** Lets the parent mirror the sync badge next to its Submit button. */
 	onSyncChange?: (info: { state: SyncState; dirty: boolean; savedAt: string | null }) => void
 	/**
-	 * Every reason the paper cannot be submitted yet (empty = complete). Lets the
-	 * parent disable Submit instead of letting the server refuse the click.
+	 * Every reason the paper cannot be submitted yet (empty = complete), pinned
+	 * to the field each is about. Lets the parent disable Submit — and jump to
+	 * the first problem — instead of letting the server refuse the click.
 	 */
-	onValidityChange?: (problems: string[]) => void
+	onValidityChange?: (problems: PaperProblem[]) => void
+	/** How many question slots have text, for the progress line beside Submit. */
+	onProgressChange?: (info: { done: number; total: number }) => void
+	/**
+	 * Filled with a "scroll to this anchor" function so the parent's tracker can
+	 * take the examiner straight to the first thing to fix.
+	 */
+	jumpRef?: React.MutableRefObject<((anchor: string) => void) | null>
 	/** Lets the parent read the questions as they are right now, unsaved edits included. */
 	questionsRef?: React.MutableRefObject<(() => IaPaperQuestion[]) | null>
 	/** Called when a conflict cannot be settled automatically; the parent reloads the server copy. */
@@ -118,7 +131,7 @@ function canonicalQuestions(qs: any[]): string {
 				q?.k_level ?? null,
 				q?.marks ?? null,
 				(q?.options || []).map((o: any) => [o?.key, plainText(o?.text_html ?? o?.text)]),
-				(q?.sub_questions || []).map((s: any) => [s?.label, plainText(s?.question_text), s?.marks ?? null, s?.co_code ?? null, s?.k_level ?? null]),
+				(q?.sub_questions || []).map((s: any) => [s?.label, plainText(s?.question_text), s?.marks ?? null, s?.co_code ?? null, s?.k_level ?? null, plainText(s?.answer_key), s?.answer_key_image?.url ?? null]),
 				q?.image?.url ?? null,
 				plainText(q?.answer_key),
 				q?.answer_key_image?.url ?? null,
@@ -139,7 +152,7 @@ function fieldKey(q: any, f: (typeof MERGE_FIELDS)[number]): string {
 		case 'options':
 			return JSON.stringify((q?.options || []).map((o: any) => [o?.key, plainText(o?.text_html ?? o?.text)]))
 		case 'sub_questions':
-			return JSON.stringify((q?.sub_questions || []).map((s: any) => [s?.label, plainText(s?.question_text), s?.marks ?? null, s?.co_code ?? null, s?.k_level ?? null, s?.image?.url ?? null]))
+			return JSON.stringify((q?.sub_questions || []).map((s: any) => [s?.label, plainText(s?.question_text), s?.marks ?? null, s?.co_code ?? null, s?.k_level ?? null, s?.image?.url ?? null, plainText(s?.answer_key), s?.answer_key_image?.url ?? null]))
 		case 'image':
 		case 'answer_key_image':
 			return String(q?.[f]?.url ?? '')
@@ -195,6 +208,8 @@ export function PortalPaperEditor({
 	saveRef,
 	onSyncChange,
 	onValidityChange,
+	onProgressChange,
+	jumpRef,
 	questionsRef: liveQuestionsRef,
 	onConflict,
 }: Props) {
@@ -600,46 +615,18 @@ export function PortalPaperEditor({
 		return () => window.removeEventListener('beforeunload', handler)
 	}, [dirty, syncState])
 
-	// ── Completeness (mirrors lib/ia/validate-paper.ts) ───────────────────
-	const problems = useMemo(() => {
-		const out: string[] = []
-		for (const q of questions) {
-			// CO and K-level are required on every question — the template's
-			// capture flags no longer gate them (see lib/ia/validate-paper).
-			const label = `Q${q.question_number}${q.sub_label ? ` ${q.sub_label}` : ''}`
-			const subs = readSubQuestions(q)
-
-			// The answer key is demanded only when ACCEPTED — never merely because
-			// the appointment says "Both".
-			if (answerKeyMode === 'required' && !plainText(q.answer_key) && !q.answer_key_image?.url) {
-				out.push(`${label}: enter the answer key`)
-			}
-			// An answer-key-only appointment does not re-check questions it cannot edit.
-			if (!questionsEditable) continue
-
-			if (subs.length > 0) {
-				for (const sb of subs) {
-					const where = `${label} ${sb.label}`
-					if (!plainText(sb.question_text)) out.push(`${where}: enter the question`)
-					if (!sb.co_code) out.push(`${where}: select a Course Outcome (CO)`)
-					if (!sb.k_level) out.push(`${where}: select a K-level`)
-				}
-				const total = subTotal(subs)
-				if (q.marks != null && Math.abs(total - Number(q.marks)) > 0.001) {
-					out.push(`${label}: sub-division marks total ${total}, must be ${q.marks}`)
-				}
-			} else {
-				if (!plainText(q.question_text)) out.push(`${label}: enter the question`)
-				if (!q.co_code) out.push(`${label}: select a Course Outcome (CO)`)
-				if (!q.k_level) out.push(`${label}: select a K-level`)
-			}
-
-			for (const o of q.options || []) {
-				if (!plainText(o.text_html) && !plainText(o.text)) out.push(`${label}: option ${o.key} is empty`)
-			}
-		}
-		return out
-	}, [questions, partByLabel, questionsEditable, answerKeyMode])
+	// ── Completeness — the SAME rules the server runs on Submit ───────────
+	// lib/ia/validate-paper is pure, so the browser and the API cannot disagree
+	// about what "complete" means. Each problem is pinned to a field anchor.
+	const problems = useMemo(
+		() =>
+			validatePaperDetailed(questions, templateParts, {
+				requireAnswerKey: answerKeyMode === 'required',
+				skipQuestions: !questionsEditable,
+				checkStructure: true,
+			}),
+		[questions, templateParts, questionsEditable, answerKeyMode]
+	)
 
 	useEffect(() => {
 		onValidityChange?.(problems)
@@ -652,12 +639,68 @@ export function PortalPaperEditor({
 		}
 	}, [liveQuestionsRef])
 
-	const doneCount = questions.filter(q => {
-		const subs = readSubQuestions(q)
-		return subs.length > 0
-			? subs.every(s => plainText(s.question_text))
-			: !!plainText(q.question_text)
-	}).length
+	/** Problems grouped by the field they sit on, and by question. */
+	const problemsByAnchor = useMemo(() => {
+		const m = new Map<string, PaperProblem[]>()
+		for (const p of problems) {
+			const list = m.get(p.anchor) || []
+			list.push(p)
+			m.set(p.anchor, list)
+		}
+		return m
+	}, [problems])
+	const problemsByQuestion = useMemo(() => {
+		const m = new Map<string, PaperProblem[]>()
+		for (const p of problems) {
+			if (!p.questionId) continue
+			const list = m.get(p.questionId) || []
+			list.push(p)
+			m.set(p.questionId, list)
+		}
+		return m
+	}, [problems])
+	const problemsByPart = useMemo(() => {
+		const m = new Map<string, PaperProblem[]>()
+		for (const p of problems) {
+			if (!p.partLabel) continue
+			const list = m.get(p.partLabel) || []
+			list.push(p)
+			m.set(p.partLabel, list)
+		}
+		return m
+	}, [problems])
+	const coeProblems = useMemo(() => problems.filter(p => p.needsCoe), [problems])
+	const ownProblems = useMemo(() => problems.filter(p => !p.needsCoe), [problems])
+
+	// ── Jump to a field ───────────────────────────────────────────────────
+	// Scrolls the anchor into view and flashes it for a moment, so a click in
+	// the summary list lands the eye on the right box, not just the right area.
+	const [flash, setFlash] = useState<string | null>(null)
+	const jumpTo = useCallback((anchor: string) => {
+		const el = document.getElementById(anchor)
+		if (!el) return
+		el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+		setFlash(anchor)
+		window.setTimeout(() => setFlash(f => (f === anchor ? null : f)), 2000)
+	}, [])
+	useEffect(() => {
+		if (jumpRef) jumpRef.current = jumpTo
+		return () => {
+			if (jumpRef) jumpRef.current = null
+		}
+	}, [jumpRef, jumpTo])
+
+	const doneCount = useMemo(
+		() =>
+			questions.filter(q => {
+				const subs = readSubQuestions(q)
+				return subs.length > 0 ? subs.every(s => plainText(s.question_text)) : !!plainText(q.question_text)
+			}).length,
+		[questions]
+	)
+	useEffect(() => {
+		onProgressChange?.({ done: doneCount, total: questions.length })
+	}, [doneCount, questions.length, onProgressChange])
 
 	// CO1–CO5 are always offered, in order. The course's own outcome rows are
 	// merged in (they may add CO6 or carry descriptions) but never shrink the
@@ -670,61 +713,126 @@ export function PortalPaperEditor({
 		return [...codes].sort((a, b) => num(a) - num(b) || a.localeCompare(b))
 	}, [courseOutcomes])
 
+	// Errors are only drawn while the examiner can act on them. A submitted or
+	// closed paper is shown clean: red outlines on fields nobody can edit would
+	// read as "something is wrong with my submission".
+	const showErrors = !readOnly
+	const [showAll, setShowAll] = useState(false)
+
+	/** The problems on one field, or none. */
+	const at = (anchor: string): PaperProblem[] | undefined => (showErrors ? problemsByAnchor.get(anchor) : undefined)
+
+	/**
+	 * The answer-key box. One per question — or, for a split question, one per
+	 * sub-division, because each sub-division is a separately valued answer.
+	 * A plain function, not a component, so the rich editor inside keeps its
+	 * state across renders.
+	 */
+	const renderAnswerKey = (opts: {
+		anchor: string
+		label: string
+		value: string | null | undefined
+		image: any
+		onText: (html: string) => void
+		onImage: (img: any) => void
+	}) => {
+		const invalid = !!at(opts.anchor)?.length
+		return (
+			<FieldFrame anchor={opts.anchor} errors={at(opts.anchor)} flashing={flash === opts.anchor}>
+				<div
+					className={cn(
+						'rounded-md border p-2.5 space-y-2',
+						answerKeyMode === 'required'
+							? invalid
+								? 'border-rose-300 bg-rose-50/40'
+								: 'border-amber-200 bg-amber-50/40'
+							: 'border-slate-200 bg-slate-50 opacity-75'
+					)}
+				>
+					<div className="flex flex-wrap items-center justify-between gap-2">
+						<Label className="text-xs font-semibold flex items-center gap-1.5">
+							<KeyRound className="h-3.5 w-3.5 text-amber-700" />
+							{opts.label}
+							{answerKeyMode === 'required' && <span className="text-rose-600">*</span>}
+						</Label>
+						{answerKeyMode === 'disabled' && (
+							<span className="text-[11px] text-muted-foreground inline-flex items-center gap-1">
+								<Lock className="h-3 w-3" />
+								Not accepted — no answer key is needed from you
+							</span>
+						)}
+					</div>
+					<QuestionRichEditor
+						value={opts.value || ''}
+						onChange={opts.onText}
+						disabled={!akEditable}
+						placeholder="Type the answer key / marking scheme for this question…"
+						className={cn(invalid && 'border-rose-400 ring-1 ring-rose-300')}
+					/>
+					{akEditable ? (
+						<QuestionImageField
+							paperId={assignmentId}
+							uploadUrl={`/api/examiner-portal/assignments/${assignmentId}/image`}
+							value={opts.image || null}
+							onChange={img => opts.onImage(img)}
+							label="Attach image to the answer key"
+						/>
+					) : opts.image?.url ? (
+						// eslint-disable-next-line @next/next/no-img-element
+						<img src={opts.image.url} alt="" draggable={false} className="max-w-full max-h-64 rounded border" />
+					) : null}
+				</div>
+			</FieldFrame>
+		)
+	}
+
+	/** Status chip on a question card. */
+	const questionChip = (qid: string, locked: boolean) => {
+		if (locked) {
+			return (
+				<span className={cn('inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium', TONE.locked.badge)}>
+					<Lock className="h-3 w-3" />
+					{readOnly ? 'Read-only' : 'Not yours to edit'}
+				</span>
+			)
+		}
+		const n = problemsByQuestion.get(qid)?.length || 0
+		if (n === 0) {
+			return (
+				<span className={cn('inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium', TONE.success.badge)}>
+					<CheckCircle2 className="h-3 w-3" />
+					Complete
+				</span>
+			)
+		}
+		return (
+			<span className={cn('inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium', TONE.danger.badge)}>
+				<AlertTriangle className="h-3 w-3" />
+				{n} to fix
+			</span>
+		)
+	}
+
+	const selectClass = (invalid: boolean, width: string) =>
+		cn('h-8 text-xs', width, invalid && FIELD_INVALID)
+
 	return (
 		<div className="space-y-4">
-			{/* Sticky save bar */}
-			<div className="sticky top-0 z-10 -mx-1 px-1 py-2 bg-white/95 backdrop-blur border-b flex flex-wrap items-center justify-between gap-2">
-				<div className="flex items-center gap-2 text-sm">
-					<Badge variant="outline" className={cn(doneCount === questions.length && 'bg-emerald-50 text-emerald-700 border-emerald-200')}>
-						{doneCount} / {questions.length} entered
-					</Badge>
-					{problems.length === 0 ? (
-						<span className="text-xs text-emerald-700 flex items-center gap-1">
-							<CheckCircle2 className="h-3.5 w-3.5" />
-							Ready to submit
-						</span>
-					) : (
-						<span className="text-xs text-amber-700 flex items-center gap-1">
-							<AlertTriangle className="h-3.5 w-3.5" />
-							{problems.length} item{problems.length > 1 ? 's' : ''} incomplete
-						</span>
-					)}
-				</div>
-				<div className="flex items-center gap-2">
-					<SyncBadge state={syncState} dirty={dirty} savedAt={savedAt} error={syncError} />
-					{syncState === 'conflict' && onConflict && (
-						<Button size="sm" variant="outline" className="border-rose-300 text-rose-700" onClick={onConflict}>
-							Reload server copy
-						</Button>
-					)}
-					<Button
-						size="sm"
-						variant="outline"
-						onClick={() => void doSave()}
-						disabled={readOnly || saving || (!dirty && syncState !== 'unsynced')}
-						title="Save your progress. Nothing is validated and the paper is not submitted."
-					>
-						{saving ? <Loader2 className="h-4 w-4 mr-1.5 animate-spin" /> : <Save className="h-4 w-4 mr-1.5" />}
-						Save Draft
-					</Button>
-				</div>
-			</div>
-
 			{/* Work this browser is holding that the server never received. Offered
 			    rather than applied: the server copy may well be the newer one. */}
 			{recovery && !readOnly && (
-				<div className="mt-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
-					<p className="font-medium flex items-center gap-1.5">
+				<div className={cn('rounded-md border-2 p-3 text-sm', TONE.warning.card, TONE.warning.frame)}>
+					<p className={cn('font-semibold flex items-center gap-1.5', TONE.warning.heading)}>
 						<AlertTriangle className="h-4 w-4" />
 						Unsaved work found in this browser
 					</p>
-					<p className="mt-1 text-xs">
+					<p className={cn('mt-1 text-xs', TONE.warning.text)}>
 						Edits from{' '}
 						{new Date(recovery.savedAt).toLocaleString('en-IN', {
 							day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit',
 						})}{' '}
-						never reached the server — most likely the connection dropped or the tab closed.
-						Restoring replaces what is on screen with that version.
+						never reached the server — most likely the connection dropped or the tab closed.{' '}
+						<span className="font-semibold text-rose-700">Restoring replaces what is on screen with that version.</span>
 					</p>
 					<div className="mt-2 flex gap-2">
 						<Button
@@ -751,39 +859,145 @@ export function PortalPaperEditor({
 				</div>
 			)}
 
+			{/* Who may edit what. */}
 			{readOnly ? (
-				<Card className="border-slate-200 bg-slate-50">
-					<CardContent className="p-3 text-sm text-slate-700">
-						This paper is read-only — it has been submitted, or the entry period has ended.
-					</CardContent>
-				</Card>
+				<div className={cn('rounded-md border p-3 text-sm flex items-start gap-2', TONE.locked.card, TONE.locked.text)}>
+					<Eye className={cn('h-4 w-4 shrink-0 mt-0.5', TONE.locked.icon)} />
+					<p>
+						<span className="font-semibold">Read-only.</span> This paper has been submitted, or the entry period has
+						ended. Nothing on it can be changed, downloaded or printed.
+					</p>
+				</div>
 			) : !questionsEditable ? (
-				<Card className="border-slate-200 bg-slate-50">
-					<CardContent className="p-3 text-sm text-slate-700">
-						The questions are read-only for you —{' '}
+				<div className={cn('rounded-md border p-3 text-sm flex items-start gap-2', TONE.info.card, TONE.info.text)}>
+					<Info className={cn('h-4 w-4 shrink-0 mt-0.5', TONE.info.icon)} />
+					<p>
+						<span className="font-semibold">The questions are locked for you.</span>{' '}
 						{answerKeyMode === 'required'
-							? 'your appointment is for the answer key. Enter the answer key under each question below.'
-							: 'you have not accepted setting this question paper.'}
-					</CardContent>
-				</Card>
-			) : null}
+							? 'Your appointment is for the answer key only — type the answer key in the yellow box under each question.'
+							: 'You have not accepted setting this question paper.'}
+					</p>
+				</div>
+			) : (
+				<div className={cn('rounded-md border p-3 text-xs flex flex-wrap items-center gap-x-4 gap-y-1', TONE.locked.card, TONE.locked.text)}>
+					<span className="font-semibold text-slate-800">How to read this page</span>
+					<span className="inline-flex items-center gap-1"><span className="text-rose-600 font-bold">*</span> required</span>
+					<span className="inline-flex items-center gap-1"><span className="inline-block h-3 w-5 rounded border-2 border-rose-400 bg-rose-50" /> needs a value or has a problem</span>
+					<span className="inline-flex items-center gap-1"><CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" /> question complete</span>
+					<span className="inline-flex items-center gap-1"><Lock className="h-3.5 w-3.5 text-slate-500" /> locked</span>
+				</div>
+			)}
+
+			{/* Things only the CoE can put right — template or data problems. */}
+			{showErrors && coeProblems.length > 0 && (
+				<div className={cn('rounded-md border-2 p-3 text-sm', TONE.danger.card, TONE.danger.frame)}>
+					<p className={cn('font-semibold flex items-center gap-1.5', TONE.danger.heading)}>
+						<AlertTriangle className="h-4 w-4" />
+						This paper cannot be submitted until the Office of the Controller of Examinations corrects it
+					</p>
+					<ul className={cn('mt-1.5 text-xs space-y-0.5 list-disc pl-5', TONE.danger.text)}>
+						{coeProblems.map((p, i) => (
+							<li key={i}>{p.message}</li>
+						))}
+					</ul>
+					<p className={cn('text-xs mt-1.5', TONE.danger.text)}>
+						You do not need to do anything on the paper for these. Please contact the CoE office.
+					</p>
+				</div>
+			)}
+
+			{/* What the examiner still has to do — clickable. */}
+			{showErrors && ownProblems.length > 0 && (
+				<div className={cn('rounded-md border-2 p-3', TONE.warning.card, TONE.warning.frame)}>
+					<div className="flex flex-wrap items-center justify-between gap-2">
+						<p className={cn('text-sm font-semibold flex items-center gap-1.5', TONE.warning.heading)}>
+							<AlertTriangle className="h-4 w-4" />
+							{ownProblems.length} item{ownProblems.length === 1 ? '' : 's'} to complete before you can submit
+						</p>
+						{ownProblems.length > 8 && (
+							<button
+								type="button"
+								className={cn('text-xs underline-offset-2 hover:underline inline-flex items-center gap-1', TONE.warning.text)}
+								onClick={() => setShowAll(v => !v)}
+							>
+								{showAll ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+								{showAll ? 'Show fewer' : `Show all ${ownProblems.length}`}
+							</button>
+						)}
+					</div>
+					<p className={cn('text-xs mt-0.5', TONE.warning.text)}>
+						Click an item to go straight to it. Each field that needs a value is outlined in red.
+					</p>
+					<ul className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-x-3 gap-y-0.5">
+						{(showAll ? ownProblems : ownProblems.slice(0, 8)).map((p, i) => (
+							<li key={`${p.anchor}-${p.field}-${i}`}>
+								<button
+									type="button"
+									onClick={() => jumpTo(p.anchor)}
+									className="w-full text-left text-xs rounded px-2 py-1 hover:bg-amber-100 flex gap-2 items-baseline"
+								>
+									<span className={cn('font-semibold shrink-0 w-16 truncate', TONE.warning.heading)}>{p.where}</span>
+									<span className={TONE.warning.text}>{p.message.replace(/^[^:]+:\s*/, '')}</span>
+								</button>
+							</li>
+						))}
+					</ul>
+				</div>
+			)}
 
 			{/* Parts */}
 			{[...grouped.entries()].map(([label, qs]) => {
 				const part = partByLabel.get(label)
 				const answerCount = Number(part?.num_to_answer) > 0 ? Number(part!.num_to_answer) : part?.num_questions || qs.length
 				const each = part?.marks_per_question ?? qs[0]?.marks ?? 0
+				const partProblems = showErrors ? problemsByPart.get(label) || [] : []
+				const partDone = qs.filter(q => (problemsByQuestion.get(q.id)?.length || 0) === 0).length
+				const partOk = partProblems.length === 0
+				const partAnchorId = partAnchor(label)
+				const structural = at(partAnchorId)
 				return (
 					<div key={label} className="space-y-3">
-						<div className="rounded-md bg-muted/60 px-3 py-2">
-							<p className="font-semibold text-sm">
-								PART {label} — ({answerCount} × {each} = {Number(answerCount) * Number(each)} marks)
-							</p>
-							{part?.instruction && <p className="text-xs text-muted-foreground mt-0.5">{part.instruction}</p>}
+						<div
+							id={partAnchorId}
+							className={cn(
+								'rounded-md border-l-4 px-3 py-2 flex flex-wrap items-center justify-between gap-2 scroll-mt-40',
+								partOk ? 'bg-emerald-50/70 border-emerald-400' : 'bg-muted/60 border-slate-300',
+								structural?.length && 'bg-rose-50 border-rose-400',
+								flash === partAnchorId && 'ring-2 ring-offset-2 ring-rose-400'
+							)}
+						>
+							<div className="min-w-0">
+								<p className="font-semibold text-sm">
+									PART {label} — ({answerCount} × {each} = {Number(answerCount) * Number(each)} marks)
+								</p>
+								{part?.instruction && <p className="text-xs text-muted-foreground mt-0.5">{part.instruction}</p>}
+								{structural?.map((p, i) => (
+									<p key={i} className="text-xs text-rose-700 mt-0.5 flex items-center gap-1">
+										<AlertTriangle className="h-3 w-3" />
+										{p.message}
+									</p>
+								))}
+							</div>
+							{showErrors && (
+								<span
+									className={cn(
+										'inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium shrink-0',
+										partOk ? TONE.success.badge : TONE.warning.badge
+									)}
+								>
+									{partOk ? <CheckCircle2 className="h-3 w-3" /> : <AlertTriangle className="h-3 w-3" />}
+									{partDone} of {qs.length} complete
+								</span>
+							)}
 						</div>
 
 						{qs.map(q => {
 							const subs = readSubQuestions(q)
+							const qProblems = showErrors ? problemsByQuestion.get(q.id) || [] : []
+							const qOk = qProblems.length === 0
+							const cardTone = qLocked && !akEditable ? 'border-l-slate-300' : qOk ? 'border-l-emerald-400' : 'border-l-rose-400'
+							const textAnchor = problemAnchor(q.id, 'question_text')
+							const marksAnchor = problemAnchor(q.id, 'marks')
 							// Both selectors always render: the rule requires them on every
 							// question, so hiding either would make a paper unsubmittable
 							// with no way for the examiner to fix it.
@@ -792,43 +1006,60 @@ export function PortalPaperEditor({
 								   the screenshot to THIS question — see QuestionImageField. */
 								<Card
 									key={q.id}
+									id={`qp-q-${q.id}`}
 									data-qp-image-scope
-									className={cn(q.is_choice_alternative && 'ml-4 border-dashed')}
+									className={cn('border-l-4 scroll-mt-40', cardTone, q.is_choice_alternative && 'ml-3 sm:ml-5 border-dashed border-l-solid')}
 								>
 									<CardContent className="p-3 space-y-3">
-										<div className="flex items-center justify-between gap-2">
-											<div className="flex items-center gap-2">
+										<div className="flex flex-wrap items-center justify-between gap-2">
+											<div className="flex flex-wrap items-center gap-2">
 												<span className="font-semibold text-sm">
-													{q.question_number}
-													{q.sub_label ? ` ${q.sub_label})` : '.'}
+													Q{q.question_number}
+													{q.sub_label ? ` ${q.sub_label})` : ''}
 												</span>
 												{q.is_choice_alternative && (
 													<Badge variant="outline" className="text-[10px]">OR</Badge>
 												)}
 												{q.marks != null && (
-													<span className="text-xs text-muted-foreground">{q.marks} marks</span>
+													<span
+														id={subs.length === 0 ? marksAnchor : undefined}
+														className={cn(
+															'text-xs rounded px-1.5 py-0.5',
+															at(marksAnchor)?.length && subs.length === 0 ? 'bg-rose-50 text-rose-700 border border-rose-300' : 'text-muted-foreground bg-muted'
+														)}
+													>
+														{q.marks} marks
+													</span>
 												)}
 											</div>
-											{!qLocked && canSplit(q) && subs.length === 0 && (
-												<Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => splitQuestion(q)}>
-													<Split className="h-3.5 w-3.5 mr-1" />
-													Split into (i)/(ii)
-												</Button>
-											)}
+											<div className="flex items-center gap-2">
+												{questionChip(q.id, qLocked && !akEditable)}
+												{!qLocked && canSplit(q) && subs.length === 0 && (
+													<Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => splitQuestion(q)}>
+														<Split className="h-3.5 w-3.5 mr-1" />
+														Split into (i)/(ii)
+													</Button>
+												)}
+											</div>
 										</div>
 
 										{/* Question text (a stem when split) */}
-										<div>
-											{subs.length > 0 && (
-												<Label className="text-xs text-muted-foreground">Common stem (optional)</Label>
-											)}
+										<FieldFrame
+											anchor={textAnchor}
+											errors={at(textAnchor)}
+											flashing={flash === textAnchor}
+											label={subs.length > 0 ? 'Common stem' : 'Question'}
+											required={subs.length === 0 && !qLocked}
+											hint={subs.length > 0 ? 'optional' : undefined}
+										>
 											<QuestionRichEditor
 												value={q.question_text || ''}
 												onChange={html => patchQuestion(q.id, { question_text: html })}
 												disabled={qLocked}
-												placeholder={subs.length > 0 ? 'Optional shared text…' : 'Enter the question…'}
+												placeholder={subs.length > 0 ? 'Optional shared text…' : 'Type the question here…'}
+												className={cn(at(textAnchor)?.length && 'border-rose-400 ring-1 ring-rose-300')}
 											/>
-										</div>
+										</FieldFrame>
 
 										{/* Figure */}
 										{!qLocked && (
@@ -843,120 +1074,142 @@ export function PortalPaperEditor({
 										{/* MCQ options */}
 										{Array.isArray(q.options) && q.options.length > 0 && (
 											<div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-												{q.options.map(o => (
-													<div key={o.key} className="flex items-start gap-2">
-														<span className="pt-2 text-sm font-medium w-5">{o.key})</span>
-														<div className="flex-1">
-															<QuestionRichEditor
-																value={o.text_html || o.text || ''}
-																onChange={html => patchOption(q.id, o.key, html)}
-																disabled={qLocked}
-																variant="compact"
-																placeholder={`Option ${o.key}`}
-															/>
-														</div>
-													</div>
-												))}
+												{q.options.map(o => {
+													const oAnchor = problemAnchor(q.id, 'option', { optionKey: o.key })
+													return (
+														<FieldFrame key={o.key} anchor={oAnchor} errors={at(oAnchor)} flashing={flash === oAnchor} className="flex items-start gap-2">
+															<span className="pt-2 text-sm font-medium w-5">{o.key})</span>
+															<div className="flex-1">
+																<QuestionRichEditor
+																	value={o.text_html || o.text || ''}
+																	onChange={html => patchOption(q.id, o.key, html)}
+																	disabled={qLocked}
+																	variant="compact"
+																	placeholder={`Option ${o.key} *`}
+																	className={cn(at(oAnchor)?.length && 'border-rose-400 ring-1 ring-rose-300')}
+																/>
+															</div>
+														</FieldFrame>
+													)
+												})}
 											</div>
 										)}
 
 										{/* Sub-divisions */}
 										{subs.length > 0 && (
-											<div className="space-y-2 border-l-2 pl-3">
-												{subs.map(sb => (
-													<div key={sb.id} className="space-y-2">
-														<div className="flex items-center justify-between">
-															<span className="text-xs font-medium">{sb.label}.</span>
-															{!qLocked && (
-																<Button
-																	variant="ghost"
-																	size="icon"
-																	className="h-6 w-6 text-rose-600"
-																	onClick={() => removeSub(q, sb.id)}
-																	aria-label="Remove sub-division"
-																>
-																	<X className="h-3.5 w-3.5" />
-																</Button>
-															)}
-														</div>
-														<QuestionRichEditor
-															value={sb.question_text || ''}
-															onChange={html => patchSub(q, sb.id, { question_text: html })}
-															disabled={qLocked}
-															variant="compact"
-															placeholder="Enter this sub-division…"
-														/>
-														<div className="flex flex-wrap gap-2">
-															<div className="w-24">
-																<Input
-																	type="number"
-																	min="0"
-																	step="0.5"
-																	value={sb.marks ?? ''}
-																	onChange={e =>
-																		patchSub(q, sb.id, {
-																			marks: e.target.value === '' ? null : Number(e.target.value),
-																		})
-																	}
-																	disabled={qLocked}
-																	placeholder="Marks"
-																	className="h-8 text-xs"
-																/>
+											<div className="space-y-3 border-l-2 pl-3">
+												{subs.map(sb => {
+													const sText = problemAnchor(q.id, 'question_text', { subId: sb.id })
+													const sMarks = problemAnchor(q.id, 'marks', { subId: sb.id })
+													const sCo = problemAnchor(q.id, 'co_code', { subId: sb.id })
+													const sK = problemAnchor(q.id, 'k_level', { subId: sb.id })
+													return (
+														<div key={sb.id} className="space-y-2">
+															<div className="flex items-center justify-between">
+																<span className="text-xs font-semibold">({sb.label})</span>
+																{!qLocked && (
+																	<Button
+																		variant="ghost"
+																		size="icon"
+																		className="h-6 w-6 text-rose-600"
+																		onClick={() => removeSub(q, sb.id)}
+																		aria-label="Remove sub-division"
+																		title="Remove this sub-division"
+																	>
+																		<X className="h-3.5 w-3.5" />
+																	</Button>
+																)}
 															</div>
-															{/* CO and K-level are mandatory on every sub-division; an
-															    unset one is outlined so it is findable at a glance. */}
-															<Select
-																value={sb.co_code || ''}
-																onValueChange={v => patchSub(q, sb.id, { co_code: v })}
-																disabled={qLocked}
-															>
-																<SelectTrigger
-																	className={cn(
-																		'h-8 w-24 text-xs',
-																		!sb.co_code && !qLocked && 'border-destructive'
-																	)}
-																>
-																	<SelectValue placeholder="CO *" />
-																</SelectTrigger>
-																<SelectContent>
-																	{coOptions.map(c => (
-																		<SelectItem key={c} value={c}>{c}</SelectItem>
-																	))}
-																</SelectContent>
-															</Select>
-															<Select
-																value={sb.k_level || ''}
-																onValueChange={v => patchSub(q, sb.id, { k_level: v })}
-																disabled={qLocked}
-															>
-																<SelectTrigger
-																	className={cn(
-																		'h-8 w-32 text-xs',
-																		!sb.k_level && !qLocked && 'border-destructive'
-																	)}
-																>
-																	<SelectValue placeholder="K-level *" />
-																</SelectTrigger>
-																<SelectContent>
-																	{K_LEVELS.map(k => (
-																		<SelectItem key={k.code} value={k.code}>{k.label}</SelectItem>
-																	))}
-																</SelectContent>
-															</Select>
+															<FieldFrame anchor={sText} errors={at(sText)} flashing={flash === sText} label="Sub-division text" required={!qLocked}>
+																<QuestionRichEditor
+																	value={sb.question_text || ''}
+																	onChange={html => patchSub(q, sb.id, { question_text: html })}
+																	disabled={qLocked}
+																	variant="compact"
+																	placeholder="Type this sub-division…"
+																	className={cn(at(sText)?.length && 'border-rose-400 ring-1 ring-rose-300')}
+																/>
+															</FieldFrame>
+															<div className="flex flex-wrap gap-2 items-start">
+																<FieldFrame anchor={sMarks} errors={at(sMarks)} flashing={flash === sMarks} label="Marks" required={!qLocked} className="w-24">
+																	<Input
+																		type="number"
+																		min="0"
+																		step="0.5"
+																		value={sb.marks ?? ''}
+																		onChange={e =>
+																			patchSub(q, sb.id, {
+																				marks: e.target.value === '' ? null : Number(e.target.value),
+																			})
+																		}
+																		disabled={qLocked}
+																		placeholder="Marks"
+																		aria-invalid={!!at(sMarks)?.length}
+																		className={cn('h-8 text-xs', at(sMarks)?.length && FIELD_INVALID)}
+																	/>
+																</FieldFrame>
+																<FieldFrame anchor={sCo} errors={at(sCo)} flashing={flash === sCo} label="Course Outcome" required={!qLocked} className="w-28">
+																	<Select
+																		value={sb.co_code || ''}
+																		onValueChange={v => patchSub(q, sb.id, { co_code: v })}
+																		disabled={qLocked}
+																	>
+																		<SelectTrigger className={selectClass(!!at(sCo)?.length, 'w-full')} aria-invalid={!!at(sCo)?.length}>
+																			<SelectValue placeholder="Select CO" />
+																		</SelectTrigger>
+																		<SelectContent>
+																			{coOptions.map(c => (
+																				<SelectItem key={c} value={c}>{c}</SelectItem>
+																			))}
+																		</SelectContent>
+																	</Select>
+																</FieldFrame>
+																<FieldFrame anchor={sK} errors={at(sK)} flashing={flash === sK} label="K-level" required={!qLocked} className="w-40">
+																	<Select
+																		value={sb.k_level || ''}
+																		onValueChange={v => patchSub(q, sb.id, { k_level: v })}
+																		disabled={qLocked}
+																	>
+																		<SelectTrigger className={selectClass(!!at(sK)?.length, 'w-full')} aria-invalid={!!at(sK)?.length}>
+																			<SelectValue placeholder="Select K-level" />
+																		</SelectTrigger>
+																		<SelectContent>
+																			{K_LEVELS.map(k => (
+																				<SelectItem key={k.code} value={k.code}>{k.label}</SelectItem>
+																			))}
+																		</SelectContent>
+																	</Select>
+																</FieldFrame>
+															</div>
+															{/* Each sub-division is valued on its own, so each carries its own key. */}
+															{answerKeyMode !== 'hidden' &&
+																renderAnswerKey({
+																	anchor: problemAnchor(q.id, 'answer_key', { subId: sb.id }),
+																	label: `Answer Key (${sb.label})`,
+																	value: sb.answer_key,
+																	image: sb.answer_key_image,
+																	onText: html => patchSub(q, sb.id, { answer_key: html }),
+																	onImage: img => patchSub(q, sb.id, { answer_key_image: img }),
+																})}
 														</div>
-													</div>
-												))}
-												<div className="flex items-center justify-between pt-1">
-													<span
-														className={cn(
-															'text-xs',
-															q.marks != null && Math.abs(subTotal(subs) - Number(q.marks)) > 0.001
-																? 'text-rose-600'
-																: 'text-muted-foreground'
-														)}
-													>
-														Sub-division marks: {subTotal(subs)} / {q.marks ?? '—'}
-													</span>
+													)
+												})}
+												<div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+													<FieldFrame anchor={marksAnchor} errors={at(marksAnchor)} flashing={flash === marksAnchor}>
+														<span
+															className={cn(
+																'text-xs rounded px-1.5 py-0.5 inline-flex items-center gap-1',
+																at(marksAnchor)?.length
+																	? 'bg-rose-50 text-rose-700 border border-rose-300 font-medium'
+																	: subs.every(s => s.marks != null)
+																		? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+																		: 'text-muted-foreground'
+															)}
+														>
+															{at(marksAnchor)?.length ? <AlertTriangle className="h-3 w-3" /> : subs.every(s => s.marks != null) ? <CheckCircle2 className="h-3 w-3" /> : null}
+															Sub-division marks: {subTotal(subs)} / {q.marks ?? '—'}
+														</span>
+													</FieldFrame>
 													{!qLocked && subs.length < MAX_SUB_QUESTIONS && (
 														<Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => addSub(q)}>
 															<Plus className="h-3.5 w-3.5 mr-1" />
@@ -969,23 +1222,18 @@ export function PortalPaperEditor({
 
 										{/* CO / K on the question itself — both mandatory. */}
 										{subs.length === 0 && (
-											<div className="flex flex-wrap gap-2">
-												<div>
-													<Label className="text-[11px] text-muted-foreground">
-														Course Outcome <span className="text-destructive">*</span>
-													</Label>
-														<Select
-															value={q.co_code || ''}
-															onValueChange={v => patchQuestion(q.id, { co_code: v })}
-															disabled={qLocked}
-														>
+											<div className="flex flex-wrap gap-2 items-start">
+												<FieldFrame anchor={problemAnchor(q.id, 'co_code')} errors={at(problemAnchor(q.id, 'co_code'))} flashing={flash === problemAnchor(q.id, 'co_code')} label="Course Outcome" required={!qLocked} className="w-32">
+													<Select
+														value={q.co_code || ''}
+														onValueChange={v => patchQuestion(q.id, { co_code: v })}
+														disabled={qLocked}
+													>
 														<SelectTrigger
-															className={cn(
-																'h-8 w-28 text-xs mt-0.5',
-																!q.co_code && !qLocked && 'border-destructive'
-															)}
+															className={selectClass(!!at(problemAnchor(q.id, 'co_code'))?.length, 'w-full')}
+															aria-invalid={!!at(problemAnchor(q.id, 'co_code'))?.length}
 														>
-															<SelectValue placeholder="CO" />
+															<SelectValue placeholder="Select CO" />
 														</SelectTrigger>
 														<SelectContent>
 															{coOptions.map(c => (
@@ -993,23 +1241,18 @@ export function PortalPaperEditor({
 															))}
 														</SelectContent>
 													</Select>
-												</div>
-												<div>
-													<Label className="text-[11px] text-muted-foreground">
-														K-level <span className="text-destructive">*</span>
-													</Label>
-														<Select
-															value={q.k_level || ''}
-															onValueChange={v => patchQuestion(q.id, { k_level: v })}
-															disabled={qLocked}
-														>
+												</FieldFrame>
+												<FieldFrame anchor={problemAnchor(q.id, 'k_level')} errors={at(problemAnchor(q.id, 'k_level'))} flashing={flash === problemAnchor(q.id, 'k_level')} label="K-level" required={!qLocked} className="w-44">
+													<Select
+														value={q.k_level || ''}
+														onValueChange={v => patchQuestion(q.id, { k_level: v })}
+														disabled={qLocked}
+													>
 														<SelectTrigger
-															className={cn(
-																'h-8 w-36 text-xs mt-0.5',
-																!q.k_level && !qLocked && 'border-destructive'
-															)}
+															className={selectClass(!!at(problemAnchor(q.id, 'k_level'))?.length, 'w-full')}
+															aria-invalid={!!at(problemAnchor(q.id, 'k_level'))?.length}
 														>
-															<SelectValue placeholder="K-level" />
+															<SelectValue placeholder="Select K-level" />
 														</SelectTrigger>
 														<SelectContent>
 															{K_LEVELS.map(k => (
@@ -1017,55 +1260,23 @@ export function PortalPaperEditor({
 															))}
 														</SelectContent>
 													</Select>
-												</div>
+												</FieldFrame>
 											</div>
 										)}
 
-										{/* Answer key — belongs to THIS question, never printed on the paper. */}
-										{answerKeyMode !== 'hidden' && (
-											<div
-												className={cn(
-													'rounded-md border p-2.5 space-y-2',
-													answerKeyMode === 'required'
-														? 'border-amber-200 bg-amber-50/40'
-														: 'border-slate-200 bg-slate-50 opacity-75'
-												)}
-											>
-												<div className="flex flex-wrap items-center justify-between gap-2">
-													<Label className="text-xs font-semibold flex items-center gap-1.5">
-														<KeyRound className="h-3.5 w-3.5 text-amber-700" />
-														Answer Key
-														{answerKeyMode === 'required' && <span className="text-destructive">*</span>}
-													</Label>
-													{answerKeyMode === 'disabled' && (
-														<span className="text-[11px] text-muted-foreground">
-															Not accepted — no answer key is required from you
-														</span>
-													)}
-													{akEditable && !plainText(q.answer_key) && !q.answer_key_image?.url && (
-														<span className="text-[11px] text-amber-700">Required for this question</span>
-													)}
-												</div>
-												<QuestionRichEditor
-													value={q.answer_key || ''}
-													onChange={html => patchQuestion(q.id, { answer_key: html })}
-													disabled={!akEditable}
-													placeholder="Enter the answer key / marking scheme for this question…"
-												/>
-												{akEditable ? (
-													<QuestionImageField
-														paperId={assignmentId}
-														uploadUrl={`/api/examiner-portal/assignments/${assignmentId}/image`}
-														value={(q.answer_key_image as any) || null}
-														onChange={img => patchQuestion(q.id, { answer_key_image: img as any })}
-														label="Attach image to the answer key"
-													/>
-												) : q.answer_key_image?.url ? (
-													// eslint-disable-next-line @next/next/no-img-element
-													<img src={q.answer_key_image.url} alt="" draggable={false} className="max-w-full max-h-64 rounded border" />
-												) : null}
-											</div>
-										)}
+										{/* Answer key — belongs to THIS question, never printed on the paper.
+										    A split question is keyed under each sub-division instead; the
+										    whole-question box stays only where an older paper already has one. */}
+										{answerKeyMode !== 'hidden' &&
+											(subs.length === 0 || hasOwnAnswerKey(q)) &&
+											renderAnswerKey({
+												anchor: problemAnchor(q.id, 'answer_key'),
+												label: subs.length > 0 ? 'Common answer key (whole question)' : 'Answer Key',
+												value: q.answer_key,
+												image: q.answer_key_image,
+												onText: html => patchQuestion(q.id, { answer_key: html }),
+												onImage: img => patchQuestion(q.id, { answer_key_image: img as any }),
+											})}
 									</CardContent>
 								</Card>
 							)
@@ -1074,53 +1285,78 @@ export function PortalPaperEditor({
 				)
 			})}
 
-			{problems.length > 0 && (
-				<Card className="border-amber-200 bg-amber-50/60">
-					<CardContent className="p-3">
-						<p className="text-sm font-medium text-amber-900 flex items-center gap-1.5">
-							<AlertTriangle className="h-4 w-4" />
-							Still to complete before you can submit
-						</p>
-						<ul className="mt-2 text-xs text-amber-800 space-y-0.5 max-h-40 overflow-y-auto">
-							{problems.slice(0, 40).map((p, i) => (
-								<li key={i}>· {p}</li>
-							))}
-							{problems.length > 40 && <li>· … and {problems.length - 40} more</li>}
-						</ul>
-					</CardContent>
-				</Card>
+			{/* A second copy of the summary at the foot, so an examiner who scrolled
+			    to the end is not sent hunting back up. */}
+			{showErrors && ownProblems.length > 0 && (
+				<div className={cn('rounded-md border p-3 text-sm flex flex-wrap items-center justify-between gap-2', TONE.warning.card)}>
+					<span className={cn('font-medium flex items-center gap-1.5', TONE.warning.heading)}>
+						<AlertTriangle className="h-4 w-4" />
+						{ownProblems.length} item{ownProblems.length === 1 ? '' : 's'} still to complete
+					</span>
+					<Button size="sm" variant="outline" onClick={() => jumpTo(ownProblems[0].anchor)}>
+						Take me to the first one
+					</Button>
+				</div>
+			)}
+			{showErrors && problems.length === 0 && questions.length > 0 && (
+				<div className={cn('rounded-md border p-3 text-sm flex items-center gap-2', TONE.success.card, TONE.success.text)}>
+					<CheckCircle2 className={cn('h-4 w-4', TONE.success.icon)} />
+					<span className="font-medium">Every question is complete.</span> Use the Submit button above when you are ready.
+				</div>
 			)}
 		</div>
 	)
 }
 
-/** Exposed so the portal shell can gate its Submit button on the same rules. */
-export function paperProblemCount(
-	questions: IaPaperQuestion[],
-	parts: TemplatePart[],
-	opts: { questionsEditable?: boolean; requireAnswerKey?: boolean } = {}
-): number {
-	const byLabel = new Map(parts.map(p => [p.part_label, p]))
-	let n = 0
-	for (const q of questions) {
-		if (opts.requireAnswerKey && !plainText(q.answer_key) && !q.answer_key_image?.url) n++
-		if (opts.questionsEditable === false) continue
-		const part = byLabel.get(q.part_label || '')
-		const subs = readSubQuestions(q)
-		if (subs.length > 0) {
-			for (const sb of subs) {
-				if (!plainText(sb.question_text)) n++
-				if ((part?.capture_co ?? true) && !sb.co_code) n++
-				if ((part?.capture_klevel ?? true) && !sb.k_level) n++
-			}
-		} else {
-			if (!plainText(q.question_text)) n++
-			if ((part?.capture_co ?? true) && !q.co_code) n++
-			if ((part?.capture_klevel ?? true) && !q.k_level) n++
-		}
-		for (const o of q.options || []) {
-			if (!plainText(o.text_html) && !plainText(o.text)) n++
-		}
-	}
-	return n
+/**
+ * Wraps one field: gives it its anchor id (so the summary list can scroll to
+ * it), the red label and message when it has a problem, and a brief flash
+ * after a jump. A module-level component, NOT one defined inside the editor's
+ * render — that would remount every rich editor on every keystroke.
+ */
+function FieldFrame({
+	anchor,
+	errors,
+	flashing,
+	label,
+	required,
+	hint,
+	className,
+	children,
+}: {
+	anchor: string
+	errors?: PaperProblem[]
+	flashing?: boolean
+	label?: React.ReactNode
+	required?: boolean
+	hint?: string
+	className?: string
+	children: React.ReactNode
+}) {
+	const invalid = !!errors?.length
+	return (
+		<div
+			id={anchor}
+			className={cn(
+				'rounded-md transition-shadow scroll-mt-40',
+				flashing && 'ring-2 ring-offset-2 ring-rose-400',
+				className
+			)}
+		>
+			{label && (
+				<Label className={cn('text-[11px] flex items-center gap-1', invalid ? 'text-rose-700' : 'text-muted-foreground')}>
+					{label}
+					{required && <span className="text-rose-600 font-semibold">*</span>}
+					{hint && <span className="font-normal opacity-70">— {hint}</span>}
+				</Label>
+			)}
+			<div className={cn(label && 'mt-0.5')}>{children}</div>
+			{invalid && (
+				<p className="text-[11px] text-rose-700 mt-1 flex items-start gap-1" role="alert">
+					<AlertTriangle className="h-3 w-3 shrink-0 mt-px" />
+					<span>{[...new Set(errors!.map(e => e.short))].join(' · ')}</span>
+				</p>
+			)}
+		</div>
+	)
 }

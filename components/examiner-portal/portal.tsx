@@ -10,6 +10,11 @@
 //   Question Paper  time-limited, preview-only, then the submit walk
 //   Claim Form      pending → submitted → approved → payment completed
 //
+// Every screen answers the same question first — "what do I do now?" — through
+// one status vocabulary (./tones) and, on the paper page, a sticky step tracker
+// whose single sentence is the instruction. Every button that cannot be pressed
+// says why, next to it, instead of failing on the click.
+//
 // SECURITY. Nothing here is the protection; every rule is enforced by the
 // server (lib/qp-portal/guard.ts and the routes). What this file does is explain
 // the state and avoid offering actions that would be refused anyway:
@@ -31,12 +36,12 @@ import {
 	Loader2, LogOut, FileText, Clock, Lock, CheckCircle2, AlertTriangle, ArrowLeft,
 	ShieldCheck, ScrollText, Receipt, History, Send, RefreshCw, Save, LayoutDashboard,
 	Download, Eye, Menu, X, ListChecks, Wallet, BadgeCheck, UserCircle, KeyRound, Pencil, BookOpen,
+	ArrowRight, Info, XCircle, RotateCcw,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { formatIst, windowHint } from '@/lib/qp-portal/ist'
 import {
 	QP_LOG_ACTION_LABELS,
-	QP_CLAIM_STATUS_LABELS,
 	QP_ASSIGNMENT_TYPE_LABELS,
 	type QpWindowState,
 	type QpSubmissionStage,
@@ -45,13 +50,19 @@ import {
 } from '@/types/qp-examiner-assignment'
 import { componentsForType, computeClaim, formatRupees } from '@/lib/qp-portal/fees'
 import { Checkbox } from '@/components/ui/checkbox'
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { PortalPaperEditor } from './portal-paper-editor'
 import { SyncBadge, type SyncState } from './sync-badge'
 import { SubmissionWizard } from './submission-wizard'
 import { ClaimSection } from './claim-section'
 import { ProfileSection } from './profile-section'
 import { PaperPreviewDialog } from './paper-preview-dialog'
+import {
+	PaperStepTracker, DisabledReason, ToneBadge, type TrackerStep, type TrackerInstruction, type StepState,
+} from './paper-step-tracker'
+import { TONE, TONE_LEGEND, TAB_TONE, type Tone } from './tones'
 import type { IaPaperQuestion } from '@/types/ia-question-paper'
+import type { PaperProblem } from '@/lib/ia/validate-paper'
 
 interface PortalExaminer {
 	id: string
@@ -121,11 +132,43 @@ interface Props {
 }
 
 type Section = 'dashboard' | 'profile' | 'orders' | 'papers' | 'claims'
+type ListTab = 'active' | 'archived'
 
-const WINDOW_TONE: Record<QpWindowState, string> = {
-	pending: 'bg-slate-50 text-slate-700 border-slate-200',
-	open: 'bg-emerald-50 text-emerald-700 border-emerald-200',
-	closed: 'bg-rose-50 text-rose-700 border-rose-200',
+/**
+ * A paper whose validity ended more than this many days ago is ARCHIVED: it
+ * stays readable for reference (order copy, claim status, history) but is kept
+ * out of the Active list so the examiner sees only what still matters.
+ */
+const ARCHIVE_AFTER_DAYS = 90
+
+function isArchived(a: { valid_to: string }, now = Date.now()): boolean {
+	const end = new Date(a.valid_to).getTime()
+	if (Number.isNaN(end)) return false
+	return now - end > ARCHIVE_AFTER_DAYS * 24 * 60 * 60 * 1000
+}
+
+/** Newest validity first, so the paper closing soonest is not buried under old ones. */
+function byValidToDesc(x: { valid_to: string; id: string }, y: { valid_to: string; id: string }): number {
+	return String(y.valid_to).localeCompare(String(x.valid_to)) || x.id.localeCompare(y.id)
+}
+
+/** The claim column on a card: label + tone, from the submission stage and claim status. */
+function claimCell(a: AssignmentSummary): { label: string; tone: Tone; hint?: string } {
+	if (a.status === 'cancelled') return { label: 'No claim', tone: 'locked' }
+	if (a.submission_stage !== 'completed') {
+		return { label: 'Not yet available', tone: 'locked', hint: 'Opens after the submission is complete' }
+	}
+	const claim = (a.claim_status || 'pending') as QpClaimStatus
+	if (claim === 'paid') return { label: 'Payment completed', tone: 'success' }
+	if (claim === 'approved') return { label: 'Claim approved', tone: 'success' }
+	if (claim === 'submitted') return { label: 'Claim submitted', tone: 'info' }
+	return { label: 'Claim to submit', tone: 'warning', hint: 'Your action needed' }
+}
+
+const WINDOW_TONE: Record<QpWindowState, Tone> = {
+	pending: 'locked',
+	open: 'success',
+	closed: 'danger',
 }
 
 const NAV: { key: Section; label: string; icon: typeof LayoutDashboard }[] = [
@@ -136,6 +179,11 @@ const NAV: { key: Section; label: string; icon: typeof LayoutDashboard }[] = [
 	{ key: 'claims', label: 'Claim Form', icon: Receipt },
 ]
 
+/**
+ * fetch() that turns a refusal into an Error carrying the server's body, so a
+ * caller can read `error.code` ('INCOMPLETE', 'CONFLICT' …) and `error.body`
+ * (field-level problems, unanswered check list ids) instead of only a sentence.
+ */
 async function portalFetch(url: string, init: RequestInit = {}) {
 	const res = await fetch(url, init)
 	const text = await res.text()
@@ -145,7 +193,13 @@ async function portalFetch(url: string, init: RequestInit = {}) {
 	} catch {
 		if (!res.ok) throw new Error(text.slice(0, 200) || `HTTP ${res.status}`)
 	}
-	if (!res.ok) throw new Error(json?.message || json?.error || `HTTP ${res.status}`)
+	if (!res.ok) {
+		const err: any = new Error(json?.message || json?.error || `HTTP ${res.status}`)
+		err.status = res.status
+		err.code = json?.error
+		err.body = json
+		throw err
+	}
 	return json
 }
 
@@ -163,22 +217,72 @@ function contextLine(a: {
 
 /**
  * The single status an examiner should read off a row, blending the assignment,
- * the submit walk and the claim into one plain phrase.
+ * the submit walk and the claim into one plain phrase — and its tone.
  */
-function overallStatus(a: AssignmentSummary): { label: string; tone: string } {
-	if (a.status === 'returned') return { label: 'Returned for Revision', tone: 'bg-orange-50 text-orange-700 border-orange-200' }
-	if (a.submission_stage === 'checklist') return { label: 'Check List Pending', tone: 'bg-blue-50 text-blue-700 border-blue-200' }
-	if (a.submission_stage === 'signature') return { label: 'Signature Pending', tone: 'bg-blue-50 text-blue-700 border-blue-200' }
+function overallStatus(a: AssignmentSummary): { label: string; tone: Tone } {
+	if (a.status === 'cancelled') return { label: 'Cancelled', tone: 'locked' }
+	if (a.status === 'returned') return { label: 'Returned for revision', tone: 'returned' }
+	if (a.submission_stage === 'checklist') return { label: 'Check list pending', tone: 'info' }
+	if (a.submission_stage === 'signature') return { label: 'Signature pending', tone: 'info' }
 	if (a.submission_stage === 'completed') {
 		const claim = (a.claim_status || 'pending') as QpClaimStatus
-		if (claim === 'paid') return { label: 'Payment Completed', tone: 'bg-emerald-100 text-emerald-800 border-emerald-300' }
-		if (claim === 'approved') return { label: 'Claim Approved', tone: 'bg-emerald-50 text-emerald-700 border-emerald-200' }
-		if (claim === 'submitted') return { label: 'Claim Submitted', tone: 'bg-blue-50 text-blue-700 border-blue-200' }
-		return { label: 'Claim Pending', tone: 'bg-amber-50 text-amber-700 border-amber-200' }
+		if (claim === 'paid') return { label: 'Payment completed', tone: 'success' }
+		if (claim === 'approved') return { label: 'Claim approved', tone: 'success' }
+		if (claim === 'submitted') return { label: 'Claim under review', tone: 'info' }
+		if (a.status === 'accepted') return { label: 'Accepted · claim pending', tone: 'warning' }
+		return { label: 'Submitted · claim pending', tone: 'warning' }
 	}
-	if (a.window_state === 'closed') return { label: 'Window Closed', tone: 'bg-rose-50 text-rose-700 border-rose-200' }
-	if (a.window_state === 'pending') return { label: 'Assigned', tone: 'bg-slate-50 text-slate-700 border-slate-200' }
-	return { label: 'Question Paper Pending', tone: 'bg-amber-50 text-amber-700 border-amber-200' }
+	if (a.window_state === 'closed') return { label: 'Entry period ended', tone: 'danger' }
+	if (a.window_state === 'pending') return { label: 'Not open yet', tone: 'locked' }
+	if (a.status === 'in_progress') return { label: 'In progress', tone: 'info' }
+	return { label: 'Ready to start', tone: 'info' }
+}
+
+/** One plain sentence: the next thing the examiner has to do on this row. */
+function nextStepFor(a: AssignmentSummary): { text: string; tone: Tone } {
+	if (a.status === 'cancelled') return { text: 'Cancelled by the CoE — nothing to do.', tone: 'locked' }
+	const stage = a.submission_stage
+	if (a.status === 'returned') return { text: 'Fix the points raised by the CoE and resubmit.', tone: 'returned' }
+	if (stage === 'checklist') return { text: 'Answer the check list.', tone: 'info' }
+	if (stage === 'signature') return { text: 'Accept the declaration and sign.', tone: 'info' }
+	if (stage === 'completed') {
+		const claim = (a.claim_status || 'pending') as QpClaimStatus
+		if (claim === 'pending') return { text: 'Submit your claim form.', tone: 'warning' }
+		if (claim === 'submitted') return { text: 'Claim under review by the CoE — nothing to do.', tone: 'info' }
+		if (claim === 'approved') return { text: 'Claim approved — payment is being processed.', tone: 'success' }
+		return { text: 'All done.', tone: 'success' }
+	}
+	if (a.window_state === 'pending') return { text: `Opens on ${formatIst(a.valid_from)}.`, tone: 'locked' }
+	if (a.window_state === 'closed') return { text: 'Entry period ended — contact the CoE if you need it reopened.', tone: 'danger' }
+	const c = componentsForType(a.assignment_type || 'question_paper')
+	if (c.ak && a.ak_willing == null) return { text: 'Confirm whether you will prepare the answer key.', tone: 'warning' }
+	if (a.question_total > 0 && a.question_done < a.question_total) {
+		return { text: `Enter the questions (${a.question_done} of ${a.question_total} done).`, tone: 'info' }
+	}
+	return { text: 'Check every question and submit the paper.', tone: 'info' }
+}
+
+const STEP_ICON: Record<Tone, typeof Info> = {
+	success: CheckCircle2,
+	info: ArrowRight,
+	warning: AlertTriangle,
+	danger: XCircle,
+	locked: Lock,
+	returned: RotateCcw,
+}
+
+/** "Next: …" line on a card, coloured by tone. */
+function NextStep({ a }: { a: AssignmentSummary }) {
+	const n = nextStepFor(a)
+	const Icon = STEP_ICON[n.tone]
+	return (
+		<p className={cn('text-xs mt-2 flex items-start gap-1.5 rounded-md border px-2 py-1.5', TONE[n.tone].card, TONE[n.tone].text)}>
+			<Icon className={cn('h-3.5 w-3.5 shrink-0 mt-px', TONE[n.tone].icon)} />
+			<span>
+				<span className="font-semibold">Next:</span> {n.text}
+			</span>
+		</p>
+	)
 }
 
 /**
@@ -223,6 +327,7 @@ function WillingnessCard({
 		ak_willing: c.ak ? ak : false,
 	})
 	const declinedAll = !qpAlways && (!c.ak || !ak)
+	const pending = !confirmed
 
 	const line = (
 		label: string,
@@ -259,21 +364,24 @@ function WillingnessCard({
 	)
 
 	return (
-		<Card className={cn('border-2', confirmed && !editing ? 'border-emerald-200' : 'border-amber-300')}>
+		<Card className={cn('border-2', pending ? TONE.warning.frame : confirmed && !editing ? TONE.success.frame : TONE.info.frame)}>
 			<CardContent className="p-4 space-y-3">
 				<div className="flex flex-wrap items-start justify-between gap-3">
 					<div>
 						<h2 className="font-semibold flex items-center gap-2 text-sm uppercase tracking-wide">
 							<ShieldCheck className="h-4 w-4" />
 							Examiner assignment
+							{pending && <ToneBadge tone="warning">Needs your answer</ToneBadge>}
+							{confirmed && !editing && <ToneBadge tone="success">Confirmed</ToneBadge>}
+							{locked && <ToneBadge tone="locked">Locked</ToneBadge>}
 						</h2>
 						<p className="text-xs text-muted-foreground mt-0.5">
 							{QP_ASSIGNMENT_TYPE_LABELS[type]}
 							{confirmed && !editing
 								? ` · confirmed ${formatIst(assignment.willingness_confirmed_at)}`
 								: c.qp
-									? ' · the question paper is part of your appointment. Confirm whether you will also prepare the answer key.'
-									: ' · confirm whether you will prepare the answer key.'}
+									? ' · the question paper is part of your appointment. Tick below if you will also prepare the answer key, then press Confirm.'
+									: ' · tick below if you will prepare the answer key, then press Confirm.'}
 						</p>
 					</div>
 					{confirmed && !editing && !locked && (
@@ -295,17 +403,25 @@ function WillingnessCard({
 					</span>
 				</div>
 				{declinedAll && (
-					<p className="text-xs text-amber-700 flex items-start gap-1.5">
+					<p className={cn('text-xs flex items-start gap-1.5', TONE.warning.text)}>
 						<AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-px" />
 						Answer key declined — there is no payable examiner claim, and nothing to enter for this paper.
 					</p>
 				)}
 				{c.ak && !ak && !declinedAll && (
 					<p className="text-xs text-muted-foreground">
-						The answer-key fields stay visible but locked, and no answer key is required from you.
+						The answer-key boxes stay visible but locked, and no answer key is needed from you.
 					</p>
 				)}
-				{error && <p className="text-sm text-rose-600">{error}</p>}
+				{error && (
+					<p className={cn('text-sm rounded-md border p-2 flex items-start gap-1.5', TONE.danger.card, TONE.danger.text)}>
+						<AlertTriangle className="h-4 w-4 shrink-0 mt-px" />
+						{error}
+					</p>
+				)}
+				{locked && (
+					<DisabledReason tone="muted" reason="The paper has been handed over, so this choice can no longer change." />
+				)}
 
 				{editing && !locked && (
 					<div className="flex justify-end gap-2">
@@ -324,7 +440,7 @@ function WillingnessCard({
 									await onConfirm(qpAlways, c.ak ? ak : false)
 									setEditing(false)
 								} catch (e: any) {
-									setError(e?.message || 'Your choice could not be saved.')
+									setError(e?.message || 'Your choice could not be saved. Please try again.')
 								} finally {
 									setBusy(false)
 								}
@@ -344,6 +460,7 @@ export function ExaminerPortal({ examiner, onSignedOut }: Props) {
 	const { toast } = useToast()
 
 	const [section, setSection] = useState<Section>('dashboard')
+	const [listTab, setListTab] = useState<ListTab>('active')
 	const [navOpen, setNavOpen] = useState(false)
 	const [assignments, setAssignments] = useState<AssignmentSummary[]>([])
 	const [loading, setLoading] = useState(true)
@@ -364,8 +481,12 @@ export function ExaminerPortal({ examiner, onSignedOut }: Props) {
 		savedAt: null,
 	})
 	const wizardRef = useRef<HTMLDivElement | null>(null)
+	const willingnessRef = useRef<HTMLDivElement | null>(null)
 	// What the editor says still stands between this paper and Submit.
-	const [paperProblems, setPaperProblems] = useState<string[]>([])
+	const [paperProblems, setPaperProblems] = useState<PaperProblem[]>([])
+	const [progress, setProgress] = useState<{ done: number; total: number }>({ done: 0, total: 0 })
+	// The editor's "scroll to this field" — used by the tracker's Show me.
+	const jumpRef = useRef<((anchor: string) => void) | null>(null)
 	// Bumped to remount the editor on the server copy after a failed submit.
 	const [editorEpoch, setEditorEpoch] = useState(0)
 	// The editor's live questions, read when the preview opens.
@@ -379,7 +500,7 @@ export function ExaminerPortal({ examiner, onSignedOut }: Props) {
 			const json = await portalFetch('/api/examiner-portal/assignments')
 			setAssignments(json.data || [])
 		} catch (e: any) {
-			toast({ title: 'Could not load your assignments', description: e.message, variant: 'destructive' })
+			toast({ title: 'Could not load your papers', description: e.message, variant: 'destructive' })
 		} finally {
 			setLoading(false)
 		}
@@ -403,6 +524,7 @@ export function ExaminerPortal({ examiner, onSignedOut }: Props) {
 		setSection('papers')
 		setDetail(null)
 		setPaperProblems([])
+		setProgress({ done: 0, total: 0 })
 		setDetailLoading(true)
 		try {
 			setDetail(await portalFetch(`/api/examiner-portal/assignments/${id}`))
@@ -433,16 +555,23 @@ export function ExaminerPortal({ examiner, onSignedOut }: Props) {
 		}
 	}, [])
 
+	const scrollTo = (ref: React.RefObject<HTMLDivElement | null>) =>
+		requestAnimationFrame(() => ref.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }))
+
 	// ── Actions ───────────────────────────────────────────────────────────
+	const ownProblems = useMemo(() => paperProblems.filter(p => !p.needsCoe), [paperProblems])
+	const coeProblems = useMemo(() => paperProblems.filter(p => p.needsCoe), [paperProblems])
+
 	const submitPaper = async () => {
 		if (!openId) return
 		if (paperProblems.length > 0) {
 			setSubmitOpen(false)
 			toast({
 				title: 'The paper is not complete yet',
-				description: `${paperProblems.length} item${paperProblems.length > 1 ? 's' : ''} still to do — ${paperProblems.slice(0, 3).join(' · ')}${paperProblems.length > 3 ? ' …' : ''}`,
+				description: `${paperProblems.length} item${paperProblems.length === 1 ? '' : 's'} still to complete. The fields are outlined in red.`,
 				variant: 'destructive',
 			})
+			if (ownProblems[0]) jumpRef.current?.(ownProblems[0].anchor)
 			return
 		}
 		setSubmitting(true)
@@ -463,15 +592,21 @@ export function ExaminerPortal({ examiner, onSignedOut }: Props) {
 			await reloadDetail()
 			// The check list is now the next step — put it in front of the examiner
 			// rather than leaving them on a page whose editor has just gone read-only.
-			requestAnimationFrame(() => wizardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }))
+			scrollTo(wizardRef)
 		} catch (e: any) {
-			toast({ title: 'Not submitted', description: e.message, variant: 'destructive' })
+			toast({
+				title: e?.code === 'INCOMPLETE' ? 'The paper is not complete yet' : 'Not submitted',
+				description: e.message,
+				variant: 'destructive',
+			})
 			// A refused submit may have touched the paper row (a rollback bumps its
 			// updated_at). Reload and remount the editor on the server copy so the
 			// next autosave does not run into a stale-base conflict. Safe: the draft
 			// was flushed above, so there is nothing in the editor to lose.
 			await reloadDetail()
 			setEditorEpoch(n => n + 1)
+			const first = e?.body?.problems?.find((p: PaperProblem) => !p.needsCoe) || e?.body?.problems?.[0]
+			if (first?.anchor) setTimeout(() => jumpRef.current?.(first.anchor), 400)
 		} finally {
 			setSubmitting(false)
 		}
@@ -504,7 +639,7 @@ export function ExaminerPortal({ examiner, onSignedOut }: Props) {
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({ qp_willing: qp, ak_willing: ak }),
 			})
-			toast({ title: 'Willingness recorded', description: json.message })
+			toast({ title: 'Your choice is saved', description: json.message })
 			await reloadDetail()
 			// The editor's field locks follow the choice — remount it on the fresh copy.
 			setEditorEpoch(n => n + 1)
@@ -547,6 +682,7 @@ export function ExaminerPortal({ examiner, onSignedOut }: Props) {
 	// ── Summary ───────────────────────────────────────────────────────────
 	const stats = useMemo(() => {
 		const done = assignments.filter(a => a.submission_stage === 'completed')
+		const todo = assignments.filter(a => ['info', 'warning', 'returned'].includes(nextStepFor(a).tone))
 		return {
 			assigned: assignments.length,
 			submitted: assignments.filter(a => a.submission_stage !== 'authoring').length,
@@ -557,6 +693,7 @@ export function ExaminerPortal({ examiner, onSignedOut }: Props) {
 			actionNeeded: assignments.filter(
 				a => a.submission_stage === 'checklist' || a.submission_stage === 'signature'
 			).length,
+			todo,
 		}
 	}, [assignments])
 
@@ -605,7 +742,11 @@ export function ExaminerPortal({ examiner, onSignedOut }: Props) {
 				{NAV.map(({ key, label, icon: Icon }) => {
 					const active = section === key
 					const badge =
-						key === 'papers' ? stats.actionNeeded : key === 'claims' ? stats.claimPending : 0
+						key === 'papers'
+							? stats.todo.filter(a => a.submission_stage !== 'completed').length
+							: key === 'claims'
+								? stats.claimPending
+								: 0
 					return (
 						<button
 							key={key}
@@ -634,46 +775,109 @@ export function ExaminerPortal({ examiner, onSignedOut }: Props) {
 		</nav>
 	)
 
-	const cards =
-		assignments.length === 0 ? (
+	// ── Active / Archived ─────────────────────────────────────────────────
+	// Every list of papers is split the same way: Active is anything whose
+	// validity ended less than ARCHIVE_AFTER_DAYS ago (or has not ended), newest
+	// validity first; Archived is the rest, kept for reference.
+	const { activeList, archivedList } = useMemo(() => {
+		const now = Date.now()
+		const active = assignments.filter(a => !isArchived(a, now)).sort(byValidToDesc)
+		const archived = assignments.filter(a => isArchived(a, now)).sort(byValidToDesc)
+		return { activeList: active, archivedList: archived }
+	}, [assignments])
+
+	const renderCards = (list: AssignmentSummary[], tab: ListTab) =>
+		list.length === 0 ? (
 			<Card>
 				<CardContent className="p-10 text-center space-y-2">
 					<FileText className="h-8 w-8 mx-auto text-muted-foreground" />
-					<p className="font-medium">No question papers are assigned to you yet</p>
-					<p className="text-sm text-muted-foreground max-w-md mx-auto">
-						When the Office of the Controller of Examinations appoints you as a question paper setter,
-						the paper will appear here and you will receive the order by e-mail.
-					</p>
+					{tab === 'archived' ? (
+						<>
+							<p className="font-medium">Nothing archived yet</p>
+							<p className="text-sm text-muted-foreground max-w-md mx-auto">
+								A paper moves here automatically {ARCHIVE_AFTER_DAYS} days after its validity ends. It stays
+								available for reference.
+							</p>
+						</>
+					) : assignments.length > 0 ? (
+						<>
+							<p className="font-medium">No active question papers</p>
+							<p className="text-sm text-muted-foreground max-w-md mx-auto">
+								Your earlier papers are under Archived.
+							</p>
+						</>
+					) : (
+						<>
+							<p className="font-medium">No question papers are assigned to you yet</p>
+							<p className="text-sm text-muted-foreground max-w-md mx-auto">
+								When the Office of the Controller of Examinations appoints you as a question paper setter,
+								the paper will appear here and you will receive the order by e-mail.
+							</p>
+						</>
+					)}
 				</CardContent>
 			</Card>
 		) : (
 			<div className="space-y-3">
-				{assignments.map(a => {
+				{list.map(a => {
 					const st = overallStatus(a)
 					const stage = a.submission_stage
+					const claim = claimCell(a)
+					const archived = tab === 'archived'
 					const cta =
-						stage === 'checklist'
-							? 'Complete Check List'
-							: stage === 'signature'
-								? 'Add Signature'
-								: stage === 'completed'
-									? 'View Submission'
-									: a.window_state === 'open'
-										? 'Open Question Paper'
-										: 'View Details'
+						a.status === 'cancelled'
+							? 'View details'
+							: stage === 'checklist'
+								? 'Complete check list'
+								: stage === 'signature'
+									? 'Add signature'
+									: stage === 'completed'
+										? 'View submission'
+										: a.window_state === 'open'
+											? a.status === 'returned'
+												? 'Revise and resubmit'
+												: 'Open question paper'
+											: 'View details'
+					const pct = a.question_total > 0 ? Math.round((a.question_done / a.question_total) * 100) : 0
 					return (
-						<Card key={a.id} className="hover:shadow-md transition-shadow">
+						<Card key={a.id} className={cn('hover:shadow-md transition-shadow border-l-4', TONE[st.tone].bar)}>
 							<CardContent className="p-4">
 								<div className="flex flex-wrap items-start justify-between gap-3">
-									<div className="min-w-0">
-										<p className="font-semibold">{a.course_code}</p>
+									<div className="min-w-0 flex-1">
+										<p className="font-semibold flex items-center gap-2">
+											{a.course_code}
+											{archived && <ToneBadge tone="locked">Archived</ToneBadge>}
+										</p>
 										<p className="text-sm">{a.subject_title}</p>
 										<p className="text-xs text-muted-foreground mt-0.5">{contextLine(a)}</p>
-										<p className="text-xs text-muted-foreground mt-1.5">
-											Assigned: {formatIst(a.assigned_at || a.valid_from, false)} · Valid until:{' '}
-											{formatIst(a.valid_to, false)}
-										</p>
-										<p className="text-xs mt-1 flex flex-wrap items-center gap-x-2 gap-y-1">
+
+										{/* The facts an examiner asks about, in one row each time. */}
+										<dl className="mt-2.5 grid grid-cols-2 sm:grid-cols-4 gap-x-4 gap-y-2 text-xs">
+											<div>
+												<dt className="text-muted-foreground">Assignment date</dt>
+												<dd className="font-medium mt-0.5">{formatIst(a.assigned_at || a.valid_from, false)}</dd>
+											</div>
+											<div>
+												<dt className="text-muted-foreground">Valid until</dt>
+												<dd className={cn('font-medium mt-0.5', a.window_state === 'closed' ? 'text-rose-700' : a.window_state === 'open' ? 'text-emerald-700' : '')}>
+													{formatIst(a.valid_to, false)}
+												</dd>
+											</div>
+											<div>
+												<dt className="text-muted-foreground">Claim status</dt>
+												<dd className="mt-0.5">
+													<ToneBadge tone={claim.tone}>{claim.label}</ToneBadge>
+												</dd>
+											</div>
+											<div>
+												<dt className="text-muted-foreground">Claim submitted</dt>
+												<dd className={cn('font-medium mt-0.5', !a.claim_submitted_at && 'text-muted-foreground font-normal')}>
+													{a.claim_submitted_at ? formatIst(a.claim_submitted_at, false) : claim.hint || '—'}
+												</dd>
+											</div>
+										</dl>
+
+										<p className="text-xs mt-2 flex flex-wrap items-center gap-x-2 gap-y-1">
 											<span className="inline-flex items-center gap-1 rounded bg-slate-100 px-1.5 py-0.5 text-slate-700">
 												{(a.assignment_type || 'question_paper') !== 'question_paper' && <KeyRound className="h-3 w-3" />}
 												{QP_ASSIGNMENT_TYPE_LABELS[(a.assignment_type as QpAssignmentType) || 'question_paper']}
@@ -687,35 +891,60 @@ export function ExaminerPortal({ examiner, onSignedOut }: Props) {
 											)}
 										</p>
 										{a.return_remarks && (
-											<p className="text-xs text-orange-700 mt-1 flex items-start gap-1">
+											<p className={cn('text-xs mt-1.5 flex items-start gap-1 rounded-md border px-2 py-1.5', TONE.returned.card, TONE.returned.text)}>
 												<AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-px" />
-												{a.return_remarks}
+												<span>
+													<span className="font-semibold">CoE remarks:</span> {a.return_remarks}
+												</span>
 											</p>
 										)}
+										<NextStep a={a} />
 									</div>
 									<div className="flex flex-col items-end gap-2 shrink-0">
-										<Badge variant="outline" className={st.tone}>
-											{st.label}
-										</Badge>
-										<Badge variant="outline" className={cn('text-xs', WINDOW_TONE[a.window_state])}>
-											{a.window_state === 'open' ? (
-												<Clock className="h-3 w-3 mr-1" />
-											) : (
-												<Lock className="h-3 w-3 mr-1" />
-											)}
+										<ToneBadge tone={st.tone}>{st.label}</ToneBadge>
+										<ToneBadge tone={WINDOW_TONE[a.window_state]}>
+											{a.window_state === 'open' ? <Clock className="h-3 w-3" /> : <Lock className="h-3 w-3" />}
 											{a.window_hint}
-										</Badge>
-										{a.question_total > 0 && stage === 'authoring' && (
-											<p className="text-xs text-muted-foreground">
-												{a.question_done} / {a.question_total} entered
-											</p>
+										</ToneBadge>
+										{a.question_total > 0 && stage === 'authoring' && a.status !== 'cancelled' && (
+											<div className="w-32 text-right">
+												<p className="text-[11px] text-muted-foreground">
+													{a.question_done} / {a.question_total} entered
+												</p>
+												<div className="h-1.5 rounded-full bg-slate-200 overflow-hidden mt-0.5">
+													<div
+														className={cn('h-full rounded-full', pct === 100 ? 'bg-emerald-500' : 'bg-blue-500')}
+														style={{ width: `${pct}%` }}
+													/>
+												</div>
+											</div>
 										)}
 									</div>
 								</div>
-								<div className="mt-3 flex flex-wrap gap-2">
-									<Button size="sm" onClick={() => openAssignment(a.id)}>
-										{cta}
-									</Button>
+								<div className="mt-3 flex flex-wrap items-center gap-2">
+									<span className="text-xs text-muted-foreground mr-1">Actions:</span>
+									{stage === 'completed' && (a.claim_status || 'pending') === 'pending' ? (
+										<Button size="sm" onClick={() => setSection('claims')}>
+											<Receipt className="h-4 w-4 mr-1.5" />
+											Submit claim
+										</Button>
+									) : (
+										<Button size="sm" variant={archived ? 'outline' : 'default'} onClick={() => openAssignment(a.id)}>
+											{cta}
+											<ArrowRight className="h-4 w-4 ml-1.5" />
+										</Button>
+									)}
+									{stage === 'completed' && (a.claim_status || 'pending') !== 'pending' && (
+										<Button variant="outline" size="sm" onClick={() => setSection('claims')}>
+											<Receipt className="h-4 w-4 mr-1.5" />
+											View claim
+										</Button>
+									)}
+									{stage === 'completed' && (a.claim_status || 'pending') === 'pending' && (
+										<Button variant="outline" size="sm" onClick={() => openAssignment(a.id)}>
+											{cta}
+										</Button>
+									)}
 									<Button variant="outline" size="sm" onClick={() => openDoc(a.id, 'order')}>
 										<ScrollText className="h-4 w-4 mr-1.5" />
 										Order copy
@@ -737,6 +966,34 @@ export function ExaminerPortal({ examiner, onSignedOut }: Props) {
 			</div>
 		)
 
+	/** Active | Archived tabs over the same card list, shared by the dashboard and the paper page. */
+	const assignmentTabs = (
+		<div className="space-y-3">
+			<Tabs value={listTab} onValueChange={v => setListTab(v as ListTab)}>
+				<div className="flex flex-wrap items-center justify-between gap-2">
+					<TabsList className="h-auto p-1 bg-slate-100 border">
+						<TabsTrigger value="active" className={cn('gap-1.5 px-4 py-1.5', TAB_TONE.info)}>
+							<Clock className="h-3.5 w-3.5" />
+							Active
+							<span className="rounded-full px-1.5 text-[11px] leading-4 bg-black/10">{activeList.length}</span>
+						</TabsTrigger>
+						<TabsTrigger value="archived" className={cn('gap-1.5 px-4 py-1.5', TAB_TONE.locked)}>
+							<History className="h-3.5 w-3.5" />
+							Archived
+							<span className="rounded-full px-1.5 text-[11px] leading-4 bg-black/10">{archivedList.length}</span>
+						</TabsTrigger>
+					</TabsList>
+					<p className="text-xs text-muted-foreground">
+						{listTab === 'active'
+							? 'Newest validity first. Every paper claims on its own — one claim per paper.'
+							: `Validity ended more than ${ARCHIVE_AFTER_DAYS} days ago. Kept for reference.`}
+					</p>
+				</div>
+			</Tabs>
+			{renderCards(listTab === 'active' ? activeList : archivedList, listTab)}
+		</div>
+	)
+
 	// ── Section: Order Copy ─────────────────────────────────────────────
 	const orders = (
 		<div className="space-y-4">
@@ -755,30 +1012,47 @@ export function ExaminerPortal({ examiner, onSignedOut }: Props) {
 			) : (
 				<Card>
 					<CardContent className="p-0 divide-y">
-						{assignments.map(a => (
-							<div key={a.id} className="p-4 flex flex-wrap items-start justify-between gap-3">
-								<div className="min-w-0">
-									<p className="font-medium text-sm">
-										{a.order_ref_no || 'Order'} · {a.course_code}
-									</p>
-									<p className="text-sm text-muted-foreground">{a.subject_title}</p>
-									<p className="text-xs text-muted-foreground mt-0.5">{contextLine(a)}</p>
-									<p className="text-xs text-muted-foreground mt-1">
-										Order date: {formatIst(a.order_issued_at || a.assigned_at || a.valid_from, false)} ·
-										Examiner: {examiner.full_name}
-									</p>
+						{[...assignments].sort(byValidToDesc).map(a => {
+							const st = overallStatus(a)
+							return (
+								<div key={a.id} className={cn('p-4 flex flex-wrap items-start justify-between gap-3 border-l-4', TONE[st.tone].bar)}>
+									<div className="min-w-0">
+										<p className="font-semibold text-sm flex flex-wrap items-center gap-2">
+											<span className="font-mono text-xs rounded bg-slate-100 border px-1.5 py-0.5 text-slate-700">
+												{a.order_ref_no || 'Order'}
+											</span>
+											{a.course_code}
+											{isArchived(a) && <ToneBadge tone="locked">Archived</ToneBadge>}
+										</p>
+										<p className="text-sm mt-0.5">{a.subject_title}</p>
+										<p className="text-xs text-muted-foreground mt-0.5">{contextLine(a)}</p>
+										<dl className="mt-2 grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-1 text-xs">
+											<div>
+												<dt className="text-muted-foreground">Order date</dt>
+												<dd className="font-medium">{formatIst(a.order_issued_at || a.assigned_at || a.valid_from, false)}</dd>
+											</div>
+											<div>
+												<dt className="text-muted-foreground">Valid until</dt>
+												<dd className={cn('font-medium', a.window_state === 'closed' ? 'text-rose-700' : a.window_state === 'open' ? 'text-emerald-700' : '')}>
+													{formatIst(a.valid_to, false)}
+												</dd>
+											</div>
+											<div>
+												<dt className="text-muted-foreground">Examiner</dt>
+												<dd className="font-medium truncate">{examiner.full_name}</dd>
+											</div>
+										</dl>
+									</div>
+									<div className="flex flex-col items-end gap-2 shrink-0">
+										<ToneBadge tone={st.tone}>{st.label}</ToneBadge>
+										<Button variant="outline" size="sm" onClick={() => openDoc(a.id, 'order')}>
+											<Download className="h-4 w-4 mr-1.5" />
+											View order
+										</Button>
+									</div>
 								</div>
-								<div className="flex items-center gap-2 shrink-0">
-									<Badge variant="outline" className={overallStatus(a).tone}>
-										{overallStatus(a).label}
-									</Badge>
-									<Button variant="outline" size="sm" onClick={() => openDoc(a.id, 'order')}>
-										<Download className="h-4 w-4 mr-1.5" />
-										View
-									</Button>
-								</div>
-							</div>
-						))}
+							)
+						})}
 					</CardContent>
 				</Card>
 			)}
@@ -795,7 +1069,7 @@ export function ExaminerPortal({ examiner, onSignedOut }: Props) {
 					downloadable.
 				</p>
 			</div>
-			{cards}
+			{assignmentTabs}
 		</div>
 	)
 
@@ -821,6 +1095,225 @@ export function ExaminerPortal({ examiner, onSignedOut }: Props) {
 		: akWilling
 			? 'required'
 			: 'disabled'
+	const cancelled = a?.status === 'cancelled'
+	const handedOver = stage !== 'authoring' || a?.status === 'submitted' || a?.status === 'accepted'
+
+	// Why Submit cannot be pressed right now — or null when it can.
+	const submitReason: string | null = !a
+		? null
+		: coeProblems.length > 0
+			? 'Needs a correction from the CoE office first'
+			: ownProblems.length > 0
+				? `${ownProblems.length} item${ownProblems.length === 1 ? '' : 's'} still to complete`
+				: draftSync.state === 'saving'
+					? 'Wait a moment — saving your latest changes'
+					: draftSync.state === 'unsynced'
+						? 'Your latest changes have not reached the server yet'
+						: draftSync.state === 'conflict'
+							? 'Reload the server copy first'
+							: null
+	const saveReason: string | null =
+		draftSync.state === 'saving'
+			? 'Saving…'
+			: !draftSync.dirty && draftSync.state !== 'unsynced'
+				? 'Nothing new to save — your work is already saved'
+				: null
+
+	const openPreview = () => {
+		setPreviewQuestions(liveQuestionsRef.current?.() || detail?.questions || [])
+		setSubmitOpen(true)
+	}
+
+	// ── The tracker: steps + the one sentence that matters ───────────────
+	const tracker = useMemo((): { steps: TrackerStep[]; instruction: TrackerInstruction } | null => {
+		if (!a) return null
+		const steps: TrackerStep[] = []
+		const blockedAll = cancelled
+		if (aComponents.ak) {
+			steps.push({
+				key: 'willing',
+				label: 'Confirm answer key',
+				state: a.willingness_confirmed_at ? 'done' : blockedAll ? 'blocked' : 'current',
+			})
+		}
+		const paperState: StepState = handedOver
+			? 'done'
+			: blockedAll || declinedAll || !released
+				? 'blocked'
+				: willingnessPending
+					? 'todo'
+					: paperProblems.length > 0 || progress.done < progress.total
+						? 'current'
+						: 'done'
+		steps.push({ key: 'paper', label: 'Set the paper', state: paperState })
+		steps.push({
+			key: 'submit',
+			label: 'Submit',
+			state: handedOver ? 'done' : paperState === 'done' ? 'current' : paperState === 'blocked' ? 'blocked' : 'todo',
+		})
+		steps.push({
+			key: 'checklist',
+			label: 'Check list',
+			state: stage === 'signature' || stage === 'completed' ? 'done' : stage === 'checklist' ? 'current' : 'todo',
+		})
+		steps.push({
+			key: 'sign',
+			label: 'Sign',
+			state: stage === 'completed' ? 'done' : stage === 'signature' ? 'current' : 'todo',
+		})
+		steps.push({ key: 'done', label: 'Done', state: stage === 'completed' ? 'done' : 'todo' })
+
+		let instruction: TrackerInstruction
+		const claim = (a.claim_status || 'pending') as QpClaimStatus
+		if (cancelled) {
+			instruction = {
+				tone: 'locked',
+				title: 'This appointment was cancelled',
+				detail: 'Nothing more is needed from you. Contact the Office of the Controller of Examinations if you think this is a mistake.',
+			}
+		} else if (stage === 'completed') {
+			instruction =
+				claim === 'pending'
+					? {
+							tone: 'success',
+							title: 'Submission complete — your claim form is ready',
+							detail: a.status === 'accepted'
+								? `Accepted by the CoE on ${formatIst(a.accepted_at)}. Fill in the claim form to receive your remuneration.`
+								: 'Fill in the claim form to receive your remuneration.',
+							action: { label: 'Go to Claim Form', onClick: () => setSection('claims') },
+						}
+					: {
+							tone: 'success',
+							title: 'Submission complete',
+							detail:
+								claim === 'submitted'
+									? 'Your claim is under review by the CoE. Nothing more to do for now.'
+									: claim === 'approved'
+										? 'Your claim is approved and payment is being processed.'
+										: 'Payment has been completed. Thank you.',
+						}
+		} else if (stage === 'checklist') {
+			instruction = {
+				tone: 'info',
+				title: 'Paper received. Now answer the check list.',
+				detail: 'Answer YES or NO to every item, then continue to the signature. The paper stays visible below for reference.',
+				action: { label: 'Go to check list', onClick: () => scrollTo(wizardRef) },
+			}
+		} else if (stage === 'signature') {
+			instruction = {
+				tone: 'info',
+				title: a.signed_at ? 'Signed. Complete the submission to finish.' : 'Almost done — accept the declaration and sign.',
+				detail: a.signed_at
+					? 'Read the red notice, then press Complete submission.'
+					: 'Tick the declaration, sign in the box, then press Save signature.',
+				action: { label: a.signed_at ? 'Go to final step' : 'Go to signature', onClick: () => scrollTo(wizardRef) },
+			}
+		} else if (state === 'pending') {
+			instruction = {
+				tone: 'locked',
+				title: 'This paper is not open yet',
+				detail: `You can enter questions from ${formatIst(a.valid_from)}. Until then, read the instructions and your order copy.`,
+			}
+		} else if (state === 'closed') {
+			instruction = {
+				tone: 'danger',
+				title: 'The entry period has ended',
+				detail: `Access closed on ${formatIst(a.valid_to)}. Contact the Office of the Controller of Examinations if you need it reopened.`,
+			}
+		} else if (willingnessPending) {
+			instruction = {
+				tone: 'warning',
+				title: 'First, tell us whether you will prepare the answer key',
+				detail: 'Tick your choice in the Examiner Assignment box and press Confirm. The paper opens right after.',
+				action: { label: 'Show me', onClick: () => scrollTo(willingnessRef) },
+			}
+		} else if (declinedAll) {
+			instruction = {
+				tone: 'locked',
+				title: 'Nothing to enter for this paper',
+				detail: 'You declined the answer key. If that was a mistake, press Change in the Examiner Assignment box.',
+			}
+		} else if (!canEdit) {
+			instruction = {
+				tone: 'locked',
+				title: 'This paper is read-only',
+				detail: 'It has been handed over. Nothing on it can be changed.',
+			}
+		} else if (coeProblems.length > 0) {
+			instruction = {
+				tone: 'danger',
+				title: 'This paper needs a correction from the CoE office before it can be submitted',
+				detail: coeProblems[0].message,
+			}
+		} else if (ownProblems.length > 0) {
+			const n = ownProblems.length
+			instruction = {
+				tone: a.status === 'returned' ? 'returned' : 'warning',
+				title:
+					a.status === 'returned'
+						? `Returned for revision — ${n} item${n === 1 ? '' : 's'} to complete before you resubmit`
+						: `${n} item${n === 1 ? '' : 's'} to complete before you can submit`,
+				detail: `${progress.done} of ${progress.total} questions entered. Fields that need a value are outlined in red. Your work saves automatically.`,
+				action: { label: 'Show me', onClick: () => jumpRef.current?.(ownProblems[0].anchor) },
+			}
+		} else {
+			instruction = {
+				tone: a.status === 'returned' ? 'returned' : 'success',
+				title:
+					a.status === 'returned'
+						? 'Every question is complete — review and resubmit'
+						: 'Every question is complete — review and submit',
+				detail: 'Submitting hands the paper to the CoE and closes the editor. You will then answer the check list and sign.',
+				action: {
+					label: a.status === 'returned' ? 'Review and resubmit' : 'Review and submit',
+					onClick: openPreview,
+					disabled: !!submitReason,
+					reason: submitReason,
+					busy: submitting,
+				},
+			}
+		}
+		return { steps, instruction }
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [
+		a, aComponents.ak, cancelled, handedOver, declinedAll, released, willingnessPending, paperProblems,
+		ownProblems, coeProblems, progress, stage, state, canEdit, submitReason, submitting,
+	])
+
+	const editingStatus = a && canEdit && released && stage === 'authoring' && !willingnessPending && !declinedAll && (
+		<>
+			<div className="flex flex-wrap items-center gap-2">
+				<ToneBadge tone={progress.total > 0 && progress.done === progress.total ? 'success' : 'info'}>
+					{progress.done} / {progress.total} entered
+				</ToneBadge>
+				{paperProblems.length === 0 ? (
+					<ToneBadge tone="success">
+						<CheckCircle2 className="h-3 w-3" />
+						Ready to submit
+					</ToneBadge>
+				) : (
+					<ToneBadge tone={coeProblems.length ? 'danger' : 'warning'}>
+						<AlertTriangle className="h-3 w-3" />
+						{paperProblems.length} to fix
+					</ToneBadge>
+				)}
+			</div>
+			<div className="flex flex-wrap items-center gap-2">
+				<SyncBadge state={draftSync.state} dirty={draftSync.dirty} savedAt={draftSync.savedAt} />
+				<Button
+					size="sm"
+					variant="outline"
+					className="h-7"
+					onClick={() => void saveDraftRef.current?.()}
+					disabled={!!saveReason}
+					title={saveReason || 'Save your progress now'}
+				>
+					{draftSync.state === 'saving' ? <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" /> : <Save className="h-3.5 w-3.5 mr-1" />}
+					Save Draft
+				</Button>
+			</div>
+		</>
+	)
 
 	const paperDetail = !a ? null : (
 		<div className="space-y-4">
@@ -838,6 +1331,8 @@ export function ExaminerPortal({ examiner, onSignedOut }: Props) {
 				All question papers
 			</Button>
 
+			{tracker && <PaperStepTracker steps={tracker.steps} instruction={tracker.instruction} status={editingStatus} />}
+
 			<Card>
 				<CardContent className="p-4">
 					<div className="flex flex-wrap items-start justify-between gap-3">
@@ -852,50 +1347,52 @@ export function ExaminerPortal({ examiner, onSignedOut }: Props) {
 								{formatIst(a.valid_to)}
 							</p>
 						</div>
-						<div className="text-right space-y-1.5 shrink-0">
-							<Badge variant="outline" className={WINDOW_TONE[state]}>
-								{state === 'open' ? <Clock className="h-3.5 w-3.5 mr-1" /> : <Lock className="h-3.5 w-3.5 mr-1" />}
+						<div className="flex flex-col items-end gap-1.5 shrink-0">
+							<ToneBadge tone={overallStatus({ ...a, window_state: state } as any).tone}>
+								{overallStatus({ ...a, window_state: state } as any).label}
+							</ToneBadge>
+							<ToneBadge tone={WINDOW_TONE[state]}>
+								{state === 'open' ? <Clock className="h-3 w-3" /> : <Lock className="h-3 w-3" />}
 								{detail.window_hint || windowHint(a.valid_from, a.valid_to)}
-							</Badge>
-							<div>
-								<Badge variant="outline" className={overallStatus({ ...a, window_state: state } as any).tone}>
-									{overallStatus({ ...a, window_state: state } as any).label}
-								</Badge>
-							</div>
+							</ToneBadge>
 						</div>
 					</div>
 
 					{a.return_remarks && (
-						<div className="mt-3 rounded-md border border-orange-200 bg-orange-50 p-3 text-sm">
-							<p className="font-medium text-orange-900 flex items-center gap-1.5">
-								<AlertTriangle className="h-4 w-4" />
+						<div className={cn('mt-3 rounded-md border-2 p-3 text-sm', TONE.returned.card, TONE.returned.frame)}>
+							<p className={cn('font-semibold flex items-center gap-1.5', TONE.returned.heading)}>
+								<RotateCcw className="h-4 w-4" />
 								{a.reopen_scope === 'answer_key'
-									? 'Answer key added to your appointment by the Office of the Controller of Examinations'
-									: 'Reopened for revision by the Office of the Controller of Examinations'}
+									? 'Answer key added to your appointment by the CoE'
+									: 'Returned for revision by the CoE'}
 								{a.paper_version > 0 && (
-									<span className="font-normal text-orange-800">· your submission V{a.paper_version} is on record</span>
+									<span className={cn('font-normal', TONE.returned.text)}>· your submission V{a.paper_version} is on record</span>
 								)}
 							</p>
-							<p className="text-orange-800 mt-1">{a.return_remarks}</p>
+							<p className={cn('mt-1', TONE.returned.text)}>
+								<span className="font-semibold">What they asked for:</span> {a.return_remarks}
+							</p>
 							{a.reopened_at && (
-								<p className="text-xs text-orange-700 mt-1">Reopened on {formatIst(a.reopened_at)}. Your resubmission will be saved as V{(a.paper_version || 0) + 1}; V{a.paper_version || 1} is kept unchanged.</p>
+								<p className={cn('text-xs mt-1', TONE.returned.text)}>
+									Reopened on {formatIst(a.reopened_at)}. Your resubmission will be saved as V{(a.paper_version || 0) + 1}; V{a.paper_version || 1} is kept unchanged.
+								</p>
 							)}
 						</div>
 					)}
 
-					{(stage === 'completed' || a.status === 'accepted' || a.status === 'submitted') && (
-						<div className="mt-3 rounded-md border border-slate-300 bg-slate-50 p-3 text-sm text-slate-800 flex items-start gap-2">
-							<Lock className="h-4 w-4 shrink-0 mt-0.5" />
+					{handedOver && (
+						<div className={cn('mt-3 rounded-md border p-3 text-sm flex items-start gap-2', TONE.locked.card, TONE.locked.text)}>
+							<Lock className={cn('h-4 w-4 shrink-0 mt-0.5', TONE.locked.icon)} />
 							<p>
-								<span className="font-medium">This submission has already been finalized. Any reopening and subsequent modification will be permanently recorded in the audit log.</span>
-								{a.paper_version > 0 && <> Submitted as version V{a.paper_version}.</>}
+								<span className="font-semibold">This paper has been handed over{a.paper_version > 0 && <> as version V{a.paper_version}</>}.</span>{' '}
+								Any reopening and later change is permanently recorded in the audit log.
 							</p>
 						</div>
 					)}
 
 					{a.status === 'accepted' && (
-						<div className="mt-3 rounded-md border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-900 flex items-center gap-2">
-							<CheckCircle2 className="h-4 w-4" />
+						<div className={cn('mt-3 rounded-md border p-3 text-sm flex items-center gap-2', TONE.success.card, TONE.success.text)}>
+							<CheckCircle2 className={cn('h-4 w-4', TONE.success.icon)} />
 							Accepted by the Office of the Controller of Examinations on {formatIst(a.accepted_at)}.
 						</div>
 					)}
@@ -935,34 +1432,81 @@ export function ExaminerPortal({ examiner, onSignedOut }: Props) {
 
 			{/* Step one, only when the appointment carries an answer key: will the
 			    examiner prepare it? The fields — and the claim — follow the answer. */}
-			{aComponents.ak && stage === 'authoring' && a.status !== 'cancelled' && (
-				<WillingnessCard
-					assignment={a}
-					locked={!['assigned', 'in_progress', 'returned'].includes(a.status)}
-					onConfirm={confirmWillingness}
-				/>
+			{aComponents.ak && stage === 'authoring' && !cancelled && (
+				<div ref={willingnessRef} className="scroll-mt-40">
+					<WillingnessCard
+						assignment={a}
+						locked={!['assigned', 'in_progress', 'returned'].includes(a.status)}
+						onConfirm={confirmWillingness}
+					/>
+				</div>
 			)}
 
 			{/* Instructions */}
 			{content?.instructions?.body?.length > 0 && stage === 'authoring' && (
-				<Card>
-					<CardContent className="p-5">
-						<h2 className="font-semibold flex items-center gap-2 text-sm">
-							<ScrollText className="h-4 w-4" />
-							{content.instructions.title || 'Instructions'}
+				<Card className={cn('border-2 overflow-hidden', TONE.info.frame)}>
+					<div className={cn('px-4 sm:px-5 py-3 flex flex-wrap items-center justify-between gap-2', TONE.info.solid)}>
+						<h2 className="font-semibold flex items-center gap-2 text-base">
+							<ScrollText className="h-5 w-5" />
+							{content.instructions.title || 'Instructions to the Question Paper Setter'}
 						</h2>
-						<ol className="mt-2.5 space-y-1.5 text-sm list-decimal pl-5 text-muted-foreground">
-							{content.instructions.body.map((c: any) => (
-								<li key={c.id}>{c.text}</li>
-							))}
+						<span className="text-xs rounded-full bg-white/20 px-2.5 py-1 font-medium">Please read before you start</span>
+					</div>
+					<CardContent className="p-4 sm:p-5">
+						<ol className="space-y-2.5">
+							{content.instructions.body.map((c: any, i: number) => {
+								// The two rules whose breach has consequences beyond this paper
+								// — confidentiality and originality — are marked so they are
+								// never read as routine formatting advice.
+								const critical = /confidential|original|must not be shared|do not reproduce/i.test(String(c.text))
+								return (
+									<li
+										key={c.id}
+										className={cn(
+											'flex gap-3 text-sm rounded-md px-2 py-1.5 -mx-2',
+											critical && 'bg-rose-50 border border-rose-200'
+										)}
+									>
+										<span
+											className={cn(
+												'h-6 w-6 rounded-full flex items-center justify-center shrink-0 text-xs font-semibold',
+												critical ? 'bg-rose-600 text-white' : 'bg-blue-100 text-blue-800'
+											)}
+										>
+											{i + 1}
+										</span>
+										<span className={cn('leading-relaxed text-slate-800', critical && 'font-medium text-rose-900')}>
+											{c.text}
+											{critical && (
+												<span className="ml-2 inline-flex items-center gap-1 rounded-full bg-rose-600 text-white text-[10px] uppercase tracking-wide px-1.5 py-0.5 align-middle">
+													<AlertTriangle className="h-3 w-3" />
+													Important
+												</span>
+											)}
+										</span>
+									</li>
+								)
+							})}
 						</ol>
+						<div
+							className={cn(
+								'mt-4 rounded-md border px-3 py-2 text-sm flex flex-wrap items-center gap-x-2 gap-y-1',
+								state === 'closed' ? TONE.danger.card : state === 'open' ? TONE.warning.card : TONE.locked.card,
+								state === 'closed' ? TONE.danger.text : state === 'open' ? TONE.warning.text : TONE.locked.text
+							)}
+						>
+							<Clock className="h-4 w-4 shrink-0" />
+							<span className="font-semibold">Deadline:</span>
+							<span>submit by {formatIst(a.valid_to)}</span>
+							<span className="text-xs opacity-80">({detail.window_hint || windowHint(a.valid_from, a.valid_to)})</span>
+						</div>
 					</CardContent>
 				</Card>
 			)}
 
 			{/* The submit walk */}
 			{stage !== 'authoring' && (
-				<div ref={wizardRef}>
+				<div ref={wizardRef} className="scroll-mt-40">
 					<SubmissionWizard
 						assignmentId={a.id}
 						stage={stage}
@@ -976,19 +1520,32 @@ export function ExaminerPortal({ examiner, onSignedOut }: Props) {
 			)}
 
 			{/* The paper itself */}
-			{released && stage === 'authoring' && willingnessPending ? (
-				<Card className="border-2 border-amber-200">
+			{cancelled ? (
+				<Card className={cn('border-2', TONE.locked.frame)}>
 					<CardContent className="p-8 text-center space-y-2">
-						<ShieldCheck className="h-8 w-8 mx-auto text-amber-600" />
-						<p className="font-medium">Confirm your willingness first</p>
+						<Lock className="h-8 w-8 mx-auto text-muted-foreground" />
+						<p className="font-medium">This appointment was cancelled</p>
 						<p className="text-sm text-muted-foreground max-w-md mx-auto">
-							Tick the parts of this appointment you are willing to do, above. The paper opens as soon
-							as you confirm.
+							The paper is closed. Contact the Office of the Controller of Examinations if you think this is a mistake.
 						</p>
 					</CardContent>
 				</Card>
+			) : released && stage === 'authoring' && willingnessPending ? (
+				<Card className={cn('border-2', TONE.warning.frame)}>
+					<CardContent className="p-8 text-center space-y-2">
+						<ShieldCheck className="h-8 w-8 mx-auto text-amber-600" />
+						<p className="font-medium">Confirm your answer-key choice first</p>
+						<p className="text-sm text-muted-foreground max-w-md mx-auto">
+							Tick your choice in the Examiner Assignment box above and press Confirm. The paper opens as
+							soon as you do.
+						</p>
+						<Button size="sm" variant="outline" onClick={() => scrollTo(willingnessRef)}>
+							Show me
+						</Button>
+					</CardContent>
+				</Card>
 			) : released && stage === 'authoring' && declinedAll ? (
-				<Card className="border-2 border-slate-200">
+				<Card className={cn('border-2', TONE.locked.frame)}>
 					<CardContent className="p-8 text-center space-y-2">
 						<Lock className="h-8 w-8 mx-auto text-muted-foreground" />
 						<p className="font-medium">Nothing to enter for this paper</p>
@@ -999,19 +1556,19 @@ export function ExaminerPortal({ examiner, onSignedOut }: Props) {
 					</CardContent>
 				</Card>
 			) : !released ? (
-				<Card className={cn('border-2', stage === 'completed' ? 'border-slate-200' : state === 'pending' ? 'border-slate-200' : 'border-rose-200')}>
+				<Card className={cn('border-2', stage === 'completed' || state === 'pending' ? TONE.locked.frame : TONE.danger.frame)}>
 					<CardContent className="p-8 text-center space-y-2">
-						<Lock className="h-8 w-8 mx-auto text-muted-foreground" />
+						<Lock className={cn('h-8 w-8 mx-auto', stage === 'completed' || state === 'pending' ? 'text-muted-foreground' : 'text-rose-500')} />
 						<p className="font-medium">
 							{stage === 'completed'
 								? 'This question paper is closed'
 								: state === 'pending'
 									? 'This question paper is not open yet'
-									: 'The access period has ended'}
+									: 'The entry period has ended'}
 						</p>
 						<p className="text-sm text-muted-foreground max-w-md mx-auto">
 							{stage === 'completed'
-								? 'Your submission is complete. For confidentiality the question content cannot be viewed again — contact the Office of the Controller of Examinations if a change is needed.'
+								? 'Your submission is complete. For confidentiality the question content cannot be viewed again. Contact the Office of the Controller of Examinations if a change is needed.'
 								: state === 'pending'
 									? `The paper becomes available on ${formatIst(a.valid_from)}. Until then you can read the instructions and view your order.`
 									: `Access closed on ${formatIst(a.valid_to)}. Contact the Office of the Controller of Examinations if you need the period reopened.`}
@@ -1021,10 +1578,12 @@ export function ExaminerPortal({ examiner, onSignedOut }: Props) {
 			) : (
 				<>
 					{!canEdit && (
-						<div className="rounded-md border bg-slate-50 px-3.5 py-2.5 text-sm text-muted-foreground flex items-center gap-2">
-							<Eye className="h-4 w-4 shrink-0" />
-							Preview only — this paper has been submitted and can no longer be edited. It cannot be
-							downloaded or printed.
+						<div className={cn('rounded-md border px-3.5 py-2.5 text-sm flex items-center gap-2', TONE.locked.card, TONE.locked.text)}>
+							<Eye className={cn('h-4 w-4 shrink-0', TONE.locked.icon)} />
+							<span>
+								<span className="font-semibold">Preview only.</span> This paper has been submitted and can no longer
+								be edited. It cannot be downloaded or printed.
+							</span>
 						</div>
 					)}
 					{/* qp-protected: no print, no selection. See the print rules below. */}
@@ -1039,6 +1598,8 @@ export function ExaminerPortal({ examiner, onSignedOut }: Props) {
 							saveRef={saveDraftRef}
 							onSyncChange={setDraftSync}
 							onValidityChange={setPaperProblems}
+							onProgressChange={setProgress}
+							jumpRef={jumpRef}
 							questionsRef={liveQuestionsRef}
 							onConflict={() => {
 								void reloadDetail().then(() => setEditorEpoch(n => n + 1))
@@ -1064,11 +1625,11 @@ export function ExaminerPortal({ examiner, onSignedOut }: Props) {
 					</div>
 
 					{canEdit && (
-						<Card>
+						<Card className={cn('border-2', submitReason ? TONE.warning.frame : TONE.success.frame)}>
 							<CardContent className="space-y-3 p-4">
 								<div className="flex flex-wrap items-start justify-between gap-3">
 									<div className="text-sm">
-										<p className="font-medium">Save your progress, or submit</p>
+										<p className="font-semibold">Save your progress, or submit</p>
 										<p className="text-muted-foreground text-xs mt-0.5">
 											<span className="font-medium">Save Draft</span> keeps a partly finished paper
 											exactly as it is. Your work is also saved automatically as you type.
@@ -1085,40 +1646,34 @@ export function ExaminerPortal({ examiner, onSignedOut }: Props) {
 										className="shrink-0"
 									/>
 								</div>
-								<div className="flex flex-wrap items-center gap-2">
-									<Button
-										variant="outline"
-										onClick={() => void saveDraftRef.current?.()}
-										disabled={draftSync.state === 'saving'}
-									>
-										{draftSync.state === 'saving' ? (
-											<Loader2 className="h-4 w-4 mr-1.5 animate-spin" />
-										) : (
-											<Save className="h-4 w-4 mr-1.5" />
-										)}
-										Save Draft
-									</Button>
-									<Button
-										onClick={() => {
-											setPreviewQuestions(liveQuestionsRef.current?.() || detail.questions || [])
-											setSubmitOpen(true)
-										}}
-										disabled={paperProblems.length > 0 || draftSync.state === 'saving'}
-										title={
-											paperProblems.length > 0
-												? `${paperProblems.length} item${paperProblems.length > 1 ? 's' : ''} still to complete`
-												: undefined
-										}
-									>
-										<Send className="h-4 w-4 mr-1.5" />
-										Submit question paper
-									</Button>
-									{paperProblems.length > 0 && (
-										<span className="text-xs text-amber-700 flex items-center gap-1">
-											<AlertTriangle className="h-3.5 w-3.5" />
-											{paperProblems.length} item{paperProblems.length > 1 ? 's' : ''} still to complete —
-											see the list below the paper
-										</span>
+								<div className="flex flex-wrap items-start gap-x-4 gap-y-2">
+									<div className="flex flex-col gap-1">
+										<Button
+											variant="outline"
+											onClick={() => void saveDraftRef.current?.()}
+											disabled={!!saveReason}
+										>
+											{draftSync.state === 'saving' ? (
+												<Loader2 className="h-4 w-4 mr-1.5 animate-spin" />
+											) : (
+												<Save className="h-4 w-4 mr-1.5" />
+											)}
+											Save Draft
+										</Button>
+										<DisabledReason tone="muted" reason={saveReason} />
+									</div>
+									<div className="flex flex-col gap-1">
+										<Button onClick={openPreview} disabled={!!submitReason || submitting} title={submitReason || undefined}>
+											{submitting ? <Loader2 className="h-4 w-4 mr-1.5 animate-spin" /> : <Send className="h-4 w-4 mr-1.5" />}
+											{a.status === 'returned' ? 'Resubmit question paper' : 'Submit question paper'}
+										</Button>
+										<DisabledReason reason={submitReason} />
+									</div>
+									{ownProblems.length > 0 && (
+										<Button variant="ghost" size="sm" className="self-center" onClick={() => jumpRef.current?.(ownProblems[0].anchor)}>
+											Show me the first item
+											<ArrowRight className="h-4 w-4 ml-1.5" />
+										</Button>
 									)}
 								</div>
 							</CardContent>
@@ -1164,49 +1719,85 @@ export function ExaminerPortal({ examiner, onSignedOut }: Props) {
 
 				<div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3">
 					{[
-						{ label: 'Assigned', value: stats.assigned, icon: FileText, tone: 'text-slate-700' },
-						{ label: 'Submitted', value: stats.submitted, icon: CheckCircle2, tone: 'text-emerald-700' },
-						{ label: 'Claims Pending', value: stats.claimPending, icon: Clock, tone: 'text-amber-700' },
-						{ label: 'Claims Submitted', value: stats.claimSubmitted, icon: Receipt, tone: 'text-blue-700' },
-						{ label: 'Claims Approved', value: stats.claimApproved, icon: BadgeCheck, tone: 'text-emerald-700' },
-						{ label: 'Payments Completed', value: stats.paid, icon: Wallet, tone: 'text-emerald-800' },
+						{ label: 'Assigned', value: stats.assigned, icon: FileText, tone: 'locked' as Tone },
+						{ label: 'Submitted', value: stats.submitted, icon: CheckCircle2, tone: 'success' as Tone },
+						{ label: 'Claims Pending', value: stats.claimPending, icon: Clock, tone: 'warning' as Tone },
+						{ label: 'Claims Submitted', value: stats.claimSubmitted, icon: Receipt, tone: 'info' as Tone },
+						{ label: 'Claims Approved', value: stats.claimApproved, icon: BadgeCheck, tone: 'success' as Tone },
+						{ label: 'Payments Completed', value: stats.paid, icon: Wallet, tone: 'success' as Tone },
 					].map(({ label, value, icon: Icon, tone }) => (
-						<Card key={label}>
+						<Card key={label} className={cn('border-l-4', TONE[tone].bar)}>
 							<CardContent className="p-3.5">
 								<div className="flex items-center justify-between gap-2">
 									<p className="text-xs text-muted-foreground truncate">{label}</p>
-									<Icon className={cn('h-4 w-4 shrink-0', tone)} />
+									<Icon className={cn('h-4 w-4 shrink-0', TONE[tone].icon)} />
 								</div>
-								<p className={cn('text-2xl font-semibold mt-1', tone)}>{value}</p>
+								<p className={cn('text-2xl font-semibold mt-1', TONE[tone].heading)}>{value}</p>
 							</CardContent>
 						</Card>
 					))}
 				</div>
 
-				{stats.actionNeeded > 0 && (
-					<Card className="border-blue-200 bg-blue-50/50">
-						<CardContent className="p-4 flex flex-wrap items-center justify-between gap-3">
-							<div className="flex items-start gap-2.5">
-								<ListChecks className="h-5 w-5 text-blue-600 shrink-0 mt-0.5" />
-								<div>
-									<p className="font-medium text-sm text-blue-900">
-										{stats.actionNeeded} submission{stats.actionNeeded > 1 ? 's need' : ' needs'} finishing
-									</p>
-									<p className="text-xs text-blue-800 mt-0.5">
-										The question paper is in — the check list and signature are still to do.
-									</p>
+				{stats.todo.length > 0 && (
+					<Card className={cn('border-2', TONE.info.frame, 'bg-blue-50/40')}>
+						<CardContent className="p-4">
+							<div className="flex flex-wrap items-center justify-between gap-3">
+								<div className="flex items-start gap-2.5">
+									<ListChecks className={cn('h-5 w-5 shrink-0 mt-0.5', TONE.info.icon)} />
+									<div>
+										<p className={cn('font-semibold text-sm', TONE.info.heading)}>
+											{stats.todo.length} paper{stats.todo.length === 1 ? ' needs' : 's need'} something from you
+										</p>
+										<p className={cn('text-xs mt-0.5', TONE.info.text)}>
+											Open a paper below, or use the Question Paper page.
+										</p>
+									</div>
 								</div>
+								<Button size="sm" onClick={() => setSection('papers')}>
+									Go to Question Paper
+									<ArrowRight className="h-4 w-4 ml-1.5" />
+								</Button>
 							</div>
-							<Button size="sm" onClick={() => setSection('papers')}>
-								Continue
-							</Button>
+							<ul className="mt-3 space-y-1">
+								{stats.todo.slice(0, 5).map(t => {
+									const n = nextStepFor(t)
+									const Icon = STEP_ICON[n.tone]
+									return (
+										<li key={t.id}>
+											<button
+												type="button"
+												onClick={() => openAssignment(t.id)}
+												className="w-full text-left text-xs rounded-md px-2 py-1.5 hover:bg-white/70 flex items-center gap-2"
+											>
+												<Icon className={cn('h-3.5 w-3.5 shrink-0', TONE[n.tone].icon)} />
+												<span className="font-medium shrink-0">{t.course_code}</span>
+												<span className="text-muted-foreground truncate">{n.text}</span>
+											</button>
+										</li>
+									)
+								})}
+								{stats.todo.length > 5 && (
+									<li className="text-xs text-muted-foreground px-2">… and {stats.todo.length - 5} more</li>
+								)}
+							</ul>
 						</CardContent>
 					</Card>
 				)}
 
+				{/* The colour legend — learn it once. */}
+				<div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs text-muted-foreground">
+					<span className="font-medium text-slate-700">Colours:</span>
+					{TONE_LEGEND.map(l => (
+						<span key={l.tone} className="inline-flex items-center gap-1">
+							<span className={cn('inline-block h-2.5 w-2.5 rounded-full', TONE[l.tone].solid)} />
+							{l.label}
+						</span>
+					))}
+				</div>
+
 				<div>
 					<h2 className="font-semibold text-sm mb-2">Assignments</h2>
-					{cards}
+					{assignmentTabs}
 				</div>
 			</div>
 		) : section === 'profile' ? (
@@ -1306,6 +1897,7 @@ export function ExaminerPortal({ examiner, onSignedOut }: Props) {
 				problems={paperProblems}
 				submitting={submitting}
 				onSubmit={submitPaper}
+				onJump={anchor => setTimeout(() => jumpRef.current?.(anchor), 150)}
 			/>
 		</div>
 	)

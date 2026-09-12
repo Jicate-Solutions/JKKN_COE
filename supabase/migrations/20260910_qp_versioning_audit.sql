@@ -161,10 +161,15 @@ BEGIN
 	IF TG_OP = 'DELETE' THEN
 		RAISE EXCEPTION '% rows are never deleted', TG_TABLE_NAME USING ERRCODE = 'insufficient_privilege';
 	END IF;
-	IF TG_TABLE_NAME = 'ia_qp_paper_versions' AND NEW.questions IS DISTINCT FROM OLD.questions THEN
+	-- Through to_jsonb(): PL/pgSQL validates NEW.<field> at run time, so a
+	-- direct NEW.data reference fails on the paper table even behind a
+	-- TG_TABLE_NAME test. See 20260911_qp_versions_freeze_fix.sql.
+	IF TG_TABLE_NAME = 'ia_qp_paper_versions'
+	   AND (to_jsonb(NEW) -> 'questions') IS DISTINCT FROM (to_jsonb(OLD) -> 'questions') THEN
 		RAISE EXCEPTION 'A submitted question paper version cannot be altered' USING ERRCODE = 'insufficient_privilege';
 	END IF;
-	IF TG_TABLE_NAME = 'ia_qp_claim_versions' AND NEW.data IS DISTINCT FROM OLD.data THEN
+	IF TG_TABLE_NAME = 'ia_qp_claim_versions'
+	   AND (to_jsonb(NEW) -> 'data') IS DISTINCT FROM (to_jsonb(OLD) -> 'data') THEN
 		RAISE EXCEPTION 'A submitted claim version cannot be altered' USING ERRCODE = 'insufficient_privilege';
 	END IF;
 	IF NEW.version <> OLD.version OR NEW.assignment_id <> OLD.assignment_id OR NEW.submitted_at <> OLD.submitted_at THEN

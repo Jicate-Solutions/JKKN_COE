@@ -25,9 +25,12 @@ import { useToast } from '@/hooks/common/use-toast'
 import {
 	Loader2, MoreHorizontal, RefreshCw, Search, FileText, Mail, CheckCircle2, CalendarClock,
 	ShieldAlert, Ban, Download, ExternalLink, Unlock, Lock, History as HistoryIcon, Eye, ChevronDown, BookOpen, KeyRound,
+	Trash2,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { useAuth } from '@/lib/auth/auth-context-parent'
 import { formatRupees } from '@/lib/qp-portal/fees'
+import { hasAnswerKey } from '@/lib/ia/validate-paper'
 import { formatIst, isoToIstLocal } from '@/lib/qp-portal/ist'
 import {
 	QP_ASSIGNMENT_TYPE_LABELS,
@@ -196,6 +199,21 @@ export function AssignmentsTab({ institutionsId, session, refreshKey, onChanged 
 	const [windowTo, setWindowTo] = useState('')
 	const [confirmCancel, setConfirmCancel] = useState<AssignmentRow | null>(null)
 
+	// Admin delete: the Controller / super admin may remove the question paper
+	// itself (the ese_question_papers row) together with this appointment, as
+	// long as the examiner has not submitted anything. The undo for a paper that
+	// was generated with the wrong format and then handed out.
+	const { user, hasAnyRole } = useAuth()
+	const canForceDelete = user?.is_super_admin === true || hasAnyRole(['super_admin', 'coe'])
+	const canDeletePaper = (r: AssignmentRow | null | undefined) =>
+		!!r &&
+		!!r.paper_id &&
+		!['submitted', 'accepted'].includes(String(r.status)) &&
+		(!r.submission_stage || r.submission_stage === 'authoring') &&
+		!r.submitted_at &&
+		!(r.paper_version && r.paper_version > 0)
+	const [confirmDeletePaper, setConfirmDeletePaper] = useState<AssignmentRow | null>(null)
+
 	const load = useCallback(async () => {
 		if (!institutionsId) {
 			setRows([])
@@ -311,6 +329,22 @@ export function AssignmentsTab({ institutionsId, session, refreshKey, onChanged 
 		}
 	}
 
+	const deletePaper = async (row: AssignmentRow) => {
+		setBusy(row.id)
+		try {
+			const res = await apiFetch(`/api/pre-exam/ese-question-papers/${row.paper_id}?force=1`, { method: 'DELETE' })
+			toast({ title: 'Question paper removed', description: res.message })
+			setConfirmDeletePaper(null)
+			if (openRow?.id === row.id) setOpenRow(null)
+			await load()
+			onChanged()
+		} catch (e: any) {
+			toast({ title: 'Could not remove the paper', description: e.message, variant: 'destructive' })
+		} finally {
+			setBusy(null)
+		}
+	}
+
 	const openOrderPdf = (id: string) => {
 		window.open(`/api/pre-exam/qp-examiner-assignments/${id}/order`, '_blank', 'noopener')
 	}
@@ -319,6 +353,13 @@ export function AssignmentsTab({ institutionsId, session, refreshKey, onChanged 
 		// 404 on this id.
 		window.open(`/api/pre-exam/ese-question-papers/${paperId}/pdf`, '_blank', 'noopener')
 	}
+	const openAnswerKeyPdf = (paperId: string) => {
+		window.open(`/api/pre-exam/ese-question-papers/${paperId}/answer-key-pdf`, '_blank', 'noopener')
+	}
+	// The answer key PDF is offered once the appointment covers the key, or once
+	// a key exists on the paper regardless (the type may have changed since).
+	const hasAnswerKeyPdf = (r: { assignment_type?: string | null; answer_keyed?: boolean; authored?: boolean }) =>
+		!!r.answer_keyed || (!!r.authored && !!r.assignment_type && r.assignment_type !== 'question_paper')
 
 	const counts = useMemo(
 		() => ({
@@ -498,6 +539,12 @@ export function AssignmentsTab({ institutionsId, session, refreshKey, onChanged 
 																Question paper PDF
 															</DropdownMenuItem>
 														)}
+														{hasAnswerKeyPdf(r) && (
+															<DropdownMenuItem onClick={() => openAnswerKeyPdf(r.paper_id)}>
+																<KeyRound className="h-4 w-4 mr-2" />
+																Answer key PDF
+															</DropdownMenuItem>
+														)}
 														<DropdownMenuSeparator />
 														{r.status === 'submitted' && (
 															<DropdownMenuItem
@@ -544,6 +591,15 @@ export function AssignmentsTab({ institutionsId, session, refreshKey, onChanged 
 															>
 																<Ban className="h-4 w-4 mr-2" />
 																Cancel assignment
+															</DropdownMenuItem>
+														)}
+														{canForceDelete && canDeletePaper(r) && (
+															<DropdownMenuItem
+																className="text-rose-600"
+																onClick={() => setConfirmDeletePaper(r)}
+															>
+																<Trash2 className="h-4 w-4 mr-2" />
+																Delete question paper
 															</DropdownMenuItem>
 														)}
 													</DropdownMenuContent>
@@ -768,10 +824,22 @@ export function AssignmentsTab({ institutionsId, session, refreshKey, onChanged 
 										{detail.questions?.filter((q: any) => plainText(q.question_text)).length || 0} of{' '}
 										{detail.questions?.length || 0} questions entered
 									</p>
-									<Button variant="outline" size="sm" onClick={() => openPaperPdf(detail.paper_id)}>
-										<ExternalLink className="h-4 w-4 mr-1.5" />
-										Open PDF
-									</Button>
+									<div className="flex items-center gap-2">
+										<Button variant="outline" size="sm" onClick={() => openPaperPdf(detail.paper_id)}>
+											<ExternalLink className="h-4 w-4 mr-1.5" />
+											Open PDF
+										</Button>
+										{hasAnswerKeyPdf({
+											assignment_type: detail.assignment_type,
+											authored: (detail.questions || []).some((q: any) => plainText(q.question_text)),
+											answer_keyed: (detail.questions || []).some(hasAnswerKey),
+										}) && (
+											<Button variant="outline" size="sm" onClick={() => openAnswerKeyPdf(detail.paper_id)}>
+												<KeyRound className="h-4 w-4 mr-1.5" />
+												Answer key PDF
+											</Button>
+										)}
+									</div>
 								</div>
 								<div className="rounded-md border divide-y">
 									{(detail.questions || []).map((q: any) => (
@@ -1382,6 +1450,44 @@ export function AssignmentsTab({ institutionsId, session, refreshKey, onChanged 
 							}}
 						>
 							Cancel the assignment
+						</AlertDialogAction>
+					</AlertDialogFooter>
+				</AlertDialogContent>
+			</AlertDialog>
+
+			{/* ── Admin: delete the question paper ──────────────────────────── */}
+			<AlertDialog open={!!confirmDeletePaper} onOpenChange={o => !o && setConfirmDeletePaper(null)}>
+				<AlertDialogContent>
+					<AlertDialogHeader>
+						<AlertDialogTitle>Delete the question paper for {confirmDeletePaper?.course_code}?</AlertDialogTitle>
+						<AlertDialogDescription>
+							The generated paper is removed and the subject goes back to “Not generated” on the Generate Papers tab.
+							{confirmDeletePaper?.status !== 'cancelled' && (
+								<>
+									{' '}
+									The appointment of {confirmDeletePaper?.examiner?.full_name || 'the examiner'}
+									{confirmDeletePaper?.order_ref_no ? ` (order ${confirmDeletePaper.order_ref_no})` : ''} is removed with it
+									and they lose access immediately.
+								</>
+							)}
+							{confirmDeletePaper?.authored
+								? ` ${confirmDeletePaper.authored_count} question(s) already written are deleted.`
+								: ''}{' '}
+							The audit log keeps a record of the removal.
+						</AlertDialogDescription>
+					</AlertDialogHeader>
+					<AlertDialogFooter>
+						<AlertDialogCancel>Keep it</AlertDialogCancel>
+						<AlertDialogAction
+							className="bg-rose-600 hover:bg-rose-700"
+							disabled={busy === confirmDeletePaper?.id}
+							onClick={e => {
+								e.preventDefault()
+								if (confirmDeletePaper) deletePaper(confirmDeletePaper)
+							}}
+						>
+							{busy === confirmDeletePaper?.id && <Loader2 className="h-4 w-4 mr-1.5 animate-spin" />}
+							Delete the paper
 						</AlertDialogAction>
 					</AlertDialogFooter>
 				</AlertDialogContent>

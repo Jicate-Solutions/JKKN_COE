@@ -73,6 +73,24 @@ export function applyQuestionEdits(current: any[], incoming: any[]): ApplyQuesti
 		// An omitted sub_questions key re-reads the STORED value, so a payload that
 		// never mentions sub-divisions leaves them exactly as they were.
 		const subs = canSplit(base) ? readSubQuestions(has(q, 'sub_questions') ? q : base) : []
+
+		// A sub-division's answer key follows the same rule as the question's: it
+		// changes only when the payload MENTIONS it. `sub_answer_keys` carries the
+		// keys alone, for an appointment that may write keys but not questions.
+		const baseSubs = new Map<string, any>(readSubQuestions(base).map(s => [s.id, s]))
+		const sentSubs = new Map<string, any>(
+			(has(q, 'sub_questions') && Array.isArray(q.sub_questions) ? q.sub_questions : []).map((s: any) => [String(s?.id), s])
+		)
+		const sentKeys = new Map<string, any>(
+			(Array.isArray(q?.sub_answer_keys) ? q.sub_answer_keys : []).map((s: any) => [String(s?.id), s])
+		)
+		for (const s of subs) {
+			const sent = sentKeys.get(s.id) ?? sentSubs.get(s.id)
+			const prev = baseSubs.get(s.id)
+			s.answer_key = sent && has(sent, 'answer_key') ? sent.answer_key ?? null : prev?.answer_key ?? null
+			s.answer_key_image =
+				sent && has(sent, 'answer_key_image') ? readQuestionImage(sent.answer_key_image) : prev?.answer_key_image ?? null
+		}
 		next.sub_questions = subs.length > 0 ? subs : null
 
 		// A split question's CO / K-level live on its sub-divisions.

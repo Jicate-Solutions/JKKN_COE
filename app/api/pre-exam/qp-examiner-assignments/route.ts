@@ -16,6 +16,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
 import { scaffoldQuestions } from '@/lib/ia/paper-scaffold'
+import { hasAnswerKey } from '@/lib/ia/validate-paper'
 import { istLocalToIso, windowState } from '@/lib/qp-portal/ist'
 import { getPortalContent } from '@/lib/qp-portal/content'
 import { nextOrderRef } from '@/lib/qp-portal/assignment-service'
@@ -23,6 +24,7 @@ import { requireUserPermission } from '@/lib/auth/check-user-permission'
 import { isEndSemesterExamType, endSemesterMismatchMessage } from '@/lib/qp-portal/exam-type'
 import { resolveQpFeeRates, computeClaim, componentsForType } from '@/lib/qp-portal/fees'
 import { QP_ASSIGNMENT_TYPES, type QpAssignmentCreateInput, type QpAssignmentType } from '@/types/qp-examiner-assignment'
+import { countAuthored, anyAuthored } from '@/lib/ia/sub-questions'
 
 export const dynamic = 'force-dynamic'
 
@@ -195,8 +197,11 @@ export async function GET(req: NextRequest) {
 				session_name: sessionById.get(r.examination_session_id)?.session_name || null,
 				paper_status: paper?.status || null,
 				max_marks: paper?.max_marks ?? null,
-				authored: questions.some((q: any) => String(q?.question_text || '').trim() !== ''),
-				authored_count: questions.filter((q: any) => String(q?.question_text || '').trim() !== '').length,
+				authored: anyAuthored(questions),
+				authored_count: countAuthored(questions),
+				// true once at least one question carries an answer key (text or figure).
+				answer_keyed: questions.some(hasAnswerKey),
+				answer_keyed_count: questions.filter(hasAnswerKey).length,
 				question_count: questions.length,
 				window_state: windowState(r.valid_from, r.valid_to, now),
 			}

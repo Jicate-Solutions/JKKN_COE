@@ -2,7 +2,8 @@
 //
 // GET    → the paper with its questions, template parts and course outcomes
 // PUT    → save questions / meta / status, or rebuild from the format
-// DELETE → remove a paper that was never handed out
+// DELETE → remove a paper that was never handed out; ?force=1 (super_admin /
+//          coe only) also removes a live appointment that has not submitted
 //
 // The CIA equivalent is app/api/pre-exam/question-papers/[id]/route.ts and the
 // two behave identically on questions — the shared apply/validate/scaffold
@@ -13,16 +14,18 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
 import { scaffoldQuestions, mergeAuthored } from '@/lib/ia/paper-scaffold'
-import { validateSubMarks } from '@/lib/ia/sub-questions'
+import { validateSubMarks, countAuthored } from '@/lib/ia/sub-questions'
 import { validatePaperComplete, requiresCompletion } from '@/lib/ia/validate-paper'
 import { applyQuestionEdits, MASS_CLEAR_THRESHOLD, massClearError } from '@/lib/ia/apply-question-edits'
-import { hasAnyCoeRole } from '@/lib/auth/check-user-permission'
+import { hasAnyCoeRole, requireUserPermission } from '@/lib/auth/check-user-permission'
+import { deleteEsePaper } from '@/lib/qp-portal/delete-paper'
 
 export const dynamic = 'force-dynamic'
 
 const EDITABLE_STATUSES = ['draft', 'submitted']
 const VALID_STATUSES = ['draft', 'submitted', 'approved', 'locked']
 const UNRESTRICTED_ROLES = ['super_admin', 'coe']
+const PERMISSION = 'page.pre_exam.qp_examiner_assignment.view'
 
 function readQuestions(paper: any): any[] {
 	const qs = Array.isArray(paper.questions) ? paper.questions : []
@@ -142,7 +145,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
 			// Changing to a DIFFERENT format restructures the paper, so authored work
 			// can be stranded. Say so rather than discarding it silently.
 			if (template_id && template_id !== paper.template_id && !body.force) {
-				const authored = existing.filter((q: any) => String(q?.question_text || '').trim() !== '').length
+				const authored = countAuthored(existing)
 				if (authored > 0) {
 					return NextResponse.json(
 						{
@@ -256,37 +259,35 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
 	}
 }
 
-export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
 	try {
+		const perm = await requireUserPermission(PERMISSION)
+		if (!perm.ok) return NextResponse.json({ error: perm.error }, { status: perm.status })
+
 		const supabase = getSupabaseServer()
 		const { id } = await params
+		// ?force=1 removes a live appointment along with the paper — the admin
+		// delete for a paper generated with the wrong format and already handed
+		// out. The helper only honours it for unrestricted roles.
+		const force = new URL(req.url).searchParams.get('force') === '1'
+		const unrestricted = perm.isSuperAdmin || (await hasAnyCoeRole(UNRESTRICTED_ROLES))
 
-		const { data: paper } = await supabase
-			.from('ese_question_papers')
-			.select('id, status, course_code')
-			.eq('id', id)
-			.maybeSingle()
-		if (!paper) return NextResponse.json({ error: 'Paper not found' }, { status: 404 })
-
-		// Deleting would cascade the assignment away with it, taking the issued
-		// order and the audit trail. Cancel the assignment first, deliberately.
-		const assignment = await liveAssignment(supabase, id)
-		if (assignment) {
-			return NextResponse.json(
-				{
-					error: `${paper.course_code || 'This paper'} is assigned to an examiner. Cancel the assignment before deleting the paper.`,
-				},
-				{ status: 409 }
-			)
+		const result = await deleteEsePaper(supabase, req, id, {
+			force,
+			unrestricted,
+			actor: { userId: perm.userId, email: perm.email },
+		})
+		if (!result.ok) {
+			return NextResponse.json({ error: result.error, code: result.code }, { status: result.status })
 		}
-
-		if (paper.status === 'locked' && !(await hasAnyCoeRole(UNRESTRICTED_ROLES))) {
-			return NextResponse.json({ error: 'Cannot delete a locked paper' }, { status: 400 })
-		}
-
-		const { error } = await supabase.from('ese_question_papers').delete().eq('id', id)
-		if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-		return NextResponse.json({ success: true, message: 'Question paper removed.' })
+		return NextResponse.json({
+			success: true,
+			assignments_removed: result.assignments_removed,
+			message:
+				result.assignments_removed > 0
+					? `${result.course_code} removed, along with ${result.assignments_removed} appointment(s).`
+					: 'Question paper removed.',
+		})
 	} catch (error) {
 		console.error('[ESE paper] DELETE failed:', error)
 		return NextResponse.json({ error: 'Failed to delete the question paper' }, { status: 500 })

@@ -176,6 +176,9 @@ export interface AssignmentRow {
 	paper_status: string | null
 	authored: boolean
 	authored_count: number
+	/** true once at least one question carries an answer key (text or figure). */
+	answer_keyed: boolean
+	answer_keyed_count: number
 	question_count: number
 	session_name: string | null
 	examiner: {

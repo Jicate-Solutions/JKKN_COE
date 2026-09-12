@@ -4,6 +4,7 @@
 //
 //   QP_<course code>_<course name>_<assessment>[_Set<X>][_2up].pdf
 //   e.g. QP_EE3012_ELECTRICAL DRIVES_CIA1.pdf  /  QP_EE3012_ELECTRICAL DRIVES_CIA1_2up.pdf
+//   The answer key of the same paper swaps the prefix: AK_EE3012_ELECTRICAL DRIVES_ESE.pdf
 //
 // Underscores separate the SEGMENTS; the course name keeps its own spaces.
 // The set label appears only when it isn't the default 'A' (sets B/C would
@@ -50,16 +51,22 @@ export interface PaperFilenameOptions {
 	 * in one examiner's downloads called "…_SetB" tells them the others exist.
 	 */
 	hideSet?: boolean
+	/**
+	 * Leading segment. 'QP' (default) is the question paper; 'AK' is its answer
+	 * key, so the two downloads for one subject sit side by side and never
+	 * overwrite each other.
+	 */
+	prefix?: 'QP' | 'AK'
 }
 
 export function paperPdfFilename(paper: any, opts: PaperFilenameOptions = {}): string {
-	const { variant = 'single', ext = 'pdf', hideSet = false } = opts
+	const { variant = 'single', ext = 'pdf', hideSet = false, prefix = 'QP' } = opts
 	const setLabel = hideSet
 		? ''
 		: sanitizeFilePart(String(paper?.set_label || '')).replace(/\s+/g, '')
 
 	const parts = [
-		'QP',
+		prefix,
 		sanitizeFilePart(String(paper?.course_code || 'paper')),
 		sanitizeFilePart(String(paper?.subject_title || '')),
 		assessmentLabel(paper),

@@ -33,6 +33,7 @@ import {
 	BookOpen,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { useAuth } from '@/lib/auth/auth-context-parent'
 import { apiFetch, SearchableSelect, type SessionOpt } from './shared'
 
 interface Props {
@@ -66,7 +67,10 @@ export interface GenerableRow {
 	authored_count: number
 	question_count: number
 	assigned: boolean
+	assignment_id: string | null
 	assignment_status: string | null
+	/** The examiner has handed in — the paper can no longer be deleted by anyone. */
+	assignment_submitted: boolean
 	examiner_name: string | null
 }
 
@@ -84,6 +88,11 @@ const rowKey = (r: GenerableRow) => `${r.course_offering_id}:${r.set_number}`
 
 export function GenerateTab({ institutionsId, institutionCode, session, onGenerated }: Props) {
 	const { toast } = useToast()
+	const { user, hasAnyRole } = useAuth()
+	// The Controller and super admins may remove a paper that is already handed
+	// to an examiner — the appointment goes with it. Nobody may remove a paper
+	// whose examiner has submitted.
+	const canForceDelete = user?.is_super_admin === true || hasAnyRole(['super_admin', 'coe'])
 
 	const [rows, setRows] = useState<GenerableRow[]>([])
 	const [templates, setTemplates] = useState<TemplateOpt[]>([])
@@ -104,7 +113,11 @@ export function GenerateTab({ institutionsId, institutionCode, session, onGenera
 
 	const [generating, setGenerating] = useState(false)
 	const [confirmRebuild, setConfirmRebuild] = useState(false)
+	const [confirmAll, setConfirmAll] = useState(false)
+	const [allProgress, setAllProgress] = useState<{ done: number; total: number } | null>(null)
 	const [deleteTarget, setDeleteTarget] = useState<GenerableRow | null>(null)
+	const [confirmDelete, setConfirmDelete] = useState(false)
+	const [deleting, setDeleting] = useState(false)
 
 	// ── Load ──────────────────────────────────────────────────────────────
 	const load = useCallback(async () => {
@@ -169,15 +182,28 @@ export function GenerateTab({ institutionsId, institutionCode, session, onGenera
 		})
 	}, [rows, programFilter, semesterFilter, stateFilter, search])
 
-	/** A row can be picked when a format is available and it is not already handed out. */
+	/**
+	 * A row can be picked when a format is available. Rows already handed to an
+	 * examiner are picked for Delete only — Generate and Rebuild leave them alone.
+	 */
 	const isSelectable = (r: GenerableRow) =>
-		!r.assigned && (!!r.suggested_template_id || !!chosen[rowKey(r)] || !!r.paper_template_id || templates.length > 0)
+		!!r.suggested_template_id || !!chosen[rowKey(r)] || !!r.paper_template_id || templates.length > 0
 
 	const selectable = useMemo(() => visible.filter(isSelectable), [visible, chosen, templates])
 	const pickedRows = useMemo(() => rows.filter(r => picked.has(rowKey(r))), [rows, picked])
 
 	const templateFor = (r: GenerableRow) =>
 		chosen[rowKey(r)] || r.paper_template_id || r.suggested_template_id || ''
+
+	// ── What Delete would do to the current selection ─────────────────────
+	const deletable = useMemo(() => pickedRows.filter(r => !!r.paper_id), [pickedRows])
+	const deletePlan = useMemo(() => {
+		const submitted = deletable.filter(r => r.assignment_submitted)
+		const assigned = deletable.filter(r => r.assigned && !r.assignment_submitted)
+		const removable = deletable.filter(r => !r.assignment_submitted && (!r.assigned || canForceDelete))
+		const authored = removable.filter(r => r.authored)
+		return { submitted, assigned, authored, removable }
+	}, [deletable, canForceDelete])
 
 	const counts = useMemo(() => {
 		const generated = rows.filter(r => r.paper_id).length
@@ -224,6 +250,78 @@ export function GenerateTab({ institutionsId, institutionCode, session, onGenera
 		toast({ title: `${name} applied to ${pickedRows.length} subject(s)` })
 	}
 
+	// ── Generate every offered course at once ─────────────────────────────
+	// Every theory course offered in the session that has no paper yet, across
+	// all pages and filters: each takes its suggested format; one without a
+	// suggestion takes the format chosen in the bulk box, and is skipped (and
+	// named) when none is chosen. Papers already in an examiner's hands are
+	// never touched. Sent in chunks so a session of hundreds of courses never
+	// outlives one request.
+	const pendingAll = useMemo(() => rows.filter(r => !r.paper_id && !r.assigned), [rows])
+	const pendingReady = useMemo(
+		() => pendingAll.filter(r => !!(chosen[rowKey(r)] || r.suggested_template_id || bulkTemplate)),
+		[pendingAll, chosen, bulkTemplate]
+	)
+	const pendingNoFormat = useMemo(() => pendingAll.filter(r => !pendingReady.includes(r)), [pendingAll, pendingReady])
+
+	const runGenerateAll = async () => {
+		if (!session?.id || pendingReady.length === 0) return
+		setConfirmAll(false)
+		setGenerating(true)
+		const CHUNK = 40
+		const items = pendingReady.map(r => ({
+			course_offering_id: r.course_offering_id,
+			set_number: r.set_number,
+			template_id: chosen[rowKey(r)] || r.suggested_template_id || bulkTemplate,
+		}))
+		let created = 0
+		let skipped = 0
+		const failed: { course_code: string; reason: string }[] = []
+		setAllProgress({ done: 0, total: items.length })
+		try {
+			for (let i = 0; i < items.length; i += CHUNK) {
+				const slice = items.slice(i, i + CHUNK)
+				try {
+					const res = await apiFetch('/api/pre-exam/ese-question-papers', {
+						method: 'POST',
+						body: JSON.stringify({
+							institutions_id: institutionsId,
+							institution_code: institutionCode,
+							examination_session_id: session.id,
+							items: slice,
+							rebuild: false,
+						}),
+					})
+					created += res.created || 0
+					skipped += res.skipped || 0
+					failed.push(...((res.failed || []) as { course_code: string; reason: string }[]))
+				} catch (e: any) {
+					for (const it of slice) {
+						const r = pendingReady.find(x => x.course_offering_id === it.course_offering_id)
+						failed.push({ course_code: r?.course_code || it.course_offering_id, reason: e?.message || 'request failed' })
+					}
+				}
+				setAllProgress({ done: Math.min(i + CHUNK, items.length), total: items.length })
+			}
+			toast({
+				title: `${created} question paper${created === 1 ? '' : 's'} generated`,
+				description: [
+					skipped ? `${skipped} already existed` : null,
+					pendingNoFormat.length ? `${pendingNoFormat.length} skipped — no format: ${pendingNoFormat.slice(0, 5).map(r => r.course_code).join(', ')}${pendingNoFormat.length > 5 ? '…' : ''}` : null,
+					failed.length ? `${failed.length} failed: ${failed.slice(0, 3).map(f => `${f.course_code} (${f.reason})`).join('; ')}${failed.length > 3 ? '…' : ''}` : null,
+				]
+					.filter(Boolean)
+					.join(' · ') || 'Every offered theory course in this session now has a paper.',
+				variant: failed.length ? 'destructive' : undefined,
+			})
+			await load()
+			onGenerated?.()
+		} finally {
+			setGenerating(false)
+			setAllProgress(null)
+		}
+	}
+
 	// ── Generate ──────────────────────────────────────────────────────────
 	const runGenerate = async (rebuild: boolean) => {
 		if (!session?.id) return
@@ -234,7 +332,13 @@ export function GenerateTab({ institutionsId, institutionCode, session, onGenera
 
 		const items: { course_offering_id: string; set_number: number; template_id: string }[] = []
 		const missing: string[] = []
+		const assignedSkipped: string[] = []
 		for (const r of pickedRows) {
+			// A paper in an examiner's hands is never regenerated underneath them.
+			if (r.assigned) {
+				assignedSkipped.push(r.course_code)
+				continue
+			}
 			const tid = templateFor(r)
 			if (!tid) {
 				missing.push(r.course_code)
@@ -244,8 +348,10 @@ export function GenerateTab({ institutionsId, institutionCode, session, onGenera
 		}
 		if (items.length === 0) {
 			toast({
-				title: 'No format chosen',
-				description: `Pick a format for ${missing.slice(0, 4).join(', ')}${missing.length > 4 ? '…' : ''}`,
+				title: missing.length ? 'No format chosen' : 'Nothing to generate',
+				description: missing.length
+					? `Pick a format for ${missing.slice(0, 4).join(', ')}${missing.length > 4 ? '…' : ''}`
+					: 'Every selected paper is already assigned to an examiner. Use Delete to remove them first.',
 				variant: 'destructive',
 			})
 			return
@@ -272,6 +378,7 @@ export function GenerateTab({ institutionsId, institutionCode, session, onGenera
 						: res.message,
 				description: [
 					missing.length ? `${missing.length} skipped — no format chosen` : '',
+					assignedSkipped.length ? `${assignedSkipped.length} skipped — already assigned` : '',
 					failed.length ? failed.slice(0, 3).map(f => `${f.course_code}: ${f.reason}`).join(' · ') : '',
 				]
 					.filter(Boolean)
@@ -293,13 +400,47 @@ export function GenerateTab({ institutionsId, institutionCode, session, onGenera
 	const deletePaper = async () => {
 		if (!deleteTarget?.paper_id) return
 		try {
-			await apiFetch(`/api/pre-exam/ese-question-papers/${deleteTarget.paper_id}`, { method: 'DELETE' })
-			toast({ title: `${deleteTarget.course_code} paper removed` })
+			const force = deleteTarget.assigned && canForceDelete ? '?force=1' : ''
+			const res = await apiFetch(`/api/pre-exam/ese-question-papers/${deleteTarget.paper_id}${force}`, { method: 'DELETE' })
+			toast({ title: `${deleteTarget.course_code} paper removed`, description: res?.assignments_removed ? res.message : undefined })
 			setDeleteTarget(null)
 			await load()
 			onGenerated()
 		} catch (e: any) {
 			toast({ title: 'Could not remove the paper', description: e.message, variant: 'destructive' })
+		}
+	}
+
+	/** Bulk undo for a wrong Generate: remove every removable paper in the selection. */
+	const runDelete = async () => {
+		const ids = deletePlan.removable.map(r => r.paper_id).filter((x): x is string => !!x)
+		if (ids.length === 0) return
+		setDeleting(true)
+		try {
+			const res = await apiFetch('/api/pre-exam/ese-question-papers', {
+				method: 'DELETE',
+				body: JSON.stringify({ paper_ids: ids, force: canForceDelete }),
+			})
+			const failed: { reason: string }[] = res.failed || []
+			toast({
+				title: res.deleted > 0 ? `${res.deleted} paper(s) removed` : 'Nothing was removed',
+				description:
+					[
+						res.assignments_removed ? `${res.assignments_removed} appointment(s) removed with them` : '',
+						failed.length ? failed.slice(0, 3).map(f => f.reason).join(' · ') : '',
+					]
+						.filter(Boolean)
+						.join(' · ') || undefined,
+				variant: res.deleted > 0 ? 'default' : 'destructive',
+			})
+			setConfirmDelete(false)
+			setPicked(new Set())
+			await load()
+			onGenerated()
+		} catch (e: any) {
+			toast({ title: 'Could not remove the papers', description: e.message, variant: 'destructive' })
+		} finally {
+			setDeleting(false)
 		}
 	}
 
@@ -448,6 +589,37 @@ export function GenerateTab({ institutionsId, institutionCode, session, onGenera
 								disabled={generating || pickedRows.length === 0}
 							>
 								Rebuild
+							</Button>
+							<Button
+								variant="secondary"
+								size="sm"
+								className="h-9"
+								onClick={() => setConfirmAll(true)}
+								disabled={generating || pendingAll.length === 0}
+								title="Generate a paper for every offered theory course in this session that has none yet, using each course's suggested format"
+							>
+								{generating && allProgress ? (
+									<>
+										<Loader2 className="h-4 w-4 mr-1.5 animate-spin" />
+										{allProgress.done} / {allProgress.total}
+									</>
+								) : (
+									<>
+										<Wand2 className="h-4 w-4 mr-1.5" />
+										Generate all pending ({pendingAll.length})
+									</>
+								)}
+							</Button>
+							<Button
+								variant="outline"
+								size="sm"
+								className="h-9 text-rose-600 border-rose-200 hover:bg-rose-50 hover:text-rose-700"
+								title="Remove the selected generated papers so they can be generated again"
+								onClick={() => setConfirmDelete(true)}
+								disabled={generating || deleting || deletable.length === 0}
+							>
+								<Trash2 className="h-4 w-4 mr-1.5" />
+								Delete {deletable.length > 0 ? `(${deletable.length})` : ''}
 							</Button>
 						</div>
 					</div>
@@ -645,12 +817,12 @@ export function GenerateTab({ institutionsId, institutionCode, session, onGenera
 															>
 																<Download className="h-3.5 w-3.5" />
 															</Button>
-															{!r.assigned && (
+															{(!r.assigned || (canForceDelete && !r.assignment_submitted)) && (
 																<Button
 																	variant="ghost"
 																	size="icon"
 																	className="h-7 w-7 text-rose-600 hover:text-rose-700"
-																	title="Remove this paper"
+																	title={r.assigned ? 'Remove this paper and its examiner appointment' : 'Remove this paper'}
 																	onClick={() => setDeleteTarget(r)}
 																>
 																	<Trash2 className="h-3.5 w-3.5" />
@@ -669,6 +841,41 @@ export function GenerateTab({ institutionsId, institutionCode, session, onGenera
 					)}
 				</CardContent>
 			</Card>
+
+			{/* Generate-all confirmation */}
+			<AlertDialog open={confirmAll} onOpenChange={setConfirmAll}>
+				<AlertDialogContent>
+					<AlertDialogHeader>
+						<AlertDialogTitle>Generate {pendingReady.length} question paper{pendingReady.length === 1 ? '' : 's'}?</AlertDialogTitle>
+						<AlertDialogDescription asChild>
+							<div className="space-y-2 text-sm">
+								<p>
+									Every theory course offered in {session?.session_name || 'this session'} that has no paper yet gets one,
+									scaffolded from its suggested format
+									{bulkTemplate ? ` (or the format chosen above where there is no suggestion)` : ''}.
+									Papers already generated or assigned are left alone.
+								</p>
+								{pendingNoFormat.length > 0 && (
+									<p className="text-amber-700">
+										{pendingNoFormat.length} course{pendingNoFormat.length === 1 ? ' has' : 's have'} no suggested format and will be skipped:{' '}
+										{pendingNoFormat.slice(0, 8).map(r => r.course_code).join(', ')}
+										{pendingNoFormat.length > 8 ? '…' : ''}. Choose a format in the box above to include them.
+									</p>
+								)}
+								<p className="text-xs text-muted-foreground">
+									Internal assessment (CIA) papers are a separate module and are not affected.
+								</p>
+							</div>
+						</AlertDialogDescription>
+					</AlertDialogHeader>
+					<AlertDialogFooter>
+						<AlertDialogCancel>Cancel</AlertDialogCancel>
+						<AlertDialogAction onClick={runGenerateAll} disabled={pendingReady.length === 0}>
+							Generate {pendingReady.length}
+						</AlertDialogAction>
+					</AlertDialogFooter>
+				</AlertDialogContent>
+			</AlertDialog>
 
 			{/* Rebuild confirmation */}
 			<AlertDialog open={confirmRebuild} onOpenChange={setConfirmRebuild}>
@@ -697,6 +904,13 @@ export function GenerateTab({ institutionsId, institutionCode, session, onGenera
 							{deleteTarget?.authored
 								? `${deleteTarget.authored_count} question(s) have already been written. Removing the paper deletes them.`
 								: 'The paper has no questions written yet. It can be generated again at any time.'}
+							{deleteTarget?.assigned && (
+								<>
+									{' '}
+									The appointment of {deleteTarget.examiner_name || 'the examiner'} is removed with it; the issued
+									order stays in the audit log.
+								</>
+							)}
 						</AlertDialogDescription>
 					</AlertDialogHeader>
 					<AlertDialogFooter>
@@ -706,6 +920,64 @@ export function GenerateTab({ institutionsId, institutionCode, session, onGenera
 							className="bg-rose-600 hover:bg-rose-700 focus:ring-rose-600"
 						>
 							Remove
+						</AlertDialogAction>
+					</AlertDialogFooter>
+				</AlertDialogContent>
+			</AlertDialog>
+
+			{/* Bulk delete confirmation */}
+			<AlertDialog open={confirmDelete} onOpenChange={o => !deleting && setConfirmDelete(o)}>
+				<AlertDialogContent>
+					<AlertDialogHeader>
+						<AlertDialogTitle>
+							Remove {deletePlan.removable.length} of {deletable.length} selected paper(s)?
+						</AlertDialogTitle>
+						<AlertDialogDescription asChild>
+							<div className="space-y-2 text-sm text-muted-foreground">
+								<p>
+									Removed papers go back to <span className="font-medium">Not generated</span> and can be generated
+									again with the right format. This is the undo for a format applied to the wrong programme.
+								</p>
+								<ul className="list-disc pl-5 space-y-1">
+									{deletePlan.authored.length > 0 && (
+										<li>
+											{deletePlan.authored.length} paper(s) already have questions written — those questions are deleted.
+										</li>
+									)}
+									{deletePlan.assigned.length > 0 && canForceDelete && (
+										<li>
+											{deletePlan.assigned.length} paper(s) are assigned to an examiner — the appointment is removed with
+											the paper. Issued orders stay in the audit log.
+										</li>
+									)}
+									{deletePlan.assigned.length > 0 && !canForceDelete && (
+										<li>
+											{deletePlan.assigned.length} paper(s) are assigned to an examiner and are skipped — cancel the
+											assignment first, or ask the Controller of Examinations to remove them.
+										</li>
+									)}
+									{deletePlan.submitted.length > 0 && (
+										<li>
+											{deletePlan.submitted.length} paper(s) have been submitted by their examiner and are never deleted —
+											reopen or accept them from the Assignments tab instead.
+										</li>
+									)}
+								</ul>
+							</div>
+						</AlertDialogDescription>
+					</AlertDialogHeader>
+					<AlertDialogFooter>
+						<AlertDialogCancel disabled={deleting}>Keep them</AlertDialogCancel>
+						<AlertDialogAction
+							onClick={e => {
+								e.preventDefault()
+								runDelete()
+							}}
+							disabled={deleting || deletePlan.removable.length === 0}
+							className="bg-rose-600 hover:bg-rose-700 focus:ring-rose-600"
+						>
+							{deleting && <Loader2 className="h-4 w-4 mr-1.5 animate-spin" />}
+							Remove {deletePlan.removable.length} paper(s)
 						</AlertDialogAction>
 					</AlertDialogFooter>
 				</AlertDialogContent>

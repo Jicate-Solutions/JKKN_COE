@@ -25,6 +25,15 @@ import { cn } from '@/lib/utils'
 import { formatIst } from '@/lib/qp-portal/ist'
 import { QP_CLAIM_STATUS_LABELS, type QpClaimStatus, type QpAssignmentType } from '@/types/qp-examiner-assignment'
 import { computeClaim, componentsForType, formatRupees } from '@/lib/qp-portal/fees'
+import { TAB_TONE, type Tone } from './tones'
+
+/** Which colour each claim tab lights up in: amber = your action, blue = with the CoE, green = done. */
+const TAB_CLAIM_TONE: Record<QpClaimStatus, Tone> = {
+	pending: 'warning',
+	submitted: 'info',
+	approved: 'success',
+	paid: 'success',
+}
 
 interface ClaimRow {
 	id: string
@@ -486,13 +495,13 @@ export function ClaimSection({ assignments, bank, onSubmitClaim, onDownload, loa
 				</Card>
 			) : (
 				<Tabs defaultValue={byStatus.pending.length > 0 ? 'pending' : 'submitted'}>
-					<TabsList className="flex-wrap h-auto">
+					<TabsList className="flex-wrap h-auto p-1 bg-slate-100 border">
 						{TABS.map(({ key, icon: Icon }) => (
-							<TabsTrigger key={key} value={key} className="gap-1.5">
+							<TabsTrigger key={key} value={key} className={cn('gap-1.5 px-4 py-1.5', TAB_TONE[TAB_CLAIM_TONE[key]])}>
 								<Icon className="h-3.5 w-3.5" />
 								{QP_CLAIM_STATUS_LABELS[key].replace('Claim ', '')}
 								{byStatus[key].length > 0 && (
-									<span className="ml-1 rounded-full bg-slate-200 px-1.5 text-[11px] leading-4">
+									<span className="ml-1 rounded-full bg-black/10 px-1.5 text-[11px] leading-4">
 										{byStatus[key].length}
 									</span>
 								)}

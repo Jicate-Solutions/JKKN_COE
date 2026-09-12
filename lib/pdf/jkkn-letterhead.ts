@@ -87,7 +87,7 @@ export const JKKN_LETTERHEAD: Record<string, JkknLetterhead> = {
 			{ text: '(Approved by AICTE - New Delhi and Affiliated to Anna University - Chennai)', cls: 'lh-approve' },
 			{ text: 'Recognized by UGC under Section 2(f) & Accredited by NAAC', cls: 'lh-naac' },
 			{ text: 'Natarajapuram, NH-544, Kumarapalayam - 638 183, Namakkal Dt., Tamil Nadu.', cls: 'lh-addr' },
-			{ text: 'Website: www.engg.jkkn.in', cls: 'lh-web' },
+			{ text: 'Website: https://engg.jkkn.ac.in', cls: 'lh-web' },
 		],
 	},
 }

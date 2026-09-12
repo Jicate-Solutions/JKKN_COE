@@ -10,6 +10,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
 import { requireExaminer, logAccess } from '@/lib/qp-portal/guard'
 import { windowState, windowHint } from '@/lib/qp-portal/ist'
+import { countAuthored } from '@/lib/ia/sub-questions'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
@@ -48,7 +49,7 @@ export async function GET(req: NextRequest) {
 				const qs = Array.isArray(p.questions) ? p.questions : []
 				progressByPaper.set(p.id, {
 					total: qs.length,
-					done: qs.filter((q: any) => String(q?.question_text || '').trim() !== '').length,
+					done: countAuthored(qs),
 					status: p.status,
 				})
 			}

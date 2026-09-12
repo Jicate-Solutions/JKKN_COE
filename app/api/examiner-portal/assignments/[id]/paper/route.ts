@@ -18,10 +18,10 @@ import { getSupabaseServer } from '@/lib/supabase-server'
 import { requireAssignment, logAccess, requestOrigin } from '@/lib/qp-portal/guard'
 import { snapshotPaperVersion, diffQuestions } from '@/lib/qp-portal/versioning'
 import { applyQuestionEdits, MASS_CLEAR_THRESHOLD, massClearError } from '@/lib/ia/apply-question-edits'
-import { validateSubMarks } from '@/lib/ia/sub-questions'
-import { validatePaperComplete } from '@/lib/ia/validate-paper'
+import { validatePaperDetailed } from '@/lib/ia/validate-paper'
 import { componentsForType } from '@/lib/qp-portal/fees'
 import type { QpAssignmentType } from '@/types/qp-examiner-assignment'
+import { countAuthored } from '@/lib/ia/sub-questions'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
@@ -32,6 +32,29 @@ const QUESTION_KEYS = [
 	'co_code', 'k_level', 'sub_questions',
 ]
 const ANSWER_KEY_KEYS = ['answer_key', 'answer_key_image']
+
+/** Sub-divisions with their answer keys removed, so the stored keys are kept. */
+function stripSubAnswerKeys(subs: unknown): unknown {
+	if (!Array.isArray(subs)) return subs
+	return subs.map(s => {
+		if (!s || typeof s !== 'object') return s
+		const { answer_key: _k, answer_key_image: _i, ...rest } = s as Record<string, unknown>
+		return rest
+	})
+}
+
+/** Only the answer keys of each sub-division, for an examiner who may not touch the questions. */
+function subAnswerKeysOnly(subs: unknown): Record<string, unknown>[] {
+	if (!Array.isArray(subs)) return []
+	return subs
+		.filter(s => s && typeof s === 'object')
+		.map(s => {
+			const o: Record<string, unknown> = { id: (s as any).id }
+			if ('answer_key' in (s as object)) o.answer_key = (s as any).answer_key
+			if ('answer_key_image' in (s as object)) o.answer_key_image = (s as any).answer_key_image
+			return o
+		})
+}
 
 /**
  * Keep only the fields the examiner may write, by what they accepted. A field
@@ -47,7 +70,15 @@ function restrictQuestionPayload(
 		const out: Record<string, unknown> = { id: q.id }
 		for (const k of Object.keys(q)) {
 			if (k === 'id') continue
-			if (QUESTION_KEYS.includes(k)) {
+			if (k === 'sub_questions') {
+				// A split question's keys live on its sub-divisions, so this one
+				// key of the payload carries both question and answer-key content.
+				if (allow.questions) {
+					out.sub_questions = allow.answerKeys ? q.sub_questions : stripSubAnswerKeys(q.sub_questions)
+				} else if (allow.answerKeys) {
+					out.sub_answer_keys = subAnswerKeysOnly(q.sub_questions)
+				}
+			} else if (QUESTION_KEYS.includes(k)) {
 				if (allow.questions) out[k] = q[k]
 			} else if (ANSWER_KEY_KEYS.includes(k)) {
 				if (allow.answerKeys) out[k] = q[k]
@@ -196,10 +227,9 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
 					{ untagged, server_updated_at: paper.updated_at }
 				)
 			}
-			const subErrors = validateSubMarks(questions)
-			if (subErrors.length > 0) {
-				return refuse(400, { error: 'SUB_MARKS', message: subErrors.join(' · ') }, { errors: subErrors.slice(0, 20) })
-			}
+			// A draft is NEVER validated — not even sub-division marks. An examiner
+			// must be able to stop half-way with a split question whose marks are
+			// not yet balanced and come back to it. Submit runs every rule below.
 			changes = diffQuestions(current, questions)
 			nextQuestions = questions
 			paperPatch.questions = questions
@@ -213,26 +243,37 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
 			if (paper.template_id) {
 				const { data } = await supabase
 					.from('ia_template_parts')
-					.select('part_label, capture_co, capture_klevel')
+					.select('part_label, capture_co, capture_klevel, num_questions, marks_per_question, has_choice')
 					.eq('template_id', paper.template_id)
 				parts = data || []
 			}
-			// The answer key is demanded only when ACCEPTED — never merely because
-			// the type says "Both" (spec §6). An answer-key-only appointment does
-			// not re-validate questions that are someone else's and read-only here.
-			const incomplete = validatePaperComplete(nextQuestions, parts, {
+			// The SAME rules the editor runs in the browser (lib/ia/validate-paper),
+			// structural checks included, so a stale tab is refused with the same
+			// field-level problems the page would have shown. The answer key is
+			// demanded only when ACCEPTED — never merely because the type says
+			// "Both" (spec §6). An answer-key-only appointment does not re-validate
+			// questions that are someone else's and read-only here.
+			const problems = validatePaperDetailed(nextQuestions, parts, {
 				requireAnswerKey: akWilling,
 				skipQuestions: !components.qp,
+				checkStructure: true,
 			})
-			if (incomplete.length > 0) {
+			if (problems.length > 0) {
+				const coe = problems.filter(p => p.needsCoe)
+				const own = problems.filter(p => !p.needsCoe)
+				const message =
+					coe.length > 0
+						? `This paper needs a correction from the Office of the Controller of Examinations before it can be submitted: ${coe[0].message}`
+						: `${own.length} item${own.length === 1 ? '' : 's'} still to complete. The fields are outlined in red on the paper.`
 				return refuse(
 					400,
 					{
 						error: 'INCOMPLETE',
-						message: `${incomplete.length} item(s) still incomplete — ${incomplete.slice(0, 5).join(' · ')}${incomplete.length > 5 ? ' …' : ''}`,
-						items: incomplete,
+						message,
+						items: problems.map(p => p.message),
+						problems,
 					},
-					{ incomplete: incomplete.length }
+					{ incomplete: problems.length, needs_coe: coe.length }
 				)
 			}
 
@@ -396,7 +437,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
 					: null,
 			detail: {
 				questions_sent: Array.isArray(body.questions) ? body.questions.length : 0,
-				authored: nextQuestions.filter((q: any) => String(q?.question_text || '').trim() !== '').length,
+				authored: countAuthored(nextQuestions),
 				total: nextQuestions.length,
 				changed: changes.length,
 				...(isResubmit ? { resubmission_of_version: assignment.paper_version || null } : {}),
@@ -415,7 +456,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
 			paper_status: submitting ? 'submitted' : paper.status,
 			paper_version: version,
 			updated_at: paperPatch.updated_at || paper.updated_at,
-			question_done: nextQuestions.filter((q: any) => String(q?.question_text || '').trim() !== '').length,
+			question_done: countAuthored(nextQuestions),
 			question_total: nextQuestions.length,
 		})
 	} catch (error: any) {

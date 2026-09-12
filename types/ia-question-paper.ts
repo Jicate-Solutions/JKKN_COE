@@ -209,6 +209,13 @@ export interface IaPaperSubQuestion {
 	k_level?: string | null
 	/** Optional figure, printed centred under this sub-division. */
 	image?: IaQuestionImage | null
+	/**
+	 * The answer key for THIS sub-division (rich HTML). A split question is keyed
+	 * per sub-division, never as a whole. Never printed on the question paper.
+	 */
+	answer_key?: string | null
+	/** Optional figure that goes with this sub-division's answer key. */
+	answer_key_image?: IaQuestionImage | null
 	display_order: number
 }
 

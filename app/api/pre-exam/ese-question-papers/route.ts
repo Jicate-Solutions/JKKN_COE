@@ -5,6 +5,9 @@
 //      already generated for it (if any)
 // GET  /api/pre-exam/ese-question-papers                   list generated papers
 // POST /api/pre-exam/ese-question-papers                   generate / rebuild
+// DELETE /api/pre-exam/ese-question-papers                 remove generated papers
+//        body { paper_ids, force? } — force removes live appointments too
+//        (super_admin / coe only); submitted papers are never removed
 //
 // This is step one of the flow. The CoE picks the subject and the FORMAT here;
 // only once a paper exists does the Assign tab attach an examiner to it. That
@@ -21,13 +24,16 @@ import {
 	nonTheoryReason,
 } from '@/lib/ia/course-type-applicability'
 import { programTypeToken } from '@/lib/ia/program-type'
-import { requireUserPermission } from '@/lib/auth/check-user-permission'
+import { requireUserPermission, hasAnyCoeRole } from '@/lib/auth/check-user-permission'
+import { deleteEsePaper, assignmentEverSubmitted } from '@/lib/qp-portal/delete-paper'
 import { isEndSemesterExamType, endSemesterMismatchMessage } from '@/lib/qp-portal/exam-type'
 import type { EseGenerateInput } from '@/types/ese-question-paper'
+import { countAuthored } from '@/lib/ia/sub-questions'
 
 export const dynamic = 'force-dynamic'
 
 const PERMISSION = 'page.pre_exam.qp_examiner_assignment.view'
+const UNRESTRICTED_ROLES = ['super_admin', 'coe']
 
 /** How many paper sets a course needs (courses.multiple_qp_set: bool or count). */
 function setCount(multiple: unknown): number {
@@ -131,11 +137,13 @@ export async function GET(req: NextRequest) {
 		for (let i = 0; i < paperIds.length; i += 200) {
 			const { data } = await supabase
 				.from('ia_qp_assignments')
-				.select('id, paper_id, examiner_id, examiner_kind, status, valid_from, valid_to, order_ref_no')
+				.select('id, paper_id, examiner_id, examiner_kind, status, valid_from, valid_to, order_ref_no, submitted_at, paper_version, submission_stage')
 				.in('paper_id', paperIds.slice(i, i + 200))
 			assignments.push(...(data || []))
 		}
-		const assignmentByPaper = new Map(assignments.map(a => [a.paper_id, a]))
+		// A cancelled appointment frees the paper: it must not read as "assigned"
+		// (which locks the row against Rebuild and Delete for ordinary users).
+		const assignmentByPaper = new Map(assignments.filter(a => a.status !== 'cancelled').map(a => [a.paper_id, a]))
 
 		const examinerIds = [...new Set(assignments.map(a => a.examiner_id).filter(Boolean))]
 		const examinerById = new Map<string, any>()
@@ -149,7 +157,7 @@ export async function GET(req: NextRequest) {
 
 		const describePaper = (p: any) => {
 			const qs = Array.isArray(p.questions) ? p.questions : []
-			const authoredCount = qs.filter((q: any) => String(q?.question_text || '').trim() !== '').length
+			const authoredCount = countAuthored(qs)
 			const a = assignmentByPaper.get(p.id)
 			const examiner = a ? examinerById.get(a.examiner_id) : null
 			const { questions, ...rest } = p
@@ -169,6 +177,8 @@ export async function GET(req: NextRequest) {
 							valid_from: a.valid_from,
 							valid_to: a.valid_to,
 							order_ref_no: a.order_ref_no,
+							/** The examiner has handed in — the paper can no longer be deleted. */
+							submitted: assignmentEverSubmitted(a),
 						}
 					: null,
 			}
@@ -330,7 +340,9 @@ export async function GET(req: NextRequest) {
 					question_count: described?.question_count ?? 0,
 
 					assigned: !!described?.assignment,
+					assignment_id: described?.assignment?.id || null,
 					assignment_status: described?.assignment?.status || null,
+					assignment_submitted: described?.assignment?.submitted ?? false,
 					examiner_name: described?.assignment?.examiner_name || null,
 				})
 			}
@@ -571,5 +583,64 @@ export async function POST(req: NextRequest) {
 	} catch (error: any) {
 		console.error('[ESE papers] POST failed:', error)
 		return NextResponse.json({ error: error?.message || 'Failed to generate question papers' }, { status: 500 })
+	}
+}
+
+// ── DELETE — remove generated papers ────────────────────────────────────────
+//
+// The undo for a wrong Generate: the CoE picks the papers on the Generate tab
+// and removes them so they can be generated again with the right format. Each
+// paper is judged on its own, so one refused paper never blocks the rest.
+
+export async function DELETE(req: NextRequest) {
+	try {
+		const perm = await requireUserPermission(PERMISSION)
+		if (!perm.ok) return NextResponse.json({ error: perm.error }, { status: perm.status })
+
+		const body = (await req.json().catch(() => ({}))) as { paper_ids?: unknown; force?: unknown }
+		const paperIds = Array.isArray(body.paper_ids)
+			? [...new Set(body.paper_ids.filter((x): x is string => typeof x === 'string' && x.length > 0))]
+			: []
+		if (paperIds.length === 0) {
+			return NextResponse.json({ error: 'paper_ids is required' }, { status: 400 })
+		}
+		if (paperIds.length > 500) {
+			return NextResponse.json({ error: 'At most 500 papers can be removed in one request' }, { status: 400 })
+		}
+
+		const supabase = getSupabaseServer()
+		const force = body.force === true
+		const unrestricted = perm.isSuperAdmin || (await hasAnyCoeRole(UNRESTRICTED_ROLES))
+
+		let deleted = 0
+		let assignmentsRemoved = 0
+		const failed: { paper_id: string; code: string; reason: string }[] = []
+
+		for (const id of paperIds) {
+			const result = await deleteEsePaper(supabase, req, id, {
+				force,
+				unrestricted,
+				actor: { userId: perm.userId, email: perm.email },
+			})
+			if (result.ok) {
+				deleted++
+				assignmentsRemoved += result.assignments_removed
+			} else {
+				failed.push({ paper_id: id, code: result.code, reason: result.error })
+			}
+		}
+
+		return NextResponse.json({
+			deleted,
+			assignments_removed: assignmentsRemoved,
+			failed,
+			message:
+				deleted > 0
+					? `${deleted} paper(s) removed${assignmentsRemoved ? `, ${assignmentsRemoved} appointment(s) with them` : ''}${failed.length ? `; ${failed.length} skipped` : ''}.`
+					: failed[0]?.reason || 'Nothing was removed.',
+		})
+	} catch (error: any) {
+		console.error('[ESE papers] DELETE failed:', error)
+		return NextResponse.json({ error: error?.message || 'Failed to remove question papers' }, { status: 500 })
 	}
 }

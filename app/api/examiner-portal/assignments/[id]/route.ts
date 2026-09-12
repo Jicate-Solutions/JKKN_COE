@@ -17,6 +17,7 @@ import { getSupabaseServer } from '@/lib/supabase-server'
 import { requireAssignment, logAccess } from '@/lib/qp-portal/guard'
 import { windowHint } from '@/lib/qp-portal/ist'
 import { getAllPortalContent } from '@/lib/qp-portal/content'
+import { countAuthored } from '@/lib/ia/sub-questions'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
@@ -162,7 +163,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 				duration_minutes: paper.duration_minutes,
 				default_font: paper.default_font,
 				question_total: allQuestions.length,
-				question_done: allQuestions.filter((q: any) => String(q?.question_text || '').trim() !== '').length,
+				question_done: countAuthored(allQuestions),
 				updated_at: paper.updated_at || null,
 			},
 			questions,

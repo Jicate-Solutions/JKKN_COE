@@ -505,7 +505,7 @@ export const QP_CONTENT_DEFAULTS: Record<
 		],
 	},
 	claim: {
-		title: 'Claim Form — Question Paper Setting With Answer Key',
+		title: 'Claim Form — Question Paper Setting',
 		// No numbered notes: the printed form is a single page and carries only
 		// the particulars, the bank details, the certification and the office box.
 		body: [],
@@ -604,6 +604,7 @@ export const QP_LOG_ACTION_LABELS: Record<string, string> = {
 	paper_resubmit: 'Question paper resubmitted',
 	assignment_cancelled: 'Assignment cancelled by CoE',
 	assignment_deleted: 'Assignment deleted by CoE',
+	paper_deleted: 'Question paper deleted by CoE',
 	assignment_updated: 'Assignment updated by CoE',
 	order_emailed: 'Examiner order e-mailed',
 }

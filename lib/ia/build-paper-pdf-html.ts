@@ -15,6 +15,7 @@
 
 import katex from 'katex'
 import { readSubQuestions, readQuestionImage } from './sub-questions'
+import { hasAnswerKey, hasOwnAnswerKey } from './validate-paper'
 import { paperPdfFilename } from './paper-filename'
 import { buildKatexCss } from './katex-css'
 import {
@@ -289,6 +290,47 @@ function countPdfPages(buffer: Buffer): number {
 const BASE_FONT_STACK =
 	`'QP Serif', 'Times New Roman', Times, 'Liberation Serif', 'Tinos', 'DejaVu Serif', 'Noto Serif', 'Noto Sans Tamil', serif`
 
+/**
+ * The printed letterhead: the boxed, logo'd block for institutions that have
+ * one, otherwise the college name and address centred. Shared by the question
+ * paper and its answer key so both open identically.
+ */
+function letterheadMarkup(
+	letterhead: Letterhead | null,
+	logoDataUri: string | null,
+	institutionName: string,
+	address: string
+): string {
+	const isBoxed = letterhead?.style === 'boxed' && (letterhead?.lines?.length || 0) > 0
+	return isBoxed
+		? `<div class="lh">
+			${logoDataUri ? `<div class="lh-logo"><img src="${logoDataUri}"/></div>` : ''}
+			<div class="lh-text">
+				${letterhead!.lines!.map(l => `<div class="${l.cls}">${escapeHtml(l.text)}</div>`).join('')}
+			</div>
+		</div>`
+		: `<div class="head-name">${escapeHtml(institutionName.toUpperCase())}</div>
+		${address ? `<div class="head-addr">${escapeHtml(address)}</div>` : ''}`
+}
+
+/** Letterhead rules for letterheadMarkup(); the 2-up sheet prints them smaller. */
+function letterheadCss(isTwoUp: boolean): string {
+	return `
+	/* Boxed letterhead: logo at the left, the college's coloured name block centred. */
+	.lh { display: flex; align-items: center; gap: 3mm; border: 0.8pt solid #000; padding: 1.5mm 2mm; }
+	.lh-logo img { height: ${isTwoUp ? '11mm' : '16mm'}; width: auto; }
+	.lh-text { flex: 1; text-align: center; }
+	.lh-name { color: #1a7a3c; font-weight: bold; font-size: ${isTwoUp ? '9.5pt' : '12.5pt'}; line-height: 1.15; }
+	.lh-trust { color: #e6007e; font-weight: bold; font-size: ${isTwoUp ? '7.5pt' : '9.5pt'}; }
+	.lh-approve { font-weight: bold; font-size: ${isTwoUp ? '7pt' : '8.5pt'}; }
+	.lh-naac { color: #e6007e; font-weight: bold; font-size: ${isTwoUp ? '7pt' : '8.5pt'}; }
+	.lh-addr { font-weight: bold; font-size: ${isTwoUp ? '7pt' : '8.5pt'}; }
+	.lh-web { font-size: ${isTwoUp ? '6.5pt' : '8pt'}; color: #1a4fd6; text-decoration: underline; }
+	.lh + .head-exam { margin-top: 3mm; }
+	.head-name { text-align: center; font-weight: bold; font-size: 13pt; }
+	.head-addr { text-align: center; font-size: 9pt; margin-top: 2px; }`
+}
+
 function buildHtml(ctx: {
 	variant: PdfVariant
 	institutionName: string
@@ -419,16 +461,7 @@ function buildHtml(ctx: {
 			? `<div class="rn"><span class="rn-lbl">Register Number</span><span class="rn-grid">${'<i></i>'.repeat(registerCells)}</span></div>`
 			: ''
 
-	const isBoxed = letterhead?.style === 'boxed' && (letterhead?.lines?.length || 0) > 0
-	const letterheadHtml = isBoxed
-		? `<div class="lh">
-			${logoDataUri ? `<div class="lh-logo"><img src="${logoDataUri}"/></div>` : ''}
-			<div class="lh-text">
-				${letterhead!.lines!.map(l => `<div class="${l.cls}">${escapeHtml(l.text)}</div>`).join('')}
-			</div>
-		</div>`
-		: `<div class="head-name">${escapeHtml(institutionName.toUpperCase())}</div>
-		${address ? `<div class="head-addr">${escapeHtml(address)}</div>` : ''}`
+	const letterheadHtml = letterheadMarkup(letterhead, logoDataUri, institutionName, address)
 
 	const sheetInner = `
 		${registerHtml}
@@ -489,19 +522,7 @@ function buildHtml(ctx: {
 		border-left: none;
 	}
 	.rn-grid i:first-child { border-left: 0.7pt solid #000; }
-	/* Boxed letterhead: logo at the left, the college's coloured name block centred. */
-	.lh { display: flex; align-items: center; gap: 3mm; border: 0.8pt solid #000; padding: 1.5mm 2mm; }
-	.lh-logo img { height: ${isTwoUp ? '11mm' : '16mm'}; width: auto; }
-	.lh-text { flex: 1; text-align: center; }
-	.lh-name { color: #1a7a3c; font-weight: bold; font-size: ${isTwoUp ? '9.5pt' : '12.5pt'}; line-height: 1.15; }
-	.lh-trust { color: #e6007e; font-weight: bold; font-size: ${isTwoUp ? '7.5pt' : '9.5pt'}; }
-	.lh-approve { font-weight: bold; font-size: ${isTwoUp ? '7pt' : '8.5pt'}; }
-	.lh-naac { color: #e6007e; font-weight: bold; font-size: ${isTwoUp ? '7pt' : '8.5pt'}; }
-	.lh-addr { font-weight: bold; font-size: ${isTwoUp ? '7pt' : '8.5pt'}; }
-	.lh-web { font-size: ${isTwoUp ? '6.5pt' : '8pt'}; color: #1a4fd6; text-decoration: underline; }
-	.lh + .head-exam { margin-top: 3mm; }
-	.head-name { text-align: center; font-weight: bold; font-size: 13pt; }
-	.head-addr { text-align: center; font-size: 9pt; margin-top: 2px; }
+	${letterheadCss(isTwoUp)}
 	.head-exam { text-align: center; font-weight: bold; font-size: 12pt; margin-top: 4px; }
 	.head-cia { text-align: center; font-weight: bold; font-size: 11pt; margin-top: 2px; }
 	.head-sem { text-align: center; font-weight: bold; font-size: 11pt; margin-top: 2px; }
@@ -642,22 +663,29 @@ async function ciaExamLine(supabase: any, paper: any): Promise<string> {
 	return /\bEXAM/i.test(upper) ? upper : `${upper} EXAMINATION`
 }
 
+/** Everything both renderers need about one paper, fetched and derived once. */
+interface PaperContext {
+	paper: any
+	institutionName: string
+	address: string
+	examHeading: string
+	examLine: string
+	semesterText: string
+	grouped: Map<string, any[]>
+	partByLabel: Map<string, any>
+	tamilFontCss: string
+	katexCss: string
+	defaultFont: string | null
+	letterhead: Letterhead | null
+	logoDataUri: string | null
+}
+
 /**
- * Build the A4 PDF for one question paper. Same signature as the jsPDF builder so
- * the route swaps cleanly. Returns null if the paper isn't found.
+ * Read the paper, its institution, template parts and session, and derive the
+ * headings both the question paper and its answer key print. Null when the
+ * paper isn't found.
  */
-export async function buildPaperPdfHtml(
-	supabase: any,
-	id: string,
-	_origin: string,
-	variant: PdfVariant = 'single',
-	source: PaperSource = 'ia',
-	/**
-	 * Keep the set out of the download's filename. Set for the examiner portal,
-	 * where an examiner must not learn that parallel sets of their paper exist.
-	 */
-	hideSet = false
-): Promise<BuildPaperPdfResult | null> {
+async function loadPaperContext(supabase: any, id: string, source: PaperSource): Promise<PaperContext | null> {
 	const { data: paper, error } = await supabase
 		.from(PAPER_TABLE[source])
 		.select('*')
@@ -748,14 +776,13 @@ export async function buildPaperPdfHtml(
 	// Paper-wide common font → canonicalize to an embedded face, or null.
 	const defaultFont = paper.default_font ? canonicalizeFontFamily(paper.default_font) : null
 
-	const html = buildHtml({
-		variant,
+	return {
+		paper,
 		institutionName,
 		address,
 		examHeading,
 		examLine,
 		semesterText,
-		paper,
 		grouped,
 		partByLabel,
 		tamilFontCss,
@@ -763,56 +790,88 @@ export async function buildPaperPdfHtml(
 		defaultFont,
 		letterhead: letterhead || null,
 		logoDataUri,
-	})
-	const isTwoUp = variant === '2up'
+	}
+}
 
+/** Headless Chromium: the bundled build on Vercel, full puppeteer on a dev box. */
+async function launchBrowser() {
 	const isVercel = !!process.env.VERCEL || !!process.env.AWS_LAMBDA_FUNCTION_NAME
-	let browser
 	if (isVercel) {
 		const chromium = (await import('@sparticuz/chromium')).default
 		const puppeteerCore = (await import('puppeteer-core')).default
 		const executablePath = await chromium.executablePath()
-		browser = await puppeteerCore.launch({
+		return puppeteerCore.launch({
 			args: chromium.args,
 			defaultViewport: { width: 1240, height: 1754 },
 			executablePath,
 			headless: true,
 		})
-	} else {
-		const puppeteer = (await import('puppeteer')).default
-		browser = await puppeteer.launch({
-			args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
-			headless: true,
-		})
 	}
+	const puppeteer = (await import('puppeteer')).default
+	return puppeteer.launch({
+		args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
+		headless: true,
+	})
+}
 
+/**
+ * Load the document and hold until its fonts and attached figures have settled.
+ * Figures load over the network — print only once they are in, or after 8s so
+ * one bad URL can't hang the whole PDF.
+ */
+async function loadAndSettle(page: any, html: string) {
+	await page.setContent(html, { waitUntil: 'domcontentloaded' })
+	await page.evaluate(async () => {
+		try {
+			await (document as any).fonts?.ready
+		} catch {
+			// ignore font-ready failures
+		}
+		const pending = Array.from(document.images).filter((img) => !img.complete)
+		if (pending.length > 0) {
+			await Promise.race([
+				Promise.all(
+					pending.map(
+						(img) =>
+							new Promise((resolve) => {
+								img.addEventListener('load', resolve, { once: true })
+								img.addEventListener('error', resolve, { once: true })
+							})
+					)
+				),
+				new Promise((resolve) => setTimeout(resolve, 8000)),
+			])
+		}
+	})
+}
+
+/**
+ * Build the A4 PDF for one question paper. Same signature as the jsPDF builder so
+ * the route swaps cleanly. Returns null if the paper isn't found.
+ */
+export async function buildPaperPdfHtml(
+	supabase: any,
+	id: string,
+	_origin: string,
+	variant: PdfVariant = 'single',
+	source: PaperSource = 'ia',
+	/**
+	 * Keep the set out of the download's filename. Set for the examiner portal,
+	 * where an examiner must not learn that parallel sets of their paper exist.
+	 */
+	hideSet = false
+): Promise<BuildPaperPdfResult | null> {
+	const ctx = await loadPaperContext(supabase, id, source)
+	if (!ctx) return null
+	const { paper } = ctx
+
+	const html = buildHtml({ variant, ...ctx })
+	const isTwoUp = variant === '2up'
+
+	const browser = await launchBrowser()
 	try {
 		const page = await browser.newPage()
-		await page.setContent(html, { waitUntil: 'domcontentloaded' })
-		await page.evaluate(async () => {
-			try {
-				await (document as any).fonts?.ready
-			} catch {
-				// ignore font-ready failures
-			}
-			// Attached figures load over the network — print only once they have
-			// settled, or after 8s so one bad URL can't hang the whole PDF.
-			const pending = Array.from(document.images).filter((img) => !img.complete)
-			if (pending.length > 0) {
-				await Promise.race([
-					Promise.all(
-						pending.map(
-							(img) =>
-								new Promise((resolve) => {
-									img.addEventListener('load', resolve, { once: true })
-									img.addEventListener('error', resolve, { once: true })
-								})
-						)
-					),
-					new Promise((resolve) => setTimeout(resolve, 8000)),
-				])
-			}
-		})
+		await loadAndSettle(page, html)
 		const marginMm = isTwoUp ? '5mm' : '8mm'
 		const renderAt = async (scale: number) => {
 			const out = await page.pdf({
@@ -864,6 +923,262 @@ export async function buildPaperPdfHtml(
 		}
 		const filename = paperPdfFilename(paper, { variant, hideSet })
 		return { buffer: best.buffer, filename }
+	} finally {
+		await browser.close()
+	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Answer key / scheme of valuation
+//
+// The examiner writes the answer key under each question of the paper
+// (questions[].answer_key, rich HTML, plus an optional answer_key_image). It is
+// NEVER printed on the question paper. This document prints it for the
+// valuers: the same letterhead and examination heading as the paper, then every
+// question in paper order with its key and marks beneath it, a page footer
+// numbering the sheets, and a signature line for the setter.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** The answer-key block printed under one question. */
+function answerKeyBlockHtml(q: any): string {
+	// An MCQ's key is its correct option; the written key (if any) explains it.
+	const correct = String(q?.correct_option || '').trim()
+	const correctLine =
+		correct && Array.isArray(q?.options) && q.options.length > 0
+			? `<div class="ak-correct">Correct option: <b>${escapeHtml(correct)}</b></div>`
+			: ''
+	const text = renderQuestionHtml(q?.answer_key || '')
+	const figure = questionImageHtml(q?.answer_key_image)
+	// A split question is keyed under each sub-division (see subAnswerKeyHtml);
+	// a whole-question key on one is how older papers were keyed and still prints.
+	if (!correctLine && !hasOwnAnswerKey(q)) {
+		if (readSubQuestions(q).length > 0) return ''
+		return `<div class="ak missing"><span class="ak-lbl">Answer key</span><div class="ak-body">Not entered</div></div>`
+	}
+	return `<div class="ak"><span class="ak-lbl">Answer key / Scheme of valuation</span><div class="ak-body">${correctLine}${text}${figure}</div></div>`
+}
+
+/** The answer-key block printed under one sub-division of a split question. */
+function subAnswerKeyHtml(q: any, sb: any): string {
+	// Keyed as a whole (older papers): nothing to print per sub-division.
+	if (hasOwnAnswerKey(q)) return ''
+	if (!hasOwnAnswerKey(sb)) {
+		return `<div class="ak missing"><span class="ak-lbl">Answer key (${escapeHtml(sb.label)})</span><div class="ak-body">Not entered</div></div>`
+	}
+	return `<div class="ak"><span class="ak-lbl">Answer key (${escapeHtml(sb.label)})</span><div class="ak-body">${renderQuestionHtml(sb.answer_key || '')}${questionImageHtml(sb.answer_key_image)}</div></div>`
+}
+
+function buildAnswerKeyHtml(ctx: PaperContext & { hideSet: boolean }): string {
+	const { institutionName, address, examHeading, examLine, semesterText, paper, grouped, partByLabel, tamilFontCss, katexCss, defaultFont, letterhead, logoDataUri, hideSet } = ctx
+
+	const partsRows = [...grouped.entries()]
+		.map(([label, qs], partIdx) => {
+			const part: any = partByLabel.get(label)
+			const marksEach = part?.marks_per_question ?? qs[0]?.marks ?? 0
+			const count = part?.num_questions ?? qs.filter((q: any) => !q.is_choice_alternative).length
+			const answerCount = Number(part?.num_to_answer) > 0 ? Number(part.num_to_answer) : Number(count)
+			const total = Number(marksEach) * answerCount
+			const heading = `PART ${label} – (${answerCount} x ${marksEach} = ${total})`
+			const instr = part?.instruction ? `<div class="part-instr">${escapeHtml(part.instruction)}</div>` : ''
+
+			const headerRow = `<tr class="part-hdr${partIdx === 0 ? ' first' : ''}">
+				<td colspan="2" class="part-head">${escapeHtml(heading)}${instr}</td>
+				<td class="mk-head">Marks</td>
+			</tr>`
+
+			const qGroups = qs.map((q: any) => {
+				const orRow = q.is_choice_alternative ? `<tr><td colspan="3" class="or">(OR)</td></tr>` : ''
+				const prefix = q.sub_label ? `${q.question_number} ${q.sub_label})` : `${q.question_number}.`
+				const stem =
+					renderQuestionHtml(q.question_text || '') +
+					questionImageHtml(q.image) +
+					optionLineHtml(q.options, q.option_font ?? defaultFont)
+				// Sub-divisions print under the stem, each with its own marks and its
+				// own key beneath it — each sub-division is valued separately.
+				const subs = readSubQuestions(q)
+				const subsHtml = subs
+					.map(sb => {
+						const marks = sb.marks == null ? '' : ` <span class="sub-marks">(${sb.marks})</span>`
+						return `<div class="sub"><span class="sub-lbl">${escapeHtml(sb.label)}.</span> ${renderQuestionHtml(sb.question_text || '')}${marks}${questionImageHtml(sb.image)}${subAnswerKeyHtml(q, sb)}</div>`
+					})
+					.join('')
+				const marks = q.marks ?? marksEach
+				return `${orRow}<tr>
+					<td class="qno">${escapeHtml(prefix)}</td>
+					<td class="qbody"><div class="q-text">${stem}${subsHtml}</div>${answerKeyBlockHtml(q)}</td>
+					<td class="mk">${marks == null || marks === '' ? '' : escapeHtml(String(marks))}</td>
+				</tr>`
+			})
+
+			const first = qGroups.length > 0 ? qGroups[0] : ''
+			const rest = qGroups.slice(1)
+			return (
+				`<tbody class="grp part-open">${headerRow}${first}</tbody>` +
+				rest.map(g => `<tbody class="grp">${g}</tbody>`).join('')
+			)
+		})
+		.join('')
+
+	const totalQuestions = [...grouped.values()].reduce((n, qs) => n + qs.length, 0)
+	const keyed = [...grouped.values()].flat().filter(hasAnswerKey).length
+	const setLabel = hideSet ? '' : String(paper.set_label || '').trim()
+
+	return `<!doctype html>
+<html><head><meta charset="utf-8"/>
+<style>
+	${katexCss}
+	${tamilFontCss}
+	@page { size: A4 portrait; margin: 8mm 8mm 14mm; }
+	* { box-sizing: border-box; font-family: inherit; }
+	html, body {
+		margin: 0; padding: 0;
+		font-family: ${BASE_FONT_STACK};
+		color: #000; font-size: 11pt;
+	}
+	${letterheadCss(false)}
+	.head-exam { text-align: center; font-weight: bold; font-size: 12pt; margin-top: 4px; }
+	.head-cia { text-align: center; font-weight: bold; font-size: 11pt; margin-top: 2px; }
+	.head-sem { text-align: center; font-weight: bold; font-size: 11pt; margin-top: 2px; }
+	/* The document's own title: a ruled band so a valuer never mistakes it for the paper. */
+	.doc-title {
+		margin-top: 6px; padding: 3px 0;
+		border-top: 1.2pt solid #000; border-bottom: 1.2pt solid #000;
+		text-align: center; font-weight: bold; font-size: 12.5pt; letter-spacing: 0.5px;
+	}
+	.doc-conf { text-align: center; font-size: 9pt; font-style: italic; margin-top: 2px; }
+	.meta { margin-top: 6px; }
+	.meta-row { display: flex; justify-content: space-between; }
+	.meta .title { font-weight: bold; }
+	table.paper { width: 100%; border-collapse: collapse; margin-top: 8px; table-layout: fixed; }
+	table.paper .c-qno { width: 15mm; }
+	table.paper .c-mk  { width: 16mm; }
+	table.paper td {
+		border: none; vertical-align: top;
+		padding: 4px 4px;
+		line-height: 15.5pt;
+		word-wrap: break-word; overflow-wrap: break-word;
+	}
+	/* Every question is ruled off from the next so a long key never reads into
+	   the following question; the part heading is bound to its first question.
+	   A question taller than a page has to break somewhere, so only the row —
+	   not the whole group — is kept intact. */
+	table.paper tbody.grp > tr:last-child > td { border-bottom: 0.5pt solid #888; }
+	table.paper tbody.part-open { break-inside: avoid; page-break-inside: avoid; }
+	.part-hdr td { padding-top: 14px; padding-bottom: 4px; border-bottom: 0.9pt solid #000 !important; }
+	.part-hdr.first td { padding-top: 4px; }
+	.part-head { text-align: center; font-weight: bold; }
+	.part-instr { font-weight: normal; font-size: 9pt; margin-top: 2px; }
+	.mk-head { text-align: center; font-weight: bold; font-size: 9pt; white-space: nowrap; vertical-align: bottom; }
+	.qno { font-weight: bold; white-space: nowrap; }
+	.mk { text-align: center; font-weight: bold; font-size: 10pt; }
+	.or { text-align: center; font-weight: bold; padding-top: 6px; padding-bottom: 3px; }
+	.qbody p { margin: 0 0 2px; }
+	.qbody p:last-child { margin-bottom: 0; }
+	.sub { padding-left: 5mm; }
+	.sub p { display: inline; }
+	.sub-lbl { font-weight: bold; }
+	.sub-marks { font-weight: bold; white-space: nowrap; }
+	${defaultFont ? `.q-text { font-family: '${defaultFont}'; }` : ''}
+	.options { margin-top: 2px; }
+	.options .opt { display: inline-block; margin-right: 12px; }
+	.options .opt p { display: inline; margin: 0; }
+	/* The key: a tinted, left-ruled block so the eye separates it from the question. */
+	.ak {
+		margin-top: 4px; padding: 3px 6px 4px;
+		background: #f4f6f8; border-left: 2pt solid #333;
+	}
+	.ak-lbl { display: block; font-size: 8.5pt; font-weight: bold; text-transform: uppercase; letter-spacing: 0.4px; color: #333; margin-bottom: 1px; }
+	.ak-body p { margin: 0 0 2px; }
+	.ak-body p:last-child { margin-bottom: 0; }
+	.ak-correct { margin-bottom: 2px; }
+	.ak.missing { background: #fff; border-left-color: #b00; }
+	.ak.missing .ak-body { font-style: italic; color: #b00; }
+	.q-img { text-align: center; margin: 3px 0; break-inside: avoid; page-break-inside: avoid; }
+	.q-img img { display: inline-block; max-width: 100%; max-height: 85mm; height: auto; object-fit: contain; }
+	.qbody table { border-collapse: collapse; margin: 3px 0; max-width: 100%; }
+	table.paper .qbody table td, table.paper .qbody table th { padding: 1px 4px; line-height: 1.35; }
+	table.paper .qbody table th { font-weight: bold; }
+	.qp-math { white-space: nowrap; }
+	.qp-math .katex { line-height: 1.2; text-indent: 0; }
+	math { font-family: ${BASE_FONT_STACK}; font-size: 1em; }
+	/* Setter's signature at the foot of the last sheet. */
+	.sign { margin-top: 14mm; display: flex; justify-content: space-between; align-items: flex-end; break-inside: avoid; page-break-inside: avoid; font-size: 10pt; }
+	.sign .line { border-top: 0.7pt solid #000; padding-top: 2px; min-width: 60mm; text-align: center; }
+	.sign .note { font-size: 9pt; color: #333; }
+</style></head>
+<body>
+	<div id="sheet">
+		${letterheadMarkup(letterhead, logoDataUri, institutionName, address)}
+		<div class="head-exam">${escapeHtml(examHeading)}</div>
+		<div class="head-cia">${escapeHtml(examLine)}</div>
+		${semesterText ? `<div class="head-sem">${escapeHtml(semesterText)}</div>` : ''}
+		<div class="doc-title">ANSWER KEY &amp; SCHEME OF VALUATION</div>
+		<div class="doc-conf">Confidential – for valuation use only. Not to be issued to learners.</div>
+		<div class="meta">
+			<div class="meta-row">
+				<span>Subject Code: ${escapeHtml(paper.course_code || '')}</span>
+				${setLabel ? `<span>Set: ${escapeHtml(setLabel)}</span>` : ''}
+			</div>
+			<div class="title">Subject Title: ${escapeHtml(paper.subject_title || '')}</div>
+			<div class="meta-row">
+				<span>Time: ${escapeHtml(formatDuration(paper.duration_minutes))}</span>
+				<span>Maximum: ${Number(paper.max_marks) || 0} Marks</span>
+			</div>
+		</div>
+		<table class="paper">
+			<colgroup><col class="c-qno"/><col class="c-body"/><col class="c-mk"/></colgroup>
+			${partsRows}
+		</table>
+		<div class="sign">
+			<div class="note">Answer key entered for ${keyed} of ${totalQuestions} questions.</div>
+			<div class="line">Signature of the Question Paper Setter</div>
+		</div>
+	</div>
+</body></html>`
+}
+
+/**
+ * Build the A4 answer-key PDF for one paper. Unlike the question paper it is
+ * not squeezed onto two sheets — a scheme of valuation is as long as it needs
+ * to be, so each sheet carries a page number instead. Null if the paper isn't
+ * found.
+ */
+export async function buildAnswerKeyPdfHtml(
+	supabase: any,
+	id: string,
+	source: PaperSource = 'ese',
+	/** Keep the set out of the filename and the heading (examiner portal). */
+	hideSet = false
+): Promise<BuildPaperPdfResult | null> {
+	const ctx = await loadPaperContext(supabase, id, source)
+	if (!ctx) return null
+	const { paper } = ctx
+
+	const html = buildAnswerKeyHtml({ ...ctx, hideSet })
+	const footerLabel = escapeHtml(
+		['Answer Key', paper.course_code, hideSet ? '' : paper.set_label ? `Set ${paper.set_label}` : '']
+			.filter(Boolean)
+			.join(' – ')
+	)
+
+	const browser = await launchBrowser()
+	try {
+		const page = await browser.newPage()
+		await loadAndSettle(page, html)
+		const out = await page.pdf({
+			format: 'A4',
+			printBackground: true,
+			displayHeaderFooter: true,
+			// Chromium prints its own date/URL header unless a (blank) template is given.
+			headerTemplate: '<span></span>',
+			footerTemplate: `<div style="width:100%;font-size:8pt;font-family:'Times New Roman',serif;color:#333;padding:0 8mm;display:flex;justify-content:space-between;">
+				<span>${footerLabel}</span>
+				<span>Page <span class="pageNumber"></span> of <span class="totalPages"></span></span>
+			</div>`,
+			margin: { top: '8mm', bottom: '14mm', left: '8mm', right: '8mm' },
+		})
+		const filename = paperPdfFilename(paper, { hideSet, prefix: 'AK' })
+		return { buffer: Buffer.from(out), filename }
 	} finally {
 		await browser.close()
 	}

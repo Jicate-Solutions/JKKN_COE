@@ -17,6 +17,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
 import { windowState } from '@/lib/qp-portal/ist'
 import { hasTheoryPaper } from '@/lib/ia/course-type-applicability'
+import { countAuthored } from '@/lib/ia/sub-questions'
 
 export const dynamic = 'force-dynamic'
 
@@ -174,7 +175,7 @@ export async function GET(req: NextRequest) {
 			const live = liveByPaper.get(p.id)
 			const examiner = live ? examinerById.get(live.examiner_id) : null
 			const qs = Array.isArray(p.questions) ? p.questions : []
-			const authoredCount = qs.filter((q: any) => String(q?.question_text || '').trim() !== '').length
+			const authoredCount = countAuthored(qs)
 			const course = courseByCode.get(p.course_code)
 			const mappingId = mappingIdByOffering.get(p.course_offering_id)
 			const regulation =
