@@ -65,9 +65,11 @@ export function validateCourseMappingData(
 	}
 
 	// Relational validations for marks
+	// A component with max mark 0 is not assessed, so its pass mark is ignored
 	if (
 		data.internal_pass_mark !== undefined &&
 		data.internal_max_mark !== undefined &&
+		data.internal_max_mark > 0 &&
 		data.internal_pass_mark > data.internal_max_mark
 	) {
 		errors.internal_pass_mark = 'Internal pass mark cannot exceed internal max mark'
@@ -76,6 +78,7 @@ export function validateCourseMappingData(
 	if (
 		data.external_pass_mark !== undefined &&
 		data.external_max_mark !== undefined &&
+		data.external_max_mark > 0 &&
 		data.external_pass_mark > data.external_max_mark
 	) {
 		errors.external_pass_mark = 'External pass mark cannot exceed external max mark'
@@ -84,6 +87,7 @@ export function validateCourseMappingData(
 	if (
 		data.total_pass_mark !== undefined &&
 		data.total_max_mark !== undefined &&
+		data.total_max_mark > 0 &&
 		data.total_pass_mark > data.total_max_mark
 	) {
 		errors.total_pass_mark = 'Total pass mark cannot exceed total max mark'
@@ -199,7 +203,7 @@ export function hasValidMarkConfiguration(mapping: Partial<CourseMapping>): bool
 	// If marks are defined, validate relationships
 	if (hasInternalMarks) {
 		if (mapping.internal_pass_mark !== undefined && mapping.internal_max_mark !== undefined) {
-			if (mapping.internal_pass_mark > mapping.internal_max_mark) {
+			if (mapping.internal_max_mark > 0 && mapping.internal_pass_mark > mapping.internal_max_mark) {
 				return false
 			}
 		}
@@ -207,7 +211,7 @@ export function hasValidMarkConfiguration(mapping: Partial<CourseMapping>): bool
 
 	if (hasExternalMarks) {
 		if (mapping.external_pass_mark !== undefined && mapping.external_max_mark !== undefined) {
-			if (mapping.external_pass_mark > mapping.external_max_mark) {
+			if (mapping.external_max_mark > 0 && mapping.external_pass_mark > mapping.external_max_mark) {
 				return false
 			}
 		}
@@ -215,7 +219,7 @@ export function hasValidMarkConfiguration(mapping: Partial<CourseMapping>): bool
 
 	if (hasTotalMarks) {
 		if (mapping.total_pass_mark !== undefined && mapping.total_max_mark !== undefined) {
-			if (mapping.total_pass_mark > mapping.total_max_mark) {
+			if (mapping.total_max_mark > 0 && mapping.total_pass_mark > mapping.total_max_mark) {
 				return false
 			}
 		}

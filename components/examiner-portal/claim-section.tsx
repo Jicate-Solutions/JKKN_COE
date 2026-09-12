@@ -336,6 +336,10 @@ export function ClaimSection({ assignments, bank, onSubmitClaim, onDownload, loa
 								details to claim
 								{claimAmount(a) != null ? ` ${formatRupees(claimAmount(a))}` : ''}.
 							</p>
+							<p className="text-xs rounded-md border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-amber-800">
+								The form is pre-filled from the bank details you confirmed on the check list.{' '}
+								<span className="font-semibold text-rose-700">Check them once more — the claim is paid to this account.</span>
+							</p>
 
 							{openForm === a.id ? (
 								<div className="space-y-3 rounded-md border p-3.5 bg-slate-50">

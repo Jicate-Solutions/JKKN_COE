@@ -47,10 +47,39 @@ interface Props {
 	/** ia_qp_portal_content rows: checklist + declaration. */
 	content: any
 	savedSignatureUrl?: string | null
+	/**
+	 * The bank details on the examiner's profile. The claim form is pre-filled
+	 * from these, so a check list item that asks "are the bank details on the
+	 * claim form correct?" — asked BEFORE any claim exists — is answered against
+	 * them: they are shown inline under that item.
+	 */
+	bank?: Record<string, string | null | undefined> | null
+	/** Take the examiner to the Profile page to correct the bank details. */
+	onEditProfile?: () => void
 	/** POSTs one wizard step; resolves with the server's reply. */
 	onStep: (body: Record<string, unknown>) => Promise<any>
 	/** Re-read the assignment after a step lands. */
 	onAdvanced: () => Promise<void> | void
+}
+
+/** Does this check list item ask about the bank details / claim form? */
+function isBankClause(c: Clause): boolean {
+	return /bank|account|ifsc|claim form/i.test(String(c.text || ''))
+}
+
+const BANK_LABELS: { key: string; label: string }[] = [
+	{ key: 'account_holder', label: 'Account holder' },
+	{ key: 'bank_name', label: 'Bank' },
+	{ key: 'branch', label: 'Branch' },
+	{ key: 'account_number', label: 'Account number' },
+	{ key: 'ifsc', label: 'IFSC' },
+]
+
+/** Account number with only the last four digits readable — enough to recognise, not enough to copy. */
+function maskAccount(v: string | null | undefined): string {
+	const s = String(v || '').replace(/\s+/g, '')
+	if (!s) return '—'
+	return s.length <= 4 ? s : `${'•'.repeat(Math.max(0, s.length - 4))}${s.slice(-4)}`
 }
 
 function StepHeading({
@@ -86,9 +115,13 @@ export function SubmissionWizard({
 	assignment,
 	content,
 	savedSignatureUrl,
+	bank,
+	onEditProfile,
 	onStep,
 	onAdvanced,
 }: Props) {
+	const bankComplete = BANK_LABELS.every(f => String(bank?.[f.key] || '').trim() !== '')
+	const bankEmpty = BANK_LABELS.every(f => String(bank?.[f.key] || '').trim() === '')
 	const clauses: Clause[] = useMemo(() => content?.checklist?.body || [], [content])
 	const declarationClauses: Clause[] = useMemo(() => content?.declaration?.body || [], [content])
 
@@ -280,6 +313,46 @@ export function SubmissionWizard({
 												})}
 											</div>
 										</div>
+										{/* A bank-details item is asked before the claim exists. The claim
+										    form will be pre-filled from the profile, so THOSE details are
+										    what the examiner is confirming — shown here so the answer is
+										    an informed one, with a way to correct them first. */}
+										{isBankClause(c) && (
+											<div className={cn('ml-5 rounded-md border p-2.5 text-xs space-y-1.5', bankComplete ? TONE.info.card : TONE.warning.card)}>
+												<p className={cn('font-semibold', bankComplete ? TONE.info.heading : TONE.warning.heading)}>
+													{bankEmpty
+														? 'No bank details on your profile yet'
+														: bankComplete
+															? 'These bank details will be pre-filled on your claim form'
+															: 'Your profile bank details are incomplete'}
+												</p>
+												{!bankEmpty && (
+													<dl className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-1">
+														{BANK_LABELS.map(f => {
+															const v = String(bank?.[f.key] || '').trim()
+															return (
+																<div key={f.key}>
+																	<dt className="text-muted-foreground">{f.label}</dt>
+																	<dd className={cn('font-medium', !v && 'text-rose-700')}>
+																		{f.key === 'account_number' ? maskAccount(v) : v || 'Missing'}
+																	</dd>
+																</div>
+															)
+														})}
+													</dl>
+												)}
+												<p className={cn(bankComplete ? TONE.info.text : TONE.warning.text)}>
+													The claim form opens after this submission and is filled from these details; you can still edit
+													them on the form before you submit the claim.
+													{!bankComplete && ' Add the missing details in Profile now, or answer NO and complete them on the claim form.'}
+												</p>
+												{onEditProfile && (
+													<Button variant="outline" size="sm" className="h-7 text-xs" onClick={onEditProfile} disabled={busy}>
+														{bankEmpty ? 'Add bank details in Profile' : 'Correct in Profile'}
+													</Button>
+												)}
+											</div>
+										)}
 										{needsDetail && (
 											<div className="pl-5">
 												<Input

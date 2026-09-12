@@ -572,6 +572,16 @@ export async function fetchMyJKKNLearnerProfileById(id: string): Promise<MyJKKNL
 
 export type SyllabusPdfFormat = 'official' | 'v35' | 'obe' | 'meeting_summary'
 
+/**
+ * Base URL for the academic/syllabus calls only. MYJKKN_SYLLABUS_API_URL lets a
+ * dev box read syllabi from a local MyJKKN (which already renders the
+ * engineering layout) while every other MyJKKN call stays on MYJKKN_API_URL.
+ * Unset in production, where both are the same host.
+ */
+function getSyllabusBaseUrl(): string {
+	return (process.env.MYJKKN_SYLLABUS_API_URL || getBaseUrl()).replace(/\/+$/, '')
+}
+
 export interface SyllabusPdfResult {
 	bytes: ArrayBuffer
 	contentType: string
@@ -604,7 +614,7 @@ export async function fetchMyJKKNSyllabusPdf(q: {
 		throw new MyJKKNApiError('Pass courseId, or courseCode with institutionId', 400)
 	}
 
-	const url = new URL(`${getBaseUrl()}/api-management/academic/syllabus/pdf`)
+	const url = new URL(`${getSyllabusBaseUrl()}/api-management/academic/syllabus/pdf`)
 	if (q.courseId) url.searchParams.set('course_id', q.courseId)
 	if (q.courseCode) url.searchParams.set('course_code', q.courseCode)
 	if (q.institutionId) url.searchParams.set('institution_id', q.institutionId)
@@ -621,7 +631,7 @@ export async function fetchMyJKKNSyllabusPdfById(
 ): Promise<SyllabusPdfResult> {
 	const apiKey = getApiKey()
 	if (!apiKey) throw new MyJKKNApiError('MYJKKN_API_KEY not configured in environment', 500)
-	const url = new URL(`${getBaseUrl()}/api-management/academic/syllabus/${encodeURIComponent(syllabusId)}/pdf`)
+	const url = new URL(`${getSyllabusBaseUrl()}/api-management/academic/syllabus/${encodeURIComponent(syllabusId)}/pdf`)
 	url.searchParams.set('format', q.format || 'official')
 	url.searchParams.set('disposition', 'inline')
 	if (q.includeArchived) url.searchParams.set('include_archived', 'true')
@@ -708,14 +718,22 @@ export async function fetchMyJKKNSyllabusMeta(q: {
 	version?: number
 	includeArchived?: boolean
 }): Promise<{ data: SyllabusApiMeta[]; count: number }> {
-	return fetchFromMyJKKN<{ data: SyllabusApiMeta[]; count: number }>('/api-management/academic/syllabus', {
+	const apiKey = getApiKey()
+	if (!apiKey) throw new MyJKKNApiError('MYJKKN_API_KEY not configured in environment', 500)
+	const url = new URL(`${getSyllabusBaseUrl()}/api-management/academic/syllabus`)
+	const params: Record<string, string | number | undefined> = {
 		course_id: q.courseId,
 		course_code: q.courseCode,
 		institution_id: q.institutionId,
 		regulation_id: q.regulationId,
 		version: q.version,
 		include_archived: q.includeArchived ? 'true' : undefined,
-	})
+	}
+	for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== '') url.searchParams.set(k, String(v))
+	const res = await fetch(url.toString(), { headers: { Authorization: `Bearer ${apiKey}`, Accept: 'application/json' }, cache: 'no-store' })
+	const body = await res.json().catch(() => ({}))
+	if (!res.ok) throw new MyJKKNApiError(body?.error?.message || body?.error || `Syllabus API error ${res.status}`, res.status, body)
+	return body as { data: SyllabusApiMeta[]; count: number }
 }
 
 export const fetchCourseSyllabusMeta = (courseId: string) => fetchMyJKKNSyllabusMeta({ courseId })

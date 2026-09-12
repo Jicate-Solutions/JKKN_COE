@@ -1513,6 +1513,8 @@ export function ExaminerPortal({ examiner, onSignedOut }: Props) {
 						assignment={a}
 						content={content}
 						savedSignatureUrl={profile?.signature_url || null}
+						bank={profile?.bank || null}
+						onEditProfile={() => setSection('profile')}
 						onStep={runWizardStep}
 						onAdvanced={reloadDetail}
 					/>

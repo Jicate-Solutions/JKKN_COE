@@ -180,6 +180,36 @@ export async function GET(request: Request) {
 	}
 }
 
+/**
+ * Pass marks may not exceed max marks — but only for components that are
+ * actually assessed. A course whose external (or internal) max mark is 0 is
+ * not evaluated on that component, so a leftover default pass mark there
+ * (e.g. an internal-only lab with external_pass_mark = 45) must not block
+ * the mapping. Returns the first problem found, or null when consistent.
+ */
+function getMarksConsistencyError(marks: {
+	internal_max_mark?: number | null
+	internal_pass_mark?: number | null
+	external_max_mark?: number | null
+	external_pass_mark?: number | null
+	total_max_mark?: number | null
+	total_pass_mark?: number | null
+}): string | null {
+	const components: Array<[string, number | null | undefined, number | null | undefined]> = [
+		['Internal', marks.internal_pass_mark, marks.internal_max_mark],
+		['External', marks.external_pass_mark, marks.external_max_mark],
+		['Total', marks.total_pass_mark, marks.total_max_mark]
+	]
+	for (const [label, pass, max] of components) {
+		if (typeof pass !== 'number' || typeof max !== 'number') continue
+		if (max <= 0) continue
+		if (pass > max) {
+			return `${label} pass mark (${pass}) cannot exceed ${label.toLowerCase()} max mark (${max})`
+		}
+	}
+	return null
+}
+
 export async function POST(request: Request) {
 	try {
 		const supabase = getSupabaseServer()
@@ -201,13 +231,12 @@ export async function POST(request: Request) {
 					continue
 				}
 
-				if (mapping.internal_pass_mark > mapping.internal_max_mark ||
-					mapping.external_pass_mark > mapping.external_max_mark ||
-					mapping.total_pass_mark > mapping.total_max_mark) {
+				const marksError = getMarksConsistencyError(mapping)
+				if (marksError) {
 					errors.push({
 						semester_code: mapping.semester_code,
 						course_id: mapping.course_id,
-						error: 'Pass marks cannot exceed max marks'
+						error: `${mapping.course_code ? `Course "${mapping.course_code}": ` : ''}${marksError}`
 					})
 					continue
 				}
@@ -448,25 +477,9 @@ export async function POST(request: Request) {
 		}
 
 		// Validate marks consistency
-		if (body.internal_pass_mark > body.internal_max_mark) {
-			return NextResponse.json(
-				{ error: 'Internal pass mark cannot exceed internal max mark' },
-				{ status: 400 }
-			)
-		}
-
-		if (body.external_pass_mark > body.external_max_mark) {
-			return NextResponse.json(
-				{ error: 'External pass mark cannot exceed external max mark' },
-				{ status: 400 }
-			)
-		}
-
-		if (body.total_pass_mark > body.total_max_mark) {
-			return NextResponse.json(
-				{ error: 'Total pass mark cannot exceed total max mark' },
-				{ status: 400 }
-			)
+		const singleMarksError = getMarksConsistencyError(body)
+		if (singleMarksError) {
+			return NextResponse.json({ error: singleMarksError }, { status: 400 })
 		}
 
 		if (body.courses_status !== undefined && body.courses_status !== null && body.courses_status !== '') {
