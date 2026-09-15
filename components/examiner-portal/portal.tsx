@@ -51,7 +51,8 @@ import {
 import { componentsForType, computeClaim, formatRupees } from '@/lib/qp-portal/fees'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { PortalPaperEditor } from './portal-paper-editor'
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog'
+import { PortalPaperEditor, type FlowStage } from './portal-paper-editor'
 import { SyncBadge, type SyncState } from './sync-badge'
 import { SubmissionWizard } from './submission-wizard'
 import { ClaimSection } from './claim-section'
@@ -462,6 +463,11 @@ export function ExaminerPortal({ examiner, onSignedOut }: Props) {
 	const [section, setSection] = useState<Section>('dashboard')
 	const [listTab, setListTab] = useState<ListTab>('active')
 	const [navOpen, setNavOpen] = useState(false)
+	// The focused workspace: sidebar and dashboard chrome gone, only the paper.
+	// On by default whenever the paper can be worked on; Exit shows the overview.
+	const [focusMode, setFocusMode] = useState(true)
+	const [instructionsOpen, setInstructionsOpen] = useState(false)
+	const [editorStage, setEditorStage] = useState<{ stage: FlowStage; label: string; index: number; total: number } | null>(null)
 	const [assignments, setAssignments] = useState<AssignmentSummary[]>([])
 	const [loading, setLoading] = useState(true)
 	const [openId, setOpenId] = useState<string | null>(null)
@@ -523,6 +529,8 @@ export function ExaminerPortal({ examiner, onSignedOut }: Props) {
 		setOpenId(id)
 		setSection('papers')
 		setDetail(null)
+		setFocusMode(true)
+		setEditorStage(null)
 		setPaperProblems([])
 		setProgress({ done: 0, total: 0 })
 		setDetailLoading(true)
@@ -713,14 +721,17 @@ export function ExaminerPortal({ examiner, onSignedOut }: Props) {
 				</Button>
 				<Image src="/jkkncet_logo.png" alt="" width={40} height={40} className="object-contain shrink-0" />
 				<div className="min-w-0 flex-1">
-					<p className="font-semibold text-sm leading-tight truncate">Examiner Portal</p>
+					<p className="font-semibold text-sm leading-tight truncate tracking-tight">
+						Examiner Portal
+						<span className="hidden sm:inline font-normal text-muted-foreground"> · Office of the Controller of Examinations</span>
+					</p>
 					<p className="text-xs text-muted-foreground truncate">
 						{examiner.full_name} · {examiner.email}
 					</p>
 				</div>
-				<Badge variant="outline" className="hidden sm:inline-flex shrink-0">
+				<Badge variant="outline" className={cn('hidden sm:inline-flex shrink-0', TONE.success.badge)}>
 					<ShieldCheck className="h-3.5 w-3.5 mr-1" />
-					{examiner.kind === 'internal' ? 'Internal' : 'External'}
+					{examiner.kind === 'internal' ? 'Internal examiner' : 'External examiner'}
 				</Badge>
 				<Button variant="outline" size="sm" onClick={signOut} className="shrink-0">
 					<LogOut className="h-4 w-4 sm:mr-1.5" />
@@ -757,11 +768,13 @@ export function ExaminerPortal({ examiner, onSignedOut }: Props) {
 								if (key !== 'papers') setOpenId(null)
 							}}
 							className={cn(
-								'w-full flex items-center gap-2.5 rounded-md px-3 py-2 text-sm text-left transition-colors',
-								active ? 'bg-emerald-50 text-emerald-800 font-medium' : 'hover:bg-slate-50 text-slate-700'
+								'relative w-full flex items-center gap-2.5 rounded-lg px-3 py-2.5 text-sm text-left transition-colors',
+								active
+									? 'bg-brand-green-50 text-brand-green-800 font-semibold before:absolute before:left-0 before:top-2 before:bottom-2 before:w-1 before:rounded-full before:bg-brand-green-500'
+									: 'hover:bg-slate-50 text-slate-600 hover:text-slate-900'
 							)}
 						>
-							<Icon className={cn('h-4 w-4 shrink-0', active && 'text-emerald-600')} />
+							<Icon className={cn('h-4 w-4 shrink-0', active ? 'text-brand-green-600' : 'text-slate-400')} />
 							<span className="flex-1 truncate">{label}</span>
 							{badge > 0 && (
 								<span className="rounded-full bg-amber-500 text-white text-[11px] leading-4 px-1.5 shrink-0">
@@ -844,7 +857,7 @@ export function ExaminerPortal({ examiner, onSignedOut }: Props) {
 							<CardContent className="p-4">
 								<div className="flex flex-wrap items-start justify-between gap-3">
 									<div className="min-w-0 flex-1">
-										<p className="font-semibold flex items-center gap-2">
+										<p className="font-semibold text-base tracking-tight flex items-center gap-2">
 											{a.course_code}
 											{archived && <ToneBadge tone="locked">Archived</ToneBadge>}
 										</p>
@@ -998,7 +1011,7 @@ export function ExaminerPortal({ examiner, onSignedOut }: Props) {
 	const orders = (
 		<div className="space-y-4">
 			<div>
-				<h1 className="text-xl font-semibold">Order Copy</h1>
+				<h1 className="text-2xl font-semibold tracking-tight text-slate-900">Order Copy</h1>
 				<p className="text-sm text-muted-foreground mt-0.5">
 					Your official appointment orders. These stay available at all times.
 				</p>
@@ -1063,7 +1076,7 @@ export function ExaminerPortal({ examiner, onSignedOut }: Props) {
 	const papersList = (
 		<div className="space-y-4">
 			<div>
-				<h1 className="text-xl font-semibold">Question Paper</h1>
+				<h1 className="text-2xl font-semibold tracking-tight text-slate-900">Question Paper</h1>
 				<p className="text-sm text-muted-foreground mt-0.5">
 					Papers assigned to you. Content is available only inside the validity period and is never
 					downloadable.
@@ -1097,6 +1110,8 @@ export function ExaminerPortal({ examiner, onSignedOut }: Props) {
 			: 'disabled'
 	const cancelled = a?.status === 'cancelled'
 	const handedOver = stage !== 'authoring' || a?.status === 'submitted' || a?.status === 'accepted'
+	/** May the focused editor open — is there anything to type into right now? */
+	const canFocus = !!a && !cancelled && canEdit && released && stage === 'authoring' && !willingnessPending && !declinedAll
 
 	// Why Submit cannot be pressed right now — or null when it can.
 	const submitReason: string | null = !a
@@ -1112,12 +1127,6 @@ export function ExaminerPortal({ examiner, onSignedOut }: Props) {
 						: draftSync.state === 'conflict'
 							? 'Reload the server copy first'
 							: null
-	const saveReason: string | null =
-		draftSync.state === 'saving'
-			? 'Saving…'
-			: !draftSync.dirty && draftSync.state !== 'unsynced'
-				? 'Nothing new to save — your work is already saved'
-				: null
 
 	const openPreview = () => {
 		setPreviewQuestions(liveQuestionsRef.current?.() || detail?.questions || [])
@@ -1239,6 +1248,13 @@ export function ExaminerPortal({ examiner, onSignedOut }: Props) {
 				title: 'This paper is read-only',
 				detail: 'It has been handed over. Nothing on it can be changed.',
 			}
+		} else if (!focusMode) {
+			instruction = {
+				tone: 'info',
+				title: 'Ready to work on this paper',
+				detail: 'The editor walks you through it: questions, then answers, then review and submit. Your work saves automatically.',
+				action: { label: 'Open the editor', onClick: () => setFocusMode(true) },
+			}
 		} else if (coeProblems.length > 0) {
 			instruction = {
 				tone: 'danger',
@@ -1277,50 +1293,71 @@ export function ExaminerPortal({ examiner, onSignedOut }: Props) {
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [
 		a, aComponents.ak, cancelled, handedOver, declinedAll, released, willingnessPending, paperProblems,
-		ownProblems, coeProblems, progress, stage, state, canEdit, submitReason, submitting,
+		ownProblems, coeProblems, progress, stage, state, canEdit, submitReason, submitting, focusMode,
 	])
 
-	const editingStatus = a && canEdit && released && stage === 'authoring' && !willingnessPending && !declinedAll && (
+	// Only the sync-related reasons go to the editor: it computes the
+	// completeness ones itself, stage by stage.
+	const syncReason: string | null =
+		draftSync.state === 'saving'
+			? 'Wait a moment — saving your latest changes'
+			: draftSync.state === 'unsynced'
+				? 'Your latest changes have not reached the server yet'
+				: draftSync.state === 'conflict'
+					? 'Reload the server copy first'
+					: null
+
+	/** The CoE's instructions, numbered, the critical ones marked — used on the overview and in the editor's dialog. */
+	const instructionsList = a && content?.instructions?.body?.length > 0 && (
 		<>
-			<div className="flex flex-wrap items-center gap-2">
-				<ToneBadge tone={progress.total > 0 && progress.done === progress.total ? 'success' : 'info'}>
-					{progress.done} / {progress.total} entered
-				</ToneBadge>
-				{paperProblems.length === 0 ? (
-					<ToneBadge tone="success">
-						<CheckCircle2 className="h-3 w-3" />
-						Ready to submit
-					</ToneBadge>
-				) : (
-					<ToneBadge tone={coeProblems.length ? 'danger' : 'warning'}>
-						<AlertTriangle className="h-3 w-3" />
-						{paperProblems.length} to fix
-					</ToneBadge>
+			<ol className="space-y-2.5">
+				{content.instructions.body.map((c: any, i: number) => {
+					// The two rules whose breach has consequences beyond this paper
+					// — confidentiality and originality — are marked so they are
+					// never read as routine formatting advice.
+					const critical = /confidential|original|must not be shared|do not reproduce/i.test(String(c.text))
+					return (
+						<li key={c.id} className={cn('flex gap-3 text-sm rounded-md px-2 py-1.5 -mx-2', critical && 'bg-rose-50 border border-rose-200')}>
+							<span className={cn('h-6 w-6 rounded-full flex items-center justify-center shrink-0 text-xs font-semibold', critical ? 'bg-rose-600 text-white' : 'bg-blue-100 text-blue-800')}>
+								{i + 1}
+							</span>
+							<span className={cn('leading-relaxed text-slate-800', critical && 'font-medium text-rose-900')}>
+								{c.text}
+								{critical && (
+									<span className="ml-2 inline-flex items-center gap-1 rounded-full bg-rose-600 text-white text-[10px] uppercase tracking-wide px-1.5 py-0.5 align-middle">
+										<AlertTriangle className="h-3 w-3" />
+										Important
+									</span>
+								)}
+							</span>
+						</li>
+					)
+				})}
+			</ol>
+			<div
+				className={cn(
+					'mt-4 rounded-md border px-3 py-2 text-sm flex flex-wrap items-center gap-x-2 gap-y-1',
+					state === 'closed' ? TONE.danger.card : state === 'open' ? TONE.warning.card : TONE.locked.card,
+					state === 'closed' ? TONE.danger.text : state === 'open' ? TONE.warning.text : TONE.locked.text
 				)}
-			</div>
-			<div className="flex flex-wrap items-center gap-2">
-				<SyncBadge state={draftSync.state} dirty={draftSync.dirty} savedAt={draftSync.savedAt} />
-				<Button
-					size="sm"
-					variant="outline"
-					className="h-7"
-					onClick={() => void saveDraftRef.current?.()}
-					disabled={!!saveReason}
-					title={saveReason || 'Save your progress now'}
-				>
-					{draftSync.state === 'saving' ? <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" /> : <Save className="h-3.5 w-3.5 mr-1" />}
-					Save Draft
-				</Button>
+			>
+				<Clock className="h-4 w-4 shrink-0" />
+				<span className="font-semibold">Deadline:</span>
+				<span>submit by {formatIst(a.valid_to)}</span>
+				<span className="text-xs opacity-80">({detail?.window_hint || windowHint(a.valid_from, a.valid_to)})</span>
 			</div>
 		</>
 	)
+
 
 	const paperDetail = !a ? null : (
 		<div className="space-y-4">
 			<Button
 				variant="ghost"
 				size="sm"
-				onClick={() => {
+				onClick={async () => {
+					// Let any edits still in the editor land before it unmounts.
+					await saveDraftRef.current?.()
 					setOpenId(null)
 					setDetail(null)
 					setShowHistory(false)
@@ -1331,7 +1368,7 @@ export function ExaminerPortal({ examiner, onSignedOut }: Props) {
 				All question papers
 			</Button>
 
-			{tracker && <PaperStepTracker steps={tracker.steps} instruction={tracker.instruction} status={editingStatus} />}
+			{tracker && <PaperStepTracker steps={tracker.steps} instruction={tracker.instruction} />}
 
 			<Card>
 				<CardContent className="p-4">
@@ -1452,55 +1489,7 @@ export function ExaminerPortal({ examiner, onSignedOut }: Props) {
 						</h2>
 						<span className="text-xs rounded-full bg-white/20 px-2.5 py-1 font-medium">Please read before you start</span>
 					</div>
-					<CardContent className="p-4 sm:p-5">
-						<ol className="space-y-2.5">
-							{content.instructions.body.map((c: any, i: number) => {
-								// The two rules whose breach has consequences beyond this paper
-								// — confidentiality and originality — are marked so they are
-								// never read as routine formatting advice.
-								const critical = /confidential|original|must not be shared|do not reproduce/i.test(String(c.text))
-								return (
-									<li
-										key={c.id}
-										className={cn(
-											'flex gap-3 text-sm rounded-md px-2 py-1.5 -mx-2',
-											critical && 'bg-rose-50 border border-rose-200'
-										)}
-									>
-										<span
-											className={cn(
-												'h-6 w-6 rounded-full flex items-center justify-center shrink-0 text-xs font-semibold',
-												critical ? 'bg-rose-600 text-white' : 'bg-blue-100 text-blue-800'
-											)}
-										>
-											{i + 1}
-										</span>
-										<span className={cn('leading-relaxed text-slate-800', critical && 'font-medium text-rose-900')}>
-											{c.text}
-											{critical && (
-												<span className="ml-2 inline-flex items-center gap-1 rounded-full bg-rose-600 text-white text-[10px] uppercase tracking-wide px-1.5 py-0.5 align-middle">
-													<AlertTriangle className="h-3 w-3" />
-													Important
-												</span>
-											)}
-										</span>
-									</li>
-								)
-							})}
-						</ol>
-						<div
-							className={cn(
-								'mt-4 rounded-md border px-3 py-2 text-sm flex flex-wrap items-center gap-x-2 gap-y-1',
-								state === 'closed' ? TONE.danger.card : state === 'open' ? TONE.warning.card : TONE.locked.card,
-								state === 'closed' ? TONE.danger.text : state === 'open' ? TONE.warning.text : TONE.locked.text
-							)}
-						>
-							<Clock className="h-4 w-4 shrink-0" />
-							<span className="font-semibold">Deadline:</span>
-							<span>submit by {formatIst(a.valid_to)}</span>
-							<span className="text-xs opacity-80">({detail.window_hint || windowHint(a.valid_from, a.valid_to)})</span>
-						</div>
-					</CardContent>
+					<CardContent className="p-4 sm:p-5">{instructionsList}</CardContent>
 				</Card>
 			)}
 
@@ -1577,17 +1566,31 @@ export function ExaminerPortal({ examiner, onSignedOut }: Props) {
 						</p>
 					</CardContent>
 				</Card>
+			) : canEdit ? (
+				// Entry happens in the focused editor, never on this overview page.
+				<Card className={cn('border-2', TONE.info.frame)}>
+					<CardContent className="p-6 text-center space-y-2">
+						<FileText className={cn('h-8 w-8 mx-auto', TONE.info.icon)} />
+						<p className="font-medium">Set the paper in the editor</p>
+						<p className="text-sm text-muted-foreground max-w-md mx-auto">
+							Questions first, then answers if your appointment includes them, then review and submit. Your work
+							saves automatically as you type.
+						</p>
+						<Button onClick={() => setFocusMode(true)}>
+							{a.status === 'returned' ? 'Open the editor to revise' : 'Open the editor'}
+							<ArrowRight className="h-4 w-4 ml-1.5" />
+						</Button>
+					</CardContent>
+				</Card>
 			) : (
 				<>
-					{!canEdit && (
-						<div className={cn('rounded-md border px-3.5 py-2.5 text-sm flex items-center gap-2', TONE.locked.card, TONE.locked.text)}>
-							<Eye className={cn('h-4 w-4 shrink-0', TONE.locked.icon)} />
-							<span>
-								<span className="font-semibold">Preview only.</span> This paper has been submitted and can no longer
-								be edited. It cannot be downloaded or printed.
-							</span>
-						</div>
-					)}
+					<div className={cn('rounded-md border px-3.5 py-2.5 text-sm flex items-center gap-2', TONE.locked.card, TONE.locked.text)}>
+						<Eye className={cn('h-4 w-4 shrink-0', TONE.locked.icon)} />
+						<span>
+							<span className="font-semibold">Preview only.</span> This paper has been submitted and can no longer
+							be edited. It cannot be downloaded or printed.
+						</span>
+					</div>
 					{/* qp-protected: no print, no selection. See the print rules below. */}
 					<div
 						className="qp-protected"
@@ -1596,91 +1599,18 @@ export function ExaminerPortal({ examiner, onSignedOut }: Props) {
 						onContextMenu={e => e.preventDefault()}
 					>
 						<PortalPaperEditor
-							key={`${a.id}:${editorEpoch}`}
-							saveRef={saveDraftRef}
-							onSyncChange={setDraftSync}
-							onValidityChange={setPaperProblems}
-							onProgressChange={setProgress}
-							jumpRef={jumpRef}
-							questionsRef={liveQuestionsRef}
-							onConflict={() => {
-								void reloadDetail().then(() => setEditorEpoch(n => n + 1))
-							}}
+							key={`${a.id}:${editorEpoch}:preview`}
 							assignmentId={a.id}
 							questions={detail.questions || []}
 							templateParts={detail.template_parts || []}
 							courseOutcomes={detail.course_outcomes || []}
 							baseUpdatedAt={detail.paper?.updated_at || null}
-							readOnly={!canEdit}
+							readOnly
 							questionsEditable={qpWilling && a.reopen_scope !== 'answer_key'}
 							answerKeyMode={answerKeyMode}
-							onSaved={info => {
-								setAssignments(prev =>
-									prev.map(x =>
-										x.id === a.id
-											? { ...x, question_done: info.question_done, question_total: info.question_total }
-											: x
-									)
-								)
-							}}
+							onSaved={() => {}}
 						/>
 					</div>
-
-					{canEdit && (
-						<Card className={cn('border-2', submitReason ? TONE.warning.frame : TONE.success.frame)}>
-							<CardContent className="space-y-3 p-4">
-								<div className="flex flex-wrap items-start justify-between gap-3">
-									<div className="text-sm">
-										<p className="font-semibold">Save your progress, or submit</p>
-										<p className="text-muted-foreground text-xs mt-0.5">
-											<span className="font-medium">Save Draft</span> keeps a partly finished paper
-											exactly as it is. Your work is also saved automatically as you type.
-										</p>
-										<p className="text-muted-foreground text-xs mt-1">
-											<span className="font-medium">Submit</span> needs every question complete. You
-											will then be taken straight through the check list and your signature.
-										</p>
-									</div>
-									<SyncBadge
-										state={draftSync.state}
-										dirty={draftSync.dirty}
-										savedAt={draftSync.savedAt}
-										className="shrink-0"
-									/>
-								</div>
-								<div className="flex flex-wrap items-start gap-x-4 gap-y-2">
-									<div className="flex flex-col gap-1">
-										<Button
-											variant="outline"
-											onClick={() => void saveDraftRef.current?.()}
-											disabled={!!saveReason}
-										>
-											{draftSync.state === 'saving' ? (
-												<Loader2 className="h-4 w-4 mr-1.5 animate-spin" />
-											) : (
-												<Save className="h-4 w-4 mr-1.5" />
-											)}
-											Save Draft
-										</Button>
-										<DisabledReason tone="muted" reason={saveReason} />
-									</div>
-									<div className="flex flex-col gap-1">
-										<Button onClick={openPreview} disabled={!!submitReason || submitting} title={submitReason || undefined}>
-											{submitting ? <Loader2 className="h-4 w-4 mr-1.5 animate-spin" /> : <Send className="h-4 w-4 mr-1.5" />}
-											{a.status === 'returned' ? 'Resubmit question paper' : 'Submit question paper'}
-										</Button>
-										<DisabledReason reason={submitReason} />
-									</div>
-									{ownProblems.length > 0 && (
-										<Button variant="ghost" size="sm" className="self-center" onClick={() => jumpRef.current?.(ownProblems[0].anchor)}>
-											Show me the first item
-											<ArrowRight className="h-4 w-4 ml-1.5" />
-										</Button>
-									)}
-								</div>
-							</CardContent>
-						</Card>
-					)}
 				</>
 			)}
 
@@ -1713,7 +1643,7 @@ export function ExaminerPortal({ examiner, onSignedOut }: Props) {
 		section === 'dashboard' ? (
 			<div className="space-y-4">
 				<div>
-					<h1 className="text-xl font-semibold">Dashboard</h1>
+					<h1 className="text-2xl font-semibold tracking-tight text-slate-900">Dashboard</h1>
 					<p className="text-sm text-muted-foreground mt-0.5">
 						Welcome, {examiner.full_name}. Everything assigned to you is below.
 					</p>
@@ -1728,13 +1658,17 @@ export function ExaminerPortal({ examiner, onSignedOut }: Props) {
 						{ label: 'Claims Approved', value: stats.claimApproved, icon: BadgeCheck, tone: 'success' as Tone },
 						{ label: 'Payments Completed', value: stats.paid, icon: Wallet, tone: 'success' as Tone },
 					].map(({ label, value, icon: Icon, tone }) => (
-						<Card key={label} className={cn('border-l-4', TONE[tone].bar)}>
-							<CardContent className="p-3.5">
-								<div className="flex items-center justify-between gap-2">
-									<p className="text-xs text-muted-foreground truncate">{label}</p>
-									<Icon className={cn('h-4 w-4 shrink-0', TONE[tone].icon)} />
+						<Card key={label} className="border-slate-200/80">
+							<CardContent className="p-4">
+								<div className="flex items-start justify-between gap-2">
+									<div className="min-w-0">
+										<p className="text-[11px] uppercase tracking-wide text-muted-foreground truncate">{label}</p>
+										<p className={cn('text-3xl font-semibold tracking-tight mt-1 tabular-nums', value > 0 ? TONE[tone].heading : 'text-slate-400')}>{value}</p>
+									</div>
+									<span className={cn('h-9 w-9 rounded-lg flex items-center justify-center shrink-0 border', TONE[tone].card)}>
+										<Icon className={cn('h-4 w-4', TONE[tone].icon)} />
+									</span>
 								</div>
-								<p className={cn('text-2xl font-semibold mt-1', TONE[tone].heading)}>{value}</p>
 							</CardContent>
 						</Card>
 					))}
@@ -1798,7 +1732,7 @@ export function ExaminerPortal({ examiner, onSignedOut }: Props) {
 				</div>
 
 				<div>
-					<h2 className="font-semibold text-sm mb-2">Assignments</h2>
+					<h2 className="font-semibold text-base tracking-tight mb-2 flex items-center gap-2 before:content-[''] before:inline-block before:h-4 before:w-1 before:rounded-full before:bg-brand-green-500">Assignments</h2>
 					{assignmentTabs}
 				</div>
 			</div>
@@ -1826,44 +1760,185 @@ export function ExaminerPortal({ examiner, onSignedOut }: Props) {
 			papersList
 		)
 
-	return (
-		<div className="min-h-screen bg-gray-50">
-			{/*
-			  Application-level protection for the question content.
+	/*
+	  Application-level protection for the question content.
 
-			  Printing is refused rather than styled: the content is replaced with a
-			  notice, so Ctrl+P and "Save as PDF" (which is just printing) produce a
-			  page with no questions on it. Selection is disabled so the text cannot
-			  be dragged out, and copy/cut/context-menu are cancelled in the handler
-			  above. A photograph of the screen defeats all of this and is out of
-			  reach of any web application — the spec says so too.
-			*/}
-			<style>{`
-				.qp-protected, .qp-protected * {
-					-webkit-user-select: none;
-					-moz-user-select: none;
-					user-select: none;
+	  Printing is refused rather than styled: the content is replaced with a
+	  notice, so Ctrl+P and "Save as PDF" (which is just printing) produce a
+	  page with no questions on it. Selection is disabled so the text cannot
+	  be dragged out, and copy/cut/context-menu are cancelled in the handler
+	  on the qp-protected wrapper. A photograph of the screen defeats all of
+	  this and is out of reach of any web application — the spec says so too.
+	*/
+	const protectionStyle = (
+		<style>{`
+			.qp-protected, .qp-protected * {
+				-webkit-user-select: none;
+				-moz-user-select: none;
+				user-select: none;
+			}
+			/* Inputs the examiner types into must stay usable. */
+			.qp-protected input, .qp-protected textarea,
+			.qp-protected [contenteditable="true"],
+			.qp-protected [contenteditable="true"] * {
+				-webkit-user-select: text;
+				-moz-user-select: text;
+				user-select: text;
+			}
+			@media print {
+				body { visibility: hidden !important; }
+				.qp-protected { display: none !important; }
+				body::after {
+					visibility: visible;
+					content: 'This question paper cannot be printed. — Office of the Controller of Examinations';
+					position: fixed; inset: 0; display: flex;
+					align-items: center; justify-content: center;
+					font: 14px/1.5 Georgia, serif; text-align: center; padding: 40px;
 				}
-				/* Inputs the examiner types into must stay usable. */
-				.qp-protected input, .qp-protected textarea,
-				.qp-protected [contenteditable="true"],
-				.qp-protected [contenteditable="true"] * {
-					-webkit-user-select: text;
-					-moz-user-select: text;
-					user-select: text;
-				}
-				@media print {
-					body { visibility: hidden !important; }
-					.qp-protected { display: none !important; }
-					body::after {
-						visibility: visible;
-						content: 'This question paper cannot be printed. — Office of the Controller of Examinations';
-						position: fixed; inset: 0; display: flex;
-						align-items: center; justify-content: center;
-						font: 14px/1.5 Georgia, serif; text-align: center; padding: 40px;
-					}
-				}
-			`}</style>
+			}
+		`}</style>
+	)
+
+	const previewDialog = (
+		<PaperPreviewDialog
+			open={submitOpen}
+			onOpenChange={setSubmitOpen}
+			title={a ? `${a.course_code} — ${a.subject_title}` : 'Question paper'}
+			subtitle={a ? contextLine(a) : undefined}
+			questions={previewQuestions}
+			templateParts={detail?.template_parts || []}
+			problems={paperProblems}
+			submitting={submitting}
+			onSubmit={submitPaper}
+			onJump={anchor => setTimeout(() => jumpRef.current?.(anchor), 150)}
+		/>
+	)
+
+	// ── The focused workspace ─────────────────────────────────────────────
+	// No sidebar, no dashboard, no cards: a slim header, the editor, and its
+	// own stage tabs. Everything else is one Exit away.
+	if (a && detail && !detailLoading && canFocus && focusMode && section === 'papers') {
+		return (
+			<div className="min-h-screen bg-slate-50 examiner-portal">
+				{protectionStyle}
+				<div className="bg-white border-b sticky top-0 z-30">
+					<div className="h-1 bg-gradient-to-r from-green-600 via-emerald-500 to-green-600" />
+					<div className="h-[53px] px-3 sm:px-5 flex items-center gap-3">
+						<Image src="/jkkncet_logo.png" alt="" width={32} height={32} className="object-contain shrink-0 hidden sm:block" />
+						<Button
+							variant="ghost"
+							size="sm"
+							className="shrink-0"
+							onClick={async () => {
+								// Flush first, then leave; the overview (and the next Open)
+								// reads the fresh server copy, so no stale base and no
+								// "unsaved work" banner on the way back in.
+								await saveDraftRef.current?.()
+								setFocusMode(false)
+								void reloadDetail()
+							}}
+						>
+							<ArrowLeft className="h-4 w-4 sm:mr-1.5" />
+							<span className="hidden sm:inline">Exit</span>
+						</Button>
+						<div className="min-w-0 flex-1">
+							<p className="text-sm font-semibold truncate tracking-tight">
+								{a.course_code}
+								<span className="font-normal text-muted-foreground"> — {a.subject_title}</span>
+							</p>
+							<p className="text-xs text-muted-foreground truncate">
+								Question Paper Setting
+								{editorStage && <> · Step {editorStage.index} of {editorStage.total} · <span className="font-medium text-slate-700">{editorStage.label}</span></>}
+							</p>
+						</div>
+						<ToneBadge tone={WINDOW_TONE[state]} className="hidden lg:inline-flex">
+							{state === 'open' ? <Clock className="h-3 w-3" /> : <Lock className="h-3 w-3" />}
+							{detail.window_hint || windowHint(a.valid_from, a.valid_to)}
+						</ToneBadge>
+						<span className="hidden md:flex items-center rounded-full border bg-slate-50 px-2.5 py-1">
+							<SyncBadge state={draftSync.state} dirty={draftSync.dirty} savedAt={draftSync.savedAt} />
+						</span>
+						{instructionsList && (
+							<Button variant="outline" size="sm" onClick={() => setInstructionsOpen(true)} className="shrink-0">
+								<ScrollText className="h-4 w-4 sm:mr-1.5" />
+								<span className="hidden sm:inline">Instructions</span>
+							</Button>
+						)}
+					</div>
+				</div>
+
+				<main className="px-3 sm:px-5 py-4 pb-24">
+					<div className="max-w-4xl mx-auto">
+						{a.return_remarks && (
+							<div className={cn('mb-4 rounded-md border p-3 text-sm', TONE.returned.card, TONE.returned.text)}>
+								<span className="font-semibold">Returned for revision by the CoE:</span> {a.return_remarks}
+							</div>
+						)}
+						{/* qp-protected: no print, no selection. */}
+						<div
+							className="qp-protected"
+							onCopy={e => e.preventDefault()}
+							onCut={e => e.preventDefault()}
+							onContextMenu={e => e.preventDefault()}
+						>
+							<PortalPaperEditor
+								key={`${a.id}:${editorEpoch}`}
+								saveRef={saveDraftRef}
+								onSyncChange={setDraftSync}
+								onValidityChange={setPaperProblems}
+								onProgressChange={setProgress}
+								jumpRef={jumpRef}
+								questionsRef={liveQuestionsRef}
+								onConflict={() => {
+									void reloadDetail().then(() => setEditorEpoch(n => n + 1))
+								}}
+								assignmentId={a.id}
+								questions={detail.questions || []}
+								templateParts={detail.template_parts || []}
+								courseOutcomes={detail.course_outcomes || []}
+								baseUpdatedAt={detail.paper?.updated_at || null}
+								readOnly={false}
+								questionsEditable={qpWilling && a.reopen_scope !== 'answer_key'}
+								answerKeyMode={answerKeyMode}
+								onSubmit={openPreview}
+								submitReason={syncReason}
+								submitting={submitting}
+								onStageChange={setEditorStage}
+								onSaved={info => {
+									setAssignments(prev =>
+										prev.map(x =>
+											x.id === a.id
+												? { ...x, question_done: info.question_done, question_total: info.question_total }
+												: x
+										)
+									)
+								}}
+							/>
+						</div>
+					</div>
+				</main>
+
+				{previewDialog}
+
+				<Dialog open={instructionsOpen} onOpenChange={setInstructionsOpen}>
+					<DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+						<DialogHeader className="text-left">
+							<DialogTitle className="flex items-center gap-2">
+								<ScrollText className="h-5 w-5" />
+								{content?.instructions?.title || 'Instructions to the Question Paper Setter'}
+							</DialogTitle>
+							<DialogDescription>Please read before you set the paper.</DialogDescription>
+						</DialogHeader>
+						{instructionsList}
+					</DialogContent>
+				</Dialog>
+			</div>
+		)
+	}
+
+	return (
+		<div className="min-h-screen bg-slate-50 examiner-portal">
+			{protectionStyle}
 
 			{header}
 			<div className="flex">
@@ -1889,18 +1964,7 @@ export function ExaminerPortal({ examiner, onSignedOut }: Props) {
 				</main>
 			</div>
 
-			<PaperPreviewDialog
-				open={submitOpen}
-				onOpenChange={setSubmitOpen}
-				title={a ? `${a.course_code} — ${a.subject_title}` : 'Question paper'}
-				subtitle={a ? contextLine(a) : undefined}
-				questions={previewQuestions}
-				templateParts={detail?.template_parts || []}
-				problems={paperProblems}
-				submitting={submitting}
-				onSubmit={submitPaper}
-				onJump={anchor => setTimeout(() => jumpRef.current?.(anchor), 150)}
-			/>
+			{previewDialog}
 		</div>
 	)
 }

@@ -164,12 +164,12 @@ export default function ExaminerPortalPage() {
 			<div className="mx-auto flex min-h-screen w-full max-w-md flex-col justify-center px-4 py-10">
 				{/* Letterhead */}
 				<div className="mb-6 flex flex-col items-center text-center">
-					<Image src="/logo.png" alt="JKKN" width={120} height={44} className="h-11 w-auto" priority />
-					<h1 className="mt-4 text-xl font-semibold tracking-tight text-gray-900">Examiner Portal</h1>
+					<Image src="/jkkn_logo.png" alt="JKKN" width={120} height={44} className="h-11 w-auto" priority />
+					<h1 className="mt-4 text-2xl font-semibold tracking-tight text-gray-900">Examiner Portal</h1>
 					<p className="mt-1 text-sm text-gray-600">Office of the Controller of Examinations</p>
 				</div>
 
-				<Card className="border-gray-200 shadow-sm">
+				<Card className="border-gray-200/80 rounded-2xl shadow-xl shadow-emerald-900/5">
 					<CardContent className="space-y-5 p-6">
 						{unknownEmail ? (
 							// Verified, but nobody by that address is registered here.

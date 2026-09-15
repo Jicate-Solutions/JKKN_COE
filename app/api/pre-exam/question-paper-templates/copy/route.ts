@@ -210,6 +210,7 @@ export async function POST(req: NextRequest) {
 				option_count: p.option_count,
 				capture_co: p.capture_co,
 				capture_klevel: p.capture_klevel,
+				allow_split: p.allow_split !== false,
 				display_order: p.display_order ?? i + 1,
 			}))
 			const { error: partsError } = await supabase.from('ia_template_parts').insert(partRows)

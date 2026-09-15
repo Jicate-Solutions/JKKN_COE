@@ -152,7 +152,7 @@ export function ProfileSection() {
 		<div className="space-y-4 max-w-3xl">
 			<div className="flex flex-wrap items-start justify-between gap-3">
 				<div>
-					<h1 className="text-xl font-semibold">Profile</h1>
+					<h1 className="text-2xl font-semibold tracking-tight text-slate-900">Profile</h1>
 					<p className="text-sm text-muted-foreground mt-0.5">
 						Your examiner registration as held by the Office of the Controller of Examinations.
 					</p>

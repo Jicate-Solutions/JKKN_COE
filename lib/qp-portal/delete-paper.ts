@@ -19,6 +19,7 @@
 import type { NextRequest } from 'next/server'
 import { logAccess } from '@/lib/qp-portal/guard'
 import { countAuthored } from '@/lib/ia/sub-questions'
+import { deletePaperDriveFiles } from '@/lib/ia/question-paper-files'
 
 export interface DeleteActor {
 	userId?: string | null
@@ -150,12 +151,17 @@ export async function deleteEsePaper(
 		old_value: { status: paper.status, template_id: paper.template_id },
 		new_value: null,
 	})
+	// Figures uploaded through the portal live in Google Drive; their registry
+	// rows are marked deleted by the sweep (best effort — never blocks the delete).
+	await deletePaperDriveFiles(paperId)
+
 	const { error } = await supabase.from('ese_question_papers').delete().eq('id', paperId)
 	if (error) return dbFailure(error.message)
 
-	// Question and answer-key images live in storage under <paper id>/…; nothing
-	// in the database points at them once the paper is gone, so sweep the folder.
-	// Best effort: a storage hiccup must not turn a completed delete into an error.
+	// Older question and answer-key images live in storage under <paper id>/…;
+	// nothing in the database points at them once the paper is gone, so sweep
+	// the folder. Best effort: a storage hiccup must not turn a completed delete
+	// into an error.
 	await removePaperImages(supabase, paperId)
 
 	return { ok: true, course_code: label, assignments_removed: all.length, authored_count: authoredCount }

@@ -782,16 +782,30 @@ export default function QuestionPapersPage() {
 		patchSubs(q.id, seeded)
 	}
 
+	// Both read the CURRENT question inside the state update rather than the
+	// `questions` this render saw: a rich-text box keeps the handler it was last
+	// rendered with (QuestionRichEditor is memoised), so a handler from an older
+	// render must still apply its change to the latest sub-divisions.
 	const updateSubQuestion = (qid: string, subId: string, patch: Partial<IaPaperSubQuestion>) => {
-		const q = questions.find(x => x.id === qid)
-		if (!q) return
-		patchSubs(qid, readSubQuestions(q).map(s => (s.id === subId ? { ...s, ...patch } : s)))
+		setDirty(true)
+		setQuestions(prev =>
+			prev.map(q => {
+				if (q.id !== qid) return q
+				const next = readSubQuestions(q).map(s => (s.id === subId ? { ...s, ...patch } : s))
+				return { ...q, sub_questions: next.length > 0 ? relabelSubs(next) : null }
+			})
+		)
 	}
 
 	const removeSubQuestion = (qid: string, subId: string) => {
-		const q = questions.find(x => x.id === qid)
-		if (!q) return
-		patchSubs(qid, readSubQuestions(q).filter(s => s.id !== subId))
+		setDirty(true)
+		setQuestions(prev =>
+			prev.map(q => {
+				if (q.id !== qid) return q
+				const next = readSubQuestions(q).filter(s => s.id !== subId)
+				return { ...q, sub_questions: next.length > 0 ? relabelSubs(next) : null }
+			})
+		)
 	}
 
 	// Blocks Save/Submit while any split question's marks don't add up to its parent.
@@ -1881,7 +1895,8 @@ Clear them anyway?`)) {
 												const budget = Number(q.marks) || 0
 												const allocated = subTotal(subs)
 												const balanced = allocated === budget && subs.every(sb => sb.marks != null)
-												const splittable = canSplit(q)
+												// The template's per-part "Split questions" switch can turn this off.
+												const splittable = canSplit(q) && part?.allow_split !== false
 												return (
 													// data-qp-image-scope: Ctrl+V anywhere in this question
 													// attaches the screenshot here — see QuestionImageField.

@@ -57,6 +57,7 @@ const emptyPart = (order: number): IaTemplatePartFormData => ({
 	option_count: '',
 	capture_co: true,
 	capture_klevel: true,
+	allow_split: true,
 	display_order: String(order),
 })
 
@@ -371,6 +372,7 @@ export default function QuestionPaperTemplatesPage() {
 						option_count: p.option_count != null ? String(p.option_count) : '',
 						capture_co: p.capture_co,
 						capture_klevel: p.capture_klevel,
+						allow_split: p.allow_split !== false,
 						display_order: String(p.display_order || i + 1),
 					})) || [emptyPart(1)],
 		})
@@ -1163,6 +1165,13 @@ export default function QuestionPaperTemplatesPage() {
 														onCheckedChange={v => updatePart(i, { capture_klevel: v })}
 													/>
 													K-level
+												</label>
+												<label className="flex items-center gap-2 text-xs" title="Allow the setter to split a question into (i)/(ii) sub-divisions">
+													<Switch
+														checked={p.allow_split}
+														onCheckedChange={v => updatePart(i, { allow_split: v })}
+													/>
+													Split questions
 												</label>
 											</div>
 										</div>

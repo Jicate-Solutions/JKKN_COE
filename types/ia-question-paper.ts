@@ -64,6 +64,8 @@ export interface IaTemplatePart {
 	option_count?: number | null
 	capture_co: boolean
 	capture_klevel: boolean
+	// May the setter split a question in this part into (i)/(ii) sub-divisions?
+	allow_split: boolean
 	part_max_marks: number
 	display_order: number
 	is_active: boolean
@@ -122,6 +124,7 @@ export interface IaTemplatePartFormData {
 	option_count: string
 	capture_co: boolean
 	capture_klevel: boolean
+	allow_split: boolean
 	display_order: string
 }
 
@@ -177,15 +180,27 @@ export interface IaPaperQuestionOption {
 }
 
 /**
- * An image attached to a question or sub-division. Stored in the public
- * `question-images` Supabase Storage bucket and printed CENTRED under that
- * question's text. Bytes are squeezed on the client before upload — see
- * lib/ia/question-image.ts.
+ * An image attached to a question or sub-division. Stored PRIVATELY in Google
+ * Drive (Examiner / Question Papers / …, see lib/google/drive-upload.ts) and
+ * printed CENTRED under that question's text. Bytes are squeezed on the client
+ * before upload — see lib/ia/question-image.ts.
+ *
+ * Figures uploaded before the Drive switch still carry a public Supabase
+ * `question-images` URL and `path`, and no `drive_file_id`, until the one-off
+ * migration (scripts/migrate-question-images-to-drive.ts) moves them.
  */
 export interface IaQuestionImage {
-	/** Public URL — what the editor previews and the PDF renderer loads. */
+	/**
+	 * What the editor previews and the PDF renderer loads: the authenticated
+	 * proxy path (/api/examiner/question-paper/file/<drive_file_id>) for a Drive
+	 * figure, or the legacy public Supabase URL.
+	 */
 	url: string
-	/** Storage object path (`<paperId>/<uuid>.<ext>`); lets a replace/remove delete it. */
+	/** Google Drive file id — the key for the proxy route and for delete/cleanup. */
+	drive_file_id?: string | null
+	/** Retained Drive web-view link (for someone with Drive access; NOT a shareable link). */
+	drive_url?: string | null
+	/** Legacy Supabase object path (`<paperId>/<uuid>.<ext>`); null for a Drive figure. */
 	path?: string | null
 	/** Printed width as a percentage of the paper's text column. */
 	width_pct?: number | null

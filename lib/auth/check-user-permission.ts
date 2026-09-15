@@ -50,7 +50,7 @@ export type PermissionCheckOutcome = PermissionCheckSuccess | PermissionCheckFai
  *   2. Decode the `access_token` JWT payload locally (no network call)
  *   3. Fall back to MyJKKN's /api/auth/validate endpoint
  */
-async function resolveCallerEmail(): Promise<string | null> {
+export async function resolveCallerEmail(): Promise<string | null> {
 	// 1) Supabase Auth session, if one exists
 	try {
 		const routeClient = await createRouteHandlerSupabaseClient()

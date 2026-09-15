@@ -4,6 +4,7 @@ import { scaffoldQuestions, mergeAuthored } from '@/lib/ia/paper-scaffold'
 import { validateSubMarks } from '@/lib/ia/sub-questions'
 import { validatePaperComplete, requiresCompletion } from '@/lib/ia/validate-paper'
 import { applyQuestionEdits, MASS_CLEAR_THRESHOLD, massClearError } from '@/lib/ia/apply-question-edits'
+import { deletePaperDriveFiles } from '@/lib/ia/question-paper-files'
 import { hasAnyCoeRole } from '@/lib/auth/check-user-permission'
 
 const EDITABLE_STATUSES = ['draft', 'submitted']
@@ -224,6 +225,10 @@ export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ 
 		if (paper && paper.status === 'locked' && !(await hasAnyCoeRole(UNRESTRICTED_ROLES))) {
 			return NextResponse.json({ error: 'Cannot delete a locked paper' }, { status: 400 })
 		}
+
+		// Figures live in Google Drive and their registry rows cascade with the
+		// paper, so sweep Drive first (best effort — never blocks the delete).
+		await deletePaperDriveFiles(id)
 
 		const { error } = await supabase.from('ia_question_papers').delete().eq('id', id)
 		if (error) return NextResponse.json({ error: error.message }, { status: 500 })

@@ -6,7 +6,7 @@
 // Shares the storage contract with the PDF renderer (math = <span data-latex="…">;
 // Tamil = style="font-family:…").
 
-import { useEffect, useState, useCallback } from 'react'
+import { memo, useEffect, useRef, useState, useCallback } from 'react'
 import { useEditor, EditorContent } from '@tiptap/react'
 import StarterKit from '@tiptap/starter-kit'
 import { Subscript } from '@tiptap/extension-subscript'
@@ -49,10 +49,43 @@ interface Props {
 // Empty-document HTML Tiptap emits — normalise to '' so an untouched question stays blank.
 const EMPTY_HTML = new Set(['', '<p></p>', '<p><br></p>'])
 
-export function QuestionRichEditor({ value, onChange, onBlur, disabled, placeholder, className, defaultFontFamily, variant = 'full' }: Props) {
+/**
+ * One toolbar button. Defined at module level on purpose: an inner component
+ * gets a new identity on every render, which made React unmount and remount
+ * every toolbar button of every editor on the page each time anything on the
+ * paper changed.
+ */
+function Btn({
+	on, active, disabled: d, title, children,
+}: {
+	on: () => void; active?: boolean; disabled?: boolean; title: string; children: React.ReactNode
+}) {
+	return (
+		<Button
+			type="button"
+			variant={active ? 'secondary' : 'ghost'}
+			size="icon"
+			className="h-7 w-7"
+			title={title}
+			disabled={d}
+			onMouseDown={e => e.preventDefault()}
+			onClick={on}
+		>
+			{children}
+		</Button>
+	)
+}
+
+function QuestionRichEditorImpl({ value, onChange, onBlur, disabled, placeholder, className, defaultFontFamily, variant = 'full' }: Props) {
 	const [eqOpen, setEqOpen] = useState(false)
 	const [eqInitial, setEqInitial] = useState('')
 	const compact = variant === 'compact'
+
+	// The editor is created once; its handlers read the latest callbacks here.
+	const onChangeRef = useRef(onChange)
+	onChangeRef.current = onChange
+	const onBlurRef = useRef(onBlur)
+	onBlurRef.current = onBlur
 
 	const editor = useEditor({
 		editable: !disabled,
@@ -82,9 +115,9 @@ export function QuestionRichEditor({ value, onChange, onBlur, disabled, placehol
 		},
 		onUpdate: ({ editor }) => {
 			const html = editor.getHTML()
-			onChange(EMPTY_HTML.has(html) ? '' : html)
+			onChangeRef.current(EMPTY_HTML.has(html) ? '' : html)
 		},
-		onBlur: () => onBlur?.(),
+		onBlur: () => onBlurRef.current?.(),
 	})
 
 	// Keep the editor in step with external value changes (server reloads, rebuild)
@@ -119,25 +152,6 @@ export function QuestionRichEditor({ value, onChange, onBlur, disabled, placehol
 	}
 
 	if (!editor) return null
-
-	const Btn = ({
-		on, active, disabled: d, title, children,
-	}: {
-		on: () => void; active?: boolean; disabled?: boolean; title: string; children: React.ReactNode
-	}) => (
-		<Button
-			type="button"
-			variant={active ? 'secondary' : 'ghost'}
-			size="icon"
-			className="h-7 w-7"
-			title={title}
-			disabled={d}
-			onMouseDown={e => e.preventDefault()}
-			onClick={on}
-		>
-			{children}
-		</Button>
-	)
 
 	const inTable = editor.isActive('table')
 
@@ -222,5 +236,23 @@ export function QuestionRichEditor({ value, onChange, onBlur, disabled, placehol
 		</div>
 	)
 }
+
+/**
+ * A paper carries dozens of these boxes, and every edit anywhere on it — a
+ * keystroke, a CO pick — re-renders the whole paper. Each box therefore
+ * re-renders only when what it SHOWS changes; a new identity for onChange /
+ * onBlur alone is not a reason (the handlers are read through refs, and every
+ * caller's handler is keyed by ids, never by a captured question object).
+ */
+export const QuestionRichEditor = memo(
+	QuestionRichEditorImpl,
+	(a, b) =>
+		a.value === b.value &&
+		a.disabled === b.disabled &&
+		a.placeholder === b.placeholder &&
+		a.className === b.className &&
+		a.defaultFontFamily === b.defaultFontFamily &&
+		a.variant === b.variant
+)
 
 export default QuestionRichEditor

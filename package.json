@@ -76,6 +76,7 @@
     "exceljs": "^4.4.0",
     "framer-motion": "^12.38.0",
     "google-auth-library": "^10.6.2",
+    "googleapis": "^173.0.0",
     "isomorphic-dompurify": "^3.19.0",
     "jose": "^6.2.2",
     "js-cookie": "^3.0.5",

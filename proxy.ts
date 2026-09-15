@@ -32,6 +32,11 @@ const publicApiRoutes = [
 	// SameSite=Strict session cookie (lib/qp-portal/session.ts) and authorises
 	// against the assignment + its IST window (lib/qp-portal/guard.ts).
 	'/api/examiner-portal',
+	// Question-paper figures (Google Drive upload + authenticated proxy). Shared
+	// by COE authors AND external examiners, so the middleware cannot demand COE
+	// cookies; the routes authenticate both audiences themselves
+	// (app/api/examiner/question-paper/*).
+	'/api/examiner/question-paper',
 ]
 
 export async function proxy(request: NextRequest) {

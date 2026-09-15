@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
+import { deletePaperDriveFiles } from '@/lib/ia/question-paper-files'
 import { withExternalAuth } from '@/lib/api-auth/middleware'
 import type { ExternalApiContext } from '@/types/api-management'
 import { institutionAllowed, paperIsEse, ESE_NOT_AVAILABLE } from '@/lib/ia/v1-helpers'
@@ -188,6 +189,8 @@ export const DELETE = withExternalAuth(async (request: Request, context: Externa
 		return NextResponse.json({ error: ESE_NOT_AVAILABLE }, { status: 404 })
 	}
 	if (paper.status === 'locked') return NextResponse.json({ error: 'Cannot delete a locked paper' }, { status: 400 })
+	// Drive figures + their registry rows go with the paper (best effort).
+	await deletePaperDriveFiles(id)
 	const { error } = await supabase.from('ia_question_papers').delete().eq('id', id)
 	if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 	return NextResponse.json({ success: true })

@@ -480,7 +480,7 @@ export function ClaimSection({ assignments, bank, onSubmitClaim, onDownload, loa
 	return (
 		<div className="space-y-4">
 			<div>
-				<h1 className="text-xl font-semibold">Claim Form</h1>
+				<h1 className="text-2xl font-semibold tracking-tight text-slate-900">Claim Form</h1>
 				<p className="text-sm text-muted-foreground mt-0.5">
 					Remuneration claims for the question papers you have completed.
 				</p>

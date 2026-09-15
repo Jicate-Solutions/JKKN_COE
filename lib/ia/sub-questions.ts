@@ -18,7 +18,13 @@
 
 /** Figure attached to a question / sub-division (see types/ia-question-paper.ts). */
 export interface IaQuestionImageRef {
+	/** Proxy path (/api/examiner/question-paper/file/<id>) for a Drive figure, or a legacy public URL. */
 	url: string
+	/** Google Drive file id (private file, served via the proxy). */
+	drive_file_id?: string | null
+	/** Retained Drive web-view link. */
+	drive_url?: string | null
+	/** Legacy Supabase object path; null for a Drive figure. */
 	path?: string | null
 	width_pct?: number | null
 	px_w?: number | null
@@ -45,15 +51,19 @@ export interface IaSubQuestion {
 
 /**
  * Normalize an unknown value into a figure ref (null when absent / unusable).
- * Only http(s) URLs survive — the value is written into an <img src> when the
- * PDF is built, so `javascript:` and oversized `data:` payloads are dropped here.
+ * Only http(s) URLs and the same-origin proxy path (/api/examiner/question-paper/file/…)
+ * survive — the value is written into an <img src> when the PDF is built, so
+ * `javascript:` and oversized `data:` payloads are dropped here.
  */
 export function readQuestionImage(raw: any): IaQuestionImageRef | null {
 	const url = typeof raw?.url === 'string' ? raw.url.trim() : ''
-	if (!url || !/^https?:\/\//i.test(url)) return null
+	if (!url || !/^(https?:\/\/|\/api\/examiner\/question-paper\/file\/)/i.test(url)) return null
 	const num = (v: any) => (v == null || v === '' ? null : Number(v) || null)
+	const str = (v: any) => (typeof v === 'string' && v.trim() ? v.trim().slice(0, 500) : null)
 	return {
 		url,
+		drive_file_id: str(raw?.drive_file_id),
+		drive_url: str(raw?.drive_url),
 		path: raw?.path ? String(raw.path) : null,
 		width_pct: num(raw?.width_pct),
 		px_w: num(raw?.px_w),

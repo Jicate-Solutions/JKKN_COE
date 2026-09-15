@@ -15,6 +15,7 @@
 
 import katex from 'katex'
 import { readSubQuestions, readQuestionImage } from './sub-questions'
+import { inlineDriveImages } from './question-paper-files'
 import { hasAnswerKey, hasOwnAnswerKey } from './validate-paper'
 import { paperPdfFilename } from './paper-filename'
 import { buildKatexCss } from './katex-css'
@@ -239,13 +240,20 @@ function optionLineHtml(opts: any, optionFont?: string | null): string {
 /**
  * Figure attached to a question / sub-division: printed CENTRED under that
  * question's text at the author's chosen share of the text column. The URL is
- * already restricted to http(s) by readQuestionImage.
+ * already restricted to http(s) / the proxy path by readQuestionImage.
+ *
+ * A Drive-backed figure is private, and headless Chromium has no session to
+ * call the proxy with, so loadPaperContext pre-fetches its bytes onto
+ * `inline_src` (a data: URI) — that wins over the URL when present.
  */
 function questionImageHtml(image: any): string {
 	const img = readQuestionImage(image)
 	if (!img) return ''
 	const pct = Math.min(100, Math.max(10, Number(img.width_pct) || 60))
-	const src = escapeHtml(img.url).replace(/"/g, '&quot;')
+	const inline = typeof image?.inline_src === 'string' && /^data:image\/[a-z0-9.+-]+;base64,/i.test(image.inline_src)
+		? image.inline_src
+		: null
+	const src = inline ?? escapeHtml(img.url).replace(/"/g, '&quot;')
 	return `<div class="q-img"><img src="${src}" style="width:${pct}%"/></div>`
 }
 
@@ -697,6 +705,8 @@ async function loadPaperContext(supabase: any, id: string, source: PaperSource):
 	}
 
 	const questionArr: any[] = Array.isArray(paper.questions) ? paper.questions : []
+	// Private Drive figures are fetched here and inlined — see questionImageHtml.
+	await inlineDriveImages(questionArr)
 
 	// An end-semester paper prints the examination's own heading, so the session
 	// and its exam type are needed. A row from ese_question_papers is one by

@@ -3,10 +3,13 @@
 // Per-question image attachment (diagram / figure). One image per question or
 // sub-division; it prints CENTRED under that question's text.
 //
-// Bytes are squeezed on the client (see lib/ia/question-image.ts) so the bucket
+// Bytes are squeezed on the client (see lib/ia/question-image.ts) so Drive
 // holds KB-level objects, and the control reports the stored resolution + size +
 // the effective print dpi at the chosen width so the author can see when an image
 // is too soft to print.
+//
+// Storage is Google Drive (private) via POST /api/examiner/question-paper/upload;
+// the returned `url` is the authenticated proxy the preview <img> loads.
 
 import { useEffect, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
@@ -31,35 +34,51 @@ import {
 } from '@/lib/ia/question-image'
 import type { IaQuestionImage } from '@/types/ia-question-paper'
 
+const UPLOAD_ENDPOINT = '/api/examiner/question-paper/upload'
+const FILE_ENDPOINT = '/api/examiner/question-paper/file'
+
 interface Props {
-	paperId: string
+	/** CoE author: the paper being edited. Ignored when `assignmentId` is given. */
+	paperId?: string
+	/**
+	 * Examiner portal: the examiner's assignment. The upload route derives the
+	 * paper from it and authorises with the portal session, since an external
+	 * examiner has no COE session.
+	 */
+	assignmentId?: string
 	value?: IaQuestionImage | null
 	onChange: (image: IaQuestionImage | null) => void
 	disabled?: boolean
 	/** Shown on the empty-state button — "Add image" / "Add image to i." */
 	label?: string
-	/**
-	 * Endpoint that stores the image. Defaults to the CoE route, which is behind
-	 * a COE role. The examiner portal passes its own assignment-scoped route,
-	 * since an external examiner has no COE session to authorise that one.
-	 * Both accept POST (multipart `file`) and DELETE (?path=…) and answer the
-	 * same { url, path } shape.
-	 */
-	uploadUrl?: string
 }
 
 export function QuestionImageField({
 	paperId,
+	assignmentId,
 	value,
 	onChange,
 	disabled,
 	label = 'Add image',
-	uploadUrl,
 }: Props) {
-	const endpoint = uploadUrl || `/api/pre-exam/question-papers/${paperId}/image`
 	const { toast } = useToast()
 	const inputRef = useRef<HTMLInputElement>(null)
 	const [busy, setBusy] = useState(false)
+	// The picked image, shown at once from memory while Drive takes its time.
+	// It stays until the stored copy has actually loaded, so the swap is invisible.
+	const [pending, setPending] = useState<string | null>(null)
+	const pendingUrlRef = useRef<string | null>(null)
+	const showPending = (blob: Blob) => {
+		clearPending()
+		const url = URL.createObjectURL(blob)
+		pendingUrlRef.current = url
+		setPending(url)
+	}
+	const clearPending = () => {
+		if (pendingUrlRef.current) URL.revokeObjectURL(pendingUrlRef.current)
+		pendingUrlRef.current = null
+		setPending(null)
+	}
 
 	const widthPct = value?.width_pct || DEFAULT_IMAGE_WIDTH_PCT
 	const dpi = value?.px_w ? printDpi(value.px_w, widthPct) : 0
@@ -68,17 +87,20 @@ export function QuestionImageField({
 
 	const onFile = async (file: File | undefined) => {
 		if (!file) return
-		const previousPath = value?.path || null
+		const previous = value || null
 		try {
 			setBusy(true)
 			const prepared = await prepareQuestionImage(file)
+			showPending(prepared.blob)
 
 			const form = new FormData()
 			// Re-encoded blobs lose the filename; give the upload a sane one.
 			const ext = (prepared.blob.type.split('/')[1] || 'png').replace('jpeg', 'jpg')
 			form.append('file', prepared.blob, prepared.original ? file.name : `question.${ext}`)
+			if (assignmentId) form.append('assignmentId', assignmentId)
+			else if (paperId) form.append('paperId', paperId)
 
-			const res = await fetch(endpoint, {
+			const res = await fetch(UPLOAD_ENDPOINT, {
 				method: 'POST',
 				body: form,
 			})
@@ -87,7 +109,9 @@ export function QuestionImageField({
 
 			onChange({
 				url: data.url,
-				path: data.path,
+				drive_file_id: data.driveFileId,
+				drive_url: data.driveUrl,
+				path: null,
 				width_pct: widthPct,
 				px_w: prepared.width,
 				px_h: prepared.height,
@@ -95,7 +119,7 @@ export function QuestionImageField({
 			})
 
 			// Replacing: drop the object we just orphaned (best-effort).
-			if (previousPath) void removeObject(previousPath)
+			if (previous) void removeObject(previous)
 
 			toast({
 				title: 'Image attached',
@@ -104,6 +128,7 @@ export function QuestionImageField({
 				} · Save the paper to keep it.`,
 			})
 		} catch (e: any) {
+			clearPending()
 			toast({ title: 'Image not attached', description: e?.message || 'Upload failed', variant: 'destructive' })
 		} finally {
 			setBusy(false)
@@ -111,9 +136,17 @@ export function QuestionImageField({
 		}
 	}
 
-	const removeObject = async (path: string) => {
+	/**
+	 * Delete the stored object behind a figure. Only Drive-backed figures are
+	 * removed; a legacy Supabase figure (no drive_file_id) is left in the bucket
+	 * until the one-off migration's cleanup pass, so nothing is lost if the
+	 * author's save never lands.
+	 */
+	const removeObject = async (img: IaQuestionImage) => {
+		if (!img.drive_file_id) return
 		try {
-			await fetch(`${endpoint}?path=${encodeURIComponent(path)}`, {
+			const q = assignmentId ? `?assignmentId=${encodeURIComponent(assignmentId)}` : ''
+			await fetch(`${FILE_ENDPOINT}/${encodeURIComponent(img.drive_file_id)}${q}`, {
 				method: 'DELETE',
 			})
 		} catch {
@@ -122,9 +155,9 @@ export function QuestionImageField({
 	}
 
 	const remove = async () => {
-		const path = value?.path || null
+		const previous = value || null
 		onChange(null)
-		if (path) void removeObject(path)
+		if (previous) void removeObject(previous)
 	}
 
 	/**
@@ -228,7 +261,24 @@ export function QuestionImageField({
 				onChange={e => onFile(e.target.files?.[0])}
 			/>
 
-			{!value?.url ? (
+			{pending && !value?.url ? (
+				/* Picked but not yet stored: show it now rather than a spinner. */
+				<div className="rounded-md border bg-muted/20 p-2">
+					<div className="flex justify-center">
+						{/* eslint-disable-next-line @next/next/no-img-element */}
+						<img
+							src={pending}
+							alt="Question image"
+							className="max-h-44 rounded border bg-white object-contain"
+							style={{ width: `${widthPct}%`, height: 'auto' }}
+						/>
+					</div>
+					<p className="mt-2 flex items-center gap-1.5 text-xs text-muted-foreground">
+						<Loader2 className="h-3.5 w-3.5 animate-spin" />
+						Uploading…
+					</p>
+				</div>
+			) : !value?.url ? (
 				/* Focusable so a paste lands here: onPaste only fires on the focused
 				   element or its ancestors, and a bare div is not focusable. */
 				<div
@@ -294,15 +344,28 @@ export function QuestionImageField({
 							Drop to replace this image
 						</p>
 					)}
-					{/* Preview mirrors the print: centred, at the chosen column width. */}
-					<div className="flex justify-center">
+					{/* Preview mirrors the print: centred, at the chosen column width.
+					    While a replacement is uploading, or the stored copy is still on its
+					    way from Drive, the in-memory pick is shown and the real image loads
+					    behind it; the swap happens only once it is ready. */}
+					<div className="relative flex justify-center">
 						{/* eslint-disable-next-line @next/next/no-img-element */}
 						<img
-							src={value.url}
+							src={pending || value.url}
 							alt="Question image"
 							className="max-h-44 rounded border bg-white object-contain"
 							style={{ width: `${widthPct}%`, height: 'auto' }}
 						/>
+						{pending && !busy && (
+							// eslint-disable-next-line @next/next/no-img-element
+							<img src={value.url} alt="" className="hidden" onLoad={clearPending} onError={clearPending} />
+						)}
+						{busy && (
+							<span className="absolute bottom-1 right-1 inline-flex items-center gap-1 rounded bg-white/90 px-1.5 py-0.5 text-[11px] text-muted-foreground shadow">
+								<Loader2 className="h-3 w-3 animate-spin" />
+								Uploading…
+							</span>
+						)}
 					</div>
 
 					<div className="mt-2 flex flex-wrap items-center gap-2">

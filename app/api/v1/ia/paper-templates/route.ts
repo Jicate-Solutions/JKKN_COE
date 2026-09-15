@@ -27,6 +27,7 @@ function normalizePart(part: any, index: number) {
 				: parseInt(part.option_count),
 		capture_co: part.capture_co !== undefined ? part.capture_co : true,
 		capture_klevel: part.capture_klevel !== undefined ? part.capture_klevel : true,
+		allow_split: part.allow_split !== undefined ? !!part.allow_split : true,
 		display_order: part.display_order ? parseInt(part.display_order) : index + 1,
 	}
 }
