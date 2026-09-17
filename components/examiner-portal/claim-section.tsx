@@ -8,8 +8,8 @@
 // Approval and payment are the CoE's, and there is deliberately no control here
 // that could advance a claim past 'submitted'.
 //
-// A claim opens only once the SUBMISSION is complete (check list and signature
-// included), because the claim form carries that signature.
+// A claim opens once the PAPER is handed over — before the check list, which asks
+// the examiner to confirm it. The printed form waits for the signature.
 
 import { useMemo, useState } from 'react'
 import { Button } from '@/components/ui/button'
@@ -101,7 +101,7 @@ const TONE: Record<QpClaimStatus, string> = {
 const IFSC_RE = /^[A-Z]{4}0[A-Z0-9]{6}$/
 const ACCOUNT_RE = /^\d{6,20}$/
 
-const BANK_FIELDS: {
+export const BANK_FIELDS: {
 	key: string
 	label: string
 	placeholder?: string
@@ -209,10 +209,10 @@ export function ClaimSection({ assignments, bank, onSubmitClaim, onDownload, loa
 	// an empty form is not red before anyone has typed.
 	const [touched, setTouched] = useState<Record<string, boolean>>({})
 
-	// A claim only exists once the submission is complete. Everything earlier is
-	// still question-paper work and has no place on this screen.
+	// A claim opens once the paper is handed over (it comes before the check list).
+	// While the paper is still being written there is nothing to claim.
 	const claimable = useMemo(
-		() => assignments.filter(a => a.submission_stage === 'completed'),
+		() => assignments.filter(a => a.submission_stage !== 'authoring'),
 		[assignments]
 	)
 
@@ -289,17 +289,32 @@ export function ClaimSection({ assignments, bank, onSubmitClaim, onDownload, loa
 		</div>
 	)
 
-	const downloadButton = (a: ClaimRow) => (
-		<Button
-			variant="outline"
-			size="sm"
-			onClick={() => onDownload(a.id)}
-			title="One claim form per examination session — every paper you have claimed in this session is listed on it."
-		>
-			<Download className="h-4 w-4 mr-1.5" />
-			Download claim form
-		</Button>
-	)
+	// The printed claim form carries the examiner's signature, and the claim is
+	// now submitted BEFORE the check list and signature. So the download waits
+	// for the submission to be completed — an unsigned form must never print.
+	const downloadButton = (a: ClaimRow) => {
+		const signed = a.submission_stage === 'completed'
+		return (
+			<span className="inline-flex flex-col gap-1">
+				<Button
+					variant="outline"
+					size="sm"
+					onClick={() => onDownload(a.id)}
+					disabled={!signed}
+					title="One claim form per examination session — every paper you have claimed in this session is listed on it."
+				>
+					<Download className="h-4 w-4 mr-1.5" />
+					Download claim form
+				</Button>
+				{!signed && (
+					<span className="text-xs text-rose-700 flex items-center gap-1">
+						<Lock className="h-3 w-3" />
+						Available after you finish the check list and sign
+					</span>
+				)}
+			</span>
+		)
+	}
 
 	const renderCard = (a: ClaimRow) => {
 		const status = (a.claim_status || 'pending') as QpClaimStatus

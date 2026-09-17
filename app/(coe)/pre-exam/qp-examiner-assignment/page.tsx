@@ -24,12 +24,14 @@ import { useToast } from '@/hooks/common/use-toast'
 import { useInstitutionFilter } from '@/hooks/use-institution-filter'
 import {
 	FileText, UserCheck, Clock, CheckCircle2, AlertTriangle, Building2, Loader2,
-	UserPlus, ClipboardList, Palette, Mail,
+	UserPlus, ClipboardList, Palette, Mail, IndianRupee, FileDown,
 } from 'lucide-react'
 import { GenerateTab } from './generate-tab'
 import { AssignTab } from './assign-tab'
 import { AssignmentsTab } from './assignments-tab'
 import { EmailTab } from './email-tab'
+import { PapersTab } from './papers-tab'
+import { ClaimsTab } from './claims-tab'
 import { ContentTab } from './content-tab'
 import { apiFetch, SearchableSelect, type InstitutionOpt, type SessionOpt, type AssignmentRow } from './shared'
 
@@ -310,6 +312,20 @@ export default function QpExaminerAssignmentPage() {
 									<Mail className="h-3.5 w-3.5" />
 									E-mail Orders
 								</TabsTrigger>
+								<TabsTrigger
+									value="papers"
+									className="gap-1.5 px-3.5 py-1.5 text-slate-600 data-[state=active]:bg-teal-600 data-[state=active]:text-white data-[state=active]:shadow-md hover:text-teal-700"
+								>
+									<FileDown className="h-3.5 w-3.5" />
+									Question Papers
+								</TabsTrigger>
+								<TabsTrigger
+									value="claims"
+									className="gap-1.5 px-3.5 py-1.5 text-slate-600 data-[state=active]:bg-rose-600 data-[state=active]:text-white data-[state=active]:shadow-md hover:text-rose-700"
+								>
+									<IndianRupee className="h-3.5 w-3.5" />
+									Claims
+								</TabsTrigger>
 							</TabsList>
 
 							<TabsContent value="generate" className="pt-4">
@@ -345,6 +361,14 @@ export default function QpExaminerAssignmentPage() {
 
 							<TabsContent value="email" className="pt-4">
 								<EmailTab institutionsId={effectiveInstitutionId} session={session} />
+							</TabsContent>
+
+							<TabsContent value="papers" className="pt-4">
+								<PapersTab institutionsId={effectiveInstitutionId} session={session} refreshKey={refreshKey} />
+							</TabsContent>
+
+							<TabsContent value="claims" className="pt-4">
+								<ClaimsTab institutionsId={effectiveInstitutionId} session={session} refreshKey={refreshKey} />
 							</TabsContent>
 						</Tabs>
 					)}

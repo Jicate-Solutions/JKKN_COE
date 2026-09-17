@@ -1,6 +1,8 @@
 'use client'
 
-// The post-submit walk: Check List → Signature → Final Submit → Confirmation.
+// The post-submit walk: Claim Form → Check List → Signature → Final Submit.
+// The claim form comes first because the check list asks the examiner to
+// confirm it; an examiner whose claim is already in skips straight to the list.
 //
 // The examiner never has to find the next page. Submitting the paper opens this
 // at the check list; finishing the check list moves straight to the signature;
@@ -8,7 +10,7 @@
 // stage lives in the database, so re-opening the assignment resumes here at the
 // same step.
 //
-// The overall journey (paper → submit → check list → sign → done) is drawn by
+// The overall journey (paper → submit → claim form → check list → sign → done) is drawn by
 // the sticky tracker at the top of the page, so this component shows only the
 // step in hand, with every gated button explaining why it is disabled.
 //
@@ -20,15 +22,18 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Checkbox } from '@/components/ui/checkbox'
 import {
-	Loader2, ListChecks, PenLine, CheckCircle2, ShieldCheck, ArrowRight, Lock, AlertTriangle, Send,
+	Loader2, ListChecks, PenLine, CheckCircle2, ShieldCheck, ArrowRight, Lock, AlertTriangle, Send, Receipt,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { formatIst } from '@/lib/qp-portal/ist'
 import { readChecklistAnswers, type QpSubmissionStage } from '@/types/qp-examiner-assignment'
 import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 import { SignaturePad } from './signature-pad'
 import { TONE } from './tones'
 import { DisabledReason } from './paper-step-tracker'
+import { BANK_FIELDS } from './claim-section'
+import { formatRupees } from '@/lib/qp-portal/fees'
 
 interface Clause {
 	id: string
@@ -54,8 +59,11 @@ interface Props {
 	 * them: they are shown inline under that item.
 	 */
 	bank?: Record<string, string | null | undefined> | null
-	/** Take the examiner to the Profile page to correct the bank details. */
-	onEditProfile?: () => void
+	/**
+	 * Submits the claim form for this assignment. The claim comes BEFORE the
+	 * check list, because the check list asks the examiner to confirm it.
+	 */
+	onSubmitClaim?: (bank: Record<string, string>) => Promise<void>
 	/** POSTs one wizard step; resolves with the server's reply. */
 	onStep: (body: Record<string, unknown>) => Promise<any>
 	/** Re-read the assignment after a step lands. */
@@ -116,12 +124,35 @@ export function SubmissionWizard({
 	content,
 	savedSignatureUrl,
 	bank,
-	onEditProfile,
+	onSubmitClaim,
 	onStep,
 	onAdvanced,
 }: Props) {
-	const bankComplete = BANK_LABELS.every(f => String(bank?.[f.key] || '').trim() !== '')
-	const bankEmpty = BANK_LABELS.every(f => String(bank?.[f.key] || '').trim() === '')
+	// ── The claim form (the step before the check list) ───────────────────
+	const claimPending = (assignment?.claim_status || 'pending') === 'pending'
+	/** The account the claim was submitted with — what the check list item is about. */
+	const claimBank: Record<string, string | null | undefined> = {
+		account_holder: assignment?.claim_account_holder,
+		bank_name: assignment?.claim_bank_name,
+		branch: assignment?.claim_branch,
+		account_number: assignment?.claim_account_number,
+		ifsc: assignment?.claim_ifsc,
+	}
+	const [claimForm, setClaimForm] = useState<Record<string, string>>(() =>
+		Object.fromEntries(BANK_FIELDS.map(f => [f.key, String(bank?.[f.key] || '')]))
+	)
+	const [claimTouched, setClaimTouched] = useState<Record<string, boolean>>({})
+	// The profile loads a moment after the page: fill the blanks when it lands,
+	// never over something the examiner has already typed.
+	useEffect(() => {
+		if (!bank) return
+		setClaimForm(prev => Object.fromEntries(BANK_FIELDS.map(f => [f.key, prev[f.key] || String(bank[f.key] || '')])))
+	}, [bank])
+	const claimErrors = useMemo(
+		() => Object.fromEntries(BANK_FIELDS.map(f => [f.key, f.validate(String(claimForm[f.key] || ''))])),
+		[claimForm]
+	)
+	const claimComplete = BANK_FIELDS.every(f => !claimErrors[f.key])
 	const clauses: Clause[] = useMemo(() => content?.checklist?.body || [], [content])
 	const declarationClauses: Clause[] = useMemo(() => content?.declaration?.body || [], [content])
 
@@ -171,6 +202,24 @@ export function SubmissionWizard({
 			const ids = e?.body?.unanswered
 			if (Array.isArray(ids)) setFlagged(ids.map(String))
 		} finally {
+			setBusy(false)
+		}
+	}
+
+	// Signing and completing are two records on the server (the signature, then
+	// the hand-over), but ONE decision for the examiner — so one button does
+	// both. If the second call fails the signature is already saved: the page
+	// reloads into the "Signed" state, where Complete submission finishes it.
+	const signAndComplete = async () => {
+		setBusy(true)
+		setError(null)
+		try {
+			await onStep({ step: 'signature', signature, declaration_accepted: declarationAccepted })
+			await onStep({ step: 'final' })
+		} catch (e: any) {
+			setError(e?.message || 'That step could not be completed. Please try again.')
+		} finally {
+			await onAdvanced()
 			setBusy(false)
 		}
 	}
@@ -237,14 +286,131 @@ export function SubmissionWizard({
 		)
 	}
 
-	// ── Step 1: check list ────────────────────────────────────────────────
+	// ── Step 1: the claim form ────────────────────────────────────────────
+	// Shown until the claim is in. An examiner whose claim was already submitted
+	// (an earlier submission, a resubmission after a return) never sees it and
+	// goes straight to the check list.
+	if (stage === 'checklist' && claimPending && onSubmitClaim) {
+		const missing = BANK_FIELDS.filter(f => claimErrors[f.key]).length
+		const amount = assignment?.claim_amount ?? assignment?.remuneration
+		return (
+			<Card className={cn('border-2', TONE.info.frame)}>
+				<CardContent className="p-5 space-y-4">
+					<StepHeading
+						n={1}
+						icon={Receipt}
+						title="Claim Form"
+						subtitle="Your question paper has been received. Enter the bank account your remuneration should be paid to, then continue to the check list."
+					/>
+
+					<div className="rounded-md border bg-slate-50 px-3.5 py-2.5 flex flex-wrap items-center justify-between gap-2 text-sm">
+						<span className="text-muted-foreground">
+							{assignment?.course_code} — {assignment?.subject_title}
+						</span>
+						{amount != null && (
+							<span>
+								<span className="text-muted-foreground mr-1.5">Claim</span>
+								<span className="font-semibold text-emerald-700">{formatRupees(Number(amount))}</span>
+							</span>
+						)}
+					</div>
+
+					<div>
+						<p className="text-xs text-muted-foreground mb-2">
+							All fields are mandatory. <span className="text-rose-600">*</span>
+						</p>
+						<div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+							{BANK_FIELDS.map(f => {
+								const message = claimTouched[f.key] ? claimErrors[f.key] : null
+								return (
+									<div key={f.key} className={f.key === 'account_holder' ? 'sm:col-span-2' : ''}>
+										<Label htmlFor={`wiz-claim-${f.key}`} className={cn('text-xs', message && 'text-rose-700')}>
+											{f.label} <span className="text-rose-600">*</span>
+										</Label>
+										<Input
+											id={`wiz-claim-${f.key}`}
+											value={claimForm[f.key] || ''}
+											placeholder={f.placeholder}
+											required
+											aria-required
+											aria-invalid={!!message}
+											inputMode={f.key === 'account_number' ? 'numeric' : undefined}
+											autoCapitalize={f.key === 'ifsc' ? 'characters' : undefined}
+											maxLength={f.key === 'ifsc' ? 11 : f.key === 'account_number' ? 20 : 200}
+											disabled={busy}
+											onChange={e =>
+												setClaimForm(p => ({
+													...p,
+													[f.key]: f.key === 'ifsc' ? e.target.value.toUpperCase() : e.target.value,
+												}))
+											}
+											onBlur={() => setClaimTouched(p => ({ ...p, [f.key]: true }))}
+											className={cn('mt-1', message && 'border-rose-400 bg-rose-50/40 focus-visible:ring-rose-400')}
+										/>
+										{message ? (
+											<p className="text-[11px] text-rose-700 mt-1 flex items-start gap-1" role="alert">
+												<AlertTriangle className="h-3 w-3 shrink-0 mt-px" />
+												{message}
+											</p>
+										) : (
+											f.hint && <p className="text-[11px] text-muted-foreground mt-1">{f.hint}</p>
+										)}
+									</div>
+								)
+							})}
+						</div>
+					</div>
+
+					<p className="text-xs rounded-md border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-amber-800">
+						<span className="font-semibold text-rose-700">Check every digit — the claim is paid to this account.</span>{' '}
+						Once submitted, only the Office of the Controller of Examinations can reopen it.
+					</p>
+
+					{errorBanner}
+
+					<div className="flex flex-col items-end gap-1">
+						<Button
+							disabled={busy}
+							onClick={async () => {
+								setClaimTouched(Object.fromEntries(BANK_FIELDS.map(f => [f.key, true])))
+								if (!claimComplete) return
+								setBusy(true)
+								setError(null)
+								try {
+									await onSubmitClaim({
+										...claimForm,
+										account_number: String(claimForm.account_number || '').replace(/\s+/g, ''),
+										ifsc: String(claimForm.ifsc || '').trim().toUpperCase(),
+									})
+									await onAdvanced()
+								} catch (e: any) {
+									setError(e?.message || 'The claim could not be submitted. Please try again.')
+								} finally {
+									setBusy(false)
+								}
+							}}
+						>
+							{busy && <Loader2 className="h-4 w-4 mr-1.5 animate-spin" />}
+							Submit claim and continue
+							<ArrowRight className="h-4 w-4 ml-1.5" />
+						</Button>
+						{!claimComplete && Object.keys(claimTouched).length > 0 && (
+							<DisabledReason reason={`${missing} field${missing === 1 ? '' : 's'} still to correct`} />
+						)}
+					</div>
+				</CardContent>
+			</Card>
+		)
+	}
+
+	// ── Step 2: check list ────────────────────────────────────────────────
 	if (stage === 'checklist') {
 		const remaining = clauses.length - answeredCount
 		return (
 			<Card className={cn('border-2', TONE.info.frame)}>
 				<CardContent className="p-5 space-y-4">
 					<StepHeading
-						n={1}
+						n={2}
 						icon={ListChecks}
 						title={content?.checklist?.title || 'Question Paper Check List'}
 						subtitle="Your question paper has been received. Answer YES or NO to every item to continue."
@@ -313,44 +479,22 @@ export function SubmissionWizard({
 												})}
 											</div>
 										</div>
-										{/* A bank-details item is asked before the claim exists. The claim
-										    form will be pre-filled from the profile, so THOSE details are
-										    what the examiner is confirming — shown here so the answer is
-										    an informed one, with a way to correct them first. */}
-										{isBankClause(c) && (
-											<div className={cn('ml-5 rounded-md border p-2.5 text-xs space-y-1.5', bankComplete ? TONE.info.card : TONE.warning.card)}>
-												<p className={cn('font-semibold', bankComplete ? TONE.info.heading : TONE.warning.heading)}>
-													{bankEmpty
-														? 'No bank details on your profile yet'
-														: bankComplete
-															? 'These bank details will be pre-filled on your claim form'
-															: 'Your profile bank details are incomplete'}
-												</p>
-												{!bankEmpty && (
-													<dl className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-1">
-														{BANK_LABELS.map(f => {
-															const v = String(bank?.[f.key] || '').trim()
-															return (
-																<div key={f.key}>
-																	<dt className="text-muted-foreground">{f.label}</dt>
-																	<dd className={cn('font-medium', !v && 'text-rose-700')}>
-																		{f.key === 'account_number' ? maskAccount(v) : v || 'Missing'}
-																	</dd>
-																</div>
-															)
-														})}
-													</dl>
-												)}
-												<p className={cn(bankComplete ? TONE.info.text : TONE.warning.text)}>
-													The claim form opens after this submission and is filled from these details; you can still edit
-													them on the form before you submit the claim.
-													{!bankComplete && ' Add the missing details in Profile now, or answer NO and complete them on the claim form.'}
-												</p>
-												{onEditProfile && (
-													<Button variant="outline" size="sm" className="h-7 text-xs" onClick={onEditProfile} disabled={busy}>
-														{bankEmpty ? 'Add bank details in Profile' : 'Correct in Profile'}
-													</Button>
-												)}
+										{/* The claim form was submitted in the step before, so this item
+										    is answered against the claim itself — shown for reference. */}
+										{isBankClause(c) && String(claimBank.account_number || '').trim() !== '' && (
+											<div className={cn('ml-5 rounded-md border p-2.5 text-xs space-y-1.5', TONE.info.card)}>
+												<p className={cn('font-semibold', TONE.info.heading)}>The bank details on your claim form</p>
+												<dl className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-1">
+													{BANK_LABELS.map(f => {
+														const v = String(claimBank[f.key] || '').trim()
+														return (
+															<div key={f.key}>
+																<dt className="text-muted-foreground">{f.label}</dt>
+																<dd className="font-medium">{f.key === 'account_number' ? maskAccount(v) : v || '—'}</dd>
+															</div>
+														)
+													})}
+												</dl>
 											</div>
 										)}
 										{needsDetail && (
@@ -407,17 +551,39 @@ export function SubmissionWizard({
 	}
 
 	// ── Step 2: declaration + signature ───────────────────────────────────
-	const signReason = !declarationAccepted
-		? 'Tick the declaration first'
-		: !signature
-			? 'Sign in the box (or use your saved signature)'
+	// The last confirmation — the facts that matter are in red so they cannot
+	// be missed. Shown before the one button that signs and completes.
+	const finalNotice = (
+		<div className={cn('rounded-md border-2 p-4 text-sm space-y-2', TONE.danger.frame, 'bg-rose-50/40')}>
+			<p className="font-semibold flex items-center gap-1.5 text-slate-900">
+				<AlertTriangle className="h-4 w-4 text-rose-600" />
+				Please read before you complete the submission
+			</p>
+			<ul className="list-disc pl-5 space-y-1 text-slate-700">
+				<li>
+					<span className="font-semibold text-rose-700">This is final.</span> Once completed, the question
+					paper <span className="font-semibold text-rose-700">cannot be viewed, changed, downloaded or printed</span> by you.
+				</li>
+				<li>
+					The paper, your claim form, your check list and your signature go to the Office of the Controller of
+					Examinations as one record.
+				</li>
+				<li>Your signed claim form can be downloaded right after.</li>
+			</ul>
+		</div>
+	)
+
+	const signReason = !signature
+		? 'Sign in the box (or use your saved signature)'
+		: !declarationAccepted
+			? 'Tick the box under your signature to accept the declaration'
 			: null
 
 	return (
 		<Card className={cn('border-2', TONE.info.frame)}>
 			<CardContent className="p-5 space-y-4">
 				<StepHeading
-					n={2}
+					n={3}
 					icon={PenLine}
 					title="Declaration & Signature"
 					subtitle={`${assignment?.course_code} — ${assignment?.subject_title}`}
@@ -449,41 +615,9 @@ export function SubmissionWizard({
 							Signed on {formatIst(assignment.signed_at)}.
 						</div>
 
-						{/* The last confirmation — the facts that matter are in red so they
-						    cannot be missed. */}
-						<div className={cn('rounded-md border-2 p-4 text-sm space-y-2', TONE.danger.frame, 'bg-rose-50/40')}>
-							<p className="font-semibold flex items-center gap-1.5 text-slate-900">
-								<AlertTriangle className="h-4 w-4 text-rose-600" />
-								Please read before you complete the submission
-							</p>
-							<ul className="list-disc pl-5 space-y-1 text-slate-700">
-								<li>
-									<span className="font-semibold text-rose-700">This is final.</span> Once completed, the question
-									paper <span className="font-semibold text-rose-700">cannot be viewed, changed, downloaded or printed</span> by you.
-								</li>
-								<li>
-									The paper, your check list and your signature go to the Office of the Controller of
-									Examinations as one record.
-								</li>
-								<li>Your claim form becomes available right after.</li>
-							</ul>
-						</div>
 					</>
 				) : (
 					<>
-						<label className="flex items-start gap-2.5 cursor-pointer">
-							<Checkbox
-								checked={declarationAccepted}
-								onCheckedChange={v => setDeclarationAccepted(v === true)}
-								disabled={busy}
-								className="mt-0.5"
-							/>
-							<span className="text-sm">
-								I accept the declaration above. My signature below confirms it.{' '}
-								<span className="text-rose-600 font-semibold">*</span>
-							</span>
-						</label>
-
 						<div>
 							<p className="text-xs text-muted-foreground mb-1">
 								Signature <span className="text-rose-600 font-semibold">*</span>
@@ -494,22 +628,32 @@ export function SubmissionWizard({
 								disabled={busy}
 							/>
 						</div>
+
+						<label className="flex items-start gap-2.5 cursor-pointer">
+							<Checkbox
+								checked={declarationAccepted}
+								onCheckedChange={v => setDeclarationAccepted(v === true)}
+								disabled={busy}
+								className="mt-0.5"
+							/>
+							<span className="text-sm">
+								I accept the declaration above. My signature above confirms it.{' '}
+								<span className="text-rose-600 font-semibold">*</span>
+							</span>
+						</label>
 					</>
 				)}
+
+				{finalNotice}
 
 				{errorBanner}
 
 				<div className="flex flex-wrap justify-end gap-2">
 					{!alreadySigned ? (
 						<div className="flex flex-col items-end gap-1">
-							<Button
-								onClick={() =>
-									run({ step: 'signature', signature, declaration_accepted: declarationAccepted })
-								}
-								disabled={busy || !!signReason}
-							>
-								{busy && <Loader2 className="h-4 w-4 mr-1.5 animate-spin" />}
-								Save signature
+							<Button onClick={signAndComplete} disabled={busy || !!signReason} className="bg-rose-600 hover:bg-rose-700">
+								{busy ? <Loader2 className="h-4 w-4 mr-1.5 animate-spin" /> : <Send className="h-4 w-4 mr-1.5" />}
+								Sign and complete submission
 							</Button>
 							<DisabledReason reason={signReason} />
 						</div>

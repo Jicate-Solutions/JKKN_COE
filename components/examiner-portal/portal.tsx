@@ -156,8 +156,8 @@ function byValidToDesc(x: { valid_to: string; id: string }, y: { valid_to: strin
 /** The claim column on a card: label + tone, from the submission stage and claim status. */
 function claimCell(a: AssignmentSummary): { label: string; tone: Tone; hint?: string } {
 	if (a.status === 'cancelled') return { label: 'No claim', tone: 'locked' }
-	if (a.submission_stage !== 'completed') {
-		return { label: 'Not yet available', tone: 'locked', hint: 'Opens after the submission is complete' }
+	if (a.submission_stage === 'authoring') {
+		return { label: 'Not yet available', tone: 'locked', hint: 'Opens after you submit the paper' }
 	}
 	const claim = (a.claim_status || 'pending') as QpClaimStatus
 	if (claim === 'paid') return { label: 'Payment completed', tone: 'success' }
@@ -223,7 +223,7 @@ function contextLine(a: {
 function overallStatus(a: AssignmentSummary): { label: string; tone: Tone } {
 	if (a.status === 'cancelled') return { label: 'Cancelled', tone: 'locked' }
 	if (a.status === 'returned') return { label: 'Returned for revision', tone: 'returned' }
-	if (a.submission_stage === 'checklist') return { label: 'Check list pending', tone: 'info' }
+	if (a.submission_stage === 'checklist') return (a.claim_status || 'pending') === 'pending' ? { label: 'Claim form pending', tone: 'info' } : { label: 'Check list pending', tone: 'info' }
 	if (a.submission_stage === 'signature') return { label: 'Signature pending', tone: 'info' }
 	if (a.submission_stage === 'completed') {
 		const claim = (a.claim_status || 'pending') as QpClaimStatus
@@ -244,7 +244,7 @@ function nextStepFor(a: AssignmentSummary): { text: string; tone: Tone } {
 	if (a.status === 'cancelled') return { text: 'Cancelled by the CoE — nothing to do.', tone: 'locked' }
 	const stage = a.submission_stage
 	if (a.status === 'returned') return { text: 'Fix the points raised by the CoE and resubmit.', tone: 'returned' }
-	if (stage === 'checklist') return { text: 'Answer the check list.', tone: 'info' }
+	if (stage === 'checklist') return (a.claim_status || 'pending') === 'pending' ? { text: 'Fill in your claim form, then the check list.', tone: 'info' } : { text: 'Answer the check list.', tone: 'info' }
 	if (stage === 'signature') return { text: 'Accept the declaration and sign.', tone: 'info' }
 	if (stage === 'completed') {
 		const claim = (a.claim_status || 'pending') as QpClaimStatus
@@ -841,7 +841,7 @@ export function ExaminerPortal({ examiner, onSignedOut }: Props) {
 						a.status === 'cancelled'
 							? 'View details'
 							: stage === 'checklist'
-								? 'Complete check list'
+								? (a.claim_status || 'pending') === 'pending' ? 'Fill claim form' : 'Complete check list'
 								: stage === 'signature'
 									? 'Add signature'
 									: stage === 'completed'
@@ -1160,10 +1160,18 @@ export function ExaminerPortal({ examiner, onSignedOut }: Props) {
 			label: 'Submit',
 			state: handedOver ? 'done' : paperState === 'done' ? 'current' : paperState === 'blocked' ? 'blocked' : 'todo',
 		})
+		// The claim form sits between Submit and the check list: the check list
+		// asks the examiner to confirm it, so it has to exist first.
+		const claimIn = (a.claim_status || 'pending') !== 'pending'
+		steps.push({
+			key: 'claim',
+			label: 'Claim form',
+			state: claimIn ? 'done' : handedOver ? 'current' : 'todo',
+		})
 		steps.push({
 			key: 'checklist',
 			label: 'Check list',
-			state: stage === 'signature' || stage === 'completed' ? 'done' : stage === 'checklist' ? 'current' : 'todo',
+			state: stage === 'signature' || stage === 'completed' ? 'done' : stage === 'checklist' && claimIn ? 'current' : 'todo',
 		})
 		steps.push({
 			key: 'sign',
@@ -1201,11 +1209,18 @@ export function ExaminerPortal({ examiner, onSignedOut }: Props) {
 										? 'Your claim is approved and payment is being processed.'
 										: 'Payment has been completed. Thank you.',
 						}
+		} else if (stage === 'checklist' && claim === 'pending') {
+			instruction = {
+				tone: 'info',
+				title: 'Paper received. Now fill in your claim form.',
+				detail: 'Enter the bank account your remuneration should be paid to. The check list and your signature follow.',
+				action: { label: 'Go to claim form', onClick: () => scrollTo(wizardRef) },
+			}
 		} else if (stage === 'checklist') {
 			instruction = {
 				tone: 'info',
-				title: 'Paper received. Now answer the check list.',
-				detail: 'Answer YES or NO to every item, then continue to the signature. The paper stays visible below for reference.',
+				title: 'Claim form received. Now answer the check list.',
+				detail: 'Answer YES or NO to every item, then continue to the signature.',
 				action: { label: 'Go to check list', onClick: () => scrollTo(wizardRef) },
 			}
 		} else if (stage === 'signature') {
@@ -1214,7 +1229,7 @@ export function ExaminerPortal({ examiner, onSignedOut }: Props) {
 				title: a.signed_at ? 'Signed. Complete the submission to finish.' : 'Almost done — accept the declaration and sign.',
 				detail: a.signed_at
 					? 'Read the red notice, then press Complete submission.'
-					: 'Tick the declaration, sign in the box, then press Save signature.',
+					: 'Sign in the box, tick the declaration under it, then press Sign and complete submission.',
 				action: { label: a.signed_at ? 'Go to final step' : 'Go to signature', onClick: () => scrollTo(wizardRef) },
 			}
 		} else if (state === 'pending') {
@@ -1503,7 +1518,7 @@ export function ExaminerPortal({ examiner, onSignedOut }: Props) {
 						content={content}
 						savedSignatureUrl={profile?.signature_url || null}
 						bank={profile?.bank || null}
-						onEditProfile={() => setSection('profile')}
+						onSubmitClaim={bank => submitClaim(a.id, bank)}
 						onStep={runWizardStep}
 						onAdvanced={reloadDetail}
 					/>
@@ -1546,6 +1561,15 @@ export function ExaminerPortal({ examiner, onSignedOut }: Props) {
 						</p>
 					</CardContent>
 				</Card>
+			) : stage === 'checklist' || stage === 'signature' ? (
+				// Once submitted, the questions are not shown back — not even as a preview.
+				<div className={cn('rounded-md border px-3.5 py-2.5 text-sm flex items-center gap-2', TONE.locked.card, TONE.locked.text)}>
+					<Lock className={cn('h-4 w-4 shrink-0', TONE.locked.icon)} />
+					<span>
+						<span className="font-semibold">Question paper submitted.</span> For confidentiality it is no longer shown. Finish the steps above to
+						complete your submission.
+					</span>
+				</div>
 			) : !released ? (
 				<Card className={cn('border-2', stage === 'completed' || state === 'pending' ? TONE.locked.frame : TONE.danger.frame)}>
 					<CardContent className="p-8 text-center space-y-2">

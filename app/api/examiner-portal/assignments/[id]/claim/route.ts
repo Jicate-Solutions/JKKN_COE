@@ -41,11 +41,16 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 		const supabase = getSupabaseServer()
 		const { assignment, stage } = auth.access
 
-		if (stage !== 'completed') {
+		// ORDER (Sept 2026): paper handed over → CLAIM FORM → check list →
+		// signature → completed. The check list asks the examiner to confirm the
+		// bank details on the claim form, so the claim has to exist before it. The
+		// claim therefore opens as soon as the paper is in, not at completion. The
+		// printed claim form still carries the signature: the portal offers the
+		// download only once the submission is completed.
+		if (stage === 'authoring') {
 			return NextResponse.json(
 				{
-					error:
-						'Your claim opens once the question paper submission is complete — finish the check list and signature first.',
+					error: 'Your claim form opens once the question paper has been submitted.',
 					submission_stage: stage,
 				},
 				{ status: 400 }

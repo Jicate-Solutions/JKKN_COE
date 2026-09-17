@@ -114,14 +114,14 @@ export const QP_SUBMISSION_STAGE_LABELS: Record<QpSubmissionStage, string> = {
 export const QP_SUBMISSION_STAGES: QpSubmissionStage[] = ['authoring', 'checklist', 'signature', 'completed']
 
 /**
- * Stages in which question content may still be shown back to the examiner.
+ * Stages in which question content may be shown to the examiner.
  *
- * The check list asks them to confirm things like "marks distribution is
- * correct", which they cannot honestly attest to with the paper hidden — so the
- * content stays visible, PREVIEW ONLY, until the submission is completed. It is
- * never downloadable or printable at any stage.
+ * Only while they are still writing it. Once the paper is submitted the content
+ * is closed to the examiner at once — the claim form, check list and signature
+ * that follow do not show it back (CoE decision, Sept 2026). It is never
+ * downloadable or printable at any stage.
  */
-export const QP_PREVIEW_STAGES: QpSubmissionStage[] = ['authoring', 'checklist', 'signature']
+export const QP_PREVIEW_STAGES: QpSubmissionStage[] = ['authoring']
 
 // ============================================================================
 // CLAIM
@@ -539,6 +539,7 @@ export type QpLogAction =
 	| 'paper_pdf_download'
 	| 'order_download'
 	| 'claim_download'
+	| 'claim_report_download'
 	| 'claim_submit'
 	| 'checklist_save'
 	| 'checklist_complete'
@@ -586,6 +587,7 @@ export const QP_LOG_ACTION_LABELS: Record<string, string> = {
 	syllabus_view: 'Opened the syllabus',
 	order_download: 'Downloaded examiner order',
 	claim_download: 'Downloaded claim form',
+	claim_report_download: 'Downloaded examiner claim report',
 	claim_submit: 'Submitted claim form',
 	checklist_save: 'Saved check list',
 	declaration_accept: 'Accepted declaration',

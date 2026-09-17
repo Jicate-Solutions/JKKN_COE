@@ -98,6 +98,18 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 	try {
 		// ── Step 1: the check list ──────────────────────────────────────────
 		if (step === 'checklist') {
+			// The claim form comes BEFORE the check list: one of its items asks the
+			// examiner to confirm the bank details on the claim form, which cannot
+			// be answered while no claim exists. An examiner whose claim is already
+			// in (an earlier submission, a resubmission after a return) goes
+			// straight on.
+			if ((assignment.claim_status || 'pending') === 'pending') {
+				return NextResponse.json(
+					{ error: 'Fill in and submit your claim form first — it comes before the check list.', needs_claim: true },
+					{ status: 409 }
+				)
+			}
+
 			const answers = (body.checklist || {}) as Record<string, unknown>
 
 			// Completeness is judged against the CoE's OWN clause list, not against

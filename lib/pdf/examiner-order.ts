@@ -891,6 +891,141 @@ export async function generateClaimFormPdf(data: ClaimFormData): Promise<Buffer>
 	return renderPdf(buildClaimFormHtml(data, assets), data.pdf_settings)
 }
 
+// ── Consolidated claim report ───────────────────────────────────────────────
+
+export interface ClaimReportExaminer {
+	full_name: string
+	designation?: string | null
+	department?: string | null
+	institution_name?: string | null
+	email?: string | null
+	mobile?: string | null
+	bank?: {
+		account_holder?: string | null
+		bank_name?: string | null
+		account_number?: string | null
+		branch?: string | null
+		ifsc?: string | null
+	} | null
+	/** Claimed papers only. */
+	papers: { course_code: string; title: string; qp_amount: number; ak_amount: number }[]
+}
+
+export interface ClaimReportData {
+	institution: { name: string; institution_code: string }
+	session_name: string
+	examiners: ClaimReportExaminer[]
+}
+
+/**
+ * Every examiner's claim for the session on one statement: who, the account to
+ * pay, the papers claimed with the question paper / answer key split, and the
+ * total per examiner. Landscape, on the college letterhead, the examination
+ * session under it.
+ */
+export function buildClaimReportHtml(data: ClaimReportData, letterheadLogoBase64: string | null): string {
+	const money = (n: number) => (n ? Number(n).toLocaleString('en-IN') : '0')
+	const lines = (parts: (string | null | undefined)[]) =>
+		parts.filter(p => p && String(p).trim()).map(p => `<div>${escapeHtml(p)}</div>`).join('')
+
+	const boxed = boxedLetterheadHtml(data.institution.institution_code, letterheadLogoBase64)
+	const header = boxed || `<div class="plain-name">${escapeHtml(data.institution.name.toUpperCase())}</div>`
+
+	let grandQp = 0
+	let grandAk = 0
+	const body = data.examiners
+		.map((e, i) => {
+			const span = Math.max(e.papers.length, 1)
+			const total = e.papers.reduce((t, p) => t + p.qp_amount + p.ak_amount, 0)
+			grandQp += e.papers.reduce((t, p) => t + p.qp_amount, 0)
+			grandAk += e.papers.reduce((t, p) => t + p.ak_amount, 0)
+			const particulars = `<div class="nm">${escapeHtml(e.full_name)}</div>${lines([
+				[e.designation, e.department].filter(Boolean).join(', '), e.institution_name, e.email, e.mobile,
+			])}`
+			const bank = e.bank
+				? lines([
+						e.bank.account_holder,
+						e.bank.bank_name,
+						e.bank.account_number ? `A/c ${e.bank.account_number}` : null,
+						e.bank.branch,
+						e.bank.ifsc ? `IFSC ${e.bank.ifsc}` : null,
+					])
+				: '—'
+			const papers = e.papers.length ? e.papers : [{ course_code: '—', title: '—', qp_amount: 0, ak_amount: 0 }]
+			return `<tbody class="grp">${papers
+				.map(
+					(p, j) => `<tr>
+				${j === 0 ? `<td class="c" rowspan="${span}">${i + 1}</td><td rowspan="${span}">${particulars}</td><td rowspan="${span}">${bank}</td>` : ''}
+				<td class="c nw">${escapeHtml(p.course_code)}</td>
+				<td>${escapeHtml(p.title)}</td>
+				<td class="r">${money(p.qp_amount)}</td>
+				<td class="r">${money(p.ak_amount)}</td>
+				${j === 0 ? `<td class="r b" rowspan="${span}">${money(total)}</td>` : ''}
+			</tr>`
+				)
+				.join('')}</tbody>`
+		})
+		.join('')
+
+	return `<!DOCTYPE html>
+<html><head><meta charset="utf-8" />
+<style>
+	* { box-sizing: border-box; }
+	body { font-family: 'Times New Roman', Times, serif; font-size: 10pt; color: #000; margin: 0; }
+	${LETTERHEAD_CSS}
+	.lh { border-bottom: 1pt solid #000; padding-bottom: 2mm; }
+	.plain-name { text-align: center; font-weight: bold; font-size: 14pt; border-bottom: 1pt solid #000; padding-bottom: 2mm; }
+	.office { text-align: center; font-weight: bold; font-size: 11pt; margin-top: 2.5mm; }
+	.session { text-align: center; font-weight: bold; font-size: 11pt; margin-top: 1mm; }
+	.title { text-align: center; font-weight: bold; font-size: 11.5pt; margin: 1mm 0 3mm; text-decoration: underline; }
+	table { width: 100%; border-collapse: collapse; }
+	thead { display: table-header-group; }
+	tbody.grp { break-inside: avoid; page-break-inside: avoid; }
+	th, td { border: 0.7pt solid #000; padding: 1mm 2mm; vertical-align: middle; }
+	th { font-size: 9.5pt; text-align: center; background: #eee; }
+	td { font-size: 9.5pt; line-height: 1.22; }
+	.nm { font-weight: bold; }
+	.c { text-align: center; } .r { text-align: right; } .b { font-weight: bold; } .nw { white-space: nowrap; }
+	tr.total td { font-weight: bold; background: #f4f4f4; }
+	.sign { display: flex; justify-content: space-between; margin-top: 16mm; font-weight: bold; font-size: 10pt; break-inside: avoid; }
+	.sign div { min-width: 55mm; text-align: center; }
+</style></head><body>
+	${header}
+	<div class="office">OFFICE OF THE CONTROLLER OF EXAMINATIONS</div>
+	<div class="session">END SEMESTER EXAMINATIONS – ${escapeHtml(data.session_name)}</div>
+	<div class="title">CONSOLIDATED CLAIM REPORT – QUESTION PAPER SETTING</div>
+	<table>
+		<colgroup>
+			<col style="width:5%" /><col style="width:24%" /><col style="width:19%" /><col style="width:9%" />
+			<col style="width:19%" /><col style="width:8%" /><col style="width:7%" /><col style="width:9%" />
+		</colgroup>
+		<thead><tr>
+			<th>S.No</th><th>Examiner Particulars</th><th>Bank Details for Payment</th><th>Subject Code</th>
+			<th>Subject Name</th><th>Question Paper (Rs.)</th><th>Answer Key (Rs.)</th><th>Total Amount Claimed (Rs.)</th>
+		</tr></thead>
+		${body || '<tbody><tr><td colspan="8" class="c">No claim has been submitted in this session.</td></tr></tbody>'}
+		<tbody><tr class="total">
+			<td colspan="5" class="r">Grand Total</td>
+			<td class="r">${money(grandQp)}</td><td class="r">${money(grandAk)}</td><td class="r">${money(grandQp + grandAk)}</td>
+		</tr></tbody>
+	</table>
+	<div class="sign"><div>Prepared by</div><div>Deputy Controller of Examinations</div><div>Controller of Examinations</div></div>
+</body></html>`
+}
+
+export async function generateClaimReportPdf(data: ClaimReportData): Promise<Buffer> {
+	const { letterheadLogoBase64 } = loadLetterheadAssets(data.institution.institution_code)
+	const html = buildClaimReportHtml(data, letterheadLogoBase64)
+	return renderPdf(html, {
+		paper_size: 'A4',
+		orientation: 'landscape',
+		margin_top: '10mm',
+		margin_bottom: '10mm',
+		margin_left: '10mm',
+		margin_right: '10mm',
+	} as PdfInstitutionSettings)
+}
+
 /** File name for a saved order / claim, safe on every OS. */
 export function orderFilename(prefix: string, courseCode: string, examinerName: string): string {
 	const slug = (v: string) => v.replace(/[^A-Za-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 40)

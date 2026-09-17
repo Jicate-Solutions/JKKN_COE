@@ -265,10 +265,9 @@ export async function requireAssignment(
 	// steps attest to the paper, they do not revise it.
 	const canEdit = state === 'open' && EDITABLE.has(assignment.status) && stage === 'authoring'
 
-	// The paper stays PREVIEWABLE (never downloadable) through the check list and
-	// signature steps: an examiner cannot honestly confirm "marks distribution is
-	// correct" against a paper they can no longer see. Once the submission is
-	// completed the content is closed to them for good.
+	// Question content is released only while the paper is being written. The
+	// moment it is submitted it is closed to the examiner — the claim form, check
+	// list and signature that follow do not show it back (see QP_PREVIEW_STAGES).
 	const canReadQuestions = state === 'open' && QP_PREVIEW_STAGES.includes(stage)
 
 	// The attestation steps outlive the window. See AssignmentAccess.

@@ -49,6 +49,15 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 		if (!bundle) return NextResponse.json({ error: 'Assignment not found' }, { status: 404 })
 
 		if (doc === 'claim') {
+			// The claim is now submitted BEFORE the check list and signature, and
+			// the printed form carries that signature. Until the submission is
+			// completed the form would print unsigned, so it is not issued.
+			if (auth.access.stage !== 'completed') {
+				return NextResponse.json(
+					{ error: 'Your claim form can be downloaded once you have finished the check list and signed.' },
+					{ status: 409 }
+				)
+			}
 			const data = await buildClaimData(supabase, bundle)
 			const buffer = await generateClaimFormPdf(data)
 			await logAccess(req, {

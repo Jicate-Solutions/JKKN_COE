@@ -205,9 +205,24 @@ function unwrapSingleCellTables(html: string): string {
  *   3. typeset every <span data-latex="…"> through KaTeX
  * Plain-text (legacy) questions pass straight through as safe text.
  */
+/**
+ * A question pasted from Word often arrives as a ONE-item bullet list: the whole
+ * stem inside <ul><li>…</li></ul>. Printed as-is it gets a bullet, an indent and
+ * list margins, so it no longer lines up with its neighbours. A list with a
+ * single item and nothing else around it is not a list — print its content as
+ * the stem. Real lists (two or more items, or text beside them) are untouched.
+ */
+function unwrapSingleItemList(html: string): string {
+	// The editor leaves an empty paragraph before/after a list; it is not content.
+	const bare = html.replace(/<p(?:\s[^>]*)?>(?:\s|&nbsp;|<br\s*\/?>)*<\/p>/gi, '')
+	const m = /^\s*<(ul|ol)(?:\s[^>]*)?>\s*<li(?:\s[^>]*)?>([\s\S]*)<\/li>\s*<\/(?:ul|ol)>\s*$/i.exec(bare)
+	if (!m || /<li[\s>]/i.test(m[2])) return html
+	return m[2]
+}
+
 function renderQuestionHtml(raw: string): string {
 	if (!raw) return ''
-	const clean = unwrapSingleCellTables(sanitizeHtml(raw))
+	const clean = unwrapSingleItemList(unwrapSingleCellTables(sanitizeHtml(raw)))
 	// Replace the (atom) math spans with their typeset form.
 	return clean.replace(
 		/<span[^>]*\bdata-latex="([^"]*)"[^>]*>(?:.*?)<\/span>/g,
@@ -567,13 +582,16 @@ function buildHtml(ctx: {
 	.part-hdr td { padding-top: ${isTwoUp ? '8px' : '16px'}; padding-bottom: ${isTwoUp ? '2px' : '4px'}; }
 	.part-hdr.first td { padding-top: 2px; }
 	.part-head { text-align: center; font-weight: bold; }
-	.part-instr { font-weight: normal; font-size: 9pt; margin-top: 2px; }
+	.part-instr { font-weight: bold; font-size: 9pt; margin-top: 2px; }
 	.co-head, .kl-head { text-align: center; font-weight: bold; font-size: 9pt; white-space: nowrap; vertical-align: bottom; }
 	.qno { font-weight: bold; white-space: nowrap; }
 	.co { text-align: center; font-weight: bold; font-size: 9pt; }
 	.kl { text-align: center; font-weight: bold; font-size: 9pt; }
 	/* (OR) sits midway between the two alternatives it separates. */
 	.or { text-align: center; font-weight: bold; padding-top: ${isTwoUp ? '3px' : '6px'}; padding-bottom: ${isTwoUp ? '1px' : '3px'}; }
+	/* Question text is set justified, as on the printed papers; an alignment the
+	   setter chose explicitly (inline style) still wins. */
+	.qbody { text-align: justify; }
 	.qbody p { margin: 0 0 2px; }
 	.qbody p:last-child { margin-bottom: 0; }
 	/* Sub-divisions ("12 a) i. … (8)"): indented under their parent question, with
@@ -1077,11 +1095,14 @@ function buildAnswerKeyHtml(ctx: PaperContext & { hideSet: boolean }): string {
 	.part-hdr td { padding-top: 14px; padding-bottom: 4px; border-bottom: 0.9pt solid #000 !important; }
 	.part-hdr.first td { padding-top: 4px; }
 	.part-head { text-align: center; font-weight: bold; }
-	.part-instr { font-weight: normal; font-size: 9pt; margin-top: 2px; }
+	.part-instr { font-weight: bold; font-size: 9pt; margin-top: 2px; }
 	.mk-head { text-align: center; font-weight: bold; font-size: 9pt; white-space: nowrap; vertical-align: bottom; }
 	.qno { font-weight: bold; white-space: nowrap; }
 	.mk { text-align: center; font-weight: bold; font-size: 10pt; }
 	.or { text-align: center; font-weight: bold; padding-top: 6px; padding-bottom: 3px; }
+	/* Question text is set justified, as on the printed papers; an alignment the
+	   setter chose explicitly (inline style) still wins. */
+	.qbody { text-align: justify; }
 	.qbody p { margin: 0 0 2px; }
 	.qbody p:last-child { margin-bottom: 0; }
 	.sub { padding-left: 5mm; }
