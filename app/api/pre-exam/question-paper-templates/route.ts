@@ -28,6 +28,20 @@ function normalizePart(part: any, index: number) {
 	}
 }
 
+// allow_split arrives with migration 20260913_ia_template_parts_allow_split.sql.
+// Until that is run the column is unknown to PostgREST (PGRST204) and every
+// part save fails — retry without it so the rest of the template still saves.
+async function insertParts(supabase: any, rows: any[]) {
+	const { error } = await supabase.from('ia_template_parts').insert(rows)
+	if (error?.code === 'PGRST204' && error.message?.includes('allow_split')) {
+		console.warn('ia_template_parts.allow_split missing — saving parts without it. Run migration 20260913_ia_template_parts_allow_split.sql')
+		return supabase
+			.from('ia_template_parts')
+			.insert(rows.map(({ allow_split, ...rest }) => rest))
+	}
+	return { error }
+}
+
 /**
  * Templates are maintained per institution, so every mutation must name the
  * institution it is acting on and match the row it targets. Without this a
@@ -221,7 +235,7 @@ export async function POST(req: NextRequest) {
 				template_id: template.id,
 				...normalizePart(p, i),
 			}))
-			const { error: partsError } = await supabase.from('ia_template_parts').insert(rows)
+			const { error: partsError } = await insertParts(supabase, rows)
 			if (partsError) {
 				console.error('Error creating template parts:', partsError)
 				// Roll back the header so we don't leave a partless template
@@ -310,7 +324,7 @@ export async function PUT(req: NextRequest) {
 					template_id: id,
 					...normalizePart(p, i),
 				}))
-				const { error: partsError } = await supabase.from('ia_template_parts').insert(rows)
+				const { error: partsError } = await insertParts(supabase, rows)
 				if (partsError) {
 					console.error('Error replacing template parts:', partsError)
 					if (previousParts && previousParts.length > 0) {

@@ -213,7 +213,14 @@ export async function POST(req: NextRequest) {
 				allow_split: p.allow_split !== false,
 				display_order: p.display_order ?? i + 1,
 			}))
-			const { error: partsError } = await supabase.from('ia_template_parts').insert(partRows)
+			let { error: partsError } = await supabase.from('ia_template_parts').insert(partRows)
+			// allow_split is unknown until migration 20260913 is run — retry without it
+			if (partsError?.code === 'PGRST204' && partsError.message?.includes('allow_split')) {
+				const retry = await supabase
+					.from('ia_template_parts')
+					.insert(partRows.map(({ allow_split, ...rest }: any) => rest))
+				partsError = retry.error
+			}
 			if (partsError) {
 				console.error('Error copying template parts:', partsError)
 				await supabase.from('ia_paper_templates').delete().eq('id', created.id)

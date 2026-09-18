@@ -13,9 +13,8 @@
  *   - Signature block (seal + signature)
  */
 
-import puppeteerCore from 'puppeteer-core'
-import chromium from '@sparticuz/chromium'
 import { readFileSync } from 'fs'
+import { launchHeadlessBrowser } from '@/lib/pdf/headless-browser'
 import { join } from 'path'
 import type { CentralValuationAppointmentData } from '@/types/central-valuation-email'
 import type { PdfInstitutionSettings } from '@/types/pdf-settings'
@@ -383,24 +382,7 @@ export async function generateCentralValuationAppointmentPdf(
 	const marginLeft = s(ps, 'margin_left', '6.35mm')
 	const marginRight = s(ps, 'margin_right', '6.35mm')
 
-	const isVercel = !!process.env.VERCEL || !!process.env.AWS_LAMBDA_FUNCTION_NAME
-
-	let browser
-	if (isVercel) {
-		const executablePath = await chromium.executablePath()
-		browser = await puppeteerCore.launch({
-			args: chromium.args,
-			defaultViewport: { width: 1920, height: 1080 },
-			executablePath,
-			headless: true,
-		})
-	} else {
-		const puppeteer = (await import('puppeteer')).default
-		browser = await puppeteer.launch({
-			args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
-			headless: true,
-		})
-	}
+	const browser = await launchHeadlessBrowser({ defaultViewport: { width: 1920, height: 1080 } })
 
 	try {
 		const page = await browser.newPage()

@@ -16,8 +16,7 @@
  * ALL visual styling is driven by `pdf_institution_settings` table.
  */
 
-import puppeteerCore from 'puppeteer-core'
-import chromium from '@sparticuz/chromium'
+import { launchHeadlessBrowser } from '@/lib/pdf/headless-browser'
 import { readFileSync } from 'fs'
 import { join } from 'path'
 import type { AppointmentLetterData } from '@/types/practical-email'
@@ -497,25 +496,7 @@ export async function generateAppointmentPdf(data: AppointmentLetterData): Promi
 		right: marginRight,
 	}
 
-	const isVercel = !!process.env.VERCEL || !!process.env.AWS_LAMBDA_FUNCTION_NAME
-
-	let browser
-	if (isVercel) {
-		const executablePath = await chromium.executablePath()
-		browser = await puppeteerCore.launch({
-			args: chromium.args,
-			defaultViewport: { width: 1920, height: 1080 },
-			executablePath,
-			headless: true,
-		})
-	} else {
-		// Local development — use system Chrome or puppeteer's bundled Chromium
-		const puppeteer = (await import('puppeteer')).default
-		browser = await puppeteer.launch({
-			args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
-			headless: true,
-		})
-	}
+	const browser = await launchHeadlessBrowser({ defaultViewport: { width: 1920, height: 1080 } })
 
 	try {
 		const page = await browser.newPage()

@@ -96,8 +96,17 @@ export function mergeAuthored(scaffold: IaQuestionObject[], existing: any[]): Ia
 	const keyOf = (q: any) =>
 		`${q.part_label}|${q.question_number}|${q.sub_label || ''}|${q.is_choice_alternative ? 1 : 0}`
 	const existMap = new Map((existing || []).map((q: any) => [keyOf(q), q]))
+	// Turning Choice (OR) on/off renames the main branch ("11" <-> "11 a"), so its
+	// key stops matching — fall back to part + number or the authored question is lost.
+	const mainMap = new Map(
+		(existing || [])
+			.filter((q: any) => !q.is_choice_alternative)
+			.map((q: any) => [`${q.part_label}|${q.question_number}`, q])
+	)
 	return scaffold.map(s => {
-		const e: any = existMap.get(keyOf(s))
+		const e: any =
+			existMap.get(keyOf(s)) ||
+			(s.is_choice_alternative ? undefined : mainMap.get(`${s.part_label}|${s.question_number}`))
 		if (!e) return s
 		let options = s.options
 		if (Array.isArray(s.options) && Array.isArray(e.options)) {

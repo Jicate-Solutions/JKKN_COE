@@ -73,6 +73,25 @@ const ROMAN = ['', 'I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X']
 function toRoman(n: number): string { return ROMAN[n] || String(n) }
 function semesterLabel(n: number): string { return n === UNMAPPED_SEMESTER ? 'Not Mapped' : toRoman(n) }
 
+// Sentinel for learners whose register number carries no admission year
+const UNMAPPED_BATCH = 0
+
+// The learner's batch = the admission year inside the register number. Read from the
+// register number rather than MyJKKN because every row of every report carries it,
+// and MyJKKN profiles omit inactive learners - exactly the arrear-only learners of
+// older batches. Three shapes are live:
+//   24JUGAID012  -> 2024 (leading year)
+//   AUG26CS44    -> 2026 (provisional admission number, year after the letters)
+//   731325405002 -> 2025 (12-digit university number, year after the college code)
+function batchYearOf(registerNo: string | null | undefined): number {
+	const reg = String(registerNo || '').trim().toUpperCase()
+	const match = /^\d{12}$/.test(reg)
+		? reg.slice(4, 6)
+		: (reg.match(/^(\d{2})[A-Z]/) || reg.match(/^[A-Z]+(\d{2})/))?.[1]
+	return match ? 2000 + parseInt(match, 10) : UNMAPPED_BATCH
+}
+function batchLabel(year: number): string { return year === UNMAPPED_BATCH ? 'Not Mapped' : `${year} Batch` }
+
 type ReportCategory = 'exam-reg-app' | 'registration' | 'exam-date'
 
 const REPORT_CATEGORIES: { value: ReportCategory; label: string }[] = [
@@ -122,6 +141,8 @@ export default function ExamRegistrationReportsPage() {
 	const [selectedPrograms, setSelectedPrograms] = useState<string[]>([])
 	// Empty = All Semesters (no filtering)
 	const [selectedSemesters, setSelectedSemesters] = useState<number[]>([])
+	// Empty = All Batches (no filtering) — admission years, see batchYearOf
+	const [selectedBatches, setSelectedBatches] = useState<number[]>([])
 	const [selectedReportCategory, setSelectedReportCategory] = useState<ReportCategory | ''>('')
 	const [selectedReportType, setSelectedReportType] = useState<ReportType | ''>('')
 
@@ -147,6 +168,7 @@ export default function ExamRegistrationReportsPage() {
 	const [sessionOpen, setSessionOpen] = useState(false)
 	const [categoryOpen, setCategoryOpen] = useState(false)
 	const [semesterOpen, setSemesterOpen] = useState(false)
+	const [batchOpen, setBatchOpen] = useState(false)
 	const [programOpen, setProgramOpen] = useState(false)
 
 	// Report response cache — switching report types re-runs an expensive query for data
@@ -256,6 +278,7 @@ export default function ExamRegistrationReportsPage() {
 			setSelectedCourseCategories([])
 			setSelectedPrograms([])
 			setSelectedSemesters([])
+			setSelectedBatches([])
 			setSelectedReportCategory('')
 			setSelectedReportType('')
 			setReportData([])
@@ -408,7 +431,36 @@ export default function ExamRegistrationReportsPage() {
 		})
 	}, [semesterOptions])
 
-	// ── Filtered report data (by course category + program + semester) ──
+	// ── Batch options (admission years of the learners in the generated report) ──
+	const batchOptions = useMemo(() => {
+		const found = new Set<number>()
+		let hasUnmapped = false
+		for (const r of reportData) {
+			if (!r.stu_register_no) continue
+			const year = batchYearOf(r.stu_register_no)
+			if (year === UNMAPPED_BATCH) hasUnmapped = true
+			else found.add(year)
+		}
+		// Nothing generated yet: offer the recent admission years so a batch can be
+		// picked up front, the same way the semester list falls back
+		if (found.size === 0 && !hasUnmapped) {
+			const thisYear = new Date().getFullYear()
+			return Array.from({ length: 8 }, (_, i) => thisYear - i)
+		}
+		// Newest batch first; unresolved learners stay reachable under "Not Mapped"
+		const list = [...found].sort((a, b) => b - a)
+		return hasUnmapped ? [...list, UNMAPPED_BATCH] : list
+	}, [reportData])
+
+	// Drop batches that no longer exist once a new report is generated
+	useEffect(() => {
+		setSelectedBatches(prev => {
+			const next = prev.filter(b => batchOptions.includes(b))
+			return next.length === prev.length ? prev : next
+		})
+	}, [batchOptions])
+
+	// ── Filtered report data (by course category + program + semester + batch) ──
 
 	const isLearnerFormReport = STUDENT_REPORT_TYPES.includes(selectedReportType as string)
 
@@ -416,7 +468,8 @@ export default function ExamRegistrationReportsPage() {
 		const categoryActive = selectedCourseCategories.length > 0 && selectedCourseCategories.length < COURSE_CATEGORY_OPTIONS.length
 		const programActive = selectedPrograms.length > 0 && selectedPrograms.length < programOptions.length
 		const semesterActive = selectedSemesters.length > 0 && selectedSemesters.length < semesterOptions.length
-		if (!categoryActive && !programActive && !semesterActive) return reportData
+		const batchActive = selectedBatches.length > 0 && selectedBatches.length < batchOptions.length
+		if (!categoryActive && !programActive && !semesterActive && !batchActive) return reportData
 
 		// The learner's own semester, as opposed to the paper's
 		const learnerSemesterOf = (r: any) => {
@@ -458,9 +511,14 @@ export default function ExamRegistrationReportsPage() {
 				// Keep every row of a learner whose OWN semester was selected
 				if (!r.stu_register_no || !semesterCohort.has(r.stu_register_no)) return false
 			}
+			if (batchActive) {
+				// Batch is a property of the learner, so every paper of a selected
+				// learner - regular and arrear - rides along, as with the semester
+				if (!r.stu_register_no || !selectedBatches.includes(batchYearOf(r.stu_register_no))) return false
+			}
 			return true
 		})
-	}, [reportData, selectedCourseCategories, selectedPrograms, programOptions, selectedSemesters, semesterOptions])
+	}, [reportData, selectedCourseCategories, selectedPrograms, programOptions, selectedSemesters, semesterOptions, selectedBatches, batchOptions])
 
 	// Student-type reports: count unique learners (by register no), not raw registration rows
 	const isStudentReport = isLearnerFormReport
@@ -927,7 +985,7 @@ export default function ExamRegistrationReportsPage() {
 							{/* All dropdowns in one row */}
 							<div className={cn(
 								"grid gap-3",
-								mustSelectInstitution ? "grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6" : "grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5"
+								mustSelectInstitution ? "grid-cols-1 md:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7" : "grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6"
 							)}>
 								{/* Institution (only for super_admin with "All Institutions") */}
 								{mustSelectInstitution && (
@@ -1177,6 +1235,57 @@ export default function ExamRegistrationReportsPage() {
 									</Popover>
 								</div>
 
+								{/* Batch (multi-select, optional — default All Batches) */}
+								<div className="space-y-1.5">
+									<Label className="text-xs">Batch <span className="text-muted-foreground font-normal">(Optional)</span></Label>
+									<Popover open={batchOpen} onOpenChange={setBatchOpen}>
+										<PopoverTrigger asChild>
+											<Button variant="outline" role="combobox" className="w-full justify-between text-xs h-9" disabled={!selectedSessionId}>
+												<span className="truncate">
+													{selectedBatches.length === 0 || selectedBatches.length === batchOptions.length
+														? 'All Batches'
+														: selectedBatches.slice().sort((a, b) => b - a).map(b => b === UNMAPPED_BATCH ? 'Not Mapped' : String(b)).join(', ')}
+												</span>
+												<ChevronsUpDown className="h-3 w-3 ml-2 opacity-50" />
+											</Button>
+										</PopoverTrigger>
+										<PopoverContent className="w-[220px] p-0">
+											<Command>
+												<CommandList>
+													<CommandGroup>
+														<CommandItem
+															onSelect={() => setSelectedBatches([])}
+															className="text-xs font-medium"
+														>
+															<Check className={cn("mr-2 h-3 w-3", selectedBatches.length === 0 || selectedBatches.length === batchOptions.length ? "opacity-100" : "opacity-0")} />
+															All Batches
+														</CommandItem>
+													</CommandGroup>
+													<CommandGroup>
+														{batchOptions.map((batch) => (
+															<CommandItem
+																key={batch}
+																value={`Batch ${batch}`}
+																onSelect={() => {
+																	setSelectedBatches(prev =>
+																		prev.includes(batch)
+																			? prev.filter(v => v !== batch)
+																			: [...prev, batch]
+																	)
+																}}
+																className="text-xs"
+															>
+																<Check className={cn("mr-2 h-3 w-3", selectedBatches.includes(batch) ? "opacity-100" : "opacity-0")} />
+																{batchLabel(batch)}
+															</CommandItem>
+														))}
+													</CommandGroup>
+												</CommandList>
+											</Command>
+										</PopoverContent>
+									</Popover>
+								</div>
+
 								{/* Reports Category Dropdown */}
 								<div className="space-y-1.5">
 									<Label className="text-xs">Reports *</Label>
@@ -1275,7 +1384,7 @@ export default function ExamRegistrationReportsPage() {
 									<div className="flex items-center gap-3 flex-wrap">
 										{filteredReportData.length === 0 && (
 											<Badge variant="outline" className="text-xs border-amber-300 bg-amber-50 text-amber-800">
-												{reportData.length} records hidden by the Category / Program / Semester filters
+												{reportData.length} records hidden by the Category / Program / Semester / Batch filters
 											</Badge>
 										)}
 										<Badge variant="outline" className="text-xs">
@@ -1773,9 +1882,14 @@ export default function ExamRegistrationReportsPage() {
 									<div className="h-16 w-16 rounded-full bg-muted flex items-center justify-center mb-4">
 										<ClipboardCheck className="h-8 w-8 text-muted-foreground" />
 									</div>
-									<h3 className="text-lg font-semibold mb-1">No Report Generated</h3>
+									{/* reportMeta is only set once a fetch succeeds — an empty result is not "not generated" */}
+									<h3 className="text-lg font-semibold mb-1">{reportMeta ? 'No Records Found' : 'No Report Generated'}</h3>
 									<p className="text-sm text-muted-foreground max-w-md">
-										Select an Institution and Examination Session, choose a report category, then pick a report type to generate automatically.
+										{!reportMeta
+											? 'Select an Institution and Examination Session, choose a report category, then pick a report type to generate automatically.'
+											: selectedReportType === 'student-final-approval'
+												? 'No learner has been given final approval in this session yet. Approve the applied learners from Exam Management > Final Registration Approval, then generate this report again.'
+												: 'This session has no registrations for the selected report.'}
 									</p>
 								</div>
 							</CardContent>

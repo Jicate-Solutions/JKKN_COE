@@ -244,7 +244,7 @@ export function AssignmentsTab({ institutionsId, session, refreshKey, onChanged 
 			if (kindFilter !== 'all' && r.examiner_kind !== kindFilter) return false
 			if (
 				q &&
-				!`${r.course_code} ${r.subject_title} ${r.examiner?.full_name || ''} ${r.examiner?.email || ''} ${r.order_ref_no || ''}`
+				!`${r.course_code} ${r.subject_title} ${r.examiner?.full_name || ''} ${r.examiner?.email || ''} ${r.examiner?.mobile || ''} ${r.order_ref_no || ''}`
 					.toLowerCase()
 					.includes(q)
 			)
@@ -473,6 +473,9 @@ export function AssignmentsTab({ institutionsId, session, refreshKey, onChanged 
 												<div className="text-xs text-muted-foreground truncate max-w-[220px]">
 													{r.examiner?.email}
 												</div>
+												{r.examiner?.mobile && (
+													<div className="text-xs text-muted-foreground">{r.examiner.mobile}</div>
+												)}
 												<div className="mt-1"><KindBadge kind={r.examiner_kind} /></div>
 											</TableCell>
 											<TableCell className="text-xs">
@@ -665,6 +668,9 @@ export function AssignmentsTab({ institutionsId, session, refreshKey, onChanged 
 										<dt className="text-xs text-muted-foreground">Examiner</dt>
 										<dd className="font-medium">{detail.examiner?.full_name}</dd>
 										<dd className="text-xs text-muted-foreground">{detail.examiner?.email}</dd>
+										{detail.examiner?.mobile && (
+											<dd className="text-xs text-muted-foreground">{detail.examiner.mobile}</dd>
+										)}
 										<dd className="text-xs text-muted-foreground">
 											{[detail.examiner?.designation, detail.examiner?.department, detail.examiner?.institution_name]
 												.filter(Boolean)

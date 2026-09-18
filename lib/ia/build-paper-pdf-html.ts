@@ -14,6 +14,7 @@
 // than jsPDF ever did.
 
 import katex from 'katex'
+import { launchHeadlessBrowser } from '@/lib/pdf/headless-browser'
 import { readSubQuestions, readQuestionImage } from './sub-questions'
 import { inlineDriveImages } from './question-paper-files'
 import { hasAnswerKey, hasOwnAnswerKey } from './validate-paper'
@@ -823,23 +824,7 @@ async function loadPaperContext(supabase: any, id: string, source: PaperSource):
 
 /** Headless Chromium: the bundled build on Vercel, full puppeteer on a dev box. */
 async function launchBrowser() {
-	const isVercel = !!process.env.VERCEL || !!process.env.AWS_LAMBDA_FUNCTION_NAME
-	if (isVercel) {
-		const chromium = (await import('@sparticuz/chromium')).default
-		const puppeteerCore = (await import('puppeteer-core')).default
-		const executablePath = await chromium.executablePath()
-		return puppeteerCore.launch({
-			args: chromium.args,
-			defaultViewport: { width: 1240, height: 1754 },
-			executablePath,
-			headless: true,
-		})
-	}
-	const puppeteer = (await import('puppeteer')).default
-	return puppeteer.launch({
-		args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
-		headless: true,
-	})
+	return launchHeadlessBrowser({ defaultViewport: { width: 1240, height: 1754 } })
 }
 
 /**

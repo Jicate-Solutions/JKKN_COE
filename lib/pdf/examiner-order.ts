@@ -17,6 +17,7 @@ import { join } from 'path'
 import type { PdfInstitutionSettings } from '@/types/pdf-settings'
 import type { QpPortalContent } from '@/types/qp-examiner-assignment'
 import { formatIst, formatIstDate } from '@/lib/qp-portal/ist'
+import { launchHeadlessBrowser } from '@/lib/pdf/headless-browser'
 import {
 	getJkknLetterhead,
 	isBoxedLetterhead,
@@ -810,25 +811,7 @@ export function buildClaimFormHtml(
 // ── Rendering ───────────────────────────────────────────────────────────────
 
 async function renderPdf(html: string, ps: PdfInstitutionSettings | null): Promise<Buffer> {
-	const isServerless = !!process.env.VERCEL || !!process.env.AWS_LAMBDA_FUNCTION_NAME
-
-	let browser
-	if (isServerless) {
-		const chromium = (await import('@sparticuz/chromium')).default
-		const puppeteerCore = (await import('puppeteer-core')).default
-		browser = await puppeteerCore.launch({
-			args: chromium.args,
-			defaultViewport: { width: 1240, height: 1754 },
-			executablePath: await chromium.executablePath(),
-			headless: true,
-		})
-	} else {
-		const puppeteer = (await import('puppeteer')).default
-		browser = await puppeteer.launch({
-			args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
-			headless: true,
-		})
-	}
+	const browser = await launchHeadlessBrowser()
 
 	try {
 		const page = await browser.newPage()
