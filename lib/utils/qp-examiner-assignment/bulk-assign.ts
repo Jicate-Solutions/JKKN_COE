@@ -247,6 +247,7 @@ export async function downloadBulkAssignTemplate(input: TemplateInput): Promise<
 			'Examiner Type': `═══ ${title} ═══`,
 			Name: '',
 			'Email (use this in Assignments)': '',
+			'Mobile Number': '',
 			Designation: '',
 			Department: '',
 			Institution: '',
@@ -257,6 +258,8 @@ export async function downloadBulkAssignTemplate(input: TemplateInput): Promise<
 			'Examiner Type': e.kind === 'internal' ? 'Internal' : 'External',
 			Name: e.full_name,
 			'Email (use this in Assignments)': e.email,
+			// Text, so a leading zero or +91 survives and Excel never shows 9.57E+09.
+			'Mobile Number': e.mobile ? String(e.mobile) : '',
 			Designation: e.designation || '',
 			Department: e.department || '',
 			Institution: e.institution_name || '',
@@ -267,7 +270,7 @@ export async function downloadBulkAssignTemplate(input: TemplateInput): Promise<
 	pushSection('INTERNAL — teaching staff of this institution')
 	input.internal.forEach(pushExaminer)
 	const wsEx = XLSX.utils.json_to_sheet(examinerRows)
-	wsEx['!cols'] = [{ wch: 16 }, { wch: 30 }, { wch: 36 }, { wch: 22 }, { wch: 26 }, { wch: 30 }, { wch: 16 }]
+	wsEx['!cols'] = [{ wch: 16 }, { wch: 30 }, { wch: 36 }, { wch: 16 }, { wch: 22 }, { wch: 26 }, { wch: 30 }, { wch: 16 }]
 	XLSX.utils.book_append_sheet(wb, wsEx, EXAMINERS_SHEET)
 
 	// ── Sheet 3: how to fill it in ──────────────────────────────────────────

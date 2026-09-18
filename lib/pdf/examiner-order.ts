@@ -114,6 +114,7 @@ export interface ExaminerOrderData {
 		institution_name?: string | null
 		address?: string | null
 		email: string
+		mobile?: string | null
 		kind: 'internal' | 'external'
 	}
 	/** courses.regulation_code, e.g. "R-2021". */
@@ -308,7 +309,7 @@ export function buildExaminerOrderHtml(
 	]
 		.filter(Boolean)
 		.map(line => `<div>${escapeHtml(String(line).toUpperCase())}</div>`)
-		.join('')
+		.join('') + (data.examiner.mobile ? `<div>MOBILE: ${escapeHtml(data.examiner.mobile)}</div>` : '')
 
 	const sessionText = (c.session_label || data.examination.session_name || '—').toUpperCase()
 	const examName = data.examination.exam_type_name || 'End Semester Examinations'
@@ -753,6 +754,7 @@ export function buildClaimFormHtml(
 		${row(['Department', data.examiner.department || '—'])}
 		${row(['Institution', data.examiner.institution_name || '—'])}
 		${row(['E-mail', data.examiner.email])}
+		${row(['Mobile Number', data.examiner.mobile || '—'])}
 		${row(['Examiner Type', data.examiner.kind === 'internal' ? 'Internal Examiner' : 'External Examiner'])}
 	</table>
 

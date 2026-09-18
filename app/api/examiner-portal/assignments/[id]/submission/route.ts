@@ -3,8 +3,12 @@
 // POST /api/examiner-portal/assignments/:id/submission
 //   { step: 'checklist', checklist: { <clause id>: 'YES' | 'NO' } }
 //   { step: 'signature', signature: '<data:image/png;base64,...>',
-//                        declaration_accepted: true }
+//                        declaration_accepted: true, complete?: true }
 //   { step: 'final' }
+//
+// `complete: true` on the signature step signs AND completes in one request —
+// what the portal sends. `final` remains for a signature saved earlier.
+// The check list step requires the claim form to be in first.
 //
 // The paper's content is handed over by the paper route (PUT ?submit); this
 // route owns everything after it:
@@ -238,12 +242,18 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 				return NextResponse.json({ error: 'The signature could not be saved.' }, { status: 500 })
 			}
 
+			// `complete: true` signs AND completes in this one request. For the
+			// examiner signing is the final act, so the portal sends both together
+			// rather than paying for a second round trip. The check list is already
+			// guaranteed: the stage only reaches 'signature' once it is done.
+			const completing = body.complete === true && !!assignment.checklist_completed_at
 			const { error } = await supabase
 				.from('ia_qp_assignments')
 				.update({
 					submission_signature_path: path,
 					signed_at: now,
 					declaration_accepted_at: assignment.declaration_accepted_at || now,
+					...(completing ? { submission_stage: 'completed', final_submitted_at: now } : {}),
 					updated_at: now,
 				})
 				.eq('id', id)
@@ -267,6 +277,29 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 				paper_id: assignment.paper_id,
 				institutions_id: assignment.institutions_id,
 			})
+
+			if (completing) {
+				await logAccess(req, {
+					action: 'submission_completed',
+					module: 'paper',
+					performed_by_role: 'examiner',
+					version: assignment.paper_version || null,
+					old_value: { submission_stage: 'signature' },
+					new_value: { submission_stage: 'completed' },
+					examiner_id: auth.examiner.id,
+					examiner_email: auth.examiner.email,
+					assignment_id: id,
+					paper_id: assignment.paper_id,
+					institutions_id: assignment.institutions_id,
+				})
+				return NextResponse.json({
+					success: true,
+					submission_stage: 'completed',
+					signed_at: now,
+					final_submitted_at: now,
+					message: 'Submission completed. Your signed claim form can now be downloaded.',
+				})
+			}
 
 			return NextResponse.json({
 				success: true,

@@ -196,7 +196,9 @@ export function SubmissionWizard({
 		setError(null)
 		try {
 			await onStep(body)
-			await onAdvanced()
+			// The parent has already moved the page on from the server's reply;
+			// the re-read only reconciles, so it is not waited for.
+			void onAdvanced()
 		} catch (e: any) {
 			setError(e?.message || 'That step could not be completed. Please try again.')
 			const ids = e?.body?.unanswered
@@ -214,12 +216,13 @@ export function SubmissionWizard({
 		setBusy(true)
 		setError(null)
 		try {
-			await onStep({ step: 'signature', signature, declaration_accepted: declarationAccepted })
-			await onStep({ step: 'final' })
+			// One request: the server saves the signature and completes the
+			// submission together (`complete: true`).
+			await onStep({ step: 'signature', signature, declaration_accepted: declarationAccepted, complete: true })
 		} catch (e: any) {
 			setError(e?.message || 'That step could not be completed. Please try again.')
 		} finally {
-			await onAdvanced()
+			void onAdvanced()
 			setBusy(false)
 		}
 	}
@@ -382,7 +385,7 @@ export function SubmissionWizard({
 										account_number: String(claimForm.account_number || '').replace(/\s+/g, ''),
 										ifsc: String(claimForm.ifsc || '').trim().toUpperCase(),
 									})
-									await onAdvanced()
+									void onAdvanced()
 								} catch (e: any) {
 									setError(e?.message || 'The claim could not be submitted. Please try again.')
 								} finally {
@@ -618,7 +621,7 @@ export function SubmissionWizard({
 					</>
 				) : (
 					<>
-						<div>
+						<div id="qp-wizard-focus" className="scroll-mt-44">
 							<p className="text-xs text-muted-foreground mb-1">
 								Signature <span className="text-rose-600 font-semibold">*</span>
 							</p>

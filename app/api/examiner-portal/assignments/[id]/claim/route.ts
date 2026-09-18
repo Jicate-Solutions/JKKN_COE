@@ -9,9 +9,10 @@
 //
 // Two rules the UI must not be trusted to keep:
 //
-//   1. A claim opens only once the SUBMISSION IS COMPLETE — check list and
-//      signature included, not merely the content handed over. The claim form
-//      carries that signature, so a claim before it would print unsigned.
+//   1. A claim opens once the PAPER IS HANDED OVER, and comes before the check
+//      list (which asks the examiner to confirm it). The printed claim form
+//      carries the signature, so the documents route issues it only after the
+//      submission is completed.
 //   2. Bank details are SNAPSHOT onto the assignment, never referenced live off
 //      the profile. A submitted claim must keep the account it was submitted
 //      with; editing the profile afterwards cannot restate a claim the CoE has
@@ -136,7 +137,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
 		// The examiner's profile is updated alongside so the next claim is
 		// pre-filled — but the SNAPSHOT above is what this claim is paid against.
-		await supabase
+		const profileMirror = supabase
 			.from('examiners')
 			.update({
 				bank_account_holder: bank.claim_account_holder,
@@ -146,6 +147,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 				bank_ifsc: bank.claim_ifsc,
 			})
 			.eq('id', auth.examiner.id)
+			.then(() => undefined, () => undefined)
 
 		// ── Version history ──────────────────────────────────────────────────
 		const origin = requestOrigin(req)
@@ -183,6 +185,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 		})
 		if ('error' in snap) console.error('[QP portal] claim version snapshot failed:', snap.error)
 		else version = snap.version
+		// Started before the snapshot, finished by now or shortly: the two writes
+		// touch different tables, so they run side by side instead of in a queue.
+		await profileMirror
 
 		// A resubmission closes the reopen: the reason stays on the version row
 		// and in the audit log, the assignment no longer shows as reopened.

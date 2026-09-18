@@ -136,6 +136,7 @@ export async function buildOrderData(bundle: AssignmentBundle): Promise<Examiner
 			institution_name: examiner.institution_name || null,
 			address: examiner.institution_address || examiner.address || null,
 			email: examiner.email || '',
+			mobile: examiner.mobile || null,
 			kind: assignment.examiner_kind === 'internal' ? 'internal' : 'external',
 		},
 		regulation: course?.regulation_code || null,

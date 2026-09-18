@@ -500,8 +500,11 @@ export function ExaminerPortal({ examiner, onSignedOut }: Props) {
 	const [previewQuestions, setPreviewQuestions] = useState<IaPaperQuestion[]>([])
 
 	// ── Load ──────────────────────────────────────────────────────────────
-	const loadAssignments = useCallback(async () => {
-		setLoading(true)
+	// `silent` refreshes leave the page alone. Without it every refresh swapped
+	// the whole portal for a spinner — unmounting the wizard mid-walk, resetting
+	// the scroll and reading as a page reload after each step.
+	const loadAssignments = useCallback(async (silent = false) => {
+		if (!silent) setLoading(true)
 		try {
 			const json = await portalFetch('/api/examiner-portal/assignments')
 			setAssignments(json.data || [])
@@ -547,11 +550,12 @@ export function ExaminerPortal({ examiner, onSignedOut }: Props) {
 	const reloadDetail = useCallback(async () => {
 		if (!openId) return
 		try {
+			// The list refresh rides alongside, silently, and is not waited for.
+			void loadAssignments(true)
 			setDetail(await portalFetch(`/api/examiner-portal/assignments/${openId}`))
 		} catch {
 			/* keep what is on screen */
 		}
-		await loadAssignments()
 	}, [openId, loadAssignments])
 
 	const loadHistory = useCallback(async (assignmentId: string) => {
@@ -565,6 +569,27 @@ export function ExaminerPortal({ examiner, onSignedOut }: Props) {
 
 	const scrollTo = (ref: React.RefObject<HTMLDivElement | null>) =>
 		requestAnimationFrame(() => ref.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }))
+
+	/** The wizard marks the element the examiner acts on (#qp-wizard-focus); fall back to the card. */
+	const scrollToWizardFocus = useCallback(() => {
+		window.setTimeout(() => {
+			const el = document.getElementById('qp-wizard-focus') || wizardRef.current
+			el?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+		}, 120)
+	}, [])
+
+	// Arriving on a post-submit step — by opening the paper, or by finishing the
+	// step before — puts that step's working area in view, so nobody has to
+	// scroll past the header cards to find the signature box.
+	const walkKey = detail?.assignment
+		? `${detail.assignment.id}:${detail.assignment.submission_stage}:${(detail.assignment.claim_status || 'pending') !== 'pending'}:${!!detail.assignment.signed_at}`
+		: ''
+	useEffect(() => {
+		const st = detail?.assignment?.submission_stage
+		if (section !== 'papers' || !walkKey) return
+		if (st === 'checklist' || st === 'signature') scrollToWizardFocus()
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [walkKey, section])
 
 	// ── Actions ───────────────────────────────────────────────────────────
 	const ownProblems = useMemo(() => paperProblems.filter(p => !p.needsCoe), [paperProblems])
@@ -597,7 +622,27 @@ export function ExaminerPortal({ examiner, onSignedOut }: Props) {
 			})
 			setSubmitOpen(false)
 			toast({ title: 'Question paper submitted', description: json.message })
-			await reloadDetail()
+			// Move on from the reply at once; the full re-read follows behind.
+			setDetail((d: any) =>
+				d?.assignment
+					? {
+							...d,
+							can_edit: false,
+							questions_released: false,
+							questions: [],
+							assignment: {
+								...d.assignment,
+								status: json.status || 'submitted',
+								submission_stage: json.submission_stage || 'checklist',
+								submitted_at: new Date().toISOString(),
+								paper_version: json.paper_version ?? d.assignment.paper_version,
+								return_remarks: null,
+								reopen_scope: null,
+							},
+						}
+					: d
+			)
+			void reloadDetail()
 			// The check list is now the next step — put it in front of the examiner
 			// rather than leaving them on a page whose editor has just gone read-only.
 			scrollTo(wizardRef)
@@ -629,6 +674,24 @@ export function ExaminerPortal({ examiner, onSignedOut }: Props) {
 				body: JSON.stringify(body),
 			})
 			if (json?.message) toast({ title: json.message })
+			// The reply already says where the walk stands — apply it now rather
+			// than waiting for a re-fetch to redraw the step.
+			if (json?.submission_stage) {
+				setDetail((d: any) =>
+					d?.assignment
+						? {
+								...d,
+								assignment: {
+									...d.assignment,
+									submission_stage: json.submission_stage,
+									checklist_completed_at: json.checklist_completed_at ?? d.assignment.checklist_completed_at,
+									signed_at: json.signed_at ?? d.assignment.signed_at,
+									final_submitted_at: json.final_submitted_at ?? d.assignment.final_submitted_at,
+								},
+							}
+						: d
+				)
+			}
 			return json
 		},
 		[openId, toast]
@@ -663,8 +726,27 @@ export function ExaminerPortal({ examiner, onSignedOut }: Props) {
 				body: JSON.stringify(bank),
 			})
 			toast({ title: 'Claim submitted', description: json.message })
-			await loadAssignments()
-			await loadProfile()
+			// Show the result at once: the open paper moves straight on to the check
+			// list from what was just sent, and the real rows follow in the background.
+			setDetail((d: any) =>
+				d?.assignment?.id === assignmentId
+					? {
+							...d,
+							assignment: {
+								...d.assignment,
+								claim_status: 'submitted',
+								claim_submitted_at: new Date().toISOString(),
+								claim_account_holder: bank.account_holder,
+								claim_bank_name: bank.bank_name,
+								claim_account_number: bank.account_number,
+								claim_branch: bank.branch,
+								claim_ifsc: bank.ifsc,
+							},
+						}
+					: d
+			)
+			void loadAssignments(true)
+			void loadProfile()
 		},
 		[toast, loadAssignments, loadProfile]
 	)
@@ -1214,14 +1296,14 @@ export function ExaminerPortal({ examiner, onSignedOut }: Props) {
 				tone: 'info',
 				title: 'Paper received. Now fill in your claim form.',
 				detail: 'Enter the bank account your remuneration should be paid to. The check list and your signature follow.',
-				action: { label: 'Go to claim form', onClick: () => scrollTo(wizardRef) },
+				action: { label: 'Go to claim form', onClick: scrollToWizardFocus },
 			}
 		} else if (stage === 'checklist') {
 			instruction = {
 				tone: 'info',
 				title: 'Claim form received. Now answer the check list.',
 				detail: 'Answer YES or NO to every item, then continue to the signature.',
-				action: { label: 'Go to check list', onClick: () => scrollTo(wizardRef) },
+				action: { label: 'Go to check list', onClick: scrollToWizardFocus },
 			}
 		} else if (stage === 'signature') {
 			instruction = {
@@ -1230,7 +1312,7 @@ export function ExaminerPortal({ examiner, onSignedOut }: Props) {
 				detail: a.signed_at
 					? 'Read the red notice, then press Complete submission.'
 					: 'Sign in the box, tick the declaration under it, then press Sign and complete submission.',
-				action: { label: a.signed_at ? 'Go to final step' : 'Go to signature', onClick: () => scrollTo(wizardRef) },
+				action: { label: a.signed_at ? 'Go to final step' : 'Go to signature', onClick: scrollToWizardFocus },
 			}
 		} else if (state === 'pending') {
 			instruction = {
@@ -1376,7 +1458,7 @@ export function ExaminerPortal({ examiner, onSignedOut }: Props) {
 					setOpenId(null)
 					setDetail(null)
 					setShowHistory(false)
-					loadAssignments()
+					void loadAssignments(true)
 				}}
 			>
 				<ArrowLeft className="h-4 w-4 mr-1.5" />
