@@ -2930,6 +2930,8 @@ function generateFinalApprovalPdf(opts: ReportPdfOptions): string {
 
 	const rows = [...opts.data].sort((a, b) => String(a.stu_register_no || '').localeCompare(String(b.stu_register_no || '')))
 	const showLateFine = rows.some(r => feeNum(r.late_fine) > 0)
+	// Mode of payment is recorded from 20260919 on; older approvals have none
+	const showPayMode = rows.some(r => r.payment_mode)
 
 	const totals = { subjects: 0, exam: 0, application: 0, markStatement: 0, lateFine: 0, final: 0 }
 	for (const r of rows) {
@@ -2955,6 +2957,7 @@ function generateFinalApprovalPdf(opts: ReportPdfOptions): string {
 	]
 	if (showLateFine) columns.push(['Late Fine', 20, 'right'])
 	columns.push(['Final\nAmount', 26, 'right'])
+	if (showPayMode) columns.push(['Payment\nMode', 18, 'center'])
 	columns.push(['Status', 18, 'center'])
 
 	const usable = pageWidth - margin * 2
@@ -3020,6 +3023,7 @@ function generateFinalApprovalPdf(opts: ReportPdfOptions): string {
 		]
 		if (showLateFine) cells.push(formatFee(feeNum(r.late_fine)))
 		cells.push(formatFee(feeNum(r.final_amount)))
+		if (showPayMode) cells.push(String(r.payment_mode || ''))
 		cells.push(String(r.registration_status || 'Approved'))
 		drawRow(y, cells)
 		y += rowHeight
@@ -3045,6 +3049,7 @@ function generateFinalApprovalPdf(opts: ReportPdfOptions): string {
 	]
 	if (showLateFine) totalCells.push(formatFee(totals.lateFine))
 	totalCells.push(formatFee(totals.final))
+	if (showPayMode) totalCells.push('')
 	totalCells.push('')
 	drawRow(y, totalCells, true)
 	y += rowHeight + 4

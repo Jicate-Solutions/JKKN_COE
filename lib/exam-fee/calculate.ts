@@ -261,8 +261,17 @@ function findRate(
 	return book.rates.get(`${head}|${level}|`) || book.rates.get(`${head}||`) || null
 }
 
-/** Whether the late fine applies on the given date */
+/**
+ * A late APPLICATION carries no fine. The fine is for late PAYMENT, and the CoE
+ * office keys it in by hand per learner on the Final Exam Registration Approval
+ * screen. Flip this back on only if the circular's cut-off date should charge
+ * the schedule's fine automatically again.
+ */
+const AUTO_FINE_ON_LATE_APPLICATION = false
+
+/** Whether the late fine applies automatically on the given date */
 export function isFineApplicable(schedule: FeeSchedule | null, onDate: string): boolean {
+	if (!AUTO_FINE_ON_LATE_APPLICATION) return false
 	if (!schedule || schedule.fine_amount <= 0) return false
 	if (!schedule.last_date_without_fine) return false
 	return onDate > schedule.last_date_without_fine

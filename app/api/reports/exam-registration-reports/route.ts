@@ -211,20 +211,30 @@ async function buildFinalApprovalReport(
 		return NextResponse.json({ error: 'Institution or Session not found' }, { status: 404 })
 	}
 
+	const baseColumns = 'id, student_id, stu_register_no, student_name, regulation_code, program_code, semester, total_subjects, exam_fee, application_fee, mark_statement_fee, late_fine, final_amount, fee_paid, payment_status, registration_status, approved_at'
+	const fetchRows = (columns: string) => fetchAllPaginated(async (from, to) => {
+		const res = await supabase
+			.from('exam_registration_fee_details')
+			.select(columns)
+			.eq('institutions_id', institutions_id)
+			.eq('examination_session_id', examination_session_id)
+			.order('stu_register_no', { ascending: true })
+			.order('id', { ascending: true })
+			.range(from, to)
+		if (res.error) throw res.error
+		return res
+	})
+
 	let rows: any[]
 	try {
-		rows = await fetchAllPaginated(async (from, to) => {
-			const res = await supabase
-				.from('exam_registration_fee_details')
-				.select('id, student_id, stu_register_no, student_name, regulation_code, program_code, semester, total_subjects, exam_fee, application_fee, mark_statement_fee, late_fine, final_amount, fee_paid, payment_status, registration_status, approved_at')
-				.eq('institutions_id', institutions_id)
-				.eq('examination_session_id', examination_session_id)
-				.order('stu_register_no', { ascending: true })
-				.order('id', { ascending: true })
-				.range(from, to)
-			if (res.error) throw res.error
-			return res
-		})
+		try {
+			rows = await fetchRows(`${baseColumns}, payment_mode, payment_transaction_id`)
+		} catch (e: any) {
+			// The payment columns arrive with 20260919_final_approval_manual_late_fine.sql;
+			// the report must keep working until that migration is run.
+			if (!/payment_mode|payment_transaction_id/i.test(e?.message || '')) throw e
+			rows = await fetchRows(baseColumns)
+		}
 	} catch (e: any) {
 		const message = e?.message || ''
 		if (/exam_registration_fee_details/i.test(message) && /(does not exist|schema cache)/i.test(message)) {
@@ -269,6 +279,8 @@ async function buildFinalApprovalReport(
 			fee_paid: !!r.fee_paid,
 			payment_status: r.payment_status || null,
 			registration_status: r.registration_status || 'Approved',
+			payment_mode: r.payment_mode || null,
+			payment_transaction_id: r.payment_transaction_id || null,
 			approved_at: r.approved_at || null,
 			// Mirrors the shape the programme filter / options read on every report
 			course_offering: {

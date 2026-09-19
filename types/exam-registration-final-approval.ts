@@ -6,7 +6,39 @@
 // the session rides along and is approved together.
 
 /** Learner-level status shown on the approval screen and in reports */
-export type FinalApprovalStatus = 'Payment Approved' | 'Approved'
+// The fee is collected AT final approval, so a pending learner has not paid yet.
+export type FinalApprovalStatus = 'Payment Pending' | 'Paid'
+
+export type FinalApprovalPaymentMode = 'Cash' | 'Online'
+export const FINAL_APPROVAL_PAYMENT_MODES: FinalApprovalPaymentMode[] = ['Cash', 'Online']
+
+/**
+ * One approved learner, in the row shape of the Final Registration Approval
+ * report (report_type 'student-final-approval') so the same PDF / Excel
+ * generators print it.
+ */
+export interface FinalApprovalApprovedRow {
+	id: string
+	student_id: string | null
+	stu_register_no: string
+	student_name: string
+	program_code: string | null
+	program_name: string | null
+	regulation_code: string | null
+	learner_semester: number
+	total_subjects: number
+	exam_fee: number
+	application_fee: number
+	mark_statement_fee: number
+	late_fine: number
+	final_amount: number
+	fee_paid: boolean
+	payment_status: string | null
+	registration_status: string
+	payment_mode: FinalApprovalPaymentMode | null
+	payment_transaction_id: string | null
+	approved_at: string | null
+}
 
 /** One paper the learner applied for (shown when a row is expanded) */
 export interface FinalApprovalSubject {
@@ -33,12 +65,22 @@ export interface FinalApprovalLearner {
 	regulation_code: string | null
 	/** The LEARNER's semester - the semester of their regular papers */
 	semester: number | null
+	/** Admission year read from the register number; 0 = not mapped */
+	batch_year: number
 	subjects: FinalApprovalSubject[]
 	total_subjects: number
 	exam_fee: number
 	application_fee: number
 	mark_statement_fee: number
+	/**
+	 * Late-PAYMENT fine, keyed in by hand on the approval screen. Always 0 in
+	 * the pending cohort - a late application carries no automatic fine.
+	 */
 	late_fine: number
+	/** Fine an older build stamped on the paper rows; the approval overwrites it */
+	stamped_late_fine: number
+	/** Paper row that carries the once-per-session heads (and the entered fine) */
+	anchor_registration_id: string | null
 	final_amount: number
 	status: FinalApprovalStatus
 }
@@ -65,7 +107,8 @@ export interface FinalApprovalCohortResponse {
 	filters: {
 		regulations: FinalApprovalFilterOption[]
 		programs: FinalApprovalFilterOption[]
-		semesters: FinalApprovalFilterOption[]
+		/** value = admission year ("2024"), "0" = not mapped; newest first */
+		batches: FinalApprovalFilterOption[]
 	}
 	/** Totals of the rows returned (after the filters) */
 	summary: FinalApprovalTotals
@@ -78,12 +121,18 @@ export interface FinalApprovalCohortResponse {
 export interface FinalApprovalRequestLearner {
 	student_id?: string | null
 	register_number: string
+	/** Late-payment fine collected from this learner; omitted / 0 = no fine */
+	late_fine?: number
 }
 
 export interface FinalApprovalRequest {
 	institutions_id: string
 	examination_session_id: string
 	learners: FinalApprovalRequestLearner[]
+	/** How the fee was collected - applies to every learner in the request */
+	payment_mode: FinalApprovalPaymentMode
+	/** Required when payment_mode is Online */
+	payment_transaction_id?: string | null
 }
 
 export interface FinalApprovalSkipped {
@@ -97,6 +146,10 @@ export interface FinalApprovalResult {
 	students_approved: number
 	subjects_updated: number
 	totals: FinalApprovalTotals
+	payment_mode: FinalApprovalPaymentMode
+	payment_transaction_id: string | null
+	/** The learners approved by THIS request - printed as the approval report */
+	approved: FinalApprovalApprovedRow[]
 	/** Selected learners that were no longer pending and were left untouched */
 	skipped: FinalApprovalSkipped[]
 }
@@ -123,6 +176,8 @@ export interface ExamRegistrationFeeDetail {
 	fee_paid: boolean
 	payment_status: 'Payment Pending' | 'Payment Submitted' | 'Payment Approved'
 	registration_status: 'Final Approval Pending' | 'Approved'
+	payment_mode: FinalApprovalPaymentMode | null
+	payment_transaction_id: string | null
 	approved_by: string | null
 	approved_at: string | null
 	created_at: string

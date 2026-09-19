@@ -313,6 +313,7 @@ function exportStudentExamRegistrationExcel(opts: ExcelExportOptions): ExcelRepo
 function exportFinalApprovalExcel(opts: ExcelExportOptions): ExcelReportResult {
 	const sorted = [...opts.data].sort((a, b) => String(a.stu_register_no || '').localeCompare(String(b.stu_register_no || '')))
 	const showLateFine = sorted.some(r => feeNum(r.late_fine) > 0)
+	const showPayment = sorted.some(r => r.payment_mode)
 
 	const totals = { subjects: 0, exam: 0, application: 0, markStatement: 0, lateFine: 0, final: 0 }
 	const rows = sorted.map((row, idx) => {
@@ -336,6 +337,10 @@ function exportFinalApprovalExcel(opts: ExcelExportOptions): ExcelReportResult {
 		}
 		if (showLateFine) out['Late Fine'] = feeNum(row.late_fine)
 		out['Final Amount'] = feeNum(row.final_amount)
+		if (showPayment) {
+			out['Payment Mode'] = row.payment_mode || ''
+			out['Transaction ID'] = row.payment_transaction_id || ''
+		}
 		out['Status'] = row.registration_status || 'Approved'
 		return out
 	})
@@ -355,6 +360,10 @@ function exportFinalApprovalExcel(opts: ExcelExportOptions): ExcelReportResult {
 		}
 		if (showLateFine) totalRow['Late Fine'] = totals.lateFine
 		totalRow['Final Amount'] = totals.final
+		if (showPayment) {
+			totalRow['Payment Mode'] = ''
+			totalRow['Transaction ID'] = ''
+		}
 		totalRow['Status'] = ''
 		rows.push(totalRow)
 	}

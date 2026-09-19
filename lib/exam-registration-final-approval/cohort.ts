@@ -2,6 +2,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { fetchAllRows, fetchAllInChunks, tryFetchAllRows } from '@/lib/exam-applications/paginate'
 import { chargeKey, hasSessionChargeColumns } from '@/lib/exam-applications/session-charges'
 import { fetchAllMyJKKNPrograms } from '@/services/myjkkn-service'
+import { batchYearOf } from '@/lib/utils/batch-year'
 import type {
 	FinalApprovalLearner,
 	FinalApprovalSubject,
@@ -13,9 +14,12 @@ import type {
  * -----------------------------------------------------
  * The Exam Application screens move a learner's paper rows to
  * registration_status = 'Applied' and stamp the fees on them: the per-paper
- * exam fee on every row, the once-per-session application / mark statement /
- * late fine on ONE anchor row. Those 'Applied' rows are the pool awaiting final
- * approval - once approved they become 'Approved' + fee_paid and drop out.
+ * exam fee on every row, the once-per-session application / mark statement fee
+ * on ONE anchor row. Those 'Applied' rows are the pool awaiting final approval -
+ * once approved they become 'Approved' + fee_paid and drop out.
+ *
+ * The late fine is NOT read from the rows: it is a late-PAYMENT fine the office
+ * keys in per learner at approval time, so every pending learner starts at 0.
  *
  * This module folds the paper rows into one entry per learner, which is what
  * both the approval screen (GET) and the approval itself (POST) work from. The
@@ -266,14 +270,17 @@ export async function loadPendingFinalApprovalCohort(
 					program_name: program ? programNameByCode.get(program) || null : null,
 					regulation_code: null,
 					semester: null,
+					batch_year: batchYearOf(row.stu_register_no),
 					subjects: [],
 					total_subjects: 0,
 					exam_fee: 0,
 					application_fee: 0,
 					mark_statement_fee: 0,
 					late_fine: 0,
+					stamped_late_fine: 0,
+					anchor_registration_id: null,
 					final_amount: 0,
-					status: 'Payment Approved',
+					status: 'Payment Pending',
 				},
 				regularSemesters: [],
 				anySemesters: [],
@@ -323,7 +330,13 @@ export async function loadPendingFinalApprovalCohort(
 		// is exactly right and never double-counts.
 		learner.application_fee += num(row.application_fee)
 		learner.mark_statement_fee += num(row.mark_statement_fee)
-		learner.late_fine += num(row.late_fine)
+		// A late application carries no fine any more. Whatever an older build
+		// stamped is remembered only so the approval knows it has to clear it; the
+		// fine that counts is the one keyed in on the approval screen.
+		learner.stamped_late_fine += num(row.late_fine)
+		if (num(row.application_fee) > 0 || num(row.mark_statement_fee) > 0) {
+			learner.anchor_registration_id = row.id
+		}
 	}
 
 	const learners: FinalApprovalLearner[] = []
@@ -347,7 +360,8 @@ export async function loadPendingFinalApprovalCohort(
 		l.exam_fee = round2(l.exam_fee)
 		l.application_fee = round2(l.application_fee)
 		l.mark_statement_fee = round2(l.mark_statement_fee)
-		l.late_fine = round2(l.late_fine)
+		l.stamped_late_fine = round2(l.stamped_late_fine)
+		if (!l.anchor_registration_id) l.anchor_registration_id = l.subjects[0]?.registration_id ?? null
 		l.final_amount = round2(l.exam_fee + l.application_fee + l.mark_statement_fee + l.late_fine)
 		learners.push(l)
 	}

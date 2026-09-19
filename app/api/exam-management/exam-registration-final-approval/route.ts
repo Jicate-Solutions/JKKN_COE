@@ -2,15 +2,19 @@ import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
 import { requireUserPermission } from '@/lib/auth/check-user-permission'
 import { parseProgramCodes } from '@/lib/exam-applications/program-levels'
+import { batchLabel } from '@/lib/utils/batch-year'
 import {
 	learnerKeyOf,
 	loadPendingFinalApprovalCohort,
 	totalsOf,
 } from '@/lib/exam-registration-final-approval/cohort'
+import { FINAL_APPROVAL_PAYMENT_MODES } from '@/types/exam-registration-final-approval'
 import type {
+	FinalApprovalApprovedRow,
 	FinalApprovalCohortResponse,
 	FinalApprovalFilterOption,
 	FinalApprovalLearner,
+	FinalApprovalPaymentMode,
 	FinalApprovalResult,
 	FinalApprovalSkipped,
 } from '@/types/exam-registration-final-approval'
@@ -37,7 +41,11 @@ const MAX_LEARNERS_PER_APPROVAL = 1000
 const MIGRATION_HINT =
 	'Run supabase/migrations/20260912_exam_registration_final_approval.sql in the Supabase SQL Editor (creates exam_registration_fee_details and approve_final_exam_registration).'
 
-const ROMAN = ['', 'I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X', 'XI', 'XII']
+const PAYMENT_MIGRATION_HINT =
+	'Run supabase/migrations/20260919_final_approval_manual_late_fine.sql in the Supabase SQL Editor (lets the approval store the late fine and the mode of payment entered on this screen).'
+
+/** Upper bound on a hand-entered late fine - catches a slipped digit, not a policy */
+const MAX_LATE_FINE = 100000
 
 function optionsOf(
 	learners: FinalApprovalLearner[],
@@ -79,8 +87,15 @@ export async function GET(request: Request) {
 			parseProgramCodes(searchParams.get('program_codes') || searchParams.get('program_code'))
 		)
 		const regulationFilter = String(searchParams.get('regulation_code') || '').trim()
-		const semesterRaw = searchParams.get('semester')
-		const semesterFilter = semesterRaw && semesterRaw !== 'all' ? Number(semesterRaw) : null
+		// Multi-select admission years: `batches=2024,2023`; 0 = not mapped
+		const batchFilter = new Set(
+			String(searchParams.get('batches') || '')
+				.split(',')
+				.map(v => v.trim())
+				.filter(Boolean)
+				.map(Number)
+				.filter(Number.isFinite)
+		)
 
 		if (!institutions_id) return NextResponse.json({ error: 'institutions_id is required' }, { status: 400 })
 		if (!examination_session_id) return NextResponse.json({ error: 'examination_session_id is required' }, { status: 400 })
@@ -95,7 +110,7 @@ export async function GET(request: Request) {
 		const filtered = all.filter(l => {
 			if (programFilter.size > 0 && !programFilter.has(l.program_code || '')) return false
 			if (regulationFilter && regulationFilter !== 'all' && (l.regulation_code || '') !== regulationFilter) return false
-			if (semesterFilter != null && Number.isFinite(semesterFilter) && (l.semester ?? null) !== semesterFilter) return false
+			if (batchFilter.size > 0 && !batchFilter.has(l.batch_year)) return false
 			return true
 		})
 
@@ -112,10 +127,11 @@ export async function GET(request: Request) {
 					l => l.program_code ? { value: l.program_code, label: l.program_name ? `${l.program_code} - ${l.program_name}` : l.program_code } : null,
 					(a, b) => a.value.localeCompare(b.value)
 				),
-				semesters: optionsOf(
+				batches: optionsOf(
 					all,
-					l => l.semester != null ? { value: String(l.semester), label: `Semester ${ROMAN[l.semester] || l.semester}` } : null,
-					(a, b) => Number(a.value) - Number(b.value)
+					l => ({ value: String(l.batch_year), label: batchLabel(l.batch_year) }),
+					// Newest batch first; "Not Mapped" (0) sinks to the end
+					(a, b) => Number(b.value) - Number(a.value)
 				),
 			},
 			summary: totalsOf(filtered),
@@ -149,15 +165,38 @@ export async function POST(request: Request) {
 		if (!institutions_id) return NextResponse.json({ error: 'institutions_id is required' }, { status: 400 })
 		if (!examination_session_id) return NextResponse.json({ error: 'examination_session_id is required' }, { status: 400 })
 
+		// ── Mode of payment: the fee is collected at this step ──
+		const payment_mode = String(body.payment_mode || '').trim() as FinalApprovalPaymentMode
+		const payment_transaction_id = String(body.payment_transaction_id || '').trim() || null
+		if (!FINAL_APPROVAL_PAYMENT_MODES.includes(payment_mode)) {
+			return NextResponse.json({ error: 'Select the mode of payment (Cash or Online)' }, { status: 400 })
+		}
+		if (payment_mode === 'Online' && !payment_transaction_id) {
+			return NextResponse.json({ error: 'Enter the payment transaction id for an online payment' }, { status: 400 })
+		}
+		if (payment_transaction_id && payment_transaction_id.length > 255) {
+			return NextResponse.json({ error: 'Payment transaction id is too long (255 characters at most)' }, { status: 400 })
+		}
+
 		// The client sends learner keys only. Which paper rows those learners hold
 		// is re-derived from the database, so a stale screen can never approve a
 		// paper that has since been withdrawn.
-		const wanted = new Map<string, { register_number: string }>()
+		// The late-payment fine is the one amount the office keys in by hand.
+		const wanted = new Map<string, { register_number: string; late_fine: number }>()
 		for (const entry of requested) {
 			const register_number = String(entry?.register_number || entry?.stu_register_no || '').trim()
 			const key = learnerKeyOf({ student_id: entry?.student_id || entry?.id || null, register_number })
 			if (!key || key === 'sid:') continue
-			wanted.set(key, { register_number: register_number || key })
+
+			const rawFine = entry?.late_fine
+			const late_fine = rawFine == null || rawFine === '' ? 0 : Number(rawFine)
+			if (!Number.isFinite(late_fine) || late_fine < 0 || late_fine > MAX_LATE_FINE) {
+				return NextResponse.json(
+					{ error: `Late fine for ${register_number || key} must be an amount between 0 and ${MAX_LATE_FINE}.` },
+					{ status: 400 }
+				)
+			}
+			wanted.set(key, { register_number: register_number || key, late_fine: Math.round(late_fine * 100) / 100 })
 		}
 
 		if (wanted.size === 0) {
@@ -180,7 +219,12 @@ export async function POST(request: Request) {
 			const hit = wanted.has(learner.key) ? learner.key : sidKey && wanted.has(sidKey) ? sidKey : null
 			if (!hit) continue
 			matchedKeys.add(hit)
-			selected.push(learner)
+			const late_fine = wanted.get(hit)?.late_fine || 0
+			selected.push({
+				...learner,
+				late_fine,
+				final_amount: Math.round((learner.final_amount + late_fine) * 100) / 100,
+			})
 		}
 
 		const skipped: FinalApprovalSkipped[] = []
@@ -230,19 +274,35 @@ export async function POST(request: Request) {
 			final_amount: l.final_amount,
 		}))
 
+		// The entered fine is also stamped on the learner's anchor paper row (and any
+		// fine an older build stamped is cleared) so the paper-level reports agree
+		// with exam_registration_fee_details. Needs the late_fine column.
+		const lateFines = cohort.charge_columns_ready
+			? approvable
+				.filter(l => l.anchor_registration_id)
+				.map(l => ({ registration_id: l.anchor_registration_id, late_fine: l.late_fine }))
+			: null
+
 		// ── One transaction: every paper of every selected learner, or nothing ──
 		const { data: rpcData, error: rpcError } = await supabase.rpc('approve_final_exam_registration', {
 			p_registration_ids: registrationIds,
 			p_fee_details: feeDetails,
 			p_approved_by: perm.userId || null,
+			p_late_fines: lateFines,
+			// Cash carries no transaction id
+			p_payment: { payment_mode, payment_transaction_id: payment_mode === 'Online' ? payment_transaction_id : null },
 		})
 
 		if (rpcError) {
 			const msg = rpcError.message || ''
 			const missingFunction = rpcError.code === 'PGRST202' || /could not find the function/i.test(msg)
 			const missingTable = /exam_registration_fee_details/i.test(msg) && /does not exist/i.test(msg)
-			if (missingFunction || missingTable) {
+			if (missingTable) {
 				return NextResponse.json({ error: `Final approval is not set up yet. ${MIGRATION_HINT}` }, { status: 503 })
+			}
+			// p_late_fines / p_payment arrive with the 20260919 migration
+			if (missingFunction) {
+				return NextResponse.json({ error: `Final approval needs a database update. ${PAYMENT_MIGRATION_HINT}` }, { status: 503 })
 			}
 			console.error('[final-approval] approve_final_exam_registration failed:', rpcError)
 			// P0001 carries the function's own user-facing message (stale selection etc.)
@@ -253,12 +313,39 @@ export async function POST(request: Request) {
 		const subjectsUpdated = Number((rpcData as any)?.subjects_updated ?? registrationIds.length)
 		const studentsApproved = Number((rpcData as any)?.students_approved ?? approvable.length)
 
+		const approvedAt = String((rpcData as any)?.approved_at || new Date().toISOString())
+		const approved: FinalApprovalApprovedRow[] = approvable.map(l => ({
+			id: l.key,
+			student_id: l.student_id,
+			stu_register_no: l.register_number,
+			student_name: l.student_name,
+			program_code: l.program_code,
+			program_name: l.program_name,
+			regulation_code: l.regulation_code,
+			learner_semester: l.semester || 0,
+			total_subjects: l.total_subjects,
+			exam_fee: l.exam_fee,
+			application_fee: l.application_fee,
+			mark_statement_fee: l.mark_statement_fee,
+			late_fine: l.late_fine,
+			final_amount: l.final_amount,
+			fee_paid: true,
+			payment_status: 'Payment Approved',
+			registration_status: 'Approved',
+			payment_mode,
+			payment_transaction_id: payment_mode === 'Online' ? payment_transaction_id : null,
+			approved_at: approvedAt,
+		}))
+
 		const result: FinalApprovalResult = {
 			success: skipped.length === 0,
 			message: `Final registration approval completed successfully. Learners approved: ${studentsApproved}, subjects updated: ${subjectsUpdated}.`,
 			students_approved: studentsApproved,
 			subjects_updated: subjectsUpdated,
 			totals,
+			payment_mode,
+			payment_transaction_id: payment_mode === 'Online' ? payment_transaction_id : null,
+			approved,
 			skipped,
 		}
 
