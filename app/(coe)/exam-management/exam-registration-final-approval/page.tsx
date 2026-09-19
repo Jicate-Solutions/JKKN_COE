@@ -16,6 +16,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Textarea } from '@/components/ui/textarea'
 import { Badge } from '@/components/ui/badge'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
@@ -52,6 +53,7 @@ import {
 	RefreshCw,
 	RotateCcw,
 	Search,
+	Undo2,
 	Users,
 } from 'lucide-react'
 import { FINAL_APPROVAL_PAYMENT_MODES } from '@/types/exam-registration-final-approval'
@@ -63,6 +65,7 @@ import type {
 	FinalApprovalPaymentMode,
 	FinalApprovalResult,
 	FinalApprovalTotals,
+	FinalUnapprovalResult,
 } from '@/types/exam-registration-final-approval'
 
 const ROMAN = ['', 'I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X', 'XI', 'XII']
@@ -328,6 +331,12 @@ export default function FinalExamRegistrationApprovalPage() {
 	const [lastResult, setLastResult] = useState<FinalApprovalResult | null>(null)
 	const [exporting, setExporting] = useState<'pdf' | 'excel' | null>(null)
 
+	// ── Unapprove (Approved tab): learners approved by mistake go back to pending ──
+	const [selectedApproved, setSelectedApproved] = useState<Set<string>>(new Set())
+	const [unapproveOpen, setUnapproveOpen] = useState(false)
+	const [unapproveReason, setUnapproveReason] = useState('')
+	const [unapproving, setUnapproving] = useState(false)
+
 	const fetchCohort = useCallback(async () => {
 		if (!institutionsId || !sessionId) {
 			setCohort(null)
@@ -381,6 +390,7 @@ export default function FinalExamRegistrationApprovalPage() {
 				data: (json.data || []) as FinalApprovalApprovedRow[],
 			}
 			setApprovedReport(report)
+			setSelectedApproved(new Set())
 			return report
 		} catch (error) {
 			console.error('Final approval report error:', error)
@@ -559,6 +569,34 @@ export default function FinalExamRegistrationApprovalPage() {
 	)
 	const approvedSummary = useMemo(() => sumApproved(visibleApproved), [visibleApproved])
 
+	// As on Pending: only rows on screen can be acted on
+	const selectedApprovedRows = useMemo(() => visibleApproved.filter(r => selectedApproved.has(r.id)), [visibleApproved, selectedApproved])
+	const unapproveSelection = useMemo(() => sumApproved(selectedApprovedRows), [selectedApprovedRows])
+	const approvedHeaderChecked: boolean | 'indeterminate' =
+		visibleApproved.length > 0 && selectedApprovedRows.length === visibleApproved.length ? true
+			: selectedApprovedRows.length > 0 ? 'indeterminate'
+				: false
+
+	const toggleApprovedOne = useCallback((id: string, checked: boolean) => {
+		setSelectedApproved(prev => {
+			const next = new Set(prev)
+			if (checked) next.add(id)
+			else next.delete(id)
+			return next
+		})
+	}, [])
+
+	const toggleApprovedAllVisible = useCallback((checked: boolean) => {
+		setSelectedApproved(prev => {
+			const next = new Set(prev)
+			for (const r of visibleApproved) {
+				if (checked) next.add(r.id)
+				else next.delete(r.id)
+			}
+			return next
+		})
+	}, [visibleApproved])
+
 	const paymentModeSplit = useMemo(() => {
 		const split = new Map<string, { learners: number; amount: number }>()
 		for (const r of visibleApproved) {
@@ -693,12 +731,52 @@ export default function FinalExamRegistrationApprovalPage() {
 		}
 	}, [selectedLearners, paymentMode, transactionId, institutionsId, sessionId, fetchCohort, fetchApproved, downloadPdf, toast])
 
+	const handleConfirmUnapprove = useCallback(async () => {
+		const reason = unapproveReason.trim()
+		if (selectedApprovedRows.length === 0 || !reason) return
+		try {
+			setUnapproving(true)
+			const res = await fetch('/api/exam-management/exam-registration-final-approval/unapprove', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					institutions_id: institutionsId,
+					examination_session_id: sessionId,
+					register_numbers: selectedApprovedRows.map(r => r.stu_register_no),
+					reason,
+				}),
+			})
+			const json = await parseJsonResponse(res)
+			if (!res.ok) throw new Error(json?.error || 'Unapprove failed')
+
+			const result = json as FinalUnapprovalResult
+			setUnapproveOpen(false)
+			setUnapproveReason('')
+			setLastResult(null)
+			toast({
+				title: 'Approval undone',
+				description: `${result.students_unapproved} learner${result.students_unapproved === 1 ? '' : 's'} moved back to Pending, ${result.subjects_updated} subject${result.subjects_updated === 1 ? '' : 's'} updated.${result.not_found > 0 ? ` ${result.not_found} were no longer approved and were left as they are.` : ''}`,
+				className: 'bg-green-50 border-green-200 text-green-800',
+			})
+			await Promise.all([fetchCohort(), fetchApproved()])
+		} catch (error) {
+			console.error('Final approval unapprove error:', error)
+			toast({
+				title: 'Unapprove failed',
+				description: error instanceof Error ? error.message : 'Unknown error',
+				variant: 'destructive',
+			})
+		} finally {
+			setUnapproving(false)
+		}
+	}, [unapproveReason, selectedApprovedRows, institutionsId, sessionId, fetchCohort, fetchApproved, toast])
+
 	const canApprove = selectedLearners.length > 0 && !approving && !loading && (cohort?.migration_ready ?? false)
 	const ready = !!institutionsId && !!sessionId
 	const showingPending = tab === 'pending'
 	const listLoading = showingPending ? loading : loadingApproved
 	const PENDING_COLUMNS = 13
-	const APPROVED_COLUMNS = 15
+	const APPROVED_COLUMNS = 16
 
 	const filtersActive = filters.regulation !== 'all' || filters.programs.length > 0 || filters.batches.length > 0 || filters.semester !== 'all' || !!search
 
@@ -1221,6 +1299,16 @@ export default function FinalExamRegistrationApprovalPage() {
 											<Badge variant="outline" className="text-[11px] font-medium border-brand-green-200 bg-white text-brand-green-700 dark:border-brand-green-800 dark:bg-transparent dark:text-brand-green-300">
 												{visibleApproved.length} learner{visibleApproved.length === 1 ? '' : 's'} · {money(approvedSummary.final_amount)}
 											</Badge>
+											<Button
+												variant="outline"
+												size="sm"
+												className="h-8 text-xs gap-1.5 border-red-200 text-red-700 hover:bg-red-50 hover:text-red-800 dark:border-red-900 dark:text-red-300 dark:hover:bg-red-900/30"
+												onClick={() => { setUnapproveReason(''); setUnapproveOpen(true) }}
+												disabled={selectedApprovedRows.length === 0 || unapproving}
+											>
+												{unapproving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Undo2 className="h-3.5 w-3.5" />}
+												Unapprove{selectedApprovedRows.length > 0 ? ` (${selectedApprovedRows.length})` : ''}
+											</Button>
 											<Button size="sm" className={cn('h-8 text-xs gap-1.5', PRIMARY_BUTTON_CLASS)} onClick={handleDownloadPdf} disabled={visibleApproved.length === 0 || exporting !== null}>
 												{exporting === 'pdf' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FileDown className="h-3.5 w-3.5" />} PDF
 											</Button>
@@ -1231,6 +1319,14 @@ export default function FinalExamRegistrationApprovalPage() {
 											<Table>
 												<TableHeader className={TABLE_HEADER_CLASS}>
 													<TableRow className="hover:bg-transparent">
+														<TableHead className="w-10 text-center">
+															<Checkbox
+																checked={approvedHeaderChecked}
+																onCheckedChange={(v) => toggleApprovedAllVisible(v === true)}
+																disabled={visibleApproved.length === 0}
+																aria-label="Select all approved learners"
+															/>
+														</TableHead>
 														<TableHead className="w-12 text-center">S.No</TableHead>
 														<TableHead>Register Number</TableHead>
 														<TableHead>Learner Name</TableHead>
@@ -1269,7 +1365,19 @@ export default function FinalExamRegistrationApprovalPage() {
 														</TableRow>
 													) : (
 														approvedPageRows.map((r, idx) => (
-															<TableRow key={r.id} className="hover:bg-brand-cream-200/70 dark:hover:bg-gray-800/60">
+															<TableRow key={r.id} className={cn(
+																'transition-colors',
+																selectedApproved.has(r.id)
+																	? 'bg-red-50/70 hover:bg-red-50 shadow-[inset_3px_0_0_0_#dc2626] dark:bg-red-900/15 dark:hover:bg-red-900/25'
+																	: 'hover:bg-brand-cream-200/70 dark:hover:bg-gray-800/60'
+															)}>
+																<TableCell className="text-center">
+																	<Checkbox
+																		checked={selectedApproved.has(r.id)}
+																		onCheckedChange={(v) => toggleApprovedOne(r.id, v === true)}
+																		aria-label={`Select ${r.stu_register_no}`}
+																	/>
+																</TableCell>
 																<TableCell className="text-center text-xs">{(approvedCurrentPage - 1) * PAGE_SIZE + idx + 1}</TableCell>
 																<TableCell className="text-xs font-semibold whitespace-nowrap text-brand-green-800 dark:text-brand-green-200">{r.stu_register_no}</TableCell>
 																<TableCell className="text-xs">{r.student_name || '—'}</TableCell>
@@ -1365,6 +1473,50 @@ export default function FinalExamRegistrationApprovalPage() {
 				</PageTransition>
 				<AppFooter />
 			</SidebarInset>
+
+			{/* Unapprove - learners approved by mistake go back to Pending */}
+			<Dialog open={unapproveOpen} onOpenChange={open => { if (!unapproving) setUnapproveOpen(open) }}>
+				<DialogContent className="sm:max-w-md">
+					<DialogHeader>
+						<DialogTitle>Unapprove Final Registration</DialogTitle>
+						<DialogDescription>
+							The selected learners go back to the Pending tab as unpaid. Every subject they were approved for returns to Applied, and the payment details recorded at approval are cleared.
+						</DialogDescription>
+					</DialogHeader>
+
+					<FeeBreakdown totals={unapproveSelection} />
+
+					<div className="max-h-28 overflow-y-auto rounded-md border px-3 py-2 text-xs space-y-0.5">
+						{selectedApprovedRows.map(r => (
+							<div key={r.id} className="flex justify-between gap-2">
+								<span className="truncate"><span className="font-medium">{r.stu_register_no}</span> — {r.student_name || '—'}</span>
+								<span className="shrink-0 tabular-nums text-muted-foreground">{money(r.final_amount)}{r.payment_mode ? ` · ${r.payment_mode}` : ''}</span>
+							</div>
+						))}
+					</div>
+
+					<div className="space-y-1.5">
+						<Label htmlFor="unapprove-reason" className="text-xs">Reason *</Label>
+						<Textarea
+							id="unapprove-reason"
+							value={unapproveReason}
+							onChange={e => setUnapproveReason(e.target.value)}
+							placeholder="Why is this approval being undone? (kept in the log)"
+							maxLength={1000}
+							rows={3}
+							className="text-sm"
+						/>
+						<p className="text-[11px] text-muted-foreground">The undone approval, its amount and this reason are kept in the approval log. Any money already collected must be settled outside the system.</p>
+					</div>
+
+					<DialogFooter>
+						<Button variant="outline" onClick={() => setUnapproveOpen(false)} disabled={unapproving}>Cancel</Button>
+						<Button variant="destructive" onClick={handleConfirmUnapprove} disabled={unapproving || !unapproveReason.trim() || selectedApprovedRows.length === 0}>
+							{unapproving ? <><Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" />Unapproving…</> : `Unapprove ${selectedApprovedRows.length} learner${selectedApprovedRows.length === 1 ? '' : 's'}`}
+						</Button>
+					</DialogFooter>
+				</DialogContent>
+			</Dialog>
 
 			{/* Step 1 - the summary again, plus how the fee was paid */}
 			<Dialog open={confirmStep === 1} onOpenChange={open => { if (!open) setConfirmStep(0) }}>

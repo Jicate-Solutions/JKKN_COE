@@ -154,6 +154,16 @@ export interface FinalApprovalResult {
 	skipped: FinalApprovalSkipped[]
 }
 
+/** Result of sending approved learners back to the pending list */
+export interface FinalUnapprovalResult {
+	success: boolean
+	message: string
+	students_unapproved: number
+	subjects_updated: number
+	/** Selected learners that were not approved any more and were left untouched */
+	not_found: number
+}
+
 /** Row of exam_registration_fee_details */
 export interface ExamRegistrationFeeDetail {
 	id: string
