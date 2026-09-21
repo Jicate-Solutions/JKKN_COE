@@ -33,6 +33,7 @@ import { cn } from '@/lib/utils'
 import { batchLabel, batchYearOf } from '@/lib/utils/batch-year'
 import { generateExamRegistrationReportPdf } from '@/lib/utils/generate-exam-registration-report-pdf'
 import { exportExamRegistrationReportExcel } from '@/lib/utils/exam-registration-report-excel'
+import { FeeConcessionPanel } from '@/components/exam-fee-concessions/fee-concession-panel'
 import {
 	AlertTriangle,
 	BadgeCheck,
@@ -48,6 +49,7 @@ import {
 	FileDown,
 	FileSpreadsheet,
 	FileText,
+	HeartHandshake,
 	IndianRupee,
 	Loader2,
 	RefreshCw,
@@ -86,7 +88,8 @@ const EMPTY_TOTALS: FinalApprovalTotals = {
 	learners: 0, subjects: 0, exam_fee: 0, application_fee: 0, mark_statement_fee: 0, late_fine: 0, concession: 0, final_amount: 0,
 }
 
-type TabKey = 'pending' | 'approved' | 'report'
+type TabKey = 'pending' | 'concession' | 'approved' | 'report'
+const TAB_KEYS: TabKey[] = ['pending', 'concession', 'approved', 'report']
 
 interface Filters {
 	regulation: string
@@ -343,6 +346,14 @@ export default function FinalExamRegistrationApprovalPage() {
 	const [approving, setApproving] = useState(false)
 	const [lastResult, setLastResult] = useState<FinalApprovalResult | null>(null)
 	const [exporting, setExporting] = useState<'pdf' | 'excel' | null>(null)
+	// Bumped whenever the Fee Concession tab has to reload (Refresh, approve, unapprove)
+	const [concessionRefreshKey, setConcessionRefreshKey] = useState(0)
+
+	// ?tab=concession opens a tab directly (the old Fee Concessions URL lands here)
+	useEffect(() => {
+		const wanted = new URLSearchParams(window.location.search).get('tab') as TabKey | null
+		if (wanted && TAB_KEYS.includes(wanted)) setTab(wanted)
+	}, [])
 
 	// ── Unapprove (Approved tab): learners approved by mistake go back to pending ──
 	const [selectedApproved, setSelectedApproved] = useState<Set<string>>(new Set())
@@ -432,7 +443,13 @@ export default function FinalExamRegistrationApprovalPage() {
 	const handleRefresh = useCallback(() => {
 		fetchCohort()
 		fetchApproved()
+		setConcessionRefreshKey(k => k + 1)
 	}, [fetchCohort, fetchApproved])
+
+	const matchesActiveFilters = useCallback(
+		(facts: FilterFacts) => matchesFilters(filters, facts),
+		[filters]
+	)
 
 	const handleReset = useCallback(() => {
 		setFilters(NO_FILTERS)
@@ -458,7 +475,7 @@ export default function FinalExamRegistrationApprovalPage() {
 
 	// ── Filter options come from the list the active tab shows ──
 	const activeFacts = useMemo(
-		() => tab === 'pending' ? learners.map(factsOfPending) : approvedRows.map(factsOfApproved),
+		() => tab === 'pending' || tab === 'concession' ? learners.map(factsOfPending) : approvedRows.map(factsOfApproved),
 		[tab, learners, approvedRows]
 	)
 	const regulationOptions = useMemo(() => optionsOf(
@@ -717,6 +734,7 @@ export default function FinalExamRegistrationApprovalPage() {
 				return next
 			})
 			const [, report] = await Promise.all([fetchCohort(), fetchApproved()])
+			setConcessionRefreshKey(k => k + 1)
 
 			// The approval report for exactly the learners just approved downloads
 			// straight away; the whole session stays available under Report.
@@ -772,6 +790,7 @@ export default function FinalExamRegistrationApprovalPage() {
 				className: 'bg-green-50 border-green-200 text-green-800',
 			})
 			await Promise.all([fetchCohort(), fetchApproved()])
+			setConcessionRefreshKey(k => k + 1)
 		} catch (error) {
 			console.error('Final approval unapprove error:', error)
 			toast({
@@ -825,9 +844,6 @@ export default function FinalExamRegistrationApprovalPage() {
 								</p>
 							</div>
 						</div>
-							<Button asChild variant="outline" size="sm" className={cn('h-8 text-xs', OUTLINE_BUTTON_CLASS)}>
-								<Link href="/exam-management/exam-fee-concessions">Fee Concessions</Link>
-							</Button>
 						</div>
 
 						{/* Stats */}
@@ -1118,6 +1134,12 @@ export default function FinalExamRegistrationApprovalPage() {
 									<Clock className="h-3.5 w-3.5" /> Pending
 									<Badge variant="secondary" className="ml-1 h-5 px-1.5 text-[10px] tabular-nums">{pendingSummary.learners}</Badge>
 								</TabsTrigger>
+								<TabsTrigger value="concession" className="text-xs gap-1.5">
+									<HeartHandshake className="h-3.5 w-3.5" /> Fee Concession
+									{pendingSummary.concession > 0 && (
+										<Badge variant="secondary" className="ml-1 h-5 px-1.5 text-[10px] tabular-nums">{visible.filter(l => l.concession_amount > 0).length}</Badge>
+									)}
+								</TabsTrigger>
 								<TabsTrigger value="approved" className="text-xs gap-1.5">
 									<BadgeCheck className="h-3.5 w-3.5" /> Approved
 									<Badge variant="secondary" className="ml-1 h-5 px-1.5 text-[10px] tabular-nums">{approvedSummary.learners}</Badge>
@@ -1314,6 +1336,26 @@ export default function FinalExamRegistrationApprovalPage() {
 										</CardContent>
 									</Card>
 								</div>
+							</TabsContent>
+
+							{/* ── Fee Concession ── */}
+							<TabsContent value="concession" className="mt-0">
+								{ready ? (
+									<FeeConcessionPanel
+										institutionsId={institutionsId}
+										sessionId={sessionId}
+										matchesFilters={matchesActiveFilters}
+										search={search}
+										refreshKey={concessionRefreshKey}
+										onChanged={fetchCohort}
+									/>
+								) : (
+									<Card className="border-brand-green-100 dark:border-brand-green-900/60">
+										<CardContent className="py-10 text-center text-sm text-muted-foreground">
+											Select an institution and an exam session to record fee concessions.
+										</CardContent>
+									</Card>
+								)}
 							</TabsContent>
 
 							{/* ── Approved ── */}
