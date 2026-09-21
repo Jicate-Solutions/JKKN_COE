@@ -69,7 +69,6 @@ import {
 	Trash2,
 	AlertCircle,
 } from 'lucide-react'
-import XLSX from '@/lib/utils/excel-compat'
 import {
 	buildRegisterNumber,
 	learnerDisplayName,
@@ -266,7 +265,7 @@ export default function GenerateRegisterNumberPage() {
 		// page uses. The local `programs` mirror is not populated per institution,
 		// so querying it leaves this dropdown empty.
 		const params = new URLSearchParams({ type: 'programs', institution_code: institutionCode })
-		fetch(`/api/users/register-numbers/lookups?${params}`)
+		fetch(`/api/learners/register-numbers/lookups?${params}`)
 			.then(parseJsonResponse)
 			.then((data: any) => {
 				const rows: any[] = Array.isArray(data) ? data : data?.data || []
@@ -298,7 +297,7 @@ export default function GenerateRegisterNumberPage() {
 			institution_code: institutionCode,
 			program_code: programCode,
 		})
-		fetch(`/api/users/register-numbers/lookups?${params}`)
+		fetch(`/api/learners/register-numbers/lookups?${params}`)
 			.then(parseJsonResponse)
 			.then((data: any) => {
 				const rows: any[] = Array.isArray(data) ? data : data?.data || []
@@ -348,6 +347,16 @@ export default function GenerateRegisterNumberPage() {
 			const collected: CohortLearner[] = []
 			const seen = new Set<string>()
 
+			// Numbers this cohort already holds from a previous run. A COE query that
+			// does not depend on the MyJKKN sweep, so it runs alongside it.
+			const assignedParams = new URLSearchParams({
+				institutions_id: institutionId,
+				program_code: programCode,
+				semester_code: semesterCode,
+			})
+			const assignedPromise = fetch(`/api/learners/register-numbers?${assignedParams}`)
+			assignedPromise.catch(() => {})
+
 			for (const myjkknId of myjkknInstitutionIds) {
 				const params = new URLSearchParams({ institution_id: myjkknId, fetchAll: 'true' })
 				const res = await fetch(`/api/myjkkn/learner-profiles?${params}`)
@@ -382,13 +391,7 @@ export default function GenerateRegisterNumberPage() {
 
 			setLearners(collected)
 
-			// Numbers this cohort already holds from a previous run
-			const assignedParams = new URLSearchParams({
-				institutions_id: institutionId,
-				program_code: programCode,
-				semester_code: semesterCode,
-			})
-			const assignedRes = await fetch(`/api/users/register-numbers?${assignedParams}`)
+			const assignedRes = await assignedPromise
 			if (assignedRes.ok) {
 				const json = await parseJsonResponse(assignedRes)
 				setAssigned(json?.data || [])
@@ -519,7 +522,7 @@ export default function GenerateRegisterNumberPage() {
 	const handleGenerate = useCallback(async () => {
 		setGenerating(true)
 		try {
-			const res = await fetch('/api/users/register-numbers/generate', {
+			const res = await fetch('/api/learners/register-numbers/generate', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({
@@ -590,7 +593,7 @@ export default function GenerateRegisterNumberPage() {
 	const releaseNumbers = useCallback(
 		async (body: Record<string, unknown>, successMessage: string) => {
 			try {
-				const res = await fetch('/api/users/register-numbers', {
+				const res = await fetch('/api/learners/register-numbers', {
 					method: 'DELETE',
 					headers: { 'Content-Type': 'application/json' },
 					body: JSON.stringify(body),
@@ -620,6 +623,7 @@ export default function GenerateRegisterNumberPage() {
 	// ─── Export ───
 	const handleExport = useCallback(async () => {
 		if (previewRows.length === 0) return
+		const { default: XLSX } = await import('@/lib/utils/excel-compat')
 		const sheet = XLSX.utils.json_to_sheet(
 			previewRows.map(row => ({
 				'Sl.No': row.slNo,
@@ -658,7 +662,7 @@ export default function GenerateRegisterNumberPage() {
 							<BreadcrumbSeparator />
 							<BreadcrumbItem>
 								<BreadcrumbLink asChild>
-									<Link href="/users/learners-myjkkn">Learners</Link>
+									<Link href="/learners/directory">Learners</Link>
 								</BreadcrumbLink>
 							</BreadcrumbItem>
 							<BreadcrumbSeparator />

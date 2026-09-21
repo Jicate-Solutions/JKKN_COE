@@ -120,7 +120,7 @@ export default function StudentStrengthPage() {
 		setLoading(true)
 		setReport(null)
 		try {
-			let url = `/api/reports/student-strength?institutions_id=${institutionId}&examination_session_id=${selectedSession.id}`
+			let url = `/api/learners/student-strength?institutions_id=${institutionId}&examination_session_id=${selectedSession.id}`
 			if (refresh) url += '&refresh=true'
 			const res = await fetch(url)
 			if (!res.ok) {
@@ -276,7 +276,7 @@ export default function StudentStrengthPage() {
 							</BreadcrumbItem>
 							<BreadcrumbSeparator />
 							<BreadcrumbItem>
-								<BreadcrumbLink href='#'>Pre-Exam Reports</BreadcrumbLink>
+								<BreadcrumbLink href='/learners/directory'>Learners</BreadcrumbLink>
 							</BreadcrumbItem>
 							<BreadcrumbSeparator />
 							<BreadcrumbItem>

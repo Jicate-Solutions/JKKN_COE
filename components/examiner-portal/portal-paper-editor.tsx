@@ -716,12 +716,12 @@ export function PortalPaperEditor({
 		onProgressChange?.({ done: doneCount, total: questions.length })
 	}, [doneCount, questions.length, onProgressChange])
 
-	// CO1–CO5 are always offered, in order. The course's own outcome rows are
-	// merged in (they may add CO6 or carry descriptions) but never shrink the
+	// CO1–CO6 are always offered, in order. The course's own outcome rows are
+	// merged in (they may add CO7+ or carry descriptions) but never shrink the
 	// list: an incomplete or oddly ordered outcome master must not stop an
-	// examiner tagging a question to CO4 or CO5.
+	// examiner tagging a question to CO5 or CO6.
 	const coOptions = useMemo(() => {
-		const codes = new Set<string>(['CO1', 'CO2', 'CO3', 'CO4', 'CO5'])
+		const codes = new Set<string>(['CO1', 'CO2', 'CO3', 'CO4', 'CO5', 'CO6'])
 		for (const c of courseOutcomes) if (c?.co_code) codes.add(String(c.co_code).trim().toUpperCase())
 		const num = (v: string) => Number((v.match(/\d+/) || ['0'])[0])
 		return [...codes].sort((a, b) => num(a) - num(b) || a.localeCompare(b))

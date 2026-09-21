@@ -10,7 +10,7 @@
  *
  * Used by:
  *  - app/api/myjkkn/learner-profiles/route.ts        (single page / fetchAll)
- *  - app/api/myjkkn/learner-profiles/directory/route.ts (full cached sweep)
+ *  - app/api/learners/directory/route.ts (full cached sweep)
  */
 
 import {

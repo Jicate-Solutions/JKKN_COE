@@ -48,10 +48,8 @@ import {
 	UserMinus,
 	Users,
 } from 'lucide-react'
-import XLSX from '@/lib/utils/excel-compat'
 import { batchLabel } from '@/lib/utils/batch-year'
 import { earlierSessions } from '@/lib/discontinued-learners/sessions'
-import { generateDiscontinuedLearnersPdf } from '@/lib/utils/generate-discontinued-learners-pdf'
 import {
 	DISCONTINUED_REASONS,
 	type DiscontinuedLearnerRow,
@@ -146,7 +144,7 @@ export default function DiscontinuedLearnersPage() {
 		;(async () => {
 			try {
 				setLoadingSessions(true)
-				const res = await fetch(`/api/reports/discontinued-learners?mode=sessions&institutions_id=${selectedInstitutionId}`)
+				const res = await fetch(`/api/learners/discontinued-learners?mode=sessions&institutions_id=${selectedInstitutionId}`)
 				const json = await res.json()
 				if (!res.ok) throw new Error(json?.error || 'Failed to load exam sessions')
 				if (!cancelled) setSessions(json.data || [])
@@ -187,7 +185,7 @@ export default function DiscontinuedLearnersPage() {
 				current_session_id: currentSessionId,
 				previous_session_id: previousSessionId,
 			})
-			const res = await fetch(`/api/reports/discontinued-learners?${params.toString()}`)
+			const res = await fetch(`/api/learners/discontinued-learners?${params.toString()}`)
 			const json = await res.json()
 			if (!res.ok) throw new Error(json?.error || 'Failed to generate the report')
 			setReport(json)
@@ -260,6 +258,7 @@ export default function DiscontinuedLearnersPage() {
 		try {
 			setExportingPdf(true)
 
+			const { generateDiscontinuedLearnersPdf } = await import('@/lib/utils/generate-discontinued-learners-pdf')
 			const filename = generateDiscontinuedLearnersPdf({
 				current_session_name: report.current_session.session_name,
 				current_session_code: report.current_session.session_code,
@@ -280,6 +279,7 @@ export default function DiscontinuedLearnersPage() {
 
 	const handleExportExcel = useCallback(async () => {
 		if (!report || filteredRows.length === 0) return
+		const { default: XLSX } = await import('@/lib/utils/excel-compat')
 		const sheet = XLSX.utils.json_to_sheet(
 			filteredRows.map((r: DiscontinuedLearnerRow, i) => ({
 				'S.No': i + 1,
@@ -321,7 +321,7 @@ export default function DiscontinuedLearnersPage() {
 							<BreadcrumbSeparator />
 							<BreadcrumbItem>
 								<BreadcrumbLink asChild>
-									<Link href="/users/learners-myjkkn">Learners</Link>
+									<Link href="/learners/directory">Learners</Link>
 								</BreadcrumbLink>
 							</BreadcrumbItem>
 							<BreadcrumbSeparator />

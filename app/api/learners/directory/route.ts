@@ -8,10 +8,10 @@ import {
 import type { LearnerDirectoryRow } from '@/types/learner-directory'
 
 /**
- * GET /api/myjkkn/learner-profiles/directory
+ * GET /api/learners/directory
  *
  * The whole MyJKKN learner roster in one response, for the Learner Directory
- * page (/users/learners-myjkkn).
+ * page (/learners/directory).
  *
  * Why a full sweep instead of server-side paging:
  *  - The page's Lifecycle Status / Program / Semester dropdowns must list every
@@ -35,6 +35,7 @@ const PAGE_CONCURRENCY = 8
 const MAX_PAGES = 500
 const TTL_MS = 5 * 60 * 1000       // a complete sweep is good for 5 minutes
 const PARTIAL_TTL_MS = 60 * 1000   // an incomplete sweep is retried sooner
+const STALE_MAX_MS = 60 * 60 * 1000 // past its TTL a sweep is still served (while refreshing) for an hour
 
 interface SweepResult {
 	rows: LearnerDirectoryRow[]
@@ -157,11 +158,20 @@ async function getSweep(forceRefresh: boolean): Promise<SweepResult> {
 		const ttl = cached.complete ? TTL_MS : PARTIAL_TTL_MS
 		if (Date.now() - cached.fetchedAt < ttl) return cached
 	}
-	if (inflight) return inflight
+	if (!inflight) {
+		inflight = sweepAllProfiles()
+			.then((result) => { cached = result; return result })
+			.finally(() => { inflight = null })
+	}
 
-	inflight = sweepAllProfiles()
-		.then((result) => { cached = result; return result })
-		.finally(() => { inflight = null })
+	// Stale-while-revalidate: an expired sweep that is still recent is served at
+	// once while the fresh one builds in the background, so the page never waits
+	// on the full MyJKKN crawl just because the TTL lapsed. An explicit refresh
+	// always waits for the new data.
+	if (!forceRefresh && cached && Date.now() - cached.fetchedAt < STALE_MAX_MS) {
+		inflight.catch(err => console.error('[Learner Directory] Background refresh failed:', err))
+		return cached
+	}
 
 	return inflight
 }
@@ -172,11 +182,9 @@ export async function GET(request: NextRequest) {
 	const forceRefresh = searchParams.get('refresh') === 'true'
 
 	try {
-		const wasCached = !forceRefresh
-			&& cached !== null
-			&& Date.now() - cached.fetchedAt < (cached.complete ? TTL_MS : PARTIAL_TTL_MS)
-
+		const before = cached
 		const sweep = await getSweep(forceRefresh)
+		const wasCached = sweep === before
 
 		// MyJKKN ignores its own institution filter, so scope here instead. The
 		// page also re-checks client-side; this keeps the payload proportional.

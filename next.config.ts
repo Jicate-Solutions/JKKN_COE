@@ -8,6 +8,16 @@ const nextConfig: NextConfig = {
     // Re-evaluate after upgrading @types/react or Next.js.
     ignoreBuildErrors: true,
   },
+  // Learner pages moved under /learners/*; keep old links, bookmarks and saved
+  // favorites working.
+  async redirects() {
+    return [
+      { source: '/users/learners-myjkkn', destination: '/learners/directory', permanent: true },
+      { source: '/users/generate-register-number', destination: '/learners/generate-register-number', permanent: true },
+      { source: '/users/discontinued-learners', destination: '/learners/discontinued-learners', permanent: true },
+      { source: '/reports/pre-exam/student-strength', destination: '/learners/student-strength', permanent: true },
+    ];
+  },
   serverExternalPackages: ['@sparticuz/chromium'],
   outputFileTracingIncludes: {
     '/api/pre-exam/practical-email/*': ['./node_modules/@sparticuz/chromium/**/*'],

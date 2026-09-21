@@ -104,7 +104,7 @@ type RegistrationRow = {
 }
 
 /**
- * GET /api/reports/student-strength
+ * GET /api/learners/student-strength
  * Query params: institutions_id, examination_session_id
  *
  * Generates a pre-exam student strength report showing enrollment by program,
@@ -144,22 +144,36 @@ export async function GET(request: Request) {
 
 		// ── Phase 1: Parallel Supabase fetches ───────────────────────────────────
 		const fetchRegistrations = async (): Promise<RegistrationRow[]> => {
-			const all: RegistrationRow[] = []
-			let offset = 0
 			const pageSize = 1000
-			while (true) {
-				const { data, error } = await supabase
+			// Ordered by id: .range() paging over an unordered set can repeat or skip rows.
+			const fetchPage = (offset: number, withCount = false) =>
+				supabase
 					.from('exam_registrations')
-					.select('stu_register_no, course_offering_id, program_code, course_offerings(semester)')
+					.select(
+						'stu_register_no, course_offering_id, program_code, course_offerings(semester)',
+						withCount ? { count: 'exact' } : undefined
+					)
 					.eq('institutions_id', institutions_id)
 					.eq('examination_session_id', examination_session_id)
+					.order('id')
 					.range(offset, offset + pageSize - 1)
 
-				if (error || !data || data.length === 0) break
+			// Page 1 carries the exact count, so the remaining pages go out together
+			// instead of one round trip after another.
+			const first = await fetchPage(0, true)
+			if (first.error || !first.data) return []
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any
+			const all: RegistrationRow[] = [...(first.data as any)]
+
+			const total = first.count ?? all.length
+			const offsets: number[] = []
+			for (let offset = pageSize; offset < total; offset += pageSize) offsets.push(offset)
+
+			const rest = await Promise.all(offsets.map(offset => fetchPage(offset)))
+			for (const page of rest) {
+				if (page.error) throw new Error(`Failed to fetch exam registrations: ${page.error.message}`)
 				// eslint-disable-next-line @typescript-eslint/no-explicit-any
-				all.push(...(data as any))
-				if (data.length < pageSize) break
-				offset += pageSize
+				all.push(...((page.data || []) as any))
 			}
 			return all
 		}

@@ -46,17 +46,35 @@ function subtotalRowToTableRow(
 	return cells
 }
 
+// Body font sizes tried, largest first - the first one that keeps the whole
+// report on a single A4 page wins.
+const FONT_SIZES = [12, 11.5, 11, 10.5, 10, 9.5, 9, 8.5, 8, 7.5, 7]
+
 export function generateStudentStrengthPDF(
 	report: StudentStrengthReport,
 	logoImage?: string,
 	rightLogoImage?: string
 ): Blob {
+	let doc = buildStudentStrengthDoc(report, FONT_SIZES[0], logoImage, rightLogoImage)
+	for (const fontSize of FONT_SIZES.slice(1)) {
+		if (doc.getNumberOfPages() === 1) break
+		doc = buildStudentStrengthDoc(report, fontSize, logoImage, rightLogoImage)
+	}
+	return doc.output('blob')
+}
+
+function buildStudentStrengthDoc(
+	report: StudentStrengthReport,
+	fontSize: number,
+	logoImage?: string,
+	rightLogoImage?: string
+): jsPDF {
 	const { has_aided, max_year, ug_rows, pg_rows, ug_subtotal, pg_subtotal, grand_total } = report
 
 	// Portrait A4
 	const doc = new jsPDF('portrait', 'mm', 'a4')
 	const pageWidth = doc.internal.pageSize.getWidth()
-	const margin = 10
+	const margin = 8
 	let currentY = 8
 
 	// ── Header (matching hall ticket style) ─────────────────────────────────
@@ -162,9 +180,9 @@ export function generateStudentStrengthPDF(
 	body.push(grandRow)
 
 	// ── Column widths ────────────────────────────────────────────────────────
-	const contentWidth = pageWidth - 20 // 10mm margin each side
+	const contentWidth = pageWidth - margin * 2
 	const snoWidth = 10
-	const nameWidth = 65 // wider to accommodate code + name
+	const nameWidth = 80 // most programme names stay on one line, so the font can be larger
 	const dataWidth = contentWidth - snoWidth - nameWidth
 	const colWidth = dataWidth / (max_year * colsPerYear)
 
@@ -182,8 +200,8 @@ export function generateStudentStrengthPDF(
 		body,
 		theme: 'grid',
 		styles: {
-			fontSize: 7,
-			cellPadding: 1.5,
+			fontSize,
+			cellPadding: { top: 1.4, bottom: 1.4, left: 1, right: 1 },
 			overflow: 'linebreak',
 			font: 'times',
 			textColor: [0, 0, 0],
@@ -201,6 +219,11 @@ export function generateStudentStrengthPDF(
 		},
 		columnStyles,
 		didParseCell: (data) => {
+			// AIDED / SF / TOTAL sit in the narrowest columns - a step smaller so they never break mid-word
+			if (data.section === 'head' && data.row.index === 1) {
+				data.cell.styles.fontSize = Math.min(fontSize, 8)
+				data.cell.styles.cellPadding = { top: 1.4, bottom: 1.4, left: 0.5, right: 0.5 }
+			}
 			// Bold subtotal and grand total rows
 			const rowText = data.row.raw as unknown[]
 			if (Array.isArray(rowText)) {
@@ -213,8 +236,8 @@ export function generateStudentStrengthPDF(
 				}
 			}
 		},
-		margin: { left: 10, right: 10 },
+		margin: { left: margin, right: margin, bottom: margin },
 	})
 
-	return doc.output('blob')
+	return doc
 }

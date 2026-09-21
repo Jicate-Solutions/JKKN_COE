@@ -7,7 +7,7 @@ import {
 } from '@/lib/utils/register-number'
 
 /**
- * POST /api/users/register-numbers/generate
+ * POST /api/learners/register-numbers/generate
  *
  * Assigns register numbers to a learner cohort (institution + program + semester).
  *

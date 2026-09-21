@@ -32,7 +32,7 @@ ROUTES = {
 	'course_mapping': '/course-management/course-mapping-index',
 	'course_offering': '/course-management/course-offering',
 	# Learners
-	'learners': '/users/learners-myjkkn',
+	'learners': '/learners/directory',
 	# Grading
 	'grades': '/grading/grades',
 	'grade_system': '/grading/grade-system',

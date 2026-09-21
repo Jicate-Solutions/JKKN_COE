@@ -1,5 +1,5 @@
 /**
- * Shape returned by GET /api/myjkkn/learner-profiles/directory.
+ * Shape returned by GET /api/learners/directory.
  *
  * A slim projection of a MyJKKN learner profile: the whole directory is sent to
  * the browser in one sweep so every filter dropdown (lifecycle status, program,

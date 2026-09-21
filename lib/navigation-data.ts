@@ -195,9 +195,10 @@ export const navMain: NavItem[] = [
 		icon: GraduationCap,
 		coe_roles: ['super_admin', 'coe'],
 		items: [
-			{ title: 'Learner Directory', url: '/users/learners-myjkkn', icon: GraduationCap, permission: 'page.users.learners_myjkkn.view' },
-			{ title: 'Generate Register Number', url: '/users/generate-register-number', icon: Hash, permission: 'page.users.generate_register_number.view' },
-			{ title: 'Discontinued Learners', url: '/users/discontinued-learners', icon: UserMinus, permission: 'page.users.discontinued_learners.view' },
+			{ title: 'Learner Directory', url: '/learners/directory', icon: GraduationCap, permission: 'page.users.learners_myjkkn.view' },
+			{ title: 'Generate Register Number', url: '/learners/generate-register-number', icon: Hash, permission: 'page.users.generate_register_number.view' },
+			{ title: 'Discontinued Learners', url: '/learners/discontinued-learners', icon: UserMinus, permission: 'page.users.discontinued_learners.view' },
+			{ title: 'Student Strength', url: '/learners/student-strength', icon: Users, permission: 'page.reports.pre_exam.student_strength.view' },
 			{ title: 'Learner Promotion', url: '#' },
 		],
 	},
@@ -326,7 +327,6 @@ export const navMain: NavItem[] = [
 		icon: ClipboardList,
 		coe_roles: ['super_admin', 'coe'],
 		items: [
-			{ title: 'Student Strength', url: '/reports/pre-exam/student-strength', icon: Users, permission: 'page.reports.pre_exam.student_strength.view' },
 		],
 	},
 	{

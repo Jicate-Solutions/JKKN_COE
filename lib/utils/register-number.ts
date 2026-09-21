@@ -2,7 +2,7 @@
  * Register number generation rules.
  *
  * Shared by the "Generate Register Number" page (client-side preview) and
- * /api/users/register-numbers/generate (server-side save). Both sides must
+ * /api/learners/register-numbers/generate (server-side save). Both sides must
  * produce byte-identical numbers, so the rule lives here once — the server
  * recomputes rather than trusting the numbers the client previewed.
  */

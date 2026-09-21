@@ -7,7 +7,7 @@
  * All CRUD lives in MyJKKN.
  *
  * Data strategy: the page loads the ENTIRE roster once, via
- * /api/myjkkn/learner-profiles/directory (a `lifecycle_status=all` sweep that is
+ * /api/learners/directory (a `lifecycle_status=all` sweep that is
  * cached server-side). Everything after that — lifecycle status / program /
  * semester filters, search, sorting, paging — is client-side.
  *
@@ -20,7 +20,6 @@
 
 import { useState, useMemo, useEffect, useCallback, useRef } from 'react'
 import Link from 'next/link'
-import XLSX from '@/lib/utils/excel-compat'
 import { AppFooter } from '@/components/layout/app-footer'
 import {
 	Breadcrumb,
@@ -83,8 +82,6 @@ import {
 	Users,
 } from 'lucide-react'
 import { useInstitutionFilter } from '@/hooks/use-institution-filter'
-import { generateLearnerDirectoryPDF } from '@/lib/utils/generate-learner-directory-pdf'
-import { generateLearnerProfilePDF } from '@/lib/utils/generate-learner-profile-pdf'
 import { getInstitutionHeader } from '@/lib/utils/institution-header'
 import type { LearnerDirectoryRow } from '@/types/learner-directory'
 
@@ -212,8 +209,8 @@ export default function LearnersMyJKKNPage() {
 			setError(null)
 
 			const baseUrl = refresh
-				? '/api/myjkkn/learner-profiles/directory?refresh=true'
-				: '/api/myjkkn/learner-profiles/directory'
+				? '/api/learners/directory?refresh=true'
+				: '/api/learners/directory'
 			const response = await fetch(appendToUrl(baseUrl))
 
 			if (!response.ok) {
@@ -482,7 +479,7 @@ export default function LearnersMyJKKNPage() {
 	}
 
 	// Export every row that matches the current filters, not just this page
-	const handleExport = () => {
+	const handleExport = async () => {
 		const excelData = filteredLearners.map((learner, index) => ({
 			'S.No': index + 1,
 			'Register Number': learner.register_number || '',
@@ -516,6 +513,7 @@ export default function LearnersMyJKKNPage() {
 
 		if (excelData.length === 0) return
 
+		const { default: XLSX } = await import('@/lib/utils/excel-compat')
 		const ws = XLSX.utils.json_to_sheet(excelData)
 
 		// Auto-adjust column widths
@@ -526,7 +524,7 @@ export default function LearnersMyJKKNPage() {
 
 		const wb = XLSX.utils.book_new()
 		XLSX.utils.book_append_sheet(wb, ws, 'Learners')
-		XLSX.writeFile(wb, `learners_myjkkn_${new Date().toISOString().split('T')[0]}.xlsx`)
+		await XLSX.writeFile(wb, `learners_myjkkn_${new Date().toISOString().split('T')[0]}.xlsx`)
 
 		toast({
 			title: 'Export Successful',
@@ -570,6 +568,7 @@ export default function LearnersMyJKKNPage() {
 
 			const { logoImage, rightLogoImage } = await loadLetterheadLogos(institutionCode)
 
+			const { generateLearnerDirectoryPDF } = await import('@/lib/utils/generate-learner-directory-pdf')
 			generateLearnerDirectoryPDF({
 				learners: filteredLearners,
 				institutionCode,
@@ -619,6 +618,7 @@ export default function LearnersMyJKKNPage() {
 			// opening hundreds of simultaneous requests.
 			const learners = await withPhotos(filteredLearners)
 
+			const { generateLearnerProfilePDF } = await import('@/lib/utils/generate-learner-profile-pdf')
 			generateLearnerProfilePDF({ learners, logoImage, institutionLogos })
 
 			toast({
