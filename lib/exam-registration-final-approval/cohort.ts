@@ -3,6 +3,7 @@ import { fetchAllRows, fetchAllInChunks, tryFetchAllRows } from '@/lib/exam-appl
 import { chargeKey, hasSessionChargeColumns } from '@/lib/exam-applications/session-charges'
 import { fetchAllMyJKKNPrograms } from '@/services/myjkkn-service'
 import { batchYearOf } from '@/lib/utils/batch-year'
+import { indexConcessionsByLearner, loadSessionConcessions } from '@/lib/exam-fee-concessions/concessions'
 import type {
 	FinalApprovalLearner,
 	FinalApprovalSubject,
@@ -17,6 +18,10 @@ import type {
  * exam fee on every row, the once-per-session application / mark statement fee
  * on ONE anchor row. Those 'Applied' rows are the pool awaiting final approval -
  * once approved they become 'Approved' + fee_paid and drop out.
+ *
+ * A learner with an Active exam fee concession (exam_fee_concessions) carries
+ * it here: the fee heads stay the ACTUAL amounts, concession_amount is what the
+ * approval will take off, and final_amount is already net of it.
  *
  * The late fine is NOT read from the rows: it is a late-PAYMENT fine the office
  * keys in per learner at approval time, so every pending learner starts at 0.
@@ -127,7 +132,7 @@ async function loadProgramNames(
 }
 
 export function emptyTotals(): FinalApprovalTotals {
-	return { learners: 0, subjects: 0, exam_fee: 0, application_fee: 0, mark_statement_fee: 0, late_fine: 0, final_amount: 0 }
+	return { learners: 0, subjects: 0, exam_fee: 0, application_fee: 0, mark_statement_fee: 0, late_fine: 0, concession: 0, final_amount: 0 }
 }
 
 /** Sum a set of learners into the summary block */
@@ -140,8 +145,10 @@ export function totalsOf(learners: FinalApprovalLearner[]): FinalApprovalTotals 
 		t.application_fee += l.application_fee
 		t.mark_statement_fee += l.mark_statement_fee
 		t.late_fine += l.late_fine
+		t.concession += l.concession_amount
 		t.final_amount += l.final_amount
 	}
+	t.concession = round2(t.concession)
 	t.exam_fee = round2(t.exam_fee)
 	t.application_fee = round2(t.application_fee)
 	t.mark_statement_fee = round2(t.mark_statement_fee)
@@ -276,6 +283,12 @@ export async function loadPendingFinalApprovalCohort(
 					exam_fee: 0,
 					application_fee: 0,
 					mark_statement_fee: 0,
+					concession_id: null,
+					concession_type: null,
+					concession_exam_fee: 0,
+					concession_application_fee: 0,
+					concession_mark_statement_fee: 0,
+					concession_amount: 0,
 					late_fine: 0,
 					stamped_late_fine: 0,
 					anchor_registration_id: null,
@@ -339,6 +352,11 @@ export async function loadPendingFinalApprovalCohort(
 		}
 	}
 
+	// ── Fee concessions waiting to be taken off at approval ──
+	const concessionByLearner = indexConcessionsByLearner(
+		await loadSessionConcessions(supabase, { institutions_id, examination_session_id, status: 'Active' })
+	)
+
 	const learners: FinalApprovalLearner[] = []
 	for (const draft of drafts.values()) {
 		const l = draft.learner
@@ -362,7 +380,20 @@ export async function loadPendingFinalApprovalCohort(
 		l.mark_statement_fee = round2(l.mark_statement_fee)
 		l.stamped_late_fine = round2(l.stamped_late_fine)
 		if (!l.anchor_registration_id) l.anchor_registration_id = l.subjects[0]?.registration_id ?? null
-		l.final_amount = round2(l.exam_fee + l.application_fee + l.mark_statement_fee + l.late_fine)
+
+		// A waiver can never exceed the head it is granted on - the learner may
+		// have dropped a paper after the concession was recorded.
+		const concession = concessionByLearner.get(l.key)
+		if (concession) {
+			l.concession_id = concession.id
+			l.concession_type = concession.concession_type
+			l.concession_exam_fee = round2(Math.min(concession.exam_fee_waiver, l.exam_fee))
+			l.concession_application_fee = round2(Math.min(concession.application_fee_waiver, l.application_fee))
+			l.concession_mark_statement_fee = round2(Math.min(concession.mark_statement_fee_waiver, l.mark_statement_fee))
+			l.concession_amount = round2(l.concession_exam_fee + l.concession_application_fee + l.concession_mark_statement_fee)
+		}
+
+		l.final_amount = round2(l.exam_fee + l.application_fee + l.mark_statement_fee - l.concession_amount + l.late_fine)
 		learners.push(l)
 	}
 

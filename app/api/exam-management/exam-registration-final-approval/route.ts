@@ -3,6 +3,7 @@ import { getSupabaseServer } from '@/lib/supabase-server'
 import { requireUserPermission } from '@/lib/auth/check-user-permission'
 import { parseProgramCodes } from '@/lib/exam-applications/program-levels'
 import { batchLabel } from '@/lib/utils/batch-year'
+import { CONCESSION_MIGRATION_HINT } from '@/lib/exam-fee-concessions/concessions'
 import {
 	learnerKeyOf,
 	loadPendingFinalApprovalCohort,
@@ -43,6 +44,9 @@ const MIGRATION_HINT =
 
 const PAYMENT_MIGRATION_HINT =
 	'Run supabase/migrations/20260919_final_approval_manual_late_fine.sql in the Supabase SQL Editor (lets the approval store the late fine and the mode of payment entered on this screen).'
+
+/** Actual head less its waiver, to the paisa */
+const net = (amount: number, waiver: number) => Math.round((amount - waiver) * 100) / 100
 
 /** Upper bound on a hand-entered late fine - catches a slipped digit, not a policy */
 const MAX_LATE_FINE = 100000
@@ -267,12 +271,46 @@ export async function POST(request: Request) {
 			program_code: l.program_code,
 			semester: l.semester,
 			total_subjects: l.total_subjects,
-			exam_fee: l.exam_fee,
-			application_fee: l.application_fee,
-			mark_statement_fee: l.mark_statement_fee,
+			// The learner-level record holds what was actually collected: NET heads
+			exam_fee: net(l.exam_fee, l.concession_exam_fee),
+			application_fee: net(l.application_fee, l.concession_application_fee),
+			mark_statement_fee: net(l.mark_statement_fee, l.concession_mark_statement_fee),
 			late_fine: l.late_fine,
+			concession_amount: l.concession_amount,
 			final_amount: l.final_amount,
 		}))
+
+		// ── Fee concessions: what comes off which paper row ──
+		// The exam-fee waiver is taken paper by paper until it is used up; the
+		// application / mark statement waivers come off the anchor row that carries
+		// those heads. Unapprove puts exactly these amounts back.
+		const concessions = approvable
+			.filter(l => l.concession_id && l.concession_amount > 0)
+			.map(l => {
+				const byRow = new Map<string, { registration_id: string; fee_amount: number; application_fee: number; mark_statement_fee: number }>()
+				const rowOf = (registration_id: string) => {
+					let row = byRow.get(registration_id)
+					if (!row) {
+						row = { registration_id, fee_amount: 0, application_fee: 0, mark_statement_fee: 0 }
+						byRow.set(registration_id, row)
+					}
+					return row
+				}
+
+				let remaining = l.concession_exam_fee
+				for (const subject of l.subjects) {
+					if (remaining <= 0) break
+					const take = Math.min(remaining, subject.exam_fee)
+					if (take <= 0) continue
+					rowOf(subject.registration_id).fee_amount = net(take, 0)
+					remaining = net(remaining, take)
+				}
+				if (l.anchor_registration_id) {
+					if (l.concession_application_fee > 0) rowOf(l.anchor_registration_id).application_fee = l.concession_application_fee
+					if (l.concession_mark_statement_fee > 0) rowOf(l.anchor_registration_id).mark_statement_fee = l.concession_mark_statement_fee
+				}
+				return { concession_id: l.concession_id, adjustments: [...byRow.values()] }
+			})
 
 		// The entered fine is also stamped on the learner's anchor paper row (and any
 		// fine an older build stamped is cleared) so the paper-level reports agree
@@ -291,6 +329,9 @@ export async function POST(request: Request) {
 			p_late_fines: lateFines,
 			// Cash carries no transaction id
 			p_payment: { payment_mode, payment_transaction_id: payment_mode === 'Online' ? payment_transaction_id : null },
+			// Named only when there is one to apply, so approvals without a
+			// concession keep working before 20260921_exam_fee_concessions.sql is run
+			...(concessions.length > 0 ? { p_concessions: concessions } : {}),
 		})
 
 		if (rpcError) {
@@ -302,7 +343,8 @@ export async function POST(request: Request) {
 			}
 			// p_late_fines / p_payment arrive with the 20260919 migration
 			if (missingFunction) {
-				return NextResponse.json({ error: `Final approval needs a database update. ${PAYMENT_MIGRATION_HINT}` }, { status: 503 })
+				const hint = concessions.length > 0 ? CONCESSION_MIGRATION_HINT : PAYMENT_MIGRATION_HINT
+				return NextResponse.json({ error: `Final approval needs a database update. ${hint}` }, { status: 503 })
 			}
 			console.error('[final-approval] approve_final_exam_registration failed:', rpcError)
 			// P0001 carries the function's own user-facing message (stale selection etc.)
@@ -324,10 +366,11 @@ export async function POST(request: Request) {
 			regulation_code: l.regulation_code,
 			learner_semester: l.semester || 0,
 			total_subjects: l.total_subjects,
-			exam_fee: l.exam_fee,
-			application_fee: l.application_fee,
-			mark_statement_fee: l.mark_statement_fee,
+			exam_fee: net(l.exam_fee, l.concession_exam_fee),
+			application_fee: net(l.application_fee, l.concession_application_fee),
+			mark_statement_fee: net(l.mark_statement_fee, l.concession_mark_statement_fee),
 			late_fine: l.late_fine,
+			concession_amount: l.concession_amount,
 			final_amount: l.final_amount,
 			fee_paid: true,
 			payment_status: 'Payment Approved',

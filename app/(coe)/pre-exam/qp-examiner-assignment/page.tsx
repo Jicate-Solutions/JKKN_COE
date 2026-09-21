@@ -24,7 +24,7 @@ import { useToast } from '@/hooks/common/use-toast'
 import { useInstitutionFilter } from '@/hooks/use-institution-filter'
 import {
 	FileText, UserCheck, Clock, CheckCircle2, AlertTriangle, Building2, Loader2,
-	UserPlus, ClipboardList, Palette, Mail, IndianRupee, FileDown,
+	UserPlus, ClipboardList, Palette, Mail, IndianRupee, FileDown, Activity,
 } from 'lucide-react'
 import { GenerateTab } from './generate-tab'
 import { AssignTab } from './assign-tab'
@@ -32,6 +32,7 @@ import { AssignmentsTab } from './assignments-tab'
 import { EmailTab } from './email-tab'
 import { PapersTab } from './papers-tab'
 import { ClaimsTab } from './claims-tab'
+import { StatusTab } from './status-tab'
 import { ContentTab } from './content-tab'
 import { apiFetch, SearchableSelect, type InstitutionOpt, type SessionOpt, type AssignmentRow } from './shared'
 
@@ -326,6 +327,13 @@ export default function QpExaminerAssignmentPage() {
 									<IndianRupee className="h-3.5 w-3.5" />
 									Claims
 								</TabsTrigger>
+								<TabsTrigger
+									value="status"
+									className="gap-1.5 px-3.5 py-1.5 text-slate-600 data-[state=active]:bg-indigo-600 data-[state=active]:text-white data-[state=active]:shadow-md hover:text-indigo-700"
+								>
+									<Activity className="h-3.5 w-3.5" />
+									Status Report
+								</TabsTrigger>
 							</TabsList>
 
 							<TabsContent value="generate" className="pt-4">
@@ -369,6 +377,10 @@ export default function QpExaminerAssignmentPage() {
 
 							<TabsContent value="claims" className="pt-4">
 								<ClaimsTab institutionsId={effectiveInstitutionId} session={session} refreshKey={refreshKey} />
+							</TabsContent>
+
+							<TabsContent value="status" className="pt-4">
+								<StatusTab institutionsId={effectiveInstitutionId} session={session} refreshKey={refreshKey} />
 							</TabsContent>
 						</Tabs>
 					)}

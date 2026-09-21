@@ -15,7 +15,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
 import { useToast } from "@/hooks/common/use-toast"
-import { Loader2, Check, ChevronsUpDown, ClipboardList, Download, FileText, LayoutGrid } from "lucide-react"
+import { Loader2, Check, ChevronsUpDown, ClipboardList, Download, FileText, LayoutGrid, BookOpenCheck } from "lucide-react"
 import { cn } from "@/lib/utils"
 import Link from "next/link"
 import { useInstitutionFilter } from "@/hooks/use-institution-filter"
@@ -29,6 +29,7 @@ import {
 import { generateExamAttendanceSheetPDF } from "@/lib/utils/generate-exam-attendance-sheet-pdf"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { SeatingArrangementTab } from '@/components/pre-exam/seating-arrangement-tab'
+import { CourseSheetsTab } from '@/components/pre-exam/course-sheets-tab'
 import type { SeatingRoom } from '@/types/seating-allocation'
 
 interface ExaminationSession {
@@ -417,9 +418,18 @@ export default function ExamAttendanceSheetPage() {
 									<span className="hidden xs:inline sm:inline">Seating</span>
 									<span className="hidden sm:inline"> Arrangement</span>
 								</TabsTrigger>
+								<TabsTrigger
+									value="course-sheets"
+									className="gap-1.5 rounded-lg px-3 sm:px-4 py-1.5 text-sm font-medium text-slate-600 transition-all data-[state=active]:bg-gradient-to-r data-[state=active]:from-amber-600 data-[state=active]:to-orange-600 data-[state=active]:text-white data-[state=active]:shadow-md data-[state=active]:shadow-amber-500/30 hover:text-slate-900"
+								>
+									<BookOpenCheck className="h-4 w-4 shrink-0" />
+									<span className="hidden xs:inline sm:inline">Course</span>
+									<span className="hidden sm:inline"> Sheets</span>
+								</TabsTrigger>
 							</TabsList>
 
-							{/* Shared Filter Card */}
+							{/* Shared Filter Card — Course Sheets only needs the exam session */}
+							{(activeTab !== 'course-sheets' || mustSelectSession) && (
 							<Card>
 								<CardHeader>
 									<CardTitle className="text-base">Select Exam Details</CardTitle>
@@ -481,6 +491,7 @@ export default function ExamAttendanceSheetPage() {
 										)}
 
 										{/* Exam Date Dropdown */}
+										{activeTab !== 'course-sheets' && (
 										<div className="space-y-2">
 											<Label>Exam Date</Label>
 											<Popover open={examDateOpen} onOpenChange={setExamDateOpen}>
@@ -528,7 +539,10 @@ export default function ExamAttendanceSheetPage() {
 											</Popover>
 										</div>
 
+										)}
+
 										{/* Session Type (FN/AN) */}
+										{activeTab !== 'course-sheets' && (
 										<div className="space-y-2">
 											<Label>Session (FN/AN)</Label>
 											<Select
@@ -548,6 +562,8 @@ export default function ExamAttendanceSheetPage() {
 												</SelectContent>
 											</Select>
 										</div>
+
+										)}
 
 										{/* Start From Room — only for seating tab.
 										    Rooms before the chosen room are skipped for roll-number allotment. */}
@@ -576,6 +592,7 @@ export default function ExamAttendanceSheetPage() {
 									</div>
 								</CardContent>
 							</Card>
+							)}
 
 							{/* Attendance Sheet Tab */}
 							<TabsContent value="attendance-sheet" className="mt-0 flex flex-col gap-4">
@@ -697,6 +714,15 @@ export default function ExamAttendanceSheetPage() {
 									isFormComplete={isFormComplete}
 									rooms={rooms}
 									startingRoomId={startingRoomId}
+								/>
+							</TabsContent>
+
+							{/* Course Sheets Tab — per-programme attendance + mark entry sheets for one course */}
+							<TabsContent value="course-sheets" className="mt-0">
+								<CourseSheetsTab
+									key={`${institutionId}|${selectedSessionId}`}
+									institutionId={institutionId || ''}
+									examinationSessionId={selectedSessionId}
 								/>
 							</TabsContent>
 						</Tabs>

@@ -31,6 +31,8 @@ export interface FinalApprovalApprovedRow {
 	application_fee: number
 	mark_statement_fee: number
 	late_fine: number
+	/** Fee concession taken off at approval; the three fee heads are already NET of it */
+	concession_amount: number
 	final_amount: number
 	fee_paid: boolean
 	payment_status: string | null
@@ -69,9 +71,19 @@ export interface FinalApprovalLearner {
 	batch_year: number
 	subjects: FinalApprovalSubject[]
 	total_subjects: number
+	/** ACTUAL fee heads - the concession below is NOT taken off these */
 	exam_fee: number
 	application_fee: number
 	mark_statement_fee: number
+	/** Active exam_fee_concessions row for the session, if any */
+	concession_id: string | null
+	concession_type: string | null
+	/** Waiver per head, already clipped to the actual head */
+	concession_exam_fee: number
+	concession_application_fee: number
+	concession_mark_statement_fee: number
+	/** Sum of the three waivers */
+	concession_amount: number
 	/**
 	 * Late-PAYMENT fine, keyed in by hand on the approval screen. Always 0 in
 	 * the pending cohort - a late application carries no automatic fine.
@@ -81,6 +93,7 @@ export interface FinalApprovalLearner {
 	stamped_late_fine: number
 	/** Paper row that carries the once-per-session heads (and the entered fine) */
 	anchor_registration_id: string | null
+	/** exam_fee + application_fee + mark_statement_fee - concession_amount + late_fine */
 	final_amount: number
 	status: FinalApprovalStatus
 }
@@ -98,6 +111,7 @@ export interface FinalApprovalTotals {
 	application_fee: number
 	mark_statement_fee: number
 	late_fine: number
+	concession: number
 	final_amount: number
 }
 

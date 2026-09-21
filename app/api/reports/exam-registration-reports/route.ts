@@ -228,12 +228,18 @@ async function buildFinalApprovalReport(
 	let rows: any[]
 	try {
 		try {
-			rows = await fetchRows(`${baseColumns}, payment_mode, payment_transaction_id`)
+			rows = await fetchRows(`${baseColumns}, payment_mode, payment_transaction_id, concession_amount`)
 		} catch (e: any) {
-			// The payment columns arrive with 20260919_final_approval_manual_late_fine.sql;
-			// the report must keep working until that migration is run.
-			if (!/payment_mode|payment_transaction_id/i.test(e?.message || '')) throw e
-			rows = await fetchRows(baseColumns)
+			// payment_* arrive with 20260919_final_approval_manual_late_fine.sql and
+			// concession_amount with 20260921_exam_fee_concessions.sql; the report
+			// must keep working until those migrations are run.
+			if (!/payment_mode|payment_transaction_id|concession_amount/i.test(e?.message || '')) throw e
+			try {
+				rows = await fetchRows(`${baseColumns}, payment_mode, payment_transaction_id`)
+			} catch (e2: any) {
+				if (!/payment_mode|payment_transaction_id/i.test(e2?.message || '')) throw e2
+				rows = await fetchRows(baseColumns)
+			}
 		}
 	} catch (e: any) {
 		const message = e?.message || ''
@@ -275,6 +281,7 @@ async function buildFinalApprovalReport(
 			application_fee: num(r.application_fee),
 			mark_statement_fee: num(r.mark_statement_fee),
 			late_fine: num(r.late_fine),
+			concession_amount: num(r.concession_amount),
 			final_amount: num(r.final_amount),
 			fee_paid: !!r.fee_paid,
 			payment_status: r.payment_status || null,

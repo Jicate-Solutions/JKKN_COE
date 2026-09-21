@@ -83,7 +83,7 @@ const approvedOn = (value: string | null) =>
 		: '—'
 
 const EMPTY_TOTALS: FinalApprovalTotals = {
-	learners: 0, subjects: 0, exam_fee: 0, application_fee: 0, mark_statement_fee: 0, late_fine: 0, final_amount: 0,
+	learners: 0, subjects: 0, exam_fee: 0, application_fee: 0, mark_statement_fee: 0, late_fine: 0, concession: 0, final_amount: 0,
 }
 
 type TabKey = 'pending' | 'approved' | 'report'
@@ -147,6 +147,7 @@ function sumPending(learners: FinalApprovalLearner[]): FinalApprovalTotals {
 		t.application_fee += l.application_fee
 		t.mark_statement_fee += l.mark_statement_fee
 		t.late_fine += l.late_fine
+		t.concession += l.concession_amount
 		t.final_amount += l.final_amount
 	}
 	return t
@@ -161,6 +162,7 @@ function sumApproved(rows: FinalApprovalApprovedRow[]): FinalApprovalTotals {
 		t.application_fee += r.application_fee
 		t.mark_statement_fee += r.mark_statement_fee
 		t.late_fine += r.late_fine
+		t.concession += r.concession_amount || 0
 		t.final_amount += r.final_amount
 	}
 	return t
@@ -234,7 +236,12 @@ async function loadReportLogos(meta: { institution_code: string; institution_nam
 }
 
 /** The fee heads block - side panel and both confirmation steps print the same figures */
-function FeeBreakdown({ totals, learnersLabel = 'Selected Learners' }: { totals: FinalApprovalTotals; learnersLabel?: string }) {
+function FeeBreakdown({ totals, learnersLabel = 'Selected Learners', headsAreNet = false }: {
+	totals: FinalApprovalTotals
+	learnersLabel?: string
+	/** Approved figures: the fee heads are already net of the concession */
+	headsAreNet?: boolean
+}) {
 	return (
 		<div className="space-y-3">
 			<div className="grid grid-cols-2 gap-2">
@@ -252,6 +259,12 @@ function FeeBreakdown({ totals, learnersLabel = 'Selected Learners' }: { totals:
 				<div className="flex justify-between"><dt className="text-muted-foreground">Application Fee</dt><dd className="tabular-nums">{money(totals.application_fee)}</dd></div>
 				<div className="flex justify-between"><dt className="text-muted-foreground">Mark Statement Fee</dt><dd className="tabular-nums">{money(totals.mark_statement_fee)}</dd></div>
 				<div className="flex justify-between"><dt className="text-muted-foreground">Late Fine</dt><dd className="tabular-nums">{money(totals.late_fine)}</dd></div>
+				{totals.concession > 0 && (
+					<div className="flex justify-between text-brand-green-700 dark:text-brand-green-300">
+						<dt>{headsAreNet ? 'Fee Concession (already deducted)' : 'Fee Concession'}</dt>
+						<dd className="tabular-nums">{headsAreNet ? money(totals.concession) : `− ${money(totals.concession)}`}</dd>
+					</div>
+				)}
 			</dl>
 			<div className="flex items-center justify-between rounded-md border border-brand-green-200 bg-brand-green-50 px-3 py-2 dark:border-brand-green-800 dark:bg-brand-green-900/30">
 				<span className="text-sm font-medium text-brand-green-800 dark:text-brand-green-200">Final Amount</span>
@@ -775,8 +788,8 @@ export default function FinalExamRegistrationApprovalPage() {
 	const ready = !!institutionsId && !!sessionId
 	const showingPending = tab === 'pending'
 	const listLoading = showingPending ? loading : loadingApproved
-	const PENDING_COLUMNS = 13
-	const APPROVED_COLUMNS = 16
+	const PENDING_COLUMNS = 14
+	const APPROVED_COLUMNS = 17
 
 	const filtersActive = filters.regulation !== 'all' || filters.programs.length > 0 || filters.batches.length > 0 || filters.semester !== 'all' || !!search
 
@@ -798,6 +811,7 @@ export default function FinalExamRegistrationApprovalPage() {
 							</BreadcrumbList>
 						</Breadcrumb>
 
+						<div className="flex items-start justify-between gap-3 flex-wrap">
 						<div className="flex items-start gap-3">
 							<div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-brand-green-50 text-brand-green ring-1 ring-brand-green-200 dark:bg-brand-green-900/30 dark:text-brand-green-300 dark:ring-brand-green-800">
 								<BadgeCheck className="h-5 w-5" />
@@ -810,6 +824,10 @@ export default function FinalExamRegistrationApprovalPage() {
 									Collect the exam fee and give the registration its final approval. Approving a learner approves every subject they applied for.
 								</p>
 							</div>
+						</div>
+							<Button asChild variant="outline" size="sm" className={cn('h-8 text-xs', OUTLINE_BUTTON_CLASS)}>
+								<Link href="/exam-management/exam-fee-concessions">Fee Concessions</Link>
+							</Button>
 						</div>
 
 						{/* Stats */}
@@ -1142,6 +1160,7 @@ export default function FinalExamRegistrationApprovalPage() {
 															<TableHead className="text-right">Application Fee</TableHead>
 															<TableHead className="text-right">Mark Statement Fee</TableHead>
 															<TableHead className="text-right">Late Fine</TableHead>
+															<TableHead className="text-right">Concession</TableHead>
 															<TableHead className="text-right">Final Amount</TableHead>
 															<TableHead className="text-center">Status</TableHead>
 														</TableRow>
@@ -1228,6 +1247,13 @@ export default function FinalExamRegistrationApprovalPage() {
 																						l.late_fine > 0 && 'border-brand-yellow-500 bg-brand-yellow-50 font-semibold dark:bg-brand-yellow-900/20'
 																					)}
 																				/>
+																			</TableCell>
+																			<TableCell className="text-right text-xs tabular-nums whitespace-nowrap">
+																				{l.concession_amount > 0 ? (
+																					<span className="font-semibold text-brand-green-700 dark:text-brand-green-300" title={`${l.concession_type || 'Fee'} concession - Exam ${money(l.concession_exam_fee)}, Application ${money(l.concession_application_fee)}, Mark Statement ${money(l.concession_mark_statement_fee)}`}>
+																						− {money(l.concession_amount)}
+																					</span>
+																				) : '—'}
 																			</TableCell>
 																			<TableCell className="text-right text-xs font-bold tabular-nums text-brand-green-800 dark:text-brand-green-200">{money(l.final_amount)}</TableCell>
 																			<TableCell className="text-center">
@@ -1337,6 +1363,7 @@ export default function FinalExamRegistrationApprovalPage() {
 														<TableHead className="text-right">Application Fee</TableHead>
 														<TableHead className="text-right">Mark Statement Fee</TableHead>
 														<TableHead className="text-right">Late Fine</TableHead>
+														<TableHead className="text-right">Concession Given</TableHead>
 														<TableHead className="text-right">Final Amount</TableHead>
 														<TableHead className="text-center">Mode</TableHead>
 														<TableHead>Transaction ID</TableHead>
@@ -1391,6 +1418,7 @@ export default function FinalExamRegistrationApprovalPage() {
 																<TableCell className="text-right text-xs tabular-nums">{money(r.application_fee)}</TableCell>
 																<TableCell className="text-right text-xs tabular-nums">{money(r.mark_statement_fee)}</TableCell>
 																<TableCell className="text-right text-xs tabular-nums">{money(r.late_fine)}</TableCell>
+																<TableCell className="text-right text-xs tabular-nums">{r.concession_amount > 0 ? money(r.concession_amount) : '—'}</TableCell>
 																<TableCell className="text-right text-xs font-bold tabular-nums text-brand-green-800 dark:text-brand-green-200">{money(r.final_amount)}</TableCell>
 																<TableCell className="text-center text-xs">{r.payment_mode || '—'}</TableCell>
 																<TableCell className="text-xs whitespace-nowrap">{r.payment_transaction_id || '—'}</TableCell>
@@ -1427,7 +1455,7 @@ export default function FinalExamRegistrationApprovalPage() {
 											</p>
 										) : (
 											<div className="grid grid-cols-1 lg:grid-cols-[320px_minmax(0,1fr)] gap-4 items-start">
-												<FeeBreakdown totals={approvedSummary} learnersLabel="Approved Learners" />
+												<FeeBreakdown totals={approvedSummary} learnersLabel="Approved Learners" headsAreNet />
 												<div className="space-y-4">
 													<div className="rounded-md border border-brand-green-100 dark:border-brand-green-900/60 overflow-hidden">
 														<Table>
@@ -1484,7 +1512,7 @@ export default function FinalExamRegistrationApprovalPage() {
 						</DialogDescription>
 					</DialogHeader>
 
-					<FeeBreakdown totals={unapproveSelection} />
+					<FeeBreakdown totals={unapproveSelection} headsAreNet />
 
 					<div className="max-h-28 overflow-y-auto rounded-md border px-3 py-2 text-xs space-y-0.5">
 						{selectedApprovedRows.map(r => (
@@ -1593,6 +1621,12 @@ export default function FinalExamRegistrationApprovalPage() {
 									<strong>{money(selection.final_amount)}</strong> as paid by <strong>{paymentMode}</strong>
 									{paymentMode === 'Online' && <> (transaction id <strong>{transactionId.trim()}</strong>)</>}.
 								</p>
+								{selection.concession > 0 && (
+									<p>
+										A fee concession of <strong>{money(selection.concession)}</strong> is taken off for{' '}
+										<strong>{selectedLearners.filter(l => l.concession_amount > 0).length}</strong> learner(s); their subject registrations are updated to the reduced fee.
+									</p>
+								)}
 								{selection.late_fine > 0 && (
 									<p>
 										This includes a late fine of <strong>{money(selection.late_fine)}</strong> entered for{' '}

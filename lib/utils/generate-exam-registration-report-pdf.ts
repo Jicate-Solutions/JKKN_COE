@@ -2932,9 +2932,12 @@ function generateFinalApprovalPdf(opts: ReportPdfOptions): string {
 	const showLateFine = rows.some(r => feeNum(r.late_fine) > 0)
 	// Mode of payment is recorded from 20260919 on; older approvals have none
 	const showPayMode = rows.some(r => r.payment_mode)
+	// Fee heads are NET of the concession; the column says how much was waived
+	const showConcession = rows.some(r => feeNum(r.concession_amount) > 0)
 
-	const totals = { subjects: 0, exam: 0, application: 0, markStatement: 0, lateFine: 0, final: 0 }
+	const totals = { subjects: 0, exam: 0, application: 0, markStatement: 0, lateFine: 0, concession: 0, final: 0 }
 	for (const r of rows) {
+		totals.concession += feeNum(r.concession_amount)
 		totals.subjects += Number(r.total_subjects) || 0
 		totals.exam += feeNum(r.exam_fee)
 		totals.application += feeNum(r.application_fee)
@@ -2956,6 +2959,7 @@ function generateFinalApprovalPdf(opts: ReportPdfOptions): string {
 		['Mark\nStatement Fee', 26, 'right'],
 	]
 	if (showLateFine) columns.push(['Late Fine', 20, 'right'])
+	if (showConcession) columns.push(['Concession\nGiven', 22, 'right'])
 	columns.push(['Final\nAmount', 26, 'right'])
 	if (showPayMode) columns.push(['Payment\nMode', 18, 'center'])
 	columns.push(['Status', 18, 'center'])
@@ -3022,6 +3026,7 @@ function generateFinalApprovalPdf(opts: ReportPdfOptions): string {
 			formatFee(feeNum(r.mark_statement_fee)),
 		]
 		if (showLateFine) cells.push(formatFee(feeNum(r.late_fine)))
+		if (showConcession) cells.push(formatFee(feeNum(r.concession_amount)))
 		cells.push(formatFee(feeNum(r.final_amount)))
 		if (showPayMode) cells.push(String(r.payment_mode || ''))
 		cells.push(String(r.registration_status || 'Approved'))
@@ -3048,6 +3053,7 @@ function generateFinalApprovalPdf(opts: ReportPdfOptions): string {
 		formatFee(totals.markStatement),
 	]
 	if (showLateFine) totalCells.push(formatFee(totals.lateFine))
+	if (showConcession) totalCells.push(formatFee(totals.concession))
 	totalCells.push(formatFee(totals.final))
 	if (showPayMode) totalCells.push('')
 	totalCells.push('')
@@ -3063,6 +3069,7 @@ function generateFinalApprovalPdf(opts: ReportPdfOptions): string {
 		`Application Fee : ${formatFee(totals.application)}`,
 		`Mark Statement Fee : ${formatFee(totals.markStatement)}`,
 		...(showLateFine ? [`Late Fine : ${formatFee(totals.lateFine)}`] : []),
+		...(showConcession ? [`Concession Given (already deducted above) : ${formatFee(totals.concession)}`] : []),
 		`Final Amount : ${formatFee(totals.final)}`,
 	]
 	for (const line of summaryLines) {

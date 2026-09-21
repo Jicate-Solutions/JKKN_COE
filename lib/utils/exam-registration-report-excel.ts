@@ -314,9 +314,12 @@ function exportFinalApprovalExcel(opts: ExcelExportOptions): ExcelReportResult {
 	const sorted = [...opts.data].sort((a, b) => String(a.stu_register_no || '').localeCompare(String(b.stu_register_no || '')))
 	const showLateFine = sorted.some(r => feeNum(r.late_fine) > 0)
 	const showPayment = sorted.some(r => r.payment_mode)
+	// Fee heads are NET of the concession; the column says how much was waived
+	const showConcession = sorted.some(r => feeNum(r.concession_amount) > 0)
 
-	const totals = { subjects: 0, exam: 0, application: 0, markStatement: 0, lateFine: 0, final: 0 }
+	const totals = { subjects: 0, exam: 0, application: 0, markStatement: 0, lateFine: 0, concession: 0, final: 0 }
 	const rows = sorted.map((row, idx) => {
+		totals.concession += feeNum(row.concession_amount)
 		totals.subjects += Number(row.total_subjects) || 0
 		totals.exam += feeNum(row.exam_fee)
 		totals.application += feeNum(row.application_fee)
@@ -336,6 +339,7 @@ function exportFinalApprovalExcel(opts: ExcelExportOptions): ExcelReportResult {
 			'Mark Statement Fee': feeNum(row.mark_statement_fee),
 		}
 		if (showLateFine) out['Late Fine'] = feeNum(row.late_fine)
+		if (showConcession) out['Concession Given'] = feeNum(row.concession_amount)
 		out['Final Amount'] = feeNum(row.final_amount)
 		if (showPayment) {
 			out['Payment Mode'] = row.payment_mode || ''
@@ -359,6 +363,7 @@ function exportFinalApprovalExcel(opts: ExcelExportOptions): ExcelReportResult {
 			'Mark Statement Fee': totals.markStatement,
 		}
 		if (showLateFine) totalRow['Late Fine'] = totals.lateFine
+		if (showConcession) totalRow['Concession Given'] = totals.concession
 		totalRow['Final Amount'] = totals.final
 		if (showPayment) {
 			totalRow['Payment Mode'] = ''
