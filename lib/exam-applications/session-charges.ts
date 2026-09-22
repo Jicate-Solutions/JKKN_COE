@@ -175,3 +175,59 @@ export async function loadAlreadyChargedKeys(
 
 	return charged
 }
+
+/** The once-per-session heads a learner already carries, summed over their rows */
+export interface StoredSessionCharge {
+	application_fee: number
+	mark_statement_fee: number
+	late_fine: number
+}
+
+/**
+ * What each charged learner has actually been charged in this session.
+ *
+ * The heads sit on ONE anchor row per learner, and that row can be an arrear the
+ * Current Papers tab never loads - so the amounts are swept across the whole
+ * session rather than read off the rows a screen happens to hold. Indexed under
+ * the same keys as loadAlreadyChargedKeys(), so `.has(key)` answers "already
+ * charged" and `.get(key)` says how much.
+ */
+export async function loadSessionChargeAmounts(
+	supabase: SupabaseClient,
+	params: { institutions_id: string; examination_session_id: string }
+): Promise<Map<string, StoredSessionCharge>> {
+	const byKey = new Map<string, StoredSessionCharge>()
+
+	const rows = await tryFetchAllRows<any>(
+		() => supabase
+			.from('exam_registrations')
+			.select('id, student_id, stu_register_no, application_fee, mark_statement_fee, late_fine')
+			.eq('institutions_id', params.institutions_id)
+			.eq('examination_session_id', params.examination_session_id)
+			.or('application_fee.gt.0,mark_statement_fee.gt.0,late_fine.gt.0'),
+		{ label: 'session charge amounts' }
+	)
+
+	// Summed per learner first, then indexed under both key forms - adding into
+	// each key separately would double a learner whose rows carry both.
+	const byLearner = new Map<string, { charge: StoredSessionCharge; student_id: string | null }>()
+	for (const row of rows) {
+		const key = chargeKey({ student_id: row.student_id, register_number: row.stu_register_no })
+		const entry = byLearner.get(key) || {
+			charge: { application_fee: 0, mark_statement_fee: 0, late_fine: 0 },
+			student_id: null,
+		}
+		entry.charge.application_fee += Number(row.application_fee) || 0
+		entry.charge.mark_statement_fee += Number(row.mark_statement_fee) || 0
+		entry.charge.late_fine += Number(row.late_fine) || 0
+		if (row.student_id) entry.student_id = row.student_id
+		byLearner.set(key, entry)
+	}
+
+	for (const [key, entry] of byLearner) {
+		byKey.set(key, entry.charge)
+		if (entry.student_id) byKey.set(`sid:${entry.student_id}`, entry.charge)
+	}
+
+	return byKey
+}

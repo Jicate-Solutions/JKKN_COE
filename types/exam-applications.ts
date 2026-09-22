@@ -13,6 +13,10 @@ export type ExamApplicationEligibility =
 	| 'Eligible'
 	/** A registration exists and has already been applied for - nothing left to do */
 	| 'Already Applied'
+	/** Applied for AND final-approved (fee settled) - further along than 'Already Applied' */
+	| 'Already Approved'
+	/** An arrear held back because the learner's registered current papers are not applied for yet */
+	| 'Current Papers Pending'
 	/** A registration exists in a state that must not be re-applied (Cancelled / Rejected / Withdrawn) */
 	| 'Already Registered'
 	| 'Already Passed'
@@ -271,7 +275,11 @@ export interface BulkApplicationResponse {
 // LEARNER level: ticking 9 of 10 learners updates 9 x (their registered papers).
 // ---------------------------------------------------------------------------
 
-export type CurrentPaperStatus = 'Applied' | 'Partial' | 'Not Applied'
+/**
+ * 'Approved' - every applied paper has been final-approved (fee settled).
+ * It is the step AFTER 'Applied', never a kind of 'Not Applied'.
+ */
+export type CurrentPaperStatus = 'Approved' | 'Applied' | 'Partial' | 'Not Applied'
 
 /** One already-registered paper held by a learner */
 export interface CurrentPaperSubject {
@@ -280,9 +288,11 @@ export interface CurrentPaperSubject {
 	course_name: string
 	course_offering_id: string | null
 	registration_status: string | null
-	/** registration_status is already 'Applied' */
+	/** Applied for - registration_status is 'Applied', or has moved on to final-approved */
 	is_applied: boolean
-	/** Applied / Cancelled / Rejected / Withdrawn - never re-applied */
+	/** Final-approved: 'Approved' with the payment stamped */
+	is_approved: boolean
+	/** Applied / final-approved / Cancelled / Rejected / Withdrawn - never re-applied */
 	is_locked: boolean
 	attempt_number: number
 	/** Amount currently stored on the row */
@@ -302,7 +312,10 @@ export interface CurrentPaperLearner {
 	semester: number | null
 	subjects: CurrentPaperSubject[]
 	total_subjects: number
+	/** Papers applied for, including the final-approved ones */
 	applied_subjects: number
+	/** ...of which final-approved */
+	approved_subjects: number
 	/** Papers that can still be applied for */
 	pending_subjects: number
 	status: CurrentPaperStatus
@@ -316,6 +329,17 @@ export interface CurrentPaperLearner {
 	fee_total: number
 	/** Already carries a once-per-session charge in this session */
 	already_charged: boolean
+	/**
+	 * What the learner's applied / approved papers have been charged, read from the
+	 * stored rows: their paper fees plus the once-per-session heads. fee_total only
+	 * quotes what is still to apply, so it is 0 for a finished learner - this is the
+	 * figure to show for them.
+	 */
+	charged_paper_fee: number
+	charged_application_fee: number
+	charged_mark_statement_fee: number
+	charged_late_fine: number
+	charged_total: number
 }
 
 /** One distinct paper across the filtered cohort (right-hand panel) */
@@ -326,6 +350,8 @@ export interface CurrentPaperRow {
 	fee_amount: number | null
 	learner_count: number
 	applied_count: number
+	/** ...of which final-approved */
+	approved_count: number
 }
 
 /**
@@ -381,6 +407,7 @@ export interface CurrentPaperCohortResponse {
 		learners: number
 		papers: number
 		registrations: number
+		approved: number
 		applied: number
 		partial: number
 		not_applied: number

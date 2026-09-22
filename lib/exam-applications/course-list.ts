@@ -73,7 +73,7 @@ export async function buildExamApplicationCourses(
 		registrations = await fetchAllRows<any>(
 			() => supabase
 				.from('exam_registrations')
-				.select('id, course_offering_id, course_code, registration_status, program_code, attempt_number, is_regular')
+				.select('id, course_offering_id, course_code, registration_status, payment_date, program_code, attempt_number, is_regular')
 				.eq('institutions_id', institutions_id)
 				.eq('examination_session_id', examination_session_id)
 				.or(regClause),

@@ -84,6 +84,9 @@ const CURRENT_BADGE = 'bg-emerald-100 text-emerald-700 border-emerald-200 dark:b
 const ARREAR_BADGE = 'bg-rose-100 text-rose-700 border-rose-200 dark:bg-rose-950/40 dark:text-rose-300 dark:border-rose-900'
 
 const STATUS_STYLES: Record<string, string> = {
+	// Final-approved is the step after Applied, so it gets its own colour rather
+	// than falling through to the grey 'Not Applied'
+	'Approved': 'bg-blue-100 text-blue-700 border-blue-200 dark:bg-blue-950/40 dark:text-blue-300 dark:border-blue-900',
 	'Applied': 'bg-green-100 text-green-700 border-green-200 dark:bg-green-950/40 dark:text-green-300 dark:border-green-900',
 	'Partial': 'bg-amber-100 text-amber-700 border-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-900',
 	'Not Applied': 'bg-slate-100 text-slate-600 border-slate-200 dark:bg-slate-900/60 dark:text-slate-300 dark:border-slate-800',
@@ -92,6 +95,8 @@ const STATUS_STYLES: Record<string, string> = {
 const ELIGIBILITY_STYLES: Record<string, string> = {
 	'Eligible': 'bg-green-100 text-green-700 border-green-200',
 	'Already Applied': 'bg-slate-100 text-slate-600 border-slate-200',
+	'Already Approved': 'bg-blue-100 text-blue-700 border-blue-200',
+	'Current Papers Pending': 'bg-amber-100 text-amber-700 border-amber-200',
 	'Already Registered': 'bg-amber-100 text-amber-700 border-amber-200',
 	'Already Passed': 'bg-slate-100 text-slate-600 border-slate-200',
 	'Not Offered': 'bg-red-100 text-red-700 border-red-200',
@@ -464,15 +469,33 @@ const CurrentLearnerRow = memo(function CurrentLearnerRow({
 					<span className="text-xs font-mono text-muted-foreground">{learner.register_number || '—'}</span>
 					<Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4">{learner.program_code || '—'}</Badge>
 					<Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4">Sem {romanSemester(learner.semester)}</Badge>
+					{/* The bare "0/8 papers" counted what was LEFT, so beside an Approved badge
+					    it read as nothing done. Say which count it is. */}
 					<Badge variant="outline" className={cn('text-[10px] px-1.5 py-0 h-4', CURRENT_BADGE)}>
-						{learner.pending_subjects}/{learner.total_subjects} papers
+						{learner.status === 'Approved' ? `${learner.approved_subjects}/${learner.total_subjects} approved`
+							: learner.status === 'Applied' ? `${learner.applied_subjects}/${learner.total_subjects} applied`
+								: `${learner.pending_subjects}/${learner.total_subjects} to apply`}
 					</Badge>
 				</div>
 				<div className="text-sm truncate">{learner.student_name || '—'}</div>
 			</div>
 			{showFee && (
 				<div className="w-24 shrink-0 text-right">
-					<div className="text-sm font-medium tabular-nums">{disabled ? '—' : money(learner.fee_total)}</div>
+					{/* A finished learner owes nothing more, but "—" hid what they had been
+					    charged. Show the stored amount, and say which kind of figure it is. */}
+					<div
+						className="text-sm font-medium tabular-nums"
+						title={disabled && learner.charged_total > 0
+							? `Papers ${money(learner.charged_paper_fee)} + application ${money(learner.charged_application_fee)} + mark statement ${money(learner.charged_mark_statement_fee)}${learner.charged_late_fine > 0 ? ` + late fine ${money(learner.charged_late_fine)}` : ''}`
+							: undefined}
+					>
+						{disabled ? (learner.charged_total > 0 ? money(learner.charged_total) : '—') : money(learner.fee_total)}
+					</div>
+					{disabled && learner.charged_total > 0 && (
+						<div className="text-[10px] text-muted-foreground leading-tight">
+							{learner.status === 'Approved' ? 'paid' : 'charged'}
+						</div>
+					)}
 					{!disabled && !learner.already_charged && (learner.application_fee > 0 || learner.mark_statement_fee > 0) && (
 						<div className="text-[10px] text-muted-foreground leading-tight">incl. app + MS</div>
 					)}
@@ -516,7 +539,10 @@ const CohortPaperRow = memo(function CohortPaperRow({
 				<div className="text-sm truncate" title={paper.course_name || undefined}>{paper.course_name || '—'}</div>
 			</div>
 			<div className="w-24 shrink-0 text-right text-xs text-muted-foreground tabular-nums">
-				{paper.applied_count}/{paper.learner_count} applied
+				<div>{paper.applied_count}/{paper.learner_count} applied</div>
+				{paper.approved_count > 0 && (
+					<div className="text-[10px] text-blue-600 dark:text-blue-400">{paper.approved_count} approved</div>
+				)}
 			</div>
 			{showFee && (
 				<div className="w-16 shrink-0 text-right text-sm font-medium tabular-nums">{money(paper.fee_amount)}</div>
@@ -1157,6 +1183,7 @@ export default function ExamApplicationsPage() {
 		return cpLearners.filter(l => {
 			if (q && !l.register_number.toLowerCase().includes(q) && !l.student_name.toLowerCase().includes(q)) return false
 			if (cpStatus === 'pending' && l.pending_subjects === 0) return false
+			if (cpStatus === 'approved' && l.status !== 'Approved') return false
 			if (cpStatus === 'applied' && l.status !== 'Applied') return false
 			if (cpStatus === 'partial' && l.status !== 'Partial') return false
 			if (cpStatus === 'not_applied' && l.status !== 'Not Applied') return false
@@ -1206,6 +1233,7 @@ export default function ExamApplicationsPage() {
 				if (existing) {
 					existing.learner_count++
 					if (subject.is_applied) existing.applied_count++
+					if (subject.is_approved) existing.approved_count++
 					continue
 				}
 				byCode.set(key, {
@@ -1215,6 +1243,7 @@ export default function ExamApplicationsPage() {
 					fee_amount: subject.quoted_fee ?? null,
 					learner_count: 1,
 					applied_count: subject.is_applied ? 1 : 0,
+					approved_count: subject.is_approved ? 1 : 0,
 				})
 			}
 		}
@@ -1538,7 +1567,9 @@ export default function ExamApplicationsPage() {
 			return [
 				{ value: cpLearners.length, label: 'Learners', accent: 'border-l-violet-500', icon: Users, tone: '' },
 				{ value: cpLearners.reduce((s, l) => s + l.total_subjects, 0), label: 'Registered Papers', accent: 'border-l-emerald-500', icon: BookOpen, tone: 'text-emerald-600 dark:text-emerald-400' },
-				{ value: cpLearners.filter(l => l.status === 'Applied').length, label: 'Fully Applied', accent: 'border-l-green-500', icon: ClipboardCheck, tone: 'text-green-600 dark:text-green-400' },
+				// Applied / Approved side by side: both are "done" here, and the split shows
+				// how many are still waiting on final approval
+				{ value: `${cpLearners.filter(l => l.status === 'Applied').length} / ${cpLearners.filter(l => l.status === 'Approved').length}`, label: 'Applied / Approved', accent: 'border-l-green-500', icon: ClipboardCheck, tone: 'text-green-600 dark:text-green-400' },
 				{ value: `${cpSelection.learners} / ${selectableCpLearners.length}`, label: 'Selected / Applicable', accent: 'border-l-amber-500', icon: ClipboardCheck, tone: 'text-amber-600 dark:text-amber-400' },
 			]
 		}
@@ -1828,7 +1859,8 @@ export default function ExamApplicationsPage() {
 														<SelectItem value="pending">Yet to apply</SelectItem>
 														<SelectItem value="not_applied">Not applied</SelectItem>
 														<SelectItem value="partial">Partially applied</SelectItem>
-														<SelectItem value="applied">Fully applied</SelectItem>
+														<SelectItem value="applied">Applied — awaiting final approval</SelectItem>
+														<SelectItem value="approved">Approved (final)</SelectItem>
 														<SelectItem value="all">All learners</SelectItem>
 													</SelectContent>
 												</Select>
@@ -1863,7 +1895,8 @@ export default function ExamApplicationsPage() {
 														<>
 															<p className="font-medium text-foreground">Nothing left to apply for</p>
 															<p className="text-xs mt-1">
-																All {cpLearners.length} learner{cpLearners.length === 1 ? '' : 's'} in this scope have already applied.
+																All {cpLearners.length} learner{cpLearners.length === 1 ? '' : 's'} in this scope have already applied
+																{cpLearners.some(l => l.status === 'Approved') && ' or been final-approved'}.
 																Switch the filter to “All learners” to review them.
 															</p>
 														</>

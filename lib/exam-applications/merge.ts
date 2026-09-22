@@ -3,6 +3,7 @@ import type {
 	ExamApplicationEligibility,
 	ExamApplicationSource,
 } from '@/types/exam-applications'
+import { isFinalApprovedRegistration } from '@/lib/exam-registration-status'
 
 /**
  * Shared merge + eligibility engine for the Exam Application module.
@@ -27,6 +28,10 @@ interface Draft {
 	is_registered: boolean
 	registration_id: string | null
 	registration_status: string | null
+	/** Stamped by final approval - tells a final-approved row from a merely approved one */
+	payment_date: string | null
+	/** The registration is a current (regular) paper - false for an arrear attempt */
+	is_regular_registration: boolean
 	is_backlog: boolean
 	backlog_id: string | null
 	attempt_count: number
@@ -51,6 +56,8 @@ function emptyDraft(code: string): Draft {
 		is_registered: false,
 		registration_id: null,
 		registration_status: null,
+		payment_date: null,
+		is_regular_registration: false,
 		is_backlog: false,
 		backlog_id: null,
 		attempt_count: 0,
@@ -151,6 +158,9 @@ export function mergeExamApplicationCourses(input: MergeCourseInput): ExamApplic
 		draft.is_registered = true
 		draft.registration_id = registration.id
 		draft.registration_status = registration.registration_status || null
+		draft.payment_date = registration.payment_date || null
+		// NULL is a legacy row the Exam Registration module wrote - a regular paper
+		draft.is_regular_registration = registration.is_regular !== false
 		draft.course_offering_id = registration.course_offering_id || draft.course_offering_id
 		draft.program_code = draft.program_code || registration.program_code || offering?.program_code || null
 		draft.course_id = draft.course_id || offering?.course_id || null
@@ -194,6 +204,18 @@ export function mergeExamApplicationCourses(input: MergeCourseInput): ExamApplic
 
 	if (drafts.size === 0) return []
 
+	// Current papers come first. A learner who still holds a registered current
+	// paper they have not applied for may not apply for an arrear - the Current
+	// Papers tab has to be done before the Arrear tab. A learner with NO current
+	// paper this session (arrears only) is not held to this and applies directly.
+	const isOpenCurrentPaper = (draft: Draft): boolean => {
+		if (!draft.is_registered || !draft.is_regular_registration) return false
+		const value = String(draft.registration_status || '').trim().toUpperCase()
+		if (['CANCELLED', 'REJECTED', 'WITHDRAWN'].includes(value)) return false
+		return value !== 'APPLIED' && !isFinalApprovedRegistration(draft)
+	}
+	const openCurrentPapers = [...drafts.values()].filter(isOpenCurrentPaper).length
+
 	const results: ExamApplicationCourse[] = []
 
 	for (const draft of drafts.values()) {
@@ -216,12 +238,20 @@ export function mergeExamApplicationCourses(input: MergeCourseInput): ExamApplic
 		// learner is registered for but has not applied for must stay actionable -
 		// applying then UPDATES that row instead of inserting a second one. Treating
 		// every registration as done left those rows reachable from neither tab.
+		//
+		// Final approval moves 'Applied' on to 'Approved'. That row is further along,
+		// not un-applied: left actionable it read as never applied for, and applying
+		// again dragged it back to 'Applied' over the fee the approval had settled.
 		const registrationStatus = String(draft.registration_status || '').trim().toUpperCase()
-		const applicationDone = registrationStatus === 'APPLIED'
+		const finalApproved = isFinalApprovedRegistration(draft)
+		const applicationDone = registrationStatus === 'APPLIED' || finalApproved
 		const registrationBlocked = ['CANCELLED', 'REJECTED', 'WITHDRAWN'].includes(registrationStatus)
 		const registeredNotApplied = draft.is_registered && !applicationDone && !registrationBlocked
 
-		if (draft.is_registered && applicationDone) {
+		if (draft.is_registered && finalApproved) {
+			status = 'Already Approved'
+			reason = 'Applied for and final-approved in this session'
+		} else if (draft.is_registered && applicationDone) {
 			status = 'Already Applied'
 			reason = 'Already applied for in this session'
 		} else if (draft.is_registered && registrationBlocked) {
@@ -243,6 +273,18 @@ export function mergeExamApplicationCourses(input: MergeCourseInput): ExamApplic
 		) {
 			status = 'Seats Full'
 			reason = `Offering is full (${offering.enrolled_count}/${offering.max_enrollment})`
+		}
+
+		// Tested last, so a paper with a harder stop (not offered, already passed)
+		// still says so. The open current papers themselves stay 'Eligible' - they
+		// are exactly what has to be applied for first.
+		// Only arrears are held back: a backlog paper, or an arrear
+		// registration awaiting application. A current-semester paper from the offer
+		// list is itself a current paper and is never blocked by the others.
+		const isArrearPaper = draft.is_backlog || (draft.is_registered && !draft.is_regular_registration)
+		if (status === 'Eligible' && openCurrentPapers > 0 && isArrearPaper && !isOpenCurrentPaper(draft)) {
+			status = 'Current Papers Pending'
+			reason = `Apply the ${openCurrentPapers} registered current paper${openCurrentPapers === 1 ? '' : 's'} first - arrears can be applied for only after the current papers`
 		}
 
 		const sources = [...draft.sources]

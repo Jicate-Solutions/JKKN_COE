@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
+import { isApplicationDone } from '@/lib/exam-registration-status'
 import type {
 	BulkLearnerCourses,
 	BulkLearnerRef,
@@ -209,7 +210,7 @@ export async function buildBulkExamApplicationCourses(
 		fetchByLearners(
 			supabase,
 			'exam_registrations',
-			'id, student_id, stu_register_no, course_offering_id, course_code, registration_status, program_code, attempt_number, is_regular',
+			'id, student_id, stu_register_no, course_offering_id, course_code, registration_status, payment_date, program_code, attempt_number, is_regular',
 			(q: any) => q.eq('institutions_id', institutions_id).eq('examination_session_id', examination_session_id),
 			'student_id',
 			'stu_register_no',
@@ -522,6 +523,12 @@ export async function buildSubjectWiseCandidates(
 	// learner with existing registrations has already paid them.
 	const sessionRegisteredSids = new Set<string>()
 	const sessionRegisteredRegs = new Set<string>()
+	// Learners still holding a registered CURRENT paper they have not applied for.
+	// Current papers come first, so their arrears are held back - the same rule the
+	// merge engine applies to the by-learner list. A learner with no current paper
+	// this session is in neither set and applies for arrears directly.
+	const openCurrentSids = new Set<string>()
+	const openCurrentRegs = new Set<string>()
 	{
 		const sids = [...new Set([...drafts.values()].map(d => d.student_id).filter(Boolean))] as string[]
 		const regs = [...new Set([...drafts.values()].map(d => d.register_number).filter(Boolean))]
@@ -531,6 +538,16 @@ export async function buildSubjectWiseCandidates(
 				if (row.student_id) sessionRegisteredSids.add(row.student_id)
 				const reg = (row.stu_register_no || '').trim().toUpperCase()
 				if (reg) sessionRegisteredRegs.add(reg)
+
+				const value = String(row.registration_status || '').trim().toUpperCase()
+				const open =
+					row.is_regular !== false &&
+					!['CANCELLED', 'REJECTED', 'WITHDRAWN'].includes(value) &&
+					!isApplicationDone(row)
+				if (open) {
+					if (row.student_id) openCurrentSids.add(row.student_id)
+					if (reg) openCurrentRegs.add(reg)
+				}
 			}
 		}
 
@@ -540,13 +557,13 @@ export async function buildSubjectWiseCandidates(
 		const [bySid, byReg] = await Promise.all([
 			fetchAllInChunks(sids, ID_CHUNK, batch =>
 				tryFetchAllRows<any>(
-					() => scope(supabase.from('exam_registrations').select('id, student_id, stu_register_no').in('student_id', batch)),
+					() => scope(supabase.from('exam_registrations').select('id, student_id, stu_register_no, registration_status, payment_date, is_regular').in('student_id', batch)),
 					{ label: 'session registrations' }
 				)
 			),
 			fetchAllInChunks(regs, IN_CHUNK, batch =>
 				tryFetchAllRows<any>(
-					() => scope(supabase.from('exam_registrations').select('id, student_id, stu_register_no').in('stu_register_no', batch)),
+					() => scope(supabase.from('exam_registrations').select('id, student_id, stu_register_no, registration_status, payment_date, is_regular').in('stu_register_no', batch)),
 					{ label: 'session registrations' }
 				)
 			),
@@ -597,6 +614,13 @@ export async function buildSubjectWiseCandidates(
 		} else if (seatsFull) {
 			status = 'Seats Full'
 			reason = `Offering is full (${offering.enrolled_count}/${offering.max_enrollment})`
+		} else if (
+			draft.is_backlog &&
+			((draft.student_id ? openCurrentSids.has(draft.student_id) : false) ||
+				openCurrentRegs.has(draft.register_number.toUpperCase()))
+		) {
+			status = 'Current Papers Pending'
+			reason = 'Apply the registered current papers first - arrears can be applied for only after the current papers'
 		}
 
 		const sources = [...draft.sources]

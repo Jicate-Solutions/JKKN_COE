@@ -322,7 +322,14 @@ export async function GET(request: Request) {
 		// cover only learners who actually applied - a Pending registration has not
 		// been applied for and owes nothing yet. Filtered in the query rather than
 		// after the fetch: on a live session this is 363 rows instead of 12,507.
+		//
+		// 'Approved' alone is NOT applied: registration approval writes it too, before
+		// the learner has applied for anything. Only the final approval stamps
+		// payment_date beside it (see lib/exam-registration-status.ts), so a bare
+		// 'Approved' row is a registered learner who owes nothing yet and must stay
+		// off the fee form - the Exam Applications screen lists them as 'Not Applied'.
 		const APPLIED_STATUSES = ['Applied', 'Approved']
+		const APPLIED_FILTER = 'registration_status.eq.Applied,and(registration_status.eq.Approved,payment_date.not.is.null)'
 		const isApplicationReport = report_type === 'student-fee-details' || report_type === 'student-wise-application'
 
 		if (!institutions_id || !examination_session_id || !report_type) {
@@ -350,7 +357,7 @@ export async function GET(request: Request) {
 					.select('id, stu_register_no, student_name, is_regular, attempt_number, fee_paid, fee_amount, registration_status, program_code, course_offering_id, course_code')
 					.eq('institutions_id', institutions_id)
 					.eq('examination_session_id', examination_session_id)
-				if (isApplicationReport) query = query.in('registration_status', APPLIED_STATUSES)
+				if (isApplicationReport) query = query.or(APPLIED_FILTER)
 				return query
 					.order('stu_register_no', { ascending: true })
 					.order('id', { ascending: true })
@@ -364,7 +371,7 @@ export async function GET(request: Request) {
 
 		if (allRegistrations.length === 0) {
 			if (isApplicationReport) {
-				console.warn(`[ExamReports] No registration in this session has registration_status ${APPLIED_STATUSES.join(' / ')} - the Exam Application report covers applied learners only. Apply the cohort from Exam Management > Exam Applications first.`)
+				console.warn(`[ExamReports] No registration in this session is ${APPLIED_STATUSES.join(' / ')} (final-approved) - the Exam Application report covers applied learners only. Apply the cohort from Exam Management > Exam Applications first.`)
 			}
 			return NextResponse.json({
 				report_type,
@@ -711,7 +718,7 @@ export async function GET(request: Request) {
 							.select('id, application_fee, mark_statement_fee, late_fine')
 							.eq('institutions_id', institutions_id)
 							.eq('examination_session_id', examination_session_id)
-						if (isApplicationReport) query = query.in('registration_status', APPLIED_STATUSES)
+						if (isApplicationReport) query = query.or(APPLIED_FILTER)
 						return query.order('id', { ascending: true }).range(from, to)
 					})
 					: Promise.resolve([] as any[]),

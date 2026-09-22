@@ -5,6 +5,7 @@ import { fetchPassedCourseCodes } from '@/lib/exam-applications/bulk-course-list
 import { fetchAllRows, tryFetchAllRows } from '@/lib/exam-applications/paginate'
 import { cachedSession } from '@/lib/exam-applications/session-cache'
 import { levelOf, loadProgramLevelMap, parseProgramCodes } from '@/lib/exam-applications/program-levels'
+import { isApplicationDone } from '@/lib/exam-registration-status'
 import type { ArrearLearner, ArrearLearnersResponse, CohortFilterOption, CohortFilterTotals } from '@/types/exam-applications'
 
 /** Distinct-learner and row counts per filter value, sorted numerically when possible */
@@ -118,7 +119,7 @@ async function fetchSessionArrearRegistrations(
 	const rows = await tryFetchAllRows<any>(
 		() => supabase
 			.from('exam_registrations')
-			.select('id, student_id, stu_register_no, course_code, registration_status')
+			.select('id, student_id, stu_register_no, course_code, registration_status, payment_date')
 			.eq('institutions_id', params.institutions_id)
 			.eq('examination_session_id', params.examination_session_id)
 			.eq('is_regular', false),
@@ -128,7 +129,8 @@ async function fetchSessionArrearRegistrations(
 	for (const row of rows) {
 		const code = String(row.course_code || '').trim().toUpperCase()
 		if (!code) continue
-		const isApplied = String(row.registration_status || '').trim().toUpperCase() === 'APPLIED'
+		// A final-approved arrear is past 'Applied', not short of it
+		const isApplied = isApplicationDone(row)
 		for (const key of [
 			`${chargeKey({ student_id: row.student_id, register_number: row.stu_register_no })}|${code}`,
 			...(row.student_id ? [`sid:${row.student_id}|${code}`] : []),

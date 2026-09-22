@@ -204,6 +204,7 @@ export async function POST(request: Request) {
 				// Covers 'Already Applied' and the blocked registration states - the merge
 				// engine owns that decision, so nothing is re-applied here by accident.
 				const alreadyDone = course.eligibility_status === 'Already Applied'
+					|| course.eligibility_status === 'Already Approved'
 				results.push({
 					register_number: item.register_number,
 					course_code: item.course_code,

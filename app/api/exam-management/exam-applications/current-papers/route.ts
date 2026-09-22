@@ -13,11 +13,14 @@ import {
 	chargeKey,
 	hasSessionChargeColumns,
 	loadAlreadyChargedKeys,
+	loadSessionChargeAmounts,
 	sessionChargeFor,
 	NO_CHARGE,
 	type SessionCharge,
+	type StoredSessionCharge,
 } from '@/lib/exam-applications/session-charges'
 import { levelOf, loadProgramLevelMap, parseProgramCodes } from '@/lib/exam-applications/program-levels'
+import { isApplicationDone, isFinalApprovedRegistration } from '@/lib/exam-registration-status'
 import type {
 	CohortFilterOption,
 	CohortFilterTotals,
@@ -55,6 +58,17 @@ const APPLIED_STATUS = 'Applied'
 /** Rows in these states are never re-applied */
 const TERMINAL_STATUSES = new Set(['APPLIED', 'CANCELLED', 'REJECTED', 'WITHDRAWN'])
 
+/**
+ * Never re-applied: the terminal states, plus a final-approved row. 'Approved' is
+ * not in the set above because a registration can be approved without ever being
+ * applied for - only the payment stamp says final approval has been through it.
+ * Re-applying one would drag it back to 'Applied' and overwrite the settled fee.
+ */
+function isLockedRow(row: RegistrationRow): boolean {
+	const status = String(row.registration_status || '').trim().toUpperCase()
+	return TERMINAL_STATUSES.has(status) || isFinalApprovedRegistration(row)
+}
+
 const PAGE_SIZE = 1000
 const MAX_PAGES = 60
 /** Pages fetched at once - a large session was taking seconds page-by-page */
@@ -73,6 +87,7 @@ interface RegistrationRow {
 	course_code: string | null
 	program_code: string | null
 	registration_status: string | null
+	payment_date: string | null
 	is_regular: boolean | null
 	attempt_number: number | null
 	fee_amount: number | null
@@ -111,7 +126,7 @@ async function fetchSessionRegistrations(
 		let query = supabase
 			.from('exam_registrations')
 			.select(
-				'id, student_id, stu_register_no, student_name, course_offering_id, course_code, program_code, registration_status, is_regular, attempt_number, fee_amount',
+				'id, student_id, stu_register_no, student_name, course_offering_id, course_code, program_code, registration_status, payment_date, is_regular, attempt_number, fee_amount',
 				withCount ? { count: 'exact' } : undefined
 			)
 			.eq('institutions_id', params.institutions_id)
@@ -375,6 +390,7 @@ export async function GET(request: Request) {
 					subjects: [],
 					total_subjects: 0,
 					applied_subjects: 0,
+					approved_subjects: 0,
 					pending_subjects: 0,
 					status: 'Not Applied',
 					fee_level: null,
@@ -384,6 +400,11 @@ export async function GET(request: Request) {
 					late_fine: 0,
 					fee_total: 0,
 					already_charged: false,
+					charged_paper_fee: 0,
+					charged_application_fee: 0,
+					charged_mark_statement_fee: 0,
+					charged_late_fine: 0,
+					charged_total: 0,
 				}
 				learnerByKey.set(key, learner)
 			}
@@ -402,8 +423,9 @@ export async function GET(request: Request) {
 				course_name: '',
 				course_offering_id: row.course_offering_id,
 				registration_status: status || null,
-				is_applied: status.toUpperCase() === APPLIED_STATUS.toUpperCase(),
-				is_locked: TERMINAL_STATUSES.has(status.toUpperCase()),
+				is_applied: isApplicationDone(row),
+				is_approved: isFinalApprovedRegistration(row),
+				is_locked: isLockedRow(row),
 				attempt_number: row.attempt_number ?? 1,
 				fee_amount: row.fee_amount == null ? null : Number(row.fee_amount),
 				quoted_fee: null,
@@ -428,9 +450,11 @@ export async function GET(request: Request) {
 		const fineApplicable = isFineApplicable(book.schedule, asOf)
 		// Nobody can have been charged yet while the columns are missing, and the
 		// lookup would only error - so skip it entirely.
+		// The amounts, not just the keys: a finished learner's row shows what they
+		// were charged, and `.has()` still answers "already charged".
 		const alreadyCharged = chargeColumnsReady
-			? await loadAlreadyChargedKeys(supabase, { institutions_id, examination_session_id })
-			: new Set<string>()
+			? await loadSessionChargeAmounts(supabase, { institutions_id, examination_session_id })
+			: new Map<string, StoredSessionCharge>()
 
 		const allCourses: CourseFeeInput[] = [...courseMaster.values()].map(c => ({
 			course_code: c.course_code,
@@ -457,14 +481,17 @@ export async function GET(request: Request) {
 
 			learner.total_subjects = learner.subjects.length
 			learner.applied_subjects = learner.subjects.filter(s => s.is_applied).length
+			learner.approved_subjects = learner.subjects.filter(s => s.is_approved).length
 			learner.pending_subjects = learner.subjects.filter(s => !s.is_locked).length
 			// applied_subjects is tested first: a learner whose every row was cancelled
 			// also has pending_subjects === 0, and reporting them as "Applied" would
-			// be plainly wrong.
+			// be plainly wrong. 'Approved' needs every applied paper through final
+			// approval - one still waiting keeps the learner at 'Applied'.
 			learner.status =
 				learner.applied_subjects === 0 ? 'Not Applied'
-					: learner.pending_subjects === 0 ? 'Applied'
-						: 'Partial'
+					: learner.pending_subjects > 0 ? 'Partial'
+						: learner.approved_subjects === learner.applied_subjects ? 'Approved'
+							: 'Applied'
 
 			// Only the papers that would actually change are quoted - a learner who is
 			// half applied already must not be re-billed for the half that is done.
@@ -481,6 +508,21 @@ export async function GET(request: Request) {
 			learner.mark_statement_fee = charge.mark_statement_fee
 			learner.late_fine = charge.late_fine
 			learner.fee_total = learner.paper_fee_total + charge.total
+
+			// What has already been charged - the stored paper fees of the applied /
+			// approved papers plus the session heads the learner carries.
+			const stored = alreadyCharged.get(learner.key)
+				|| (learner.student_id ? alreadyCharged.get(`sid:${learner.student_id}`) : undefined)
+			learner.charged_paper_fee = learner.subjects
+				.filter(s => s.is_applied)
+				.reduce((sum, s) => sum + (s.fee_amount || 0), 0)
+			learner.charged_application_fee = stored?.application_fee || 0
+			learner.charged_mark_statement_fee = stored?.mark_statement_fee || 0
+			learner.charged_late_fine = stored?.late_fine || 0
+			learner.charged_total = learner.charged_paper_fee
+				+ learner.charged_application_fee
+				+ learner.charged_mark_statement_fee
+				+ learner.charged_late_fine
 		}
 
 		learners.sort((a, b) => a.register_number.localeCompare(b.register_number))
@@ -494,6 +536,7 @@ export async function GET(request: Request) {
 				if (existing) {
 					existing.learner_count++
 					if (subject.is_applied) existing.applied_count++
+					if (subject.is_approved) existing.approved_count++
 					continue
 				}
 				paperByCode.set(key, {
@@ -503,6 +546,7 @@ export async function GET(request: Request) {
 					fee_amount: subject.quoted_fee ?? null,
 					learner_count: 1,
 					applied_count: subject.is_applied ? 1 : 0,
+					approved_count: subject.is_approved ? 1 : 0,
 				})
 			}
 		}
@@ -527,6 +571,7 @@ export async function GET(request: Request) {
 				learners: learners.length,
 				papers: papers.length,
 				registrations: learners.reduce((sum, l) => sum + l.total_subjects, 0),
+				approved: learners.filter(l => l.status === 'Approved').length,
 				applied: learners.filter(l => l.status === 'Applied').length,
 				partial: learners.filter(l => l.status === 'Partial').length,
 				not_applied: learners.filter(l => l.status === 'Not Applied').length,
@@ -690,7 +735,7 @@ export async function POST(request: Request) {
 			const pending: Target[] = []
 			for (const target of targets) {
 				const status = String(target.row.registration_status || '').trim()
-				if (TERMINAL_STATUSES.has(status.toUpperCase())) {
+				if (isLockedRow(target.row)) {
 					results.push({
 						register_number: String(target.row.stu_register_no || ''),
 						course_code: target.course_code,

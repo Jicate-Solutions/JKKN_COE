@@ -1522,7 +1522,10 @@ t				</div>
 								<TabsContent value="registrations" className="space-y-4">
 
 						{/* Stats Cards */}
-						<div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3 flex-shrink-0">
+						{/* The status cards follow the flow: Pending (registered) -> Applied (exam
+						    application) -> Approved (final approval). Applied had no card, so those
+						    rows were counted in Total and nowhere else. */}
+						<div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-3 flex-shrink-0">
 							<Card className="border-l-4 border-l-blue-500 hover:shadow-md transition-shadow">
 								<CardContent className="p-4">
 									<div className="flex items-center justify-between">
@@ -1535,6 +1538,30 @@ t				</div>
 								</CardContent>
 							</Card>
 
+							<Card className="border-l-4 border-l-amber-500 hover:shadow-md transition-shadow">
+								<CardContent className="p-4">
+									<div className="flex items-center justify-between">
+										<div>
+											<p className="text-2xl font-bold tracking-tight">{items.filter(i => i.registration_status === 'Pending').length}</p>
+											<p className="text-xs font-medium text-muted-foreground mt-0.5">Pending — not yet applied</p>
+										</div>
+										<AlertTriangle className="h-5 w-5 text-amber-500/40" />
+									</div>
+								</CardContent>
+							</Card>
+
+							<Card className="border-l-4 border-l-sky-500 hover:shadow-md transition-shadow">
+								<CardContent className="p-4">
+									<div className="flex items-center justify-between">
+										<div>
+											<p className="text-2xl font-bold tracking-tight">{items.filter(i => i.registration_status === 'Applied').length}</p>
+											<p className="text-xs font-medium text-muted-foreground mt-0.5">Applied — awaiting final approval</p>
+										</div>
+										<ClipboardCheck className="h-5 w-5 text-sky-500/40" />
+									</div>
+								</CardContent>
+							</Card>
+
 							<Card className="border-l-4 border-l-emerald-500 hover:shadow-md transition-shadow">
 								<CardContent className="p-4">
 									<div className="flex items-center justify-between">
@@ -1543,18 +1570,6 @@ t				</div>
 											<p className="text-xs font-medium text-muted-foreground mt-0.5">Approved</p>
 										</div>
 										<CheckCircle className="h-5 w-5 text-emerald-500/40" />
-									</div>
-								</CardContent>
-							</Card>
-
-							<Card className="border-l-4 border-l-amber-500 hover:shadow-md transition-shadow">
-								<CardContent className="p-4">
-									<div className="flex items-center justify-between">
-										<div>
-											<p className="text-2xl font-bold tracking-tight">{items.filter(i => i.registration_status === 'Pending').length}</p>
-											<p className="text-xs font-medium text-muted-foreground mt-0.5">Pending</p>
-										</div>
-										<AlertTriangle className="h-5 w-5 text-amber-500/40" />
 									</div>
 								</CardContent>
 							</Card>

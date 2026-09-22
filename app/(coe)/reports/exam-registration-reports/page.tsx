@@ -57,6 +57,20 @@ interface SessionOption {
 
 const COURSE_CATEGORY_OPTIONS = ['Theory', 'Practical', 'Project', 'Field Work']
 
+// The course master carries more categories than the filter offers. Each one maps
+// onto the option(s) it belongs under - an unmapped value matched no option at all,
+// so the paper vanished from every filtered report ('Group Project' viva voce
+// papers never reached the Project report).
+const COURSE_CATEGORY_ALIASES: Record<string, string[]> = {
+	'Group Project': ['Project'],
+	'Theory + Practical': ['Theory', 'Practical'],
+	'Non Academic': ['Theory'],
+}
+
+function categoryOptionsOf(category: string): string[] {
+	return COURSE_CATEGORY_ALIASES[category] || [category]
+}
+
 // Fallback semester list — used until a report is generated and real semesters are known
 const DEFAULT_SEMESTER_OPTIONS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
 // Sentinel for registrations whose course offering carries no semester
@@ -484,7 +498,7 @@ export default function ExamRegistrationReportsPage() {
 			if (categoryActive) {
 				const cat = r.course_offering?.course_category
 				// Include rows with unknown category (fallback offerings) — don't silently drop them
-				if (cat && !selectedCourseCategories.includes(cat)) return false
+				if (cat && !categoryOptionsOf(cat).some(option => selectedCourseCategories.includes(option))) return false
 			}
 			if (programActive) {
 				const code = r.course_offering?.program_code || r.program_code
