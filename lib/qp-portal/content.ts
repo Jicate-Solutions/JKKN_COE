@@ -116,7 +116,7 @@ export async function getPortalContent(
 	return { ...normalized, is_fallback: false }
 }
 
-/** All six documents at once — what the portal loads on sign-in. */
+/** All seven documents at once — what the portal loads on sign-in. */
 export async function getAllPortalContent(
 	institutionsId: string,
 	sessionId?: string | null
@@ -128,6 +128,7 @@ export async function getAllPortalContent(
 		'declaration',
 		'claim',
 		'order',
+		'question_note',
 	]
 	const resolved = await Promise.all(types.map(t => getPortalContent(institutionsId, t, sessionId)))
 	return Object.fromEntries(types.map((t, i) => [t, resolved[i]])) as Record<

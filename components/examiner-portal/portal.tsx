@@ -470,6 +470,8 @@ export function ExaminerPortal({ examiner, onSignedOut }: Props) {
 	const [focusMode, setFocusMode] = useState(true)
 	const [instructionsOpen, setInstructionsOpen] = useState(false)
 	const [editorStage, setEditorStage] = useState<{ stage: FlowStage; label: string; index: number; total: number } | null>(null)
+	/** The CoE's note above the questions — open by default, collapsible for small screens. */
+	const [questionNoteOpen, setQuestionNoteOpen] = useState(true)
 	const [assignments, setAssignments] = useState<AssignmentSummary[]>([])
 	const [loading, setLoading] = useState(true)
 	const [openId, setOpenId] = useState<string | null>(null)
@@ -1988,6 +1990,40 @@ export function ExaminerPortal({ examiner, onSignedOut }: Props) {
 							<div className={cn('mb-4 rounded-md border p-3 text-sm', TONE.returned.card, TONE.returned.text)}>
 								<span className="font-semibold">Returned for revision by the CoE:</span> {a.return_remarks}
 							</div>
+						)}
+						{/* The CoE's note to the setter (Bloom's split, either/or pairing,
+						    unit coverage) stays in view while questions are typed; it is
+						    not repeated on Review & Submit. Editable by the CoE under
+						    QP Examiner Assignment → Content → "Note above Questions". */}
+						{editorStage?.stage !== 'review' && content?.question_note?.body?.length > 0 && (
+							<section
+								aria-label={content.question_note.title || 'Note'}
+								className="mb-4 rounded-lg border border-amber-200 bg-amber-50/70 px-3.5 py-3 text-sm text-amber-950"
+							>
+								<div className="flex items-center justify-between gap-3">
+									<p className="flex items-center gap-1.5 font-semibold">
+										<Info className="h-4 w-4 text-amber-700 shrink-0" />
+										{content.question_note.title || 'Note'}
+									</p>
+									<button
+										type="button"
+										onClick={() => setQuestionNoteOpen(v => !v)}
+										className="text-xs font-medium text-amber-800 underline-offset-2 hover:underline"
+										aria-expanded={questionNoteOpen}
+									>
+										{questionNoteOpen ? 'Hide' : 'Show'}
+									</button>
+								</div>
+								{questionNoteOpen && (
+									<ol className="mt-2 space-y-1.5 pl-5 list-decimal marker:font-semibold marker:text-amber-800">
+										{content.question_note.body.map((c: any) => (
+											<li key={c.id} className="leading-relaxed">
+												{c.text}
+											</li>
+										))}
+									</ol>
+								)}
+							</section>
 						)}
 						{/* qp-protected: no print, no selection. */}
 						<div

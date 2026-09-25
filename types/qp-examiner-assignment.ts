@@ -59,6 +59,8 @@ export type QpPortalDocType =
 	| 'claim'
 	| 'order'
 	| 'guidelines'
+	/** Short note pinned above the questions while the examiner types them. */
+	| 'question_note'
 
 /** The willingness role an external examiner must hold to set papers. */
 export const QP_SETTER_ROLE = 'Question Paper Setter'
@@ -457,6 +459,16 @@ export const QP_CONTENT_DEFAULTS: Record<
 			'Where a figure, table or data is required, attach it with the question.',
 			'Maintain absolute confidentiality. The question paper must not be shared with, or discussed with, any other person.',
 			'Submit the completed paper within the assignment window shown on your dashboard.',
+		],
+	},
+	question_note: {
+		title: 'Note',
+		body: [
+			"The question paper should consist of 45% of Remembering & Understanding levels, 40% of Applying & Analyzing levels and 15% of Evaluate & Create levels of Revised Bloom's taxonomy.",
+			"Kindly ensure each 'Either or Choice' pair of questions is at the same Bloom's taxonomy level.",
+			"Fill in the marks and the Bloom's taxonomy level against each question without fail.",
+			'Part A & B questions are to be taken from the first half of the unit, followed by another question from the remaining part of the unit.',
+			'Depending upon the course, K5 / K6 can be incorporated.',
 		],
 	},
 	guidelines: {

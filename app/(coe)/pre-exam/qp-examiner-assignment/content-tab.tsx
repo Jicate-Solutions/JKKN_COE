@@ -49,6 +49,7 @@ interface DocState {
 const DOCS: { key: QpPortalDocType; label: string; blurb: string }[] = [
 	{ key: 'order', label: 'Examiner Order', blurb: 'The appointment order the examiner receives by e-mail and downloads from the portal.' },
 	{ key: 'instructions', label: 'Paper Instructions', blurb: 'What the setter must follow when framing the question paper.' },
+	{ key: 'question_note', label: 'Note above Questions', blurb: "The short numbered note pinned above the questions while the setter types them — Bloom's split, either/or pairing, unit coverage." },
 	{ key: 'guidelines', label: 'Examiner Guidelines', blurb: 'How the portal and the question paper must be handled.' },
 	{ key: 'checklist', label: 'Check List', blurb: 'The self-check the setter answers before submitting.' },
 	{ key: 'declaration', label: 'Declaration', blurb: 'What the setter declares on submission.' },

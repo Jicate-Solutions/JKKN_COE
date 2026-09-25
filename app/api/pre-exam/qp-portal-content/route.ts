@@ -25,6 +25,7 @@ const DOC_TYPES: QpPortalDocType[] = [
 	'declaration',
 	'claim',
 	'order',
+	'question_note',
 ]
 
 function isDocType(v: unknown): v is QpPortalDocType {
