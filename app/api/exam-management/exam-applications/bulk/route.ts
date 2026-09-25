@@ -321,12 +321,21 @@ export async function POST(request: Request) {
 				anchoredLearners.add(key)
 				if (alreadyCharged.has(key) || (row.student_id && alreadyCharged.has(`sid:${row.student_id}`))) continue
 
-				row.apply(sessionChargeFor(
+				const charge = sessionChargeFor(
 					pricer.book,
 					pricer.levelFor(row.program_code),
 					today,
 					row.program_code
-				))
+				)
+				// See current-papers/route.ts - a zero charge for a learner who owes
+				// the heads is logged with its inputs so it can be traced.
+				if (charge.total === 0) {
+					console.warn('[exam-applications:bulk] zero session charge for an uncharged learner', {
+						key, program: row.program_code, level: pricer.levelFor(row.program_code), today,
+						rate_rows: pricer.book.rates.size, book_empty: pricer.book.isEmpty,
+					})
+				}
+				row.apply(charge)
 			}
 		}
 

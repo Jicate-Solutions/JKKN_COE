@@ -10,6 +10,7 @@ import {
 	Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
+import { stripLatexDelimiters } from '@/lib/ia/latex-paste'
 import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/utils'
 import { STRUCTURE_GROUPS, SYMBOL_GROUPS, type MathCategory } from '@/lib/ia/math-catalog'
@@ -157,7 +158,8 @@ export function EquationEditorDialog({ open, onOpenChange, initialLatex, onInser
 					</Button>
 					<Button
 						onClick={() => {
-							const v = latex.trim()
+							// MathType / Overleaf copies arrive wrapped in $…$ or […]; store bare LaTeX.
+							const v = stripLatexDelimiters(latex)
 							if (v) onInsert(v)
 							onOpenChange(false)
 						}}

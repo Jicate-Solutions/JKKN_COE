@@ -1,4 +1,4 @@
-import type { Course, CourseFormData, CourseInfo } from '@/types/courses'
+import type { Course, CourseFormData, CourseInfo, CourseUpdateResponse } from '@/types/courses'
 
 /**
  * Fetch course_info rows that drive the Course Type dropdown.
@@ -135,7 +135,7 @@ export async function createCourse(data: Partial<CourseFormData>): Promise<Cours
 	return response.json()
 }
 
-export async function updateCourse(id: string, data: Partial<CourseFormData>): Promise<Course> {
+export async function updateCourse(id: string, data: Partial<CourseFormData>): Promise<CourseUpdateResponse> {
 	const payload = {
 		institution_code: data.institution_code,
 		regulation_code: data.regulation_code,

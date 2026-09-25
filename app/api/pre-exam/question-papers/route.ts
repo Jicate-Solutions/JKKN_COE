@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
+import { loadCourseMaster } from '@/lib/api-helpers/course-master-for-offerings'
 import { scaffoldQuestions } from '@/lib/ia/paper-scaffold'
 import { formatApplicability, pickTemplateForCourse } from '@/lib/ia/course-type-applicability'
 
@@ -257,14 +258,12 @@ export async function POST(req: NextRequest) {
 			})
 		}
 
-		// 2. Enrich with course master
-		const codes = [...new Set(offerings.map(o => o.course_code).filter(Boolean))]
-		const { data: courses } = await supabase
-			.from('courses')
-			.select('id, course_code, course_name, course_type, course_category, evaluation_type, multiple_qp_set, exam_duration, internal_max_mark')
-			.eq('institutions_id', institutions_id)
-			.in('course_code', codes)
-		const courseByCode = new Map((courses || []).map(c => [c.course_code, c]))
+		// 2. Enrich with course master — by the offering's course UUID; the offering's
+		//    course_code is a denormalised copy that can lag a rename.
+		const { masterFor } = await loadCourseMaster(
+			supabase, institutions_id, offerings,
+			'id, course_code, course_name, course_type, course_category, evaluation_type, multiple_qp_set, exam_duration, internal_max_mark',
+		)
 
 		// 3. Candidate templates: explicit override, else institution CIA defaults
 		let templates: any[] = []
@@ -334,7 +333,7 @@ export async function POST(req: NextRequest) {
 			if (seenOffering.has(off.id)) continue
 			seenOffering.add(off.id)
 
-			const course = courseByCode.get(off.course_code)
+			const course = masterFor(off)
 			// Only CIA / CIA+ESE courses get internal papers
 			const evalType = course?.evaluation_type || ''
 			if (evalType && evalType !== 'CIA' && evalType !== 'CIA + ESE') continue
@@ -362,7 +361,7 @@ export async function POST(req: NextRequest) {
 						cia_round_name: cia_round_name || null,
 						course_offering_id: off.id,
 						course_id: course?.id || off.course_id,
-						course_code: off.course_code,
+						course_code: course?.course_code || off.course_code,
 						program_code: off.program_code,
 						semester: off.semester,
 						template_id: tmpl.id,

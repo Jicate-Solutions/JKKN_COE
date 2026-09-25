@@ -90,7 +90,7 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import XLSX from '@/lib/utils/excel-compat'
-import type { Course, CourseImportError, UploadSummary, CourseStatus, CourseInfo } from '@/types/courses'
+import type { Course, CourseImportError, UploadSummary, CourseStatus, CourseInfo, CourseUpdateResponse } from '@/types/courses'
 import { COURSE_CATEGORIES } from '@/types/courses'
 import { COURSE_STATUS_OPTIONS, COURSE_LEVELS } from '@/types/courses'
 import {
@@ -767,8 +767,19 @@ export default function CoursesPage() {
         : await createCourse(formData as any)
 
       if (editing) {
-        setCourses(p => p.map(c => c.id === editing.id ? saved : c))
-        toast({ title: '✅ Record Updated', description: `${formData.course_title} has been successfully updated.`, className: 'bg-green-50 border-green-200 text-green-800 dark:bg-green-900/20 dark:border-green-800 dark:text-green-200' })
+        const { course_code_cascade: cascade, ...course } = saved as CourseUpdateResponse
+        setCourses(p => p.map(c => c.id === editing.id ? course : c))
+        const keptNote = cascade && (cascade.course_offerings_kept || cascade.exam_registrations_kept)
+          ? ` ${cascade.course_offerings_kept} offering(s) and ${cascade.exam_registrations_kept} registration(s) with published results were left unchanged.`
+          : ''
+        const cascadeNote = cascade
+          ? ` Course code changed from ${cascade.old_code} to ${cascade.new_code}; also updated ${cascade.course_mapping} course mapping(s), ${cascade.course_offerings} course offering(s), ${cascade.exam_registrations} exam registration(s) (${cascade.exam_registrations_approved} approved) and ${cascade.question_papers} question paper record(s).${keptNote}`
+          : ''
+        if (cascade?.errors.length) {
+          toast({ title: '⚠️ Updated With Warnings', description: `${formData.course_title} was updated.${cascadeNote} Some related rows could not be updated: ${cascade.errors.join('; ')}`, className: 'bg-amber-50 border-amber-200 text-amber-800 dark:bg-amber-900/20 dark:border-amber-800 dark:text-amber-200' })
+        } else {
+          toast({ title: '✅ Record Updated', description: `${formData.course_title} has been successfully updated.${cascadeNote}`, className: 'bg-green-50 border-green-200 text-green-800 dark:bg-green-900/20 dark:border-green-800 dark:text-green-200' })
+        }
       } else {
         setCourses(p => [saved, ...p])
         toast({ title: '✅ Record Created', description: `${formData.course_title} has been successfully created.`, className: 'bg-green-50 border-green-200 text-green-800 dark:bg-green-900/20 dark:border-green-800 dark:text-green-200' })
@@ -2300,11 +2311,14 @@ export default function CoursesPage() {
                   <Label className="text-sm font-semibold">Course Code <span className="text-red-500">*</span></Label>
                   <Input value={formData.course_code} onChange={(e) => {
                     const v = e.target.value
+                    // Display / QP code mirror the course code until they are edited to something
+                    // different. On edit they start equal to it, so a code change carries them along.
+                    const mirrors = (code: string) => !code || code === formData.course_code
                     setFormData({
                       ...formData,
                       course_code: v,
-                      display_code: formData.display_code || v,
-                      qp_code: formData.qp_code || v,
+                      display_code: mirrors(formData.display_code) ? v : formData.display_code,
+                      qp_code: mirrors(formData.qp_code) ? v : formData.qp_code,
                     })
                   }} className={`h-10 ${errors.course_code ? 'border-destructive' : ''}`} placeholder="e.g., CS101" />
                   {errors.course_code && <p className="text-xs text-destructive">{errors.course_code}</p>}

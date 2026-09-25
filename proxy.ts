@@ -39,6 +39,14 @@ const publicApiRoutes = [
 	'/api/examiner/question-paper',
 ]
 
+// Exact public API paths (regex): shared by COE staff AND external examiners,
+// authenticated inside the route itself. Kept as patterns so a prefix such as
+// /api/courses is not opened wholesale.
+const publicApiPatterns = [
+	// One syllabus link for every screen (app/api/courses/[id]/syllabus-pdf).
+	/^\/api\/courses\/[^/]+\/syllabus-pdf\/?$/,
+]
+
 export async function proxy(request: NextRequest) {
 	const { pathname } = request.nextUrl
 
@@ -97,7 +105,7 @@ export async function proxy(request: NextRequest) {
 	}
 
 	// Allow public API routes
-	if (publicApiRoutes.some((route) => pathname.startsWith(route))) {
+	if (publicApiRoutes.some((route) => pathname.startsWith(route)) || publicApiPatterns.some((re) => re.test(pathname))) {
 		const res = NextResponse.next()
 		applySecurityHeaders(res)
 		addRateLimitHeaders(request, res)

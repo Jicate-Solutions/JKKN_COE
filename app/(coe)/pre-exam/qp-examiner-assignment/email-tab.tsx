@@ -8,7 +8,7 @@
 // Results come back per examiner; a failed address never hides the ones that
 // went out, and can be retried on its own.
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -328,8 +328,8 @@ export function EmailTab({ institutionsId, session }: Props) {
 									{visible.map(r => {
 										const open = expanded.has(r.examiner_id)
 										return (
-											<>
-												<TableRow key={r.examiner_id} className={cn(selected.has(r.examiner_id) && 'bg-emerald-50/40')}>
+											<Fragment key={r.examiner_id}>
+												<TableRow className={cn(selected.has(r.examiner_id) && 'bg-emerald-50/40')}>
 													<TableCell>
 														<Checkbox
 															checked={selected.has(r.examiner_id)}
@@ -442,7 +442,7 @@ export function EmailTab({ institutionsId, session }: Props) {
 														</TableCell>
 													</TableRow>
 												)}
-											</>
+											</Fragment>
 										)
 									})}
 								</TableBody>

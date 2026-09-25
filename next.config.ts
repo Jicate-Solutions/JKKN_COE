@@ -1,5 +1,13 @@
 import type { NextConfig } from "next";
 
+const CHROMIUM_FILES = ['./node_modules/@sparticuz/chromium/**/*'];
+const QUESTION_PAPER_FILES = [
+  ...CHROMIUM_FILES,
+  './node_modules/katex/dist/katex.min.css',
+  './node_modules/katex/dist/fonts/**/*.woff2',
+  './public/fonts/**/*',
+];
+
 const nextConfig: NextConfig = {
   outputFileTracingRoot: __dirname,
   typescript: {
@@ -19,36 +27,29 @@ const nextConfig: NextConfig = {
     ];
   },
   serverExternalPackages: ['@sparticuz/chromium'],
+  // Chromium is loaded at runtime via chromium.executablePath() (through
+  // lib/pdf/headless-browser.ts), so the tracer cannot see its .br archives —
+  // EVERY route that renders a PDF through headless Chromium must be listed
+  // here or it deploys without the binary and fails with "The input directory
+  // .../@sparticuz/chromium/bin does not exist". Question-paper PDFs also read
+  // katex.min.css + woff2 faces from disk (lib/ia/katex-css.ts) and inline them;
+  // without them formulae fall back to MathML, whose italic identifiers print
+  // BLANK under @sparticuz/chromium. public/fonts carries the Latin serif and
+  // the Tamil faces, embedded the same way.
   outputFileTracingIncludes: {
-    '/api/pre-exam/practical-email/*': ['./node_modules/@sparticuz/chromium/**/*'],
-    // Chromium is loaded at runtime via chromium.executablePath(), so the tracer
-    // can't see it — every route that renders a PDF through headless Chromium must
-    // be listed here or it deploys without the binary. IA question-paper PDFs:
-    // katex.min.css and its woff2 faces are read from disk (lib/ia/katex-css.ts) and
-    // inlined into the print page. The tracer follows `import katex from 'katex'`
-    // but not those data files; without them formulae fall back to MathML, whose
-    // italic identifiers print BLANK under @sparticuz/chromium. public/fonts carries
-    // the paper's Latin serif and the Tamil faces, embedded the same way.
-    '/api/v1/ia/question-papers/**': [
-      './node_modules/@sparticuz/chromium/**/*',
-      './node_modules/katex/dist/katex.min.css',
-      './node_modules/katex/dist/fonts/**/*.woff2',
-      './public/fonts/**/*',
-    ],
-    '/api/pre-exam/question-papers/**': [
-      './node_modules/@sparticuz/chromium/**/*',
-      './node_modules/katex/dist/katex.min.css',
-      './node_modules/katex/dist/fonts/**/*.woff2',
-      './public/fonts/**/*',
-    ],
-    // End-semester papers render through the same headless Chromium path as the
-    // CIA ones (lib/ia/build-paper-pdf-html), so they need the same files traced.
-    '/api/pre-exam/ese-question-papers/**': [
-      './node_modules/@sparticuz/chromium/**/*',
-      './node_modules/katex/dist/katex.min.css',
-      './node_modules/katex/dist/fonts/**/*.woff2',
-      './public/fonts/**/*',
-    ],
+    // Practical examiner appointment letters (lib/pdf/practical-appointment-letter.ts)
+    '/api/pre-exam/practical-email/**': CHROMIUM_FILES,
+    // Central valuation appointment letters (lib/pdf/central-valuation-appointment-letter.ts)
+    '/api/post-exam/central-valuation/email/**': CHROMIUM_FILES,
+    // QP examiner orders + claim forms (lib/pdf/examiner-order.ts): CoE side —
+    // send-order / re-send, order PDF, e-mail preview + bulk send, claims —
+    // and the examiner portal's own documents route.
+    '/api/pre-exam/qp-examiner-assignments/**': CHROMIUM_FILES,
+    '/api/examiner-portal/**': CHROMIUM_FILES,
+    // CIA / ESE question papers (lib/ia/build-paper-pdf-html.ts)
+    '/api/v1/ia/question-papers/**': QUESTION_PAPER_FILES,
+    '/api/pre-exam/question-papers/**': QUESTION_PAPER_FILES,
+    '/api/pre-exam/ese-question-papers/**': QUESTION_PAPER_FILES,
   },
 };
 

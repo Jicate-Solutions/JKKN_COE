@@ -16,6 +16,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
+import { loadCourseMaster } from '@/lib/api-helpers/course-master-for-offerings'
 import { scaffoldQuestions, mergeAuthored } from '@/lib/ia/paper-scaffold'
 import {
 	pickTemplateForCourse,
@@ -268,17 +269,11 @@ export async function GET(req: NextRequest) {
 			return q.range(from, to)
 		})
 
-		const codes = [...new Set(offerings.map(o => o.course_code).filter(Boolean))]
-		const courses: any[] = []
-		for (let i = 0; i < codes.length; i += 200) {
-			const { data } = await supabase
-				.from('courses')
-				.select('id, course_code, course_name, course_category, evaluation_type, multiple_qp_set, exam_duration')
-				.eq('institutions_id', institutionsId)
-				.in('course_code', codes.slice(i, i + 200))
-			courses.push(...(data || []))
-		}
-		const courseByCode = new Map(courses.map(c => [c.course_code, c]))
+		// Master rows by the offering's course UUID (the offering's course_code can lag a rename).
+		const { masterFor } = await loadCourseMaster(
+			supabase, institutionsId, offerings,
+			'id, course_code, course_name, course_category, evaluation_type, multiple_qp_set, exam_duration',
+		)
 		const paperByKey = new Map(papers.map(p => [`${p.course_offering_id}:${p.set_number}`, p]))
 
 		const rows: any[] = []
@@ -291,7 +286,7 @@ export async function GET(req: NextRequest) {
 			if (seen.has(off.id)) continue
 			seen.add(off.id)
 
-			const course = courseByCode.get(off.course_code)
+			const course = masterFor(off)
 			if (!hasEndSemester(course?.evaluation_type)) continue
 
 			// Only theory papers get a question-paper setter. Practical and
@@ -314,7 +309,7 @@ export async function GET(req: NextRequest) {
 				rows.push({
 					course_offering_id: off.id,
 					course_id: course?.id || off.course_id,
-					course_code: off.course_code,
+					course_code: course?.course_code || off.course_code,
 					subject_title: course?.course_name || off.course_code,
 					course_category: course?.course_category || null,
 					program_code: off.program_code,
@@ -419,17 +414,11 @@ export async function POST(req: NextRequest) {
 		}
 		const offeringById = new Map(offerings.map(o => [o.id, o]))
 
-		const codes = [...new Set(offerings.map(o => o.course_code).filter(Boolean))]
-		const courses: any[] = []
-		for (let i = 0; i < codes.length; i += 200) {
-			const { data } = await supabase
-				.from('courses')
-				.select('id, course_code, course_name, course_category, multiple_qp_set, exam_duration')
-				.eq('institutions_id', institutions_id)
-				.in('course_code', codes.slice(i, i + 200))
-			courses.push(...(data || []))
-		}
-		const courseByCode = new Map(courses.map(c => [c.course_code, c]))
+		// Master rows by the offering's course UUID (the offering's course_code can lag a rename).
+		const { masterFor } = await loadCourseMaster(
+			supabase, institutions_id, offerings,
+			'id, course_code, course_name, course_category, multiple_qp_set, exam_duration',
+		)
 
 		// Existing papers, so a re-run updates instead of colliding on the
 		// (session, offering, set) unique key.
@@ -476,7 +465,7 @@ export async function POST(req: NextRequest) {
 				continue
 			}
 
-			const course = courseByCode.get(off.course_code)
+			const course = masterFor(off)
 
 			// The theory-only rule is enforced here too, not just in the listing —
 			// a stale tab or a direct API call must not be able to create a question
@@ -539,7 +528,7 @@ export async function POST(req: NextRequest) {
 				exam_type_id: guard.examType?.id || null,
 				course_offering_id: off.id,
 				course_id: course?.id || off.course_id,
-				course_code: off.course_code,
+				course_code: course?.course_code || off.course_code,
 				program_code: off.program_code,
 				semester: off.semester,
 				template_id: template.id,

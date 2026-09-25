@@ -753,6 +753,16 @@ export async function POST(request: Request) {
 			const charged = alreadyCharged.has(key) || (studentId ? alreadyCharged.has(`sid:${studentId}`) : false)
 			const charge = charged || !chargeColumnsReady ? NO_CHARGE : sessionChargeFor(book, level as any, asOf, program)
 
+			// 29 UZO learners were applied on 2026-09-21 with the session heads at 0
+			// and no trace of why. A learner who owes the heads and gets 0 is now
+			// logged with every input, so the next time it can be traced.
+			if (!charged && chargeColumnsReady && charge.total === 0) {
+				console.warn('[current-papers] zero session charge for an uncharged learner', {
+					key, program, level, asOf,
+					rate_rows: book.rates.size, book_empty: book.isEmpty,
+				})
+			}
+
 			// The once-per-session heads land on ONE row - the alphabetically first
 			// pending paper, so a re-run picks the same anchor - and stay 0 on the
 			// rest. Summing a learner's rows then gives the true amount owed with no

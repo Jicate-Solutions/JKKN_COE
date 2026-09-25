@@ -78,6 +78,8 @@ interface PortalExaminer {
 
 interface AssignmentSummary {
 	id: string
+	/** courses.id — the key of the shared syllabus link; null on legacy rows. */
+	course_id?: string | null
 	course_code: string
 	subject_title: string
 	program_code: string | null
@@ -764,9 +766,16 @@ export function ExaminerPortal({ examiner, onSignedOut }: Props) {
 		window.open(`/api/examiner-portal/assignments/${id}/documents?doc=${doc}`, '_blank', 'noopener')
 	}
 
-	/** The prescribed syllabus for the course — readable at any time. */
-	const openSyllabus = (id: string) => {
-		window.open(`/api/examiner-portal/assignments/${id}/syllabus`, '_blank', 'noopener')
+	/**
+	 * The prescribed syllabus for the course — readable at any time. The same
+	 * address the CoE screens use; the assignment route remains only for rows
+	 * without a course id.
+	 */
+	const openSyllabus = (a: Pick<AssignmentSummary, 'id' | 'course_id'>) => {
+		const href = a.course_id
+			? `/api/courses/${a.course_id}/syllabus-pdf`
+			: `/api/examiner-portal/assignments/${a.id}/syllabus`
+		window.open(href, '_blank', 'noopener')
 	}
 
 	// ── Summary ───────────────────────────────────────────────────────────
@@ -1047,7 +1056,7 @@ export function ExaminerPortal({ examiner, onSignedOut }: Props) {
 									<Button
 										variant="outline"
 										size="sm"
-										onClick={() => openSyllabus(a.id)}
+										onClick={() => openSyllabus(a)}
 										title="The prescribed syllabus for this course — set the paper within it"
 									>
 										<BookOpen className="h-4 w-4 mr-1.5" />
@@ -1539,7 +1548,7 @@ export function ExaminerPortal({ examiner, onSignedOut }: Props) {
 						<Button
 							variant="outline"
 							size="sm"
-							onClick={() => openSyllabus(a.id)}
+							onClick={() => openSyllabus(a)}
 							title="The prescribed syllabus for this course — set the paper within it"
 						>
 							<BookOpen className="h-4 w-4 mr-1.5" />

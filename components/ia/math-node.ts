@@ -7,8 +7,11 @@
 // Never persist KaTeX HTML.
 
 import { Node, mergeAttributes } from '@tiptap/core'
+import { Plugin, PluginKey } from '@tiptap/pm/state'
+import { Fragment, Slice, type Node as PmNode } from '@tiptap/pm/model'
 import katex from 'katex'
 import 'katex/dist/katex.min.css'
+import { splitLatexSegments } from '@/lib/ia/latex-paste'
 
 export interface MathOptions {
 	HTMLAttributes: Record<string, any>
@@ -84,6 +87,57 @@ export const MathInline = Node.create<MathOptions>({
 				},
 			}
 		}
+	},
+
+	/**
+	 * Paste LaTeX as formulas. Plain text carrying $…$, $$…$$, \(…\), \[…\] or a
+	 * single bare expression (MathType "Copy as LaTeX", Overleaf, ChatGPT…) is
+	 * split into text + mathInline nodes (lib/ia/latex-paste.ts) instead of
+	 * landing as raw source. Text without LaTeX falls through to the normal paste.
+	 */
+	addProseMirrorPlugins() {
+		const type = this.type
+		return [
+			new Plugin({
+				key: new PluginKey('mathInlineLatexPaste'),
+				props: {
+					handlePaste: (view, event) => {
+						const text = event.clipboardData?.getData('text/plain') || ''
+						const segments = splitLatexSegments(text)
+						if (!segments) return false
+
+						const { schema } = view.state
+						const paragraphs: PmNode[][] = [[]]
+						for (const seg of segments) {
+							if (seg.kind === 'math') {
+								paragraphs[paragraphs.length - 1].push(type.create({ latex: seg.value }))
+								continue
+							}
+							// Line breaks in the surrounding prose start new paragraphs.
+							const lines = seg.value.split(/\r?\n/)
+							lines.forEach((line, i) => {
+								if (i > 0) paragraphs.push([])
+								if (line) paragraphs[paragraphs.length - 1].push(schema.text(line))
+							})
+						}
+
+						const slice =
+							paragraphs.length === 1
+								? new Slice(Fragment.from(paragraphs[0]), 0, 0)
+								: new Slice(
+										Fragment.from(
+											paragraphs.map(inline => schema.nodes.paragraph.create(null, Fragment.from(inline)))
+										),
+										1,
+										1
+									)
+						view.dispatch(view.state.tr.replaceSelection(slice).scrollIntoView())
+						event.preventDefault()
+						return true
+					},
+				},
+			}),
+		]
 	},
 
 	addCommands() {

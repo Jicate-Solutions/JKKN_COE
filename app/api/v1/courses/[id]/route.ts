@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
 import { withExternalAuth } from '@/lib/api-auth/middleware'
 import { mapCourseToResponse } from '@/lib/api-helpers/course-mapper'
+import { cascadeCourseCodeChange, mirroredCodeAfterRename } from '@/lib/api-helpers/cascade-course-code'
 import type { ExternalApiContext } from '@/types/api-management'
 
 const COURSE_SELECT = `
@@ -116,7 +117,7 @@ export const PUT = withExternalAuth(async (request: Request, context: ExternalAp
 		// Fetch existing course to verify access
 		const { data: existing, error: existingError } = await supabase
 			.from('courses')
-			.select('id, institutions_id, institution_code')
+			.select('id, institutions_id, institution_code, course_code, display_code, qp_code')
 			.eq('id', id)
 			.single()
 
@@ -195,6 +196,18 @@ export const PUT = withExternalAuth(async (request: Request, context: ExternalAp
 		delete updateData.institutions_id
 		delete updateData.institution_code
 
+		// Course-code rename: display_code / qp_code that still mirror the old code follow it,
+		// and the new code is propagated to course_mapping / course_offerings / exam_registrations.
+		const oldCode = typeof existing.course_code === 'string' ? existing.course_code : null
+		const newCode = updateData.course_code !== undefined && updateData.course_code !== null ? String(updateData.course_code) : null
+		const rename = oldCode && newCode && oldCode !== newCode ? { from: oldCode, to: newCode } : null
+		if (rename) {
+			const display = mirroredCodeAfterRename(body.display_code, existing.display_code, rename.from, rename.to)
+			if (display !== undefined) updateData.display_code = display
+			const qp = mirroredCodeAfterRename(body.qp_code, existing.qp_code, rename.from, rename.to)
+			if (qp !== undefined) updateData.qp_code = qp
+		}
+
 		const { data, error } = await supabase
 			.from('courses')
 			.update(updateData)
@@ -211,7 +224,12 @@ export const PUT = withExternalAuth(async (request: Request, context: ExternalAp
 			return NextResponse.json({ error: errorMsg }, { status: 400 })
 		}
 
-		return NextResponse.json({ data: mapCourseToResponse(data, 'mapped') })
+		const cascade = rename ? await cascadeCourseCodeChange(supabase, id, rename.from, rename.to) : null
+
+		return NextResponse.json({
+			data: mapCourseToResponse(data, 'mapped'),
+			...(cascade ? { course_code_cascade: cascade } : {}),
+		})
 	} catch (error) {
 		console.error('Course PUT error:', error)
 		return NextResponse.json({ error: 'Internal server error' }, { status: 500 })

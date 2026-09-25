@@ -71,6 +71,8 @@ export async function GET(req: NextRequest) {
 			const state = windowState(r.valid_from, r.valid_to, now)
 			return {
 				id: r.id,
+				// Key of the shared syllabus link (/api/courses/:id/syllabus-pdf).
+				course_id: r.course_id ?? null,
 				course_code: r.course_code,
 				subject_title: r.subject_title,
 				program_code: r.program_code,

@@ -1,5 +1,6 @@
-import jsPDF from 'jspdf'
-import autoTable from 'jspdf-autotable'
+import { jsPDF } from 'jspdf'
+import autoTableMod from 'jspdf-autotable'
+const autoTable: any = (autoTableMod as any).default ?? autoTableMod
 import type { CourseSheetData, CourseSheetProgram, CourseSheetPdfOptions } from '@/types/course-assessment-sheet'
 
 /**

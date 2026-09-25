@@ -123,6 +123,32 @@ export interface Course {
 
 export interface CourseFormData extends Omit<Course, 'id' | 'created_at' | 'updated_at'> {}
 
+/**
+ * Dependent rows rewritten when courses.course_code changes. Rows are matched by
+ * the course UUID (course_mapping.course_id, course_offerings.course_id and, through
+ * course_offering_id, exam_registrations) — see lib/api-helpers/cascade-course-code.ts.
+ * Offerings whose results are declared / published / locked are FROZEN: they and their
+ * registrations keep the old code and are reported in the *_kept counts.
+ */
+export interface CourseCodeCascade {
+	old_code: string
+	new_code: string
+	course_mapping: number
+	course_offerings: number
+	/** Offerings left unchanged because their results are already published. */
+	course_offerings_kept: number
+	exam_registrations: number
+	exam_registrations_approved: number
+	/** Registrations left unchanged because their offering's results are already published. */
+	exam_registrations_kept: number
+	/** Question papers + examiner appointments (ESE and internal) that follow the new code. */
+	question_papers: number
+	errors: string[]
+}
+
+/** PUT /api/master/courses/[id] response: the course, plus cascade counts when the code changed. */
+export type CourseUpdateResponse = Course & { course_code_cascade?: CourseCodeCascade }
+
 export interface CourseImportError {
 	row: number
 	course_code: string

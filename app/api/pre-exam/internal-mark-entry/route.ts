@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
+import { loadCourseMaster } from '@/lib/api-helpers/course-master-for-offerings'
 import { flattenEntryQuestions } from '@/lib/ia/sub-questions'
 
 export async function GET(request: Request) {
@@ -106,24 +107,20 @@ export async function GET(request: Request) {
 
 					if (!offerings || offerings.length === 0) return NextResponse.json([])
 
-					// Enrich with course_name, internal_max_mark, course_order
-					const uniqueCourseCodes = [...new Set(offerings.map(o => o.course_code).filter(Boolean))]
+					// Enrich with course_name, internal_max_mark, course_order — by the offering's
+					// course UUID; the offering's course_code is a denormalised copy that can lag a rename.
+					const uniqueCourseIds = [...new Set(offerings.map(o => o.course_id).filter(Boolean))]
 
-					const [coursesRes, cmRes] = await Promise.all([
-						supabase
-							.from('courses')
-							.select('id, course_code, course_name, internal_max_mark, evaluation_type, course_category')
-							.eq('institutions_id', institutionsId)
-							.in('course_code', uniqueCourseCodes),
+					const [{ masterFor }, cmRes] = await Promise.all([
+						loadCourseMaster(supabase, institutionsId, offerings, 'id, course_code, course_name, internal_max_mark, evaluation_type, course_category'),
 						supabase
 							.from('course_mapping')
-							.select('course_code, program_code, course_order')
+							.select('course_id, course_code, program_code, course_order')
 							.eq('program_code', programCode)
-							.in('course_code', uniqueCourseCodes)
+							.in('course_id', uniqueCourseIds)
 					])
 
-					const courseByCode = new Map((coursesRes.data || []).map(c => [c.course_code, c]))
-					const cmByCode = new Map((cmRes.data || []).map(cm => [cm.course_code, cm]))
+					const cmByCourseId = new Map((cmRes.data || []).map(cm => [cm.course_id, cm]))
 
 					// Deduplicate by course_offering_id, filter to CIA/CIA+ESE only, sort by course_order
 					const seen = new Set<string>()
@@ -131,13 +128,13 @@ export async function GET(request: Request) {
 						.filter(co => {
 							if (seen.has(co.id)) return false
 							seen.add(co.id)
-							const course = courseByCode.get(co.course_code)
+							const course = masterFor(co)
 							const evalType = course?.evaluation_type || ''
 							return evalType === 'CIA' || evalType === 'CIA + ESE'
 						})
 						.map(co => {
-							const course = courseByCode.get(co.course_code)
-							const cm = cmByCode.get(co.course_code)
+							const course = masterFor(co)
+							const cm = cmByCourseId.get(co.course_id)
 							return {
 								course_offering_id: co.id,
 								course_mapping_id: co.course_id,

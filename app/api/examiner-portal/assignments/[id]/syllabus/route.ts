@@ -2,10 +2,12 @@
 //
 // GET /api/examiner-portal/assignments/:id/syllabus?format=official
 //
-// The question paper must be set within the prescribed syllabus, so this is
-// readable at ANY time the assignment is active — it is not question content
-// and is not window-gated. Resolution (MyJKKN, then the COE course master)
-// lives in lib/myjkkn/learning-pathway.ts and is shared with the staff route.
+// Since 2026-09-22 the syllabus has ONE address for staff and examiners alike,
+// /api/courses/:courseId/syllabus-pdf, which authenticates the portal session
+// itself and writes the same syllabus_view audit row. This route stays for
+// links already open in examiners' browsers and for the rare assignment that
+// carries only a course code: it authorises the assignment as before, then
+// redirects when a course id is known and serves the PDF directly otherwise.
 
 import { NextRequest, NextResponse } from 'next/server'
 import { requireAssignment, logAccess } from '@/lib/qp-portal/guard'
@@ -29,6 +31,12 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 	const { assignment } = auth.access
 	const format = parseLearningPathwayFormat(new URL(req.url).searchParams.get('format'))
 
+	if (assignment.course_id) {
+		const target = new URL(`/api/courses/${assignment.course_id}/syllabus-pdf`, req.url)
+		if (format !== 'official') target.searchParams.set('format', format)
+		return NextResponse.redirect(target, 302)
+	}
+
 	const log = (source: string, detail: Record<string, unknown>) =>
 		logAccess(req, {
 			action: 'syllabus_view',
@@ -39,12 +47,11 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 			institutions_id: assignment.institutions_id,
 			module: 'document',
 			performed_by_role: 'examiner',
-			detail: { source, format, course_id: assignment.course_id || null, course_code: assignment.course_code, ...detail },
+			detail: { source, format, course_id: null, course_code: assignment.course_code, ...detail },
 		})
 
 	try {
 		const result = await resolveLearningPathwayPdf({
-			courseId: assignment.course_id,
 			courseCode: assignment.course_code,
 			courseTitle: assignment.subject_title,
 			institutionsId: assignment.institutions_id,

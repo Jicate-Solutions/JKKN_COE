@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
 import { logTransaction, fetchOldValues } from '@/lib/logging/server-transaction-log'
+import { cascadeCourseCodeChange, mirroredCodeAfterRename } from '@/lib/api-helpers/cascade-course-code'
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
@@ -279,6 +280,19 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
       data.courses_status = incoming
     }
 
+    // Course-code rename: display_code / qp_code that still mirror the old code follow it
+    // (a deliberately different value is kept), and after the update the new code is
+    // propagated to course_mapping / course_offerings / exam_registrations by course UUID.
+    const oldCode = typeof oldRecord?.course_code === 'string' ? oldRecord.course_code : null
+    const newCode = typeof data.course_code === 'string' ? data.course_code : null
+    const rename = oldCode && newCode && oldCode !== newCode ? { from: oldCode, to: newCode } : null
+    if (rename) {
+      const display = mirroredCodeAfterRename(input.display_code, oldRecord?.display_code, rename.from, rename.to)
+      if (display !== undefined) data.display_code = display
+      const qp = mirroredCodeAfterRename(input.qp_code, oldRecord?.qp_code, rename.from, rename.to)
+      if (qp !== undefined) data.qp_code = qp
+    }
+
     const { data: updated, error } = await supabase
       .from('courses')
       .update(data)
@@ -339,13 +353,15 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
       throw error
     }
 
+    const cascade = rename ? await cascadeCourseCodeChange(supabase, id, rename.from, rename.to) : null
+
     await logTransaction({
       action: 'update',
       resource_type: 'course',
       resource_id: '/master/courses',
       old_values: oldRecord,
       new_values: updated as Record<string, unknown>,
-      metadata: { record_id: id },
+      metadata: { record_id: id, ...(cascade ? { course_code_cascade: cascade } : {}) },
     })
 
     // Map database fields to frontend expected fields
@@ -410,7 +426,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
       courses_status: updated.courses_status ?? 'Pending',
     }
 
-    return NextResponse.json(mapped)
+    return NextResponse.json(cascade ? { ...mapped, course_code_cascade: cascade } : mapped)
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown error'
     console.error('PUT /api/master/courses/[id] failed:', err)
