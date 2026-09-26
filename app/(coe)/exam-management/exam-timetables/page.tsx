@@ -113,6 +113,7 @@ export default function ExamTimetablesListPage() {
 	const [examTypeFilter, setExamTypeFilter] = useState("all")
 	const { selectedSessionId: syncedSessionId, mustSelectSession } = useSessionSync()
 	const [examSessionFilter, setExamSessionFilter] = useState("") // Will be set to latest session after fetch
+	const [templateLoading, setTemplateLoading] = useState(false)
 
 	// Date range filter - default "upcoming" to show upcoming exams
 	const [dateRangePreset, setDateRangePreset] = useState("upcoming") // upcoming, today, this_week, this_month, custom, all
@@ -134,14 +135,22 @@ export default function ExamTimetablesListPage() {
 			])
 
 			if (sessionsRes.ok) {
-				const sessionsData = await sessionsRes.json()
-				setExaminationSessions(sessionsData || [])
+				let sessionsData: any[] = (await sessionsRes.json()) || []
+				// Sessions are institution-scoped — show only the selected institution's
+				if (shouldFilter && institutionId) {
+					sessionsData = sessionsData.filter((s: any) => s.institutions_id === institutionId)
+				}
+				setExaminationSessions(sessionsData)
 
-				// Auto-select: global session takes priority, otherwise use latest session
+				// Auto-select: global session takes priority, otherwise keep the current
+				// session if it belongs to this institution, else the latest one
 				if (syncedSessionId) {
 					setExamSessionFilter(syncedSessionId)
-				} else if (sessionsData && sessionsData.length > 0 && !examSessionFilter) {
-					setExamSessionFilter(sessionsData[0].id)
+				} else {
+					setExamSessionFilter(prev => {
+						if (prev === 'all' || sessionsData.some((s: any) => s.id === prev)) return prev
+						return sessionsData[0]?.id || ''
+					})
 				}
 			}
 
@@ -481,12 +490,45 @@ export default function ExamTimetablesListPage() {
 
 	// Template Export with dropdown validations
 	const handleTemplateExport = async () => {
+		if (!examSessionFilter || examSessionFilter === 'all') {
+			toast({
+				title: "⚠️ Select Exam Session",
+				description: "Select an examination session to download the template.",
+				variant: "destructive",
+			})
+			return
+		}
+
+		// Subjects applied for in the selected session (fee-paid learners)
+		let appliedSubjects: Array<{ course_code: string, course_name: string, exam_type: string, students: number, exam_date: string, session: string }> = []
+		let templateInstitutionCode = ''
+		let templateSessionCode = examinationSessions.find(s => s.id === examSessionFilter)?.session_code || ''
+		try {
+			setTemplateLoading(true)
+			const res = await fetch(`/api/exam-management/exam-timetables/applied-subjects?examination_session_id=${examSessionFilter}`)
+			if (!res.ok) throw new Error('Failed to fetch applied subjects')
+			const data = await res.json()
+			appliedSubjects = data.subjects || []
+			templateInstitutionCode = data.institution_code || ''
+			templateSessionCode = data.session_code || templateSessionCode
+		} catch (error) {
+			console.error('Error fetching applied subjects:', error)
+			toast({
+				title: "❌ Error",
+				description: "Failed to load applied subjects for the template",
+				variant: "destructive",
+			})
+			return
+		} finally {
+			setTemplateLoading(false)
+		}
+
 		const wb = XLSX.utils.book_new()
 
 		// Sheet 1: Template with empty row for user to fill
 		const sample = [{
-			'Institution Code *': '',
-			'Examination Session Code *': '',
+			'Institution Code *': templateInstitutionCode,
+			'Examination Session Code *': templateSessionCode,
 			'Course Code *': '',
 			'Exam Date *': '',
 			'Session (FN/AN) *': '',
@@ -548,8 +590,10 @@ export default function ExamTimetablesListPage() {
 			})
 		}
 
-		// Column C: Course Code dropdown
-		const courseCodes = courses.map(c => c.course_code).filter(Boolean)
+		// Column C: Course Code dropdown — the applied subjects when there are any
+		const courseCodes = appliedSubjects.length > 0
+			? appliedSubjects.map(s => s.course_code)
+			: courses.map(c => c.course_code).filter(Boolean)
 		if (courseCodes.length > 0) {
 			validations.push({
 				type: 'list',
@@ -588,11 +632,11 @@ export default function ExamTimetablesListPage() {
 		validations.push({
 			type: 'list',
 			sqref: 'G2:G1000',
-			formula1: '"Theory,Practical"',
+			formula1: '"Theory,Practical,Project,Field Work,Group Project"',
 			showDropDown: true,
 			showErrorMessage: true,
 			errorTitle: 'Invalid Exam Type',
-			error: 'Select: Theory or Practical',
+			error: 'Select: Theory, Practical, Project, Field Work or Group Project',
 		})
 
 		// Column I: Is Published dropdown
@@ -611,7 +655,22 @@ export default function ExamTimetablesListPage() {
 
 		XLSX.utils.book_append_sheet(wb, ws, 'Template')
 
-		// Sheet 2: Reference Codes (for user documentation)
+		// Sheet 2: Applied Subjects — pick Course Code / Exam Type from here into the Template
+		const appliedRows = appliedSubjects.length > 0
+			? appliedSubjects.map(s => ({
+				'Course Code': s.course_code,
+				'Course Name': s.course_name,
+				'Exam Type': s.exam_type,
+				'Students': s.students,
+				'Exam Date': s.exam_date,
+				'Session': s.session,
+			}))
+			: [{ 'Course Code': '', 'Course Name': 'No fee-paid applications found for this session', 'Exam Type': '', 'Students': '', 'Exam Date': '', 'Session': '' }]
+		const wsApplied = XLSX.utils.json_to_sheet(appliedRows)
+		wsApplied['!cols'] = [{ wch: 16 }, { wch: 45 }, { wch: 14 }, { wch: 10 }, { wch: 14 }, { wch: 10 }]
+		XLSX.utils.book_append_sheet(wb, wsApplied, 'Applied Subjects')
+
+		// Sheet 3: Reference Codes (for user documentation)
 		const referenceData: any[] = []
 
 		// Institution codes section
@@ -658,6 +717,9 @@ export default function ExamTimetablesListPage() {
 		referenceData.push({ 'Type': '═══ EXAM TYPE VALUES ═══', 'Code': '', 'Name/Description': '' })
 		referenceData.push({ 'Type': 'Exam Type', 'Code': 'Theory', 'Name/Description': 'Theory (written) examination' })
 		referenceData.push({ 'Type': 'Exam Type', 'Code': 'Practical', 'Name/Description': 'Practical examination (requires Batch Capacity)' })
+		referenceData.push({ 'Type': 'Exam Type', 'Code': 'Project', 'Name/Description': 'Project viva (requires Batch Capacity)' })
+		referenceData.push({ 'Type': 'Exam Type', 'Code': 'Field Work', 'Name/Description': 'Field work evaluation (requires Batch Capacity)' })
+		referenceData.push({ 'Type': 'Exam Type', 'Code': 'Group Project', 'Name/Description': 'Group project viva (requires Batch Capacity)' })
 
 		// Is Published values section
 		referenceData.push({ 'Type': '═══ PUBLISHED STATUS ═══', 'Code': '', 'Name/Description': '' })
@@ -668,15 +730,15 @@ export default function ExamTimetablesListPage() {
 		wsRef['!cols'] = [{ wch: 35 }, { wch: 25 }, { wch: 50 }]
 		XLSX.utils.book_append_sheet(wb, wsRef, 'Reference Codes')
 
-		// Sheet 3: Instructions
+		// Sheet 4: Instructions
 		const instructionsData = [
 			{ 'Field': 'Institution Code *', 'Format': 'Select from dropdown', 'Example': institutions[0]?.institution_code || 'JKKN001', 'Required': 'Yes' },
 			{ 'Field': 'Examination Session Code *', 'Format': 'Select from dropdown', 'Example': examinationSessions[0]?.session_code || 'APR2025', 'Required': 'Yes' },
-			{ 'Field': 'Course Code *', 'Format': 'Select from dropdown', 'Example': courses[0]?.course_code || '23BCA101', 'Required': 'Yes' },
+			{ 'Field': 'Course Code *', 'Format': 'Select from dropdown (see Applied Subjects sheet)', 'Example': appliedSubjects[0]?.course_code || courses[0]?.course_code || '23BCA101', 'Required': 'Yes' },
 			{ 'Field': 'Exam Date *', 'Format': 'YYYY-MM-DD', 'Example': '2025-04-15', 'Required': 'Yes' },
 			{ 'Field': 'Session (FN/AN) *', 'Format': 'FN or AN', 'Example': 'FN', 'Required': 'Yes' },
 			{ 'Field': 'Exam Mode', 'Format': 'Offline or Online', 'Example': 'Offline', 'Required': 'No (default: Offline)' },
-			{ 'Field': 'Exam Type', 'Format': 'Theory or Practical', 'Example': 'Theory', 'Required': 'No (default: Theory)' },
+			{ 'Field': 'Exam Type', 'Format': 'Theory, Practical, Project, Field Work or Group Project', 'Example': 'Theory', 'Required': 'No (default: Theory)' },
 			{ 'Field': 'Batch Capacity', 'Format': 'Number', 'Example': '30', 'Required': 'Yes when Exam Type is Practical' },
 			{ 'Field': 'Is Published', 'Format': 'Yes or No', 'Example': 'No', 'Required': 'No (default: No)' },
 			{ 'Field': 'Instructions', 'Format': 'Free text', 'Example': 'Calculators allowed', 'Required': 'No' }
@@ -691,7 +753,7 @@ export default function ExamTimetablesListPage() {
 
 		toast({
 			title: "✅ Template Downloaded",
-			description: "Template file with dropdown validations and reference sheets has been downloaded.",
+			description: `Template downloaded with ${appliedSubjects.length} applied subject(s) for ${templateSessionCode}.`,
 			className: "bg-green-50 border-green-200 text-green-800 dark:bg-green-900/20 dark:border-green-800 dark:text-green-200",
 		})
 	}
@@ -1312,7 +1374,7 @@ export default function ExamTimetablesListPage() {
 										<Button variant="outline" size="sm" onClick={fetchExamTimetables} disabled={loading} className="h-9 w-9 rounded-lg hover:bg-slate-100 text-slate-600 hover:text-slate-900 transition-colors border border-slate-300 p-0" title="Refresh">
 											<RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
 										</Button>
-										<Button variant="outline" size="sm" onClick={handleTemplateExport} className="h-9 w-9 rounded-lg hover:bg-slate-100 text-slate-600 hover:text-slate-900 transition-colors border border-slate-300 p-0" title="Download Template">
+										<Button variant="outline" size="sm" onClick={handleTemplateExport} disabled={templateLoading || !examSessionFilter || examSessionFilter === 'all'} className="h-9 w-9 rounded-lg hover:bg-slate-100 text-slate-600 hover:text-slate-900 transition-colors border border-slate-300 p-0 disabled:opacity-50 disabled:cursor-not-allowed" title={!examSessionFilter || examSessionFilter === 'all' ? 'Select an exam session to download the template' : 'Download Template'}>
 											<FileSpreadsheet className="h-4 w-4" />
 										</Button>
 										<Button variant="outline" size="sm" onClick={handleImport} disabled={loading} className="h-9 w-9 rounded-lg hover:bg-slate-100 text-slate-600 hover:text-slate-900 transition-colors border border-slate-300 p-0" title="Import File">
