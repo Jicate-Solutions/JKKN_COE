@@ -932,7 +932,7 @@ export async function exportExamRegistrationReportExcel(opts: ExcelExportOptions
 				courseMap.set(key, {
 					board_code: co.board_code || '',
 					board_name: co.board_name || '',
-					board_order: co.board_order ?? 999,
+					board_order: (co.board_type === 'PG' ? 1000 : co.board_type === 'UG' ? 0 : 2000) + (co.board_order ?? 999),
 					semester: co.semester || 0,
 					course_order: co.course_order ?? 999,
 					course_code: co.course_code,
@@ -976,7 +976,7 @@ export async function exportExamRegistrationReportExcel(opts: ExcelExportOptions
 				courseMap.set(key, {
 					board_code: co.board_code || '',
 					board_name: co.board_name || '',
-					board_order: co.board_order ?? 999,
+					board_order: (co.board_type === 'PG' ? 1000 : co.board_type === 'UG' ? 0 : 2000) + (co.board_order ?? 999),
 					semester: co.semester || 0,
 					course_order: co.course_order ?? 999,
 					course_code: co.course_code,
