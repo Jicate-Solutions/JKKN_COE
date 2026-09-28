@@ -924,7 +924,7 @@ export async function exportExamRegistrationReportExcel(opts: ExcelExportOptions
 		const courseMap = new Map<string, any>()
 		for (const row of opts.data) {
 			const co = row.course_offering
-			if (!co) continue
+			if (!co || !row.exam_date) continue
 			const examDate = row.exam_date || ''
 			const examSession = row.exam_session || ''
 			const key = `${co.board_code || ''}|${co.course_code}|${examDate}|${examSession}`
@@ -955,6 +955,53 @@ export async function exportExamRegistrationReportExcel(opts: ExcelExportOptions
 			'Exam Date': row.exam_date ? formatDate(row.exam_date) : '',
 			'Session': row.exam_session || '',
 			'Sem': row.semester ? toRoman(row.semester) : '',
+			'Course Code': row.course_code,
+			'Course Name': row.course_name,
+		}))
+
+		const result: ExcelReportResult = { rows, merges: [] }
+		const ws = XLSX.utils.json_to_sheet(result.rows)
+		applySheetFormatting(ws, result)
+		if (opts.course_category_filter?.length) prependInfoRow(ws, `Course Category : ${opts.course_category_filter.join(', ')}`)
+		XLSX.utils.book_append_sheet(wb, ws, 'Timetable')
+	} else if (opts.report_type === 'date-wise-exam-timetable') {
+		// Date wise exam timetable — single sheet, rows without an exam date are skipped
+		const courseMap = new Map<string, any>()
+		for (const row of opts.data) {
+			const co = row.course_offering
+			if (!co || !row.exam_date) continue
+			const examSession = row.exam_session || ''
+			const key = `${row.exam_date}|${examSession}|${co.board_code || ''}|${co.course_code}`
+			if (!courseMap.has(key)) {
+				courseMap.set(key, {
+					board_code: co.board_code || '',
+					board_name: co.board_name || '',
+					board_order: co.board_order ?? 999,
+					semester: co.semester || 0,
+					course_order: co.course_order ?? 999,
+					course_code: co.course_code,
+					course_name: co.course_name || '',
+					exam_date: row.exam_date,
+					exam_session: examSession,
+				})
+			}
+		}
+		const sorted = Array.from(courseMap.values())
+			.sort((a, b) =>
+				(new Date(a.exam_date).getTime() - new Date(b.exam_date).getTime()) ||
+				((a.exam_session === 'FN' ? 0 : 1) - (b.exam_session === 'FN' ? 0 : 1)) ||
+				(a.board_order - b.board_order) || (a.semester - b.semester) || (a.course_order - b.course_order) || a.course_code.localeCompare(b.course_code))
+
+		if (sorted.length === 0) return
+
+		const formatDate = (d: string) => { try { const dt = new Date(d); return isNaN(dt.getTime()) ? d : `${String(dt.getDate()).padStart(2,'0')}-${String(dt.getMonth()+1).padStart(2,'0')}-${dt.getFullYear()}` } catch { return d } }
+
+		const rows = sorted.map((row, idx) => ({
+			'S.No': idx + 1,
+			'Date': formatDate(row.exam_date),
+			'Session': row.exam_session || '',
+			'Board': row.board_code ? `${row.board_code}${row.board_name ? ` - ${row.board_name}` : ''}` : '',
+			'Exam Sem': row.semester ? toRoman(row.semester) : '',
 			'Course Code': row.course_code,
 			'Course Name': row.course_name,
 		}))
@@ -1129,6 +1176,7 @@ export async function exportExamRegistrationReportExcel(opts: ExcelExportOptions
 		'course-count-program-year-wise': 'course-count-program-year-wise',
 		'course-count-program-year-section': 'course-count-program-year-section',
 		'board-wise-exam-timetable': 'board-wise-exam-timetable',
+		'date-wise-exam-timetable': 'date-wise-exam-timetable',
 		'exam-date-wise-summary': 'exam-date-wise-summary',
 		'qp-packing-list': 'qp-packing-list',
 	}

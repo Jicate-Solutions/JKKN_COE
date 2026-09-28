@@ -2448,6 +2448,13 @@ function generateQPPackingListPdf(opts: ReportPdfOptions): string {
 	return filename
 }
 
+/** Timetable title: "PRACTICAL" is inserted when the course category filter excludes Theory */
+function timetableTitle(prefix: string, opts: ReportPdfOptions): string {
+	const cats = opts.course_category_filter
+	const practicalOnly = !!cats?.length && !cats.includes('Theory')
+	return `${prefix} ${practicalOnly ? 'PRACTICAL ' : ''}EXAM TIMETABLE`
+}
+
 // ── Report: Board Wise Exam Timetable (A4 Portrait) ──
 
 function generateBoardWiseExamTimetablePdf(opts: ReportPdfOptions): string {
@@ -2456,11 +2463,11 @@ function generateBoardWiseExamTimetablePdf(opts: ReportPdfOptions): string {
 	const pageHeight = doc.internal.pageSize.getHeight()
 	const margin = 6.35
 
-	// Aggregate unique courses with exam date/session
+	// Aggregate unique courses with exam date/session; courses without an exam date are skipped
 	const courseMap = new Map<string, any>()
 	for (const row of opts.data) {
 		const co = row.course_offering
-		if (!co) continue
+		if (!co || !row.exam_date) continue
 		const examDate = row.exam_date || ''
 		const examSession = row.exam_session || ''
 		const key = `${co.board_code || ''}|${co.course_code}|${examDate}|${examSession}`
@@ -2533,7 +2540,7 @@ function generateBoardWiseExamTimetablePdf(opts: ReportPdfOptions): string {
 		} catch { return dateStr }
 	}
 
-	let startY = drawHeader(doc, pageWidth, margin, opts, 'BOARD WISE EXAM TIMETABLE')
+	let startY = drawHeader(doc, pageWidth, margin, opts, timetableTitle('BOARD WISE', opts))
 	let tableY = drawTimetableHeader(startY)
 
 	doc.setFont('times', 'normal')
@@ -2644,6 +2651,188 @@ function generateBoardWiseExamTimetablePdf(opts: ReportPdfOptions): string {
 
 	const levelSuffix = opts.course_level ? `-${opts.course_level}` : ''
 	const filename = `board-wise-exam-timetable-${opts.session_code}${levelSuffix}-${new Date().toISOString().slice(0, 10)}.pdf`
+	doc.save(filename)
+	return filename
+}
+
+// ── Report: Date Wise Exam Timetable (A4 Portrait) ──
+// Same data as the board-wise timetable, ordered by date → session → board; Date+Session cells merged per slot.
+// Rows without an exam date are skipped.
+
+function generateDateWiseExamTimetablePdf(opts: ReportPdfOptions): string {
+	const doc = new jsPDF('portrait', 'mm', 'a4')
+	const pageWidth = doc.internal.pageSize.getWidth()
+	const pageHeight = doc.internal.pageSize.getHeight()
+	const margin = 6.35
+
+	const courseMap = new Map<string, any>()
+	for (const row of opts.data) {
+		const co = row.course_offering
+		if (!co || !row.exam_date) continue
+		const examSession = row.exam_session || ''
+		const key = `${row.exam_date}|${examSession}|${co.board_code || ''}|${co.course_code}`
+		if (!courseMap.has(key)) {
+			courseMap.set(key, {
+				board_code: co.board_code || '',
+				board_name: co.board_name || '',
+				board_order: co.board_order ?? 999,
+				semester: co.semester || 0,
+				course_order: co.course_order ?? 999,
+				course_code: co.course_code,
+				course_name: co.course_name || '',
+				exam_date: row.exam_date,
+				exam_session: examSession,
+			})
+		}
+	}
+
+	const rows = Array.from(courseMap.values())
+		.sort((a, b) =>
+			(new Date(a.exam_date).getTime() - new Date(b.exam_date).getTime()) ||
+			((a.exam_session === 'FN' ? 0 : 1) - (b.exam_session === 'FN' ? 0 : 1)) ||
+			(a.board_order - b.board_order) || (a.semester - b.semester) || (a.course_order - b.course_order) || a.course_code.localeCompare(b.course_code))
+
+	if (rows.length === 0) return ''
+
+	function formatDate(dateStr: string): string {
+		try {
+			const d = new Date(dateStr)
+			if (isNaN(d.getTime())) return dateStr
+			return `${String(d.getDate()).padStart(2, '0')}-${String(d.getMonth() + 1).padStart(2, '0')}-${d.getFullYear()}`
+		} catch { return dateStr }
+	}
+
+	// Date+Session slot groups for merged cells
+	const slotGroups: { startIdx: number, count: number }[] = []
+	let prevSlot: string | null = null
+	for (let i = 0; i < rows.length; i++) {
+		const slot = `${rows[i].exam_date}|${rows[i].exam_session}`
+		if (slot !== prevSlot) {
+			slotGroups.push({ startIdx: i, count: 1 })
+			prevSlot = slot
+		} else {
+			slotGroups[slotGroups.length - 1].count++
+		}
+	}
+
+	// Portrait A4 = ~197mm usable
+	const colWidths = [8, 22, 14, 40, 12, 22, 79]  // Total = 197
+	const headers = ['S.No', 'Date', 'Session', 'Board', 'Exam\nSem', 'Course\nCode', 'Course Name']
+	const headerHeight = 10
+	const rowHeight = 7
+	const footerSpace = 10
+
+	function drawTimetableHeader(y: number): number {
+		doc.setFont('times', 'bold')
+		doc.setFontSize(9)
+		doc.setDrawColor(0, 0, 0)
+		doc.setLineWidth(0.3)
+
+		let x = margin
+		for (let i = 0; i < headers.length; i++) {
+			doc.rect(x, y, colWidths[i], headerHeight)
+			const lines = headers[i].split('\n')
+			const lineH = headerHeight / (lines.length + 1)
+			lines.forEach((line, li) => {
+				doc.text(line, x + colWidths[i] / 2, y + lineH * (li + 1), { align: 'center' })
+			})
+			x += colWidths[i]
+		}
+		return y + headerHeight
+	}
+
+	let startY = drawHeader(doc, pageWidth, margin, opts, timetableTitle('DATE WISE', opts))
+	let tableY = drawTimetableHeader(startY)
+
+	doc.setFont('times', 'normal')
+	doc.setFontSize(9)
+	const rowHeights = rows.map(row => Math.max(
+		calcWrappedRowHeight(doc, row.course_name, colWidths[6] - 2, rowHeight),
+		calcWrappedRowHeight(doc, formatBoardDisplay(row.board_code, row.board_name), colWidths[3] - 2, rowHeight),
+	))
+
+	let slotIdx = 0
+	let slotRowOffset = 0
+	let rowsOnPage = 0
+
+	for (let idx = 0; idx < rows.length; idx++) {
+		const row = rows[idx]
+		const rh = rowHeights[idx]
+		const sg = slotGroups[slotIdx]
+
+		if (tableY + rh > pageHeight - margin - footerSpace) {
+			doc.addPage()
+			tableY = margin + 2
+			tableY = drawTimetableHeader(tableY)
+			rowsOnPage = 0
+		}
+
+		doc.setFont('times', 'normal')
+		doc.setFontSize(9)
+		doc.setDrawColor(0, 0, 0)
+		doc.setLineWidth(0.3)
+
+		let x = margin
+
+		// S.No
+		doc.rect(x, tableY, colWidths[0], rh)
+		doc.text(String(idx + 1), x + colWidths[0] / 2, tableY + rh / 2 + 1.5, { align: 'center' })
+		x += colWidths[0]
+
+		// Date + Session - merged per slot (re-drawn at the top of a new page)
+		if (slotRowOffset === 0 || rowsOnPage === 0) {
+			const remainingInGroup = sg.count - slotRowOffset
+			const availableSpace = pageHeight - margin - footerSpace - tableY
+			let mergeHeight = 0
+			for (let ri = 0; ri < remainingInGroup; ri++) {
+				const h = rowHeights[sg.startIdx + slotRowOffset + ri]
+				if (mergeHeight + h > availableSpace) break
+				mergeHeight += h
+			}
+			if (mergeHeight === 0) mergeHeight = rh
+			doc.rect(x, tableY, colWidths[1], mergeHeight)
+			doc.text(formatDate(row.exam_date), x + colWidths[1] / 2, tableY + mergeHeight / 2 + 1.5, { align: 'center' })
+			doc.rect(x + colWidths[1], tableY, colWidths[2], mergeHeight)
+			doc.text(row.exam_session || '-', x + colWidths[1] + colWidths[2] / 2, tableY + mergeHeight / 2 + 1.5, { align: 'center' })
+		}
+		x += colWidths[1] + colWidths[2]
+
+		// Board
+		doc.rect(x, tableY, colWidths[3], rh)
+		drawWrappedCell(doc, formatBoardDisplay(row.board_code, row.board_name), x, tableY, colWidths[3], rh, 'center')
+		x += colWidths[3]
+
+		// Exam Sem
+		doc.rect(x, tableY, colWidths[4], rh)
+		doc.text(row.semester ? toRoman(row.semester) : '', x + colWidths[4] / 2, tableY + rh / 2 + 1.5, { align: 'center' })
+		x += colWidths[4]
+
+		// Course Code
+		doc.rect(x, tableY, colWidths[5], rh)
+		doc.text(row.course_code, x + colWidths[5] / 2, tableY + rh / 2 + 1.5, { align: 'center' })
+		x += colWidths[5]
+
+		// Course Name - wrapped
+		doc.rect(x, tableY, colWidths[6], rh)
+		drawWrappedCell(doc, row.course_name, x, tableY, colWidths[6], rh)
+
+		tableY += rh
+		rowsOnPage++
+
+		slotRowOffset++
+		if (slotRowOffset >= sg.count) {
+			slotIdx++
+			slotRowOffset = 0
+		}
+	}
+
+	const totalPages = doc.getNumberOfPages()
+	for (let p = 1; p <= totalPages; p++) {
+		doc.setPage(p)
+		drawFooter(doc, pageWidth, margin, p, totalPages)
+	}
+
+	const filename = `date-wise-exam-timetable-${opts.session_code}-${new Date().toISOString().slice(0, 10)}.pdf`
 	doc.save(filename)
 	return filename
 }
@@ -3408,6 +3597,8 @@ export function generateExamRegistrationReportPdf(opts: ReportPdfOptions): strin
 			return generateQPPackingListPdf(filteredOpts)
 		case 'board-wise-exam-timetable':
 			return generateBoardWiseExamTimetablePdf(filteredOpts)
+		case 'date-wise-exam-timetable':
+			return generateDateWiseExamTimetablePdf(filteredOpts)
 		case 'exam-date-wise-summary':
 			return generateExamDateWiseSummaryPdf(filteredOpts)
 		case 'exam-date-wise-registration':

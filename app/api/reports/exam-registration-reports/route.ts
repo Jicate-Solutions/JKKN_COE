@@ -809,7 +809,7 @@ export async function GET(request: Request) {
 		}
 
 		// ── Phase 5: Date-wise report enrichment (timetable + attendance) ──
-		const isDateWiseReport = report_type === 'exam-date-wise-registration' || report_type === 'exam-date-wise-attendance' || report_type === 'board-wise-exam-timetable' || report_type === 'exam-date-wise-summary' || report_type === 'qp-packing-list'
+		const isDateWiseReport = report_type === 'exam-date-wise-registration' || report_type === 'exam-date-wise-attendance' || report_type === 'board-wise-exam-timetable' || report_type === 'date-wise-exam-timetable' || report_type === 'exam-date-wise-summary' || report_type === 'qp-packing-list'
 
 		if (isDateWiseReport) {
 			const registrationIds = enriched.map(r => r.id)
