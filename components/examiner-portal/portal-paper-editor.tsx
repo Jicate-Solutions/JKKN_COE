@@ -1073,7 +1073,9 @@ export function PortalPaperEditor({
 								const sK = problemAnchor(q.id, 'k_level', { subId: sb.id })
 								const sAk = problemAnchor(q.id, 'answer_key', { subId: sb.id })
 								return (
-									<div key={sb.id} className="space-y-1.5">
+									/* Its own paste scope: Ctrl+V inside this sub-division attaches the
+									   screenshot to ITS figure, not the parent question's. */
+									<div key={sb.id} data-qp-image-scope className="space-y-1.5">
 										<div className="flex flex-wrap items-start justify-between gap-2">
 											<span className="text-xs font-semibold text-slate-800 pt-1">({sb.label})</span>
 											{mode === 'questions' ? (
@@ -1121,6 +1123,18 @@ export function PortalPaperEditor({
 											<RichView html={sb.question_text} />
 										) : (
 											<p className="text-sm italic text-rose-600">Not entered</p>
+										)}
+										{/* A sub-division can carry its own figure, printed under it like the
+										    question's. Field while entering; the picture itself otherwise. */}
+										{mode === 'questions' && !qDisabled ? (
+											<QuestionImageField
+												assignmentId={assignmentId}
+												value={(sb.image as any) || null}
+												onChange={img => patchSub(q, sb.id, { image: img as any })}
+												label={`Add image to (${sb.label})`}
+											/>
+										) : (
+											<Figure raw={sb.image} />
 										)}
 										{mode === 'answers' &&
 											answerBox({
