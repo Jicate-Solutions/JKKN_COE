@@ -169,7 +169,7 @@ export function useExamRegistrations(programId?: string, sessionId?: string) {
 	const fetchExamRegistrations = useCallback(async () => {
 		try {
 			setLoading(true)
-			let url = appendToUrl('/api/exam-management/exam-registrations?pageSize=100000')
+			let url = appendToUrl('/api/exam-management/exam-registrations?pageSize=100000&active_only=true')
 			// Add program_id filter if provided
 			if (programId && programId !== 'all') {
 				url += `&program_code=${encodeURIComponent(programId)}`
@@ -212,7 +212,7 @@ export function useExamRegistrations(programId?: string, sessionId?: string) {
 	const refreshExamRegistrations = useCallback(async () => {
 		try {
 			setLoading(true)
-			let url = appendToUrl('/api/exam-management/exam-registrations?pageSize=100000')
+			let url = appendToUrl('/api/exam-management/exam-registrations?pageSize=100000&active_only=true')
 			// Add program_id filter if provided
 			if (programId && programId !== 'all') {
 				url += `&program_code=${encodeURIComponent(programId)}`

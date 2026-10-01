@@ -130,6 +130,8 @@ export interface FinalApprovalCohortResponse {
 	migration_ready: boolean
 	/** application_fee / mark_statement_fee / late_fine columns exist on exam_registrations */
 	charge_columns_ready: boolean
+	/** Applied learners not listed because they are no longer on the rolls in MyJKKN */
+	hidden_off_roll: number
 }
 
 export interface FinalApprovalRequestLearner {

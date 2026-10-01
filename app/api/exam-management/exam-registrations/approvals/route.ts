@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
+import { getOffRollRegisterNumbers, isOffRoll } from '@/lib/myjkkn-off-roll-learners'
 
 interface ApprovalPayload {
 	registration_ids: string[]
@@ -104,12 +105,16 @@ export async function GET(request: Request) {
 		if (examination_session_id) query = query.eq('examination_session_id', examination_session_id)
 		if (program_code) query = query.eq('program_code', program_code)
 
-		const { data, error } = await query
+		const { data: allRows, error } = await query
 
 		if (error) {
 			console.error('[approvals] fetch error:', error)
 			return NextResponse.json({ error: 'Failed to fetch pending registrations' }, { status: 500 })
 		}
+
+		// Only learners still on the rolls (MyJKKN inactive / exited are left out)
+		const offRoll = await getOffRollRegisterNumbers()
+		const data = (allRows || []).filter(reg => !isOffRoll(offRoll, reg.stu_register_no))
 
 		// Group by program
 		const grouped = new Map<string, any[]>()

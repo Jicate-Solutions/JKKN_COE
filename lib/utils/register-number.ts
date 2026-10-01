@@ -39,6 +39,20 @@ export function buildRegisterNumber(prefix: string, startNumber: string, offset:
 	return `${String(prefix ?? '').trim()}${String(value).padStart(width, '0')}`
 }
 
+/**
+ * True when a learner holds a real register number.
+ *
+ * Learners without one were exam-registered with their roll number pasted into
+ * the register number field, so a value equal to the roll number is only a
+ * placeholder and the learner is still eligible for generation.
+ */
+export function hasRealRegisterNumber(registerNumber: string | null | undefined, rollNumber: string | null | undefined): boolean {
+	const reg = String(registerNumber ?? '').trim().toUpperCase()
+	if (!reg) return false
+	const roll = String(rollNumber ?? '').trim().toUpperCase()
+	return reg !== roll
+}
+
 /** Normalised display name for a learner record from MyJKKN. */
 export function learnerDisplayName(learner: {
 	first_name?: string | null

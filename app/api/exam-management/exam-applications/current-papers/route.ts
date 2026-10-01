@@ -30,6 +30,7 @@ import type {
 	CurrentPaperRow,
 	CurrentPaperSubject,
 } from '@/types/exam-applications'
+import { getOffRollRegisterNumbers, isOffRoll } from '@/lib/myjkkn-off-roll-learners'
 
 /**
  * Current Papers - Exam Application
@@ -161,7 +162,10 @@ async function fetchSessionRegistrations(
 		}
 	}
 
-	return rows
+	// Only learners still on the rolls: one MyJKKN marks inactive / exited is
+	// neither listed (GET) nor applied (POST re-reads the cohort through here).
+	const offRoll = await getOffRollRegisterNumbers()
+	return offRoll.size === 0 ? rows : rows.filter(r => !isOffRoll(offRoll, r.stu_register_no))
 }
 
 /**

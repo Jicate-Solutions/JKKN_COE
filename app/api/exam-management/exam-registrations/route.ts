@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
 import { buildRegistrationPricer } from '@/lib/exam-fee/calculate'
 import { handleDeleteWithDependencyCheck } from '@/lib/delete-helpers'
+import { getOffRollRegisterNumbers, isOffRoll } from '@/lib/myjkkn-off-roll-learners'
 
 // GET: list exam registrations
 export async function GET(request: Request) {
@@ -15,6 +16,9 @@ export async function GET(request: Request) {
 		const program_code = searchParams.get('program_code')
 		const course_offering_id = searchParams.get('course_offering_id')
 		const search = searchParams.get('search')
+		// Opt-in: leave out learners MyJKKN marks inactive / exited. Off by default
+		// because the timetable and revaluation screens read every registration here.
+		const activeOnly = searchParams.get('active_only') === 'true'
 
 		// Check if client wants all records (for bulk operations)
 		const fetchAll = searchParams.get('fetchAll') === 'true'
@@ -147,7 +151,16 @@ export async function GET(request: Request) {
 		)
 
 		// Transform the data to include course_name in course_offering
-		const transformedData = allRegistrations.map((item: any) => ({
+		const offRoll = activeOnly ? await getOffRollRegisterNumbers() : null
+		const visibleRegistrations = offRoll && offRoll.size > 0
+			? allRegistrations.filter((item: any) => !isOffRoll(offRoll, item.stu_register_no))
+			: allRegistrations
+		// The database count includes the rows just left out
+		if (visibleRegistrations.length !== allRegistrations.length) {
+			totalCount = Math.max(0, (totalCount || allRegistrations.length) - (allRegistrations.length - visibleRegistrations.length))
+		}
+
+		const transformedData = visibleRegistrations.map((item: any) => ({
 			...item,
 			course_offering: item.course_offering ? {
 				...item.course_offering,

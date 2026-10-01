@@ -3,6 +3,7 @@ import { fetchAllRows, fetchAllInChunks, tryFetchAllRows } from '@/lib/exam-appl
 import { chargeKey, hasSessionChargeColumns } from '@/lib/exam-applications/session-charges'
 import { fetchAllMyJKKNPrograms } from '@/services/myjkkn-service'
 import { batchYearOf } from '@/lib/utils/batch-year'
+import { getOffRollRegisterNumbers, isOffRoll } from '@/lib/myjkkn-off-roll-learners'
 import { indexConcessionsByLearner, loadSessionConcessions } from '@/lib/exam-fee-concessions/concessions'
 import type {
 	FinalApprovalLearner,
@@ -66,6 +67,8 @@ interface OfferingInfo {
 
 export interface PendingCohort {
 	learners: FinalApprovalLearner[]
+	/** Applied learners left out because MyJKKN says they are no longer on the rolls */
+	hidden_off_roll: number
 	charge_columns_ready: boolean
 	institution: { id: string; institution_code: string | null; name: string | null } | null
 	session: { id: string; session_code: string | null; session_name: string | null } | null
@@ -181,19 +184,30 @@ export async function loadPendingFinalApprovalCohort(
 		'id, student_id, stu_register_no, student_name, course_offering_id, course_code, program_code, registration_status, is_regular, attempt_number, fee_amount'
 		+ (chargeColumnsReady ? ', application_fee, mark_statement_fee, late_fine' : '')
 
-	const rows = await fetchAllRows<RegistrationRow>(
-		() => supabase
-			.from('exam_registrations')
-			.select(columns)
-			.eq('institutions_id', institutions_id)
-			.eq('examination_session_id', examination_session_id)
-			.eq('registration_status', PENDING_FINAL_APPROVAL_STATUS),
-		{ label: 'pending final-approval registrations' }
-	)
+	const [appliedRows, offRoll] = await Promise.all([
+		fetchAllRows<RegistrationRow>(
+			() => supabase
+				.from('exam_registrations')
+				.select(columns)
+				.eq('institutions_id', institutions_id)
+				.eq('examination_session_id', examination_session_id)
+				.eq('registration_status', PENDING_FINAL_APPROVAL_STATUS),
+			{ label: 'pending final-approval registrations' }
+		),
+		getOffRollRegisterNumbers(),
+	])
+
+	// Only learners still on the rolls are listed (and can be approved): one
+	// who discontinued after applying stays 'Applied' but is left out here.
+	const rows = appliedRows.filter(r => !isOffRoll(offRoll, r.stu_register_no))
+	const hiddenOffRoll = new Set(
+		appliedRows.filter(r => isOffRoll(offRoll, r.stu_register_no)).map(r => String(r.stu_register_no || '').trim().toUpperCase())
+	).size
 
 	const inst = institutionRes.data as any
 	const empty: PendingCohort = {
 		learners: [],
+		hidden_off_roll: hiddenOffRoll,
 		charge_columns_ready: chargeColumnsReady,
 		institution: inst ? { id: inst.id, institution_code: inst.institution_code ?? null, name: inst.name ?? null } : null,
 		session: (sessionRes.data as PendingCohort['session']) || null,

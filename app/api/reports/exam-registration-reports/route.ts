@@ -9,6 +9,7 @@ import {
 	type PaperFeeHead,
 } from '@/lib/exam-fee/calculate'
 import type { ProgramLevel } from '@/lib/exam-fee-catalog'
+import { normalizeDateOfBirth } from '@/lib/myjkkn-learner-enrichment'
 
 // Helper: fetch all pages from Supabase in parallel batches
 async function fetchAllPaginated(
@@ -26,9 +27,9 @@ async function fetchAllPaginated(
 	let hasMore = true
 
 	while (hasMore) {
-		// Fetch next 4 pages in parallel
+		// Fetch next 8 pages in parallel (a 15k-row session: 2.2s at 4, 1.3s at 8)
 		const pagePromises = []
-		for (let i = 0; i < 4 && hasMore; i++) {
+		for (let i = 0; i < 8 && hasMore; i++) {
 			const p = page + i
 			pagePromises.push(queryFn(p * pageSize, (p + 1) * pageSize - 1))
 		}
@@ -117,78 +118,116 @@ async function fetchMyJKKNPaginated(
 }
 
 // ── MyJKKN learner profile cache ──
-// Profiles change rarely but the sweep costs many sequential 200-row pages, and the same
-// institution is hit again every time the user switches report type. Cache per institution.
+// The profiles endpoint ignores institution_id and returns every institution's learners,
+// so sweeping once per MyJKKN institution id fetched the whole table several times over,
+// one 200-row page after another. One sweep now serves every institution: pages are
+// requested in concurrent windows (the endpoint caps pages at 200 and 500s past the
+// last page), the result is cached process-wide, and concurrent requests share the
+// in-flight sweep.
 const PROFILE_CACHE_TTL_MS = 10 * 60 * 1000
-const profileCache = new Map<string, { at: number; data: any[] }>()
+const PROFILE_PAGE_SIZE = 200
+const PROFILE_PAGE_CONCURRENCY = 8
+const PROFILE_MAX_PAGES = 400
+
+interface SlimProfile {
+	/** register_number and roll_number, trimmed + UPPER — unnumbered learners are registered under the roll number */
+	ids: string[]
+	student_name: string | null
+	date_of_birth: string | null
+	gender: string | null
+}
+
+let profileCache: { at: number; data: SlimProfile[]; ids: Set<string> } | null = null
+let profileInflight: Promise<SlimProfile[]> | null = null
 
 /** Keep only the fields the reports actually read — cached rows stay small */
-function slimProfile(p: any) {
+function slimProfile(p: any): SlimProfile {
+	const ids = [p.register_number, p.roll_number]
+		.map(v => (v ?? '').toString().trim().toUpperCase())
+		.filter(Boolean)
 	return {
-		register_number: p.register_number,
+		ids: [...new Set(ids)],
 		student_name: p.student_name || p.full_name || [p.first_name, p.last_name].filter(Boolean).join(' ') || null,
 		date_of_birth: p.date_of_birth || null,
 		gender: p.gender || null,
 	}
 }
 
-/** True when the given profiles resolve every register number we need */
-function coversAll(profiles: any[], needed: Set<string>): boolean {
-	if (needed.size === 0) return true
-	const seen = new Set<string>()
-	for (const p of profiles) {
-		if (p.register_number && needed.has(p.register_number)) seen.add(p.register_number)
+/** One page of profiles, or null when the request failed */
+async function fetchProfilePage(apiUrl: string, apiKey: string, page: number): Promise<any[] | null> {
+	try {
+		const response = await fetch(
+			`${apiUrl}/api-management/learners/profiles?limit=${PROFILE_PAGE_SIZE}&page=${page}`,
+			{
+				method: 'GET',
+				headers: { 'Authorization': `Bearer ${apiKey}`, 'Accept': 'application/json' },
+				cache: 'no-store',
+			}
+		)
+		if (!response.ok) return null
+		const json = await response.json()
+		const rows = json?.data ?? json
+		return Array.isArray(rows) ? rows : null
+	} catch {
+		return null
 	}
-	return seen.size >= needed.size
 }
 
-async function fetchLearnerProfilesCached(
-	apiUrl: string,
-	instIds: string[],
-	apiKey: string,
-	needed: Set<string>
-): Promise<any[]> {
-	try {
-		const now = Date.now()
-		const cached: any[] = []
-		const stale: string[] = []
-		for (const id of instIds) {
-			const hit = profileCache.get(id)
-			if (hit && now - hit.at < PROFILE_CACHE_TTL_MS) cached.push(...hit.data)
-			else stale.push(id)
+/** Every profile, or null when not even the first page could be read */
+async function sweepLearnerProfiles(apiUrl: string, apiKey: string): Promise<SlimProfile[] | null> {
+	const startedAt = Date.now()
+	const all: SlimProfile[] = []
+	let done = false
+	for (let start = 1; !done && start <= PROFILE_MAX_PAGES; start += PROFILE_PAGE_CONCURRENCY) {
+		const pages = Array.from({ length: PROFILE_PAGE_CONCURRENCY }, (_, i) => start + i)
+		const results = await Promise.all(pages.map(pg => fetchProfilePage(apiUrl, apiKey, pg)))
+		for (let i = 0; i < results.length; i++) {
+			// A failed page is retried once; still failing = past the last page
+			const rows = results[i] ?? await fetchProfilePage(apiUrl, apiKey, pages[i])
+			if (rows === null) {
+				if (all.length === 0) return null
+				done = true
+				break
+			}
+			for (const row of rows) all.push(slimProfile(row))
+			if (rows.length < PROFILE_PAGE_SIZE) { done = true; break }
 		}
-
-		// Everything cached and every learner resolved — no network call at all
-		if (stale.length === 0 && coversAll(cached, needed)) {
-			console.log(`[ExamReports] Profile cache hit (${cached.length} rows, 0 requests)`)
-			return cached
-		}
-
-		// Partially cached: only sweep the institutions we lack. If the cache is complete but
-		// doesn't cover these learners (an earlier sweep stopped early), re-sweep all of them.
-		const toFetch = stale.length > 0 ? stale : instIds
-		const found = new Set<string>()
-		for (const p of cached) {
-			if (p.register_number && needed.has(p.register_number)) found.add(p.register_number)
-		}
-
-		const results = await Promise.all(toFetch.map(instId =>
-			fetchMyJKKNPaginated(apiUrl, 'learners/profiles', instId, apiKey, 200, (profiles) => {
-				for (const p of profiles) {
-					if (p.register_number && needed.has(p.register_number)) found.add(p.register_number)
-				}
-				return found.size >= needed.size
-			}).then(rows => {
-				const slim = rows.map(slimProfile)
-				profileCache.set(instId, { at: Date.now(), data: slim })
-				return slim
-			})
-		))
-
-		return stale.length > 0 ? [...cached, ...results.flat()] : results.flat()
-	} catch {
-		return []
 	}
+	console.log(`[ExamReports] Profile sweep: ${all.length} profiles in ${Date.now() - startedAt}ms`)
+	return all
+}
+
+function refreshLearnerProfiles(apiUrl: string, apiKey: string): Promise<SlimProfile[]> {
+	if (profileInflight) return profileInflight
+	profileInflight = sweepLearnerProfiles(apiUrl, apiKey)
+		.then(rows => {
+			// A failed sweep keeps the last good answer
+			if (rows) profileCache = { at: Date.now(), data: rows, ids: new Set(rows.flatMap(r => r.ids)) }
+			return profileCache?.data ?? []
+		})
+		.catch(() => profileCache?.data ?? [])
+		.finally(() => { profileInflight = null })
+	return profileInflight
+}
+
+/**
+ * MyJKKN learner profiles for name / DOB / gender. Served from cache when fresh.
+ * A stale cache that still resolves every learner is served at once and refreshed
+ * in the background; one missing a learner (e.g. a register number generated since
+ * the last sweep) waits for a fresh sweep.
+ */
+async function getLearnerProfiles(apiUrl: string, apiKey: string, needed: Set<string>): Promise<SlimProfile[]> {
+	if (profileCache) {
+		const fresh = Date.now() - profileCache.at < PROFILE_CACHE_TTL_MS
+		if (fresh) return profileCache.data
+		const cache = profileCache
+		const coversAll = [...needed].every(k => cache.ids.has(k))
+		if (coversAll) {
+			void refreshLearnerProfiles(apiUrl, apiKey)
+			return cache.data
+		}
+	}
+	return refreshLearnerProfiles(apiUrl, apiKey)
 }
 
 /**
@@ -418,12 +457,13 @@ export async function GET(request: Request) {
 		// ── Phase 2b: Course mapping (needs course_ids from offerings) — parallel with MyJKKN profiles ──
 		const uniqueCourseIds = [...new Set(allOfferings.map(o => o.course_id).filter(Boolean))]
 		const registerNumbers = [...new Set(allRegistrations.map(r => r.stu_register_no).filter(Boolean))]
-		const registerNumberSet = new Set(registerNumbers)
+		// Upper-cased: profile ids and the row lookups below are both upper-case
+		const registerNumberSet = new Set(registerNumbers.map(r => r.toUpperCase()))
 
 		// Only the student-* reports print learner name / DOB / gender
 		const needsLearnerProfiles = report_type.startsWith('student-')
 
-		const [courseMappings, myjkknProfilesRaw] = await Promise.all([
+		const [courseMappings, myjkknProfilesRaw]: [any[], SlimProfile[]] = await Promise.all([
 			// Course mapping (parallel batches)
 			fetchBatchedIn(uniqueCourseIds, (batch) =>
 				supabase.from('course_mapping').select('course_id, course_order').in('course_id', batch)
@@ -431,8 +471,8 @@ export async function GET(request: Request) {
 			// MyJKKN learner profiles — only the learner-detail reports read names/DOB/gender.
 			// Count and date-wise reports aggregate by course, so skip the sweep entirely for them.
 			(needsLearnerProfiles && registerNumbers.length > 0 && myjkknIds.length > 0 && myjkknApiKey)
-				? fetchLearnerProfilesCached(myjkknApiUrl, myjkknIds, myjkknApiKey, registerNumberSet)
-				: Promise.resolve([] as any[]),
+				? getLearnerProfiles(myjkknApiUrl, myjkknApiKey, registerNumberSet)
+				: Promise.resolve([] as SlimProfile[]),
 		])
 
 		// ── Phase 3: Build lookup maps (pure computation, fast) ──
@@ -499,27 +539,21 @@ export async function GET(request: Request) {
 		const dobMap = new Map<string, string>()
 		const genderMap = new Map<string, string>()
 		for (const lp of myjkknProfilesRaw) {
-			const regNo = lp.register_number
-			if (!regNo || !registerNumberSet.has(regNo)) continue
-			const key = regNo.toUpperCase()
-			if (!nameMap.has(key)) {
-				const fullName = lp.student_name || lp.full_name || [lp.first_name, lp.last_name].filter(Boolean).join(' ')
-				if (fullName) nameMap.set(key, fullName)
-			}
-			if (isStudentWise && !genderMap.has(key) && lp.gender) {
-				const g = String(lp.gender).trim()
-				if (g) genderMap.set(key, g.charAt(0).toUpperCase() + g.slice(1).toLowerCase())
-			}
-			if ((report_type === 'student-fee-details' || report_type === 'student-exam-registration' || report_type === 'student-wise-application' || report_type === 'student-wise-registration') && !dobMap.has(key) && lp.date_of_birth) {
-				try {
-					const dob = new Date(lp.date_of_birth)
-					if (!isNaN(dob.getTime())) {
-						dobMap.set(key, `${String(dob.getDate()).padStart(2, '0')}-${String(dob.getMonth() + 1).padStart(2, '0')}-${dob.getFullYear()}`)
-					} else {
-						dobMap.set(key, lp.date_of_birth)
+			// A learner may be registered under either the register number or the roll number
+			for (const key of lp.ids) {
+				if (!registerNumberSet.has(key)) continue
+				if (!nameMap.has(key) && lp.student_name) nameMap.set(key, lp.student_name)
+				if (isStudentWise && !genderMap.has(key) && lp.gender) {
+					const g = String(lp.gender).trim()
+					if (g) genderMap.set(key, g.charAt(0).toUpperCase() + g.slice(1).toLowerCase())
+				}
+				if ((report_type === 'student-fee-details' || report_type === 'student-exam-registration' || report_type === 'student-wise-application' || report_type === 'student-wise-registration') && !dobMap.has(key) && lp.date_of_birth) {
+					// MyJKKN stores some DOBs as Excel serials ("39911"); new Date() reads those as the year
+					const iso = normalizeDateOfBirth(lp.date_of_birth)
+					if (iso) {
+						const [y, m, d] = iso.split('-')
+						dobMap.set(key, `${d}-${m}-${y}`)
 					}
-				} catch {
-					dobMap.set(key, lp.date_of_birth)
 				}
 			}
 		}

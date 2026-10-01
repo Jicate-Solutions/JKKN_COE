@@ -7,6 +7,7 @@ import { cachedSession } from '@/lib/exam-applications/session-cache'
 import { levelOf, loadProgramLevelMap, parseProgramCodes } from '@/lib/exam-applications/program-levels'
 import { isApplicationDone } from '@/lib/exam-registration-status'
 import type { ArrearLearner, ArrearLearnersResponse, CohortFilterOption, CohortFilterTotals } from '@/types/exam-applications'
+import { getOffRollRegisterNumbers, isOffRoll } from '@/lib/myjkkn-off-roll-learners'
 
 /** Distinct-learner and row counts per filter value, sorted numerically when possible */
 function countBy<T>(rows: T[], valueOf: (row: T) => string | null, learnerOf: (row: T) => string): CohortFilterOption[] {
@@ -78,19 +79,25 @@ async function fetchBacklogs(
 	supabase: Supabase,
 	params: { institutions_id: string; program_code?: string | null }
 ): Promise<BacklogRow[]> {
-	return fetchAllRows<BacklogRow>(
-		() => {
-			let query = supabase
-				.from('student_backlogs_detailed_view')
-				.select('id, student_id, register_number, student_name, program_code, course_code, original_semester')
-				.eq('institutions_id', params.institutions_id)
-				.eq('is_cleared', false)
-				.eq('is_active', true)
-			if (params.program_code) query = query.eq('program_code', params.program_code)
-			return query
-		},
-		{ label: 'student_backlogs_detailed_view' }
-	)
+	const [backlogs, offRoll] = await Promise.all([
+		fetchAllRows<BacklogRow>(
+			() => {
+				let query = supabase
+					.from('student_backlogs_detailed_view')
+					.select('id, student_id, register_number, student_name, program_code, course_code, original_semester')
+					.eq('institutions_id', params.institutions_id)
+					.eq('is_cleared', false)
+					.eq('is_active', true)
+				if (params.program_code) query = query.eq('program_code', params.program_code)
+				return query
+			},
+			{ label: 'student_backlogs_detailed_view' }
+		),
+		getOffRollRegisterNumbers(),
+	])
+	// Only learners still on the rolls. Passed-out ('graduated') learners are
+	// NOT off the rolls - they are exactly who writes arrears.
+	return offRoll.size === 0 ? backlogs : backlogs.filter(b => !isOffRoll(offRoll, b.register_number))
 }
 
 interface ArrearRegistrationIndex {

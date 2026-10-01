@@ -914,6 +914,12 @@ export default function FinalExamRegistrationApprovalPage() {
 							</Alert>
 						)}
 
+						{cohort && cohort.hidden_off_roll > 0 && (
+							<p className="text-xs text-muted-foreground">
+								{cohort.hidden_off_roll} applied learner{cohort.hidden_off_roll === 1 ? ' is' : 's are'} not listed because MyJKKN marks them inactive or exited. Only active learners can be approved.
+							</p>
+						)}
+
 						{/* Success */}
 						{lastResult && (
 							<Alert className="border-brand-green-200 bg-brand-green-50 text-brand-green-900 dark:border-brand-green-800 dark:bg-brand-green-900/30 dark:text-brand-green-100">

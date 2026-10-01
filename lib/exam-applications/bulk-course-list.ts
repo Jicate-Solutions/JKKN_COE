@@ -10,6 +10,7 @@ import type {
 } from '@/types/exam-applications'
 import { collectInvolvedCourseCodes, mergeExamApplicationCourses } from './merge'
 import { chunk, fetchAllInChunks, fetchAllRows, tryFetchAllRows } from './paginate'
+import { getOffRollRegisterNumbers, isOffRoll } from '@/lib/myjkkn-off-roll-learners'
 
 /** Learners per `.in()` filter - keeps the PostgREST GET URL well under any length limit */
 const IN_CHUNK = 60
@@ -346,6 +347,8 @@ export async function buildSubjectWiseCandidates(
 	params: BuildSubjectCandidatesParams
 ): Promise<{ offering: BulkSubjectOffering; candidates: BulkSubjectCandidate[] }> {
 	const { institutions_id, examination_session_id, course_offering_id, cohort = [] } = params
+	// Learners MyJKKN marks inactive / exited are never offered as candidates
+	const offRoll = await getOffRollRegisterNumbers()
 	const programFilter = new Set((params.program_codes || []).map(c => String(c || '').trim().toUpperCase()).filter(Boolean))
 	const matchesProgram = (code: any) =>
 		programFilter.size === 0 || programFilter.has(String(code || '').trim().toUpperCase())
@@ -450,6 +453,7 @@ export async function buildSubjectWiseCandidates(
 		const register = (learner.register_number || '').trim()
 		const sid = (learner.student_id || '').trim()
 		if (!register && !sid) return null
+		if (isOffRoll(offRoll, register)) return null
 		const key = learnerKey({ student_id: sid, register_number: register })
 		let draft = drafts.get(key)
 		if (!draft) {

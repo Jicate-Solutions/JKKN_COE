@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useMemo, useCallback } from 'react'
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import Link from 'next/link'
 import { AppSidebar } from '@/components/layout/app-sidebar'
 import { AppHeader } from '@/components/layout/app-header'
@@ -19,6 +19,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Badge } from '@/components/ui/badge'
 import { Switch } from '@/components/ui/switch'
+import { Checkbox } from '@/components/ui/checkbox'
 import {
 	Select,
 	SelectContent,
@@ -35,13 +36,6 @@ import {
 	TableRow,
 } from '@/components/ui/table'
 import {
-	DropdownMenu,
-	DropdownMenuContent,
-	DropdownMenuItem,
-	DropdownMenuSeparator,
-	DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu'
-import {
 	AlertDialog,
 	AlertDialogAction,
 	AlertDialogCancel,
@@ -52,11 +46,11 @@ import {
 	AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { SearchableSelect, type SearchableSelectOption } from '@/components/ui/searchable-select'
 import { useToast } from '@/hooks/common/use-toast'
 import { useAuth } from '@/context/auth-context'
 import { useInstitutionFilter } from '@/hooks/use-institution-filter'
 import {
-	MoreHorizontal,
 	RefreshCw,
 	Download,
 	Search,
@@ -66,11 +60,11 @@ import {
 	Users,
 	UserCheck,
 	Sparkles,
-	Trash2,
 	AlertCircle,
 } from 'lucide-react'
 import {
 	buildRegisterNumber,
+	hasRealRegisterNumber,
 	learnerDisplayName,
 	parseStartNumber,
 	sortAlphabetically,
@@ -105,35 +99,30 @@ interface SemesterOption {
 interface CohortLearner {
 	id: string
 	name: string
+	/** DD-MM-YYYY, or '' when MyJKKN has none. */
+	date_of_birth: string
 	roll_number: string
 	/** Register number the learner already carries in MyJKKN, if any. */
 	register_number: string
 }
 
-/** A register number already issued by the CoE (row from learner_register_numbers). */
-interface AssignedRow {
-	id: string
-	learner_id: string
-	learner_name: string
-	register_number: string
-	serial_no: number
-}
-
-type RowStatus = 'new' | 'replace' | 'skipped'
+type RowStatus = 'new' | 'replace' | 'skipped' | 'excluded'
 
 interface PreviewRow extends CohortLearner {
 	slNo: number
-	/** Number already held — issued by the CoE or carried over from MyJKKN. */
+	/** Number the learner holds in MyJKKN (may be the roll-number placeholder). */
 	existing: string
 	/** Number this run would issue. Empty when the learner is skipped. */
 	generated: string
 	status: RowStatus
-	assignedId: string | null
 }
 
 // ─────────────────────────────────────────────────────────────
 // Helpers
 // ─────────────────────────────────────────────────────────────
+
+/** Page-size sentinel for "show every row". */
+const ALL_ROWS = -1
 
 /** Semester value can arrive as a number, a code ('EEE-6'), or a name. */
 function parseSemesterNumber(value: unknown): number {
@@ -148,6 +137,13 @@ function parseSemesterNumber(value: unknown): number {
 	}
 	const digits = String(value).match(/(\d+)/)
 	return digits ? parseInt(digits[1], 10) : 0
+}
+
+/** MyJKKN stores date_of_birth as text, usually YYYY-MM-DD. Show DD-MM-YYYY. */
+function formatDob(value: unknown): string {
+	const raw = String(value ?? '').trim()
+	const iso = raw.match(/^(\d{4})-(\d{2})-(\d{2})/)
+	return iso ? `${iso[3]}-${iso[2]}-${iso[1]}` : raw
 }
 
 /**
@@ -214,28 +210,39 @@ export default function GenerateRegisterNumberPage() {
 		() => semesters.find(s => s.code === semesterCode) || null,
 		[semesters, semesterCode]
 	)
+	const programOptions = useMemo<SearchableSelectOption[]>(
+		() => programs.map(p => ({ value: p.program_code, label: `${p.program_code} — ${p.program_name}` })),
+		[programs]
+	)
+	const semesterOptions = useMemo<SearchableSelectOption[]>(
+		() => semesters.map(s => ({ value: s.code, label: s.label })),
+		[semesters]
+	)
 
 	// ── Step 4: Prefix & start number ──
 	const [prefix, setPrefix] = useState('')
 	const [startNumber, setStartNumber] = useState('001')
 	const [skipExisting, setSkipExisting] = useState(true)
 
-	// ── Cohort + already-issued numbers ──
+	// ── Cohort (MyJKKN learners_profiles holds the register numbers) ──
 	const [learners, setLearners] = useState<CohortLearner[]>([])
-	const [assigned, setAssigned] = useState<AssignedRow[]>([])
 	const [loadingLearners, setLoadingLearners] = useState(false)
 	const [loadError, setLoadError] = useState<string | null>(null)
 	const [generating, setGenerating] = useState(false)
+	// Learners ticked for this run. Every reload starts with the whole cohort ticked.
+	const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+
+	useEffect(() => {
+		setSelectedIds(new Set(learners.map(l => l.id)))
+	}, [learners])
 
 	// ── Table state ──
 	const [search, setSearch] = useState('')
 	const [currentPage, setCurrentPage] = useState(1)
-	const [itemsPerPage, setItemsPerPage] = useState(10)
+	const [itemsPerPage, setItemsPerPage] = useState(ALL_ROWS)
 
 	// ── Dialogs ──
 	const [confirmGenerate, setConfirmGenerate] = useState(false)
-	const [confirmClearCohort, setConfirmClearCohort] = useState(false)
-	const [releaseTarget, setReleaseTarget] = useState<PreviewRow | null>(null)
 
 	// ─── Load institutions ───
 	useEffect(() => {
@@ -251,7 +258,6 @@ export default function GenerateRegisterNumberPage() {
 		setSemesterCode('')
 		setSemesters([])
 		setLearners([])
-		setAssigned([])
 	}, [institutionId])
 
 	// ─── Load programs for the institution ───
@@ -284,7 +290,6 @@ export default function GenerateRegisterNumberPage() {
 	useEffect(() => {
 		setSemesterCode('')
 		setLearners([])
-		setAssigned([])
 		if (!institutionCode || !programCode) {
 			setSemesters([])
 			return
@@ -319,14 +324,52 @@ export default function GenerateRegisterNumberPage() {
 			.finally(() => setLoadingSemesters(false))
 	}, [institutionCode, programCode])
 
-	// ─── Load the cohort (MyJKKN) + numbers already issued (COE) ───
-	const loadCohort = useCallback(async () => {
+	// ─── MyJKKN learner sweep, cached per institution ───
+	// MyJKKN ignores program_code / current_semester server-side and returns a
+	// stripped record shape when they are passed, so the whole institution is
+	// fetched and filtered here. That sweep is the slow part (thousands of rows),
+	// so it runs once per institution — prefetched as soon as the institution is
+	// known — and program/semester changes only re-filter the cached rows.
+	const sweepRef = useRef<{ key: string; promise: Promise<any[]> } | null>(null)
+
+	const fetchInstitutionLearners = useCallback(
+		(force: boolean): Promise<any[]> => {
+			const key = myjkknInstitutionIds.join(',')
+			if (!force && sweepRef.current?.key === key) return sweepRef.current.promise
+
+			// One COE institution can map to several MyJKKN ones — fetch them in parallel.
+			const promise = Promise.all(
+				myjkknInstitutionIds.map(async myjkknId => {
+					const params = new URLSearchParams({ institution_id: myjkknId, fetchAll: 'true' })
+					const res = await fetch(`/api/myjkkn/learner-profiles?${params}`)
+					if (!res.ok) return []
+					const json = await parseJsonResponse(res)
+					return (json?.data || json || []) as any[]
+				})
+			).then(lists => lists.flat())
+
+			sweepRef.current = { key, promise }
+			// A failed sweep must not stay cached.
+			promise.catch(() => {
+				if (sweepRef.current?.promise === promise) sweepRef.current = null
+			})
+			return promise
+		},
+		[myjkknInstitutionIds]
+	)
+
+	// Warm the cache while the user is still choosing program and semester.
+	useEffect(() => {
+		if (isReady && myjkknInstitutionIds.length > 0) fetchInstitutionLearners(false).catch(() => {})
+	}, [isReady, myjkknInstitutionIds, fetchInstitutionLearners])
+
+	// ─── Load the cohort from MyJKKN ───
+	const loadCohort = useCallback(async (force = false) => {
 		// The institution context resolves asynchronously; fetching before it settles
 		// would query with an empty institution and return an empty cohort.
 		if (!isReady) return
 		if (!institutionId || !programCode || !semesterCode) {
 			setLearners([])
-			setAssigned([])
 			setLoadError(null)
 			return
 		}
@@ -340,66 +383,36 @@ export default function GenerateRegisterNumberPage() {
 		setLoadError(null)
 		try {
 			const targetSemesterNumber = selectedSemester?.number || 0
+			const rows = await fetchInstitutionLearners(force)
 
-			// MyJKKN ignores program_code / current_semester server-side and returns a
-			// stripped record shape when they are passed, so fetch by institution and
-			// filter here. One COE institution can map to several MyJKKN ones.
 			const collected: CohortLearner[] = []
 			const seen = new Set<string>()
+			for (const row of rows) {
+				if (!row?.id || seen.has(row.id)) continue
 
-			// Numbers this cohort already holds from a previous run. A COE query that
-			// does not depend on the MyJKKN sweep, so it runs alongside it.
-			const assignedParams = new URLSearchParams({
-				institutions_id: institutionId,
-				program_code: programCode,
-				semester_code: semesterCode,
-			})
-			const assignedPromise = fetch(`/api/learners/register-numbers?${assignedParams}`)
-			assignedPromise.catch(() => {})
+				// program_id from MyJKKN is a CODE string ("BCA"), not a UUID.
+				const learnerProgram = row.program_code || row.program_id
+				if (learnerProgram && learnerProgram !== programCode) continue
 
-			for (const myjkknId of myjkknInstitutionIds) {
-				const params = new URLSearchParams({ institution_id: myjkknId, fetchAll: 'true' })
-				const res = await fetch(`/api/myjkkn/learner-profiles?${params}`)
-				if (!res.ok) continue
-				const json = await parseJsonResponse(res)
-				const rows: any[] = json?.data || json || []
+				// Match on the semester UUID when it resolves, else on the number —
+				// MyJKKN semester ids do not always line up with the COE mirror.
+				const semesterMatches =
+					(selectedSemester?.id && row.semester_id === selectedSemester.id) ||
+					(targetSemesterNumber > 0 &&
+						parseSemesterNumber(row.current_semester) === targetSemesterNumber)
+				if (!semesterMatches) continue
 
-				for (const row of rows) {
-					if (!row?.id || seen.has(row.id)) continue
-
-					// program_id from MyJKKN is a CODE string ("BCA"), not a UUID.
-					const learnerProgram = row.program_code || row.program_id
-					if (learnerProgram && learnerProgram !== programCode) continue
-
-					// Match on the semester UUID when it resolves, else on the number —
-					// MyJKKN semester ids do not always line up with the COE mirror.
-					const semesterMatches =
-						(selectedSemester?.id && row.semester_id === selectedSemester.id) ||
-						(targetSemesterNumber > 0 &&
-							parseSemesterNumber(row.current_semester) === targetSemesterNumber)
-					if (!semesterMatches) continue
-
-					seen.add(row.id)
-					collected.push({
-						id: row.id,
-						name: learnerDisplayName(row),
-						roll_number: row.roll_number || '',
-						register_number: row.register_number || '',
-					})
-				}
+				seen.add(row.id)
+				collected.push({
+					id: row.id,
+					name: learnerDisplayName(row),
+					date_of_birth: formatDob(row.date_of_birth),
+					roll_number: row.roll_number || '',
+					register_number: row.register_number || '',
+				})
 			}
 
 			setLearners(collected)
-
-			const assignedRes = await assignedPromise
-			if (assignedRes.ok) {
-				const json = await parseJsonResponse(assignedRes)
-				setAssigned(json?.data || [])
-			} else {
-				const json = await parseJsonResponse(assignedRes).catch(() => null)
-				setAssigned([])
-				if (assignedRes.status === 404 && json?.hint) setLoadError(json.hint)
-			}
 		} catch (error) {
 			console.error('[generate-register-number] cohort load failed:', error)
 			setLoadError(error instanceof Error ? error.message : 'Failed to load learners')
@@ -411,36 +424,32 @@ export default function GenerateRegisterNumberPage() {
 		} finally {
 			setLoadingLearners(false)
 		}
-	}, [isReady, institutionId, programCode, semesterCode, myjkknInstitutionIds, selectedSemester, toast])
+	}, [isReady, institutionId, programCode, semesterCode, myjkknInstitutionIds, selectedSemester, fetchInstitutionLearners, toast])
 
 	useEffect(() => {
 		loadCohort()
 	}, [loadCohort])
 
 	// ─── Preview: sort A–Z, then number program-wise ───
-	const assignedByLearner = useMemo(
-		() => new Map(assigned.map(row => [row.learner_id, row])),
-		[assigned]
-	)
-
 	const previewRows = useMemo<PreviewRow[]>(() => {
 		const sorted = sortAlphabetically(learners)
 		let offset = 0
 		return sorted.map((learner, index) => {
-			const issued = assignedByLearner.get(learner.id)
-			const existing = issued?.register_number || learner.register_number || ''
+			const existing = learner.register_number
+			// A register number equal to the roll number is the placeholder pasted at
+			// exam registration, so that learner still gets a real number.
+			const numbered = hasRealRegisterNumber(learner.register_number, learner.roll_number)
 
 			// Skipped learners consume no slot in the sequence — the same rule the
 			// save endpoint applies, so preview and saved output stay identical.
-			if (skipExisting && existing) {
-				return {
-					...learner,
-					slNo: index + 1,
-					existing,
-					generated: '',
-					status: 'skipped' as RowStatus,
-					assignedId: issued?.id || null,
-				}
+			if (skipExisting && numbered) {
+				return { ...learner, slNo: index + 1, existing, generated: '', status: 'skipped' as RowStatus }
+			}
+
+			// Unticked learners are left out of this run and, like skipped ones,
+			// consume no slot — the server only ever sees the ticked learners.
+			if (!selectedIds.has(learner.id)) {
+				return { ...learner, slNo: index + 1, existing, generated: '', status: 'excluded' as RowStatus }
 			}
 
 			return {
@@ -448,20 +457,22 @@ export default function GenerateRegisterNumberPage() {
 				slNo: index + 1,
 				existing,
 				generated: buildRegisterNumber(prefix, startNumber, offset++),
-				status: (issued ? 'replace' : 'new') as RowStatus,
-				assignedId: issued?.id || null,
+				status: (numbered ? 'replace' : 'new') as RowStatus,
 			}
 		})
-	}, [learners, assignedByLearner, skipExisting, prefix, startNumber])
+	}, [learners, skipExisting, prefix, startNumber, selectedIds])
 
 	// ─── Scorecards (cohort totals, unaffected by the search box) ───
 	const toAssignCount = useMemo(
-		() => previewRows.filter(r => r.status !== 'skipped').length,
+		() => previewRows.filter(r => r.status === 'new' || r.status === 'replace').length,
 		[previewRows]
 	)
-	const alreadyNumberedCount = useMemo(
-		() => previewRows.filter(r => r.existing).length,
-		[previewRows]
+	const isNumbered = (r: PreviewRow) => hasRealRegisterNumber(r.register_number, r.roll_number)
+	const alreadyNumberedCount = useMemo(() => previewRows.filter(isNumbered).length, [previewRows])
+	// Already-numbered learners among the ticked ones — what the confirm dialog warns about.
+	const selectedNumberedCount = useMemo(
+		() => previewRows.filter(r => selectedIds.has(r.id) && isNumbered(r)).length,
+		[previewRows, selectedIds]
 	)
 	const numberRange = useMemo(() => {
 		const issuing = previewRows.filter(r => r.generated)
@@ -486,17 +497,17 @@ export default function GenerateRegisterNumberPage() {
 
 	const pageSizeOptions = useMemo(() => {
 		const base = [10, 25, 50, 100].filter(size => size <= Math.max(filteredRows.length, 10))
-		if (filteredRows.length > 100) base.push(filteredRows.length)
 		// The current size must stay in the list — dropping it when the cohort
 		// shrinks leaves the Select showing nothing.
-		if (!base.includes(itemsPerPage)) base.push(itemsPerPage)
+		if (itemsPerPage !== ALL_ROWS && !base.includes(itemsPerPage)) base.push(itemsPerPage)
 		return base.sort((a, b) => a - b)
 	}, [filteredRows.length, itemsPerPage])
 
-	const totalPages = Math.max(1, Math.ceil(filteredRows.length / itemsPerPage))
+	const pageSize = itemsPerPage === ALL_ROWS ? Math.max(filteredRows.length, 1) : itemsPerPage
+	const totalPages = Math.max(1, Math.ceil(filteredRows.length / pageSize))
 	const pagedRows = useMemo(
-		() => filteredRows.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage),
-		[filteredRows, currentPage, itemsPerPage]
+		() => filteredRows.slice((currentPage - 1) * pageSize, currentPage * pageSize),
+		[filteredRows, currentPage, pageSize]
 	)
 
 	useEffect(() => {
@@ -537,7 +548,7 @@ export default function GenerateRegisterNumberPage() {
 					start_number: startNumber.trim(),
 					skip_existing: skipExisting,
 					generated_by: user?.coe_user_id || undefined,
-					learners: learners.map(l => ({
+					learners: learners.filter(l => selectedIds.has(l.id)).map(l => ({
 						id: l.id,
 						name: l.name,
 						roll_number: l.roll_number,
@@ -561,7 +572,8 @@ export default function GenerateRegisterNumberPage() {
 				title: 'Register numbers assigned',
 				description: json?.message || `Assigned ${json?.count ?? 0} register numbers.`,
 			})
-			await loadCohort()
+			// Re-sweep MyJKKN so the new numbers show as existing.
+			await loadCohort(true)
 		} catch (error) {
 			console.error('[generate-register-number] generate failed:', error)
 			toast({
@@ -584,41 +596,41 @@ export default function GenerateRegisterNumberPage() {
 		startNumber,
 		skipExisting,
 		learners,
+		selectedIds,
 		user,
 		toast,
 		loadCohort,
 	])
 
-	// ─── Release numbers ───
-	const releaseNumbers = useCallback(
-		async (body: Record<string, unknown>, successMessage: string) => {
-			try {
-				const res = await fetch('/api/learners/register-numbers', {
-					method: 'DELETE',
-					headers: { 'Content-Type': 'application/json' },
-					body: JSON.stringify(body),
-				})
-				const json = await parseJsonResponse(res)
-				if (!res.ok) {
-					toast({
-						title: 'Delete failed',
-						description: json?.error || 'Could not release the register numbers.',
-						variant: 'destructive',
-					})
-					return
-				}
-				toast({ title: successMessage, description: `${json?.deleted ?? 0} register numbers released.` })
-				await loadCohort()
-			} catch (error) {
-				toast({
-					title: 'Delete failed',
-					description: error instanceof Error ? error.message : 'Unexpected error',
-					variant: 'destructive',
-				})
-			}
-		},
-		[toast, loadCohort]
+	// ─── Row selection ───
+	// Skipped rows can't be issued a number, so they are never tickable.
+	const selectableFiltered = useMemo(
+		() => filteredRows.filter(r => r.status !== 'skipped'),
+		[filteredRows]
 	)
+	const allFilteredSelected =
+		selectableFiltered.length > 0 && selectableFiltered.every(r => selectedIds.has(r.id))
+	const someFilteredSelected = selectableFiltered.some(r => selectedIds.has(r.id))
+
+	const toggleAllFiltered = (checked: boolean) => {
+		setSelectedIds(prev => {
+			const next = new Set(prev)
+			for (const r of selectableFiltered) {
+				if (checked) next.add(r.id)
+				else next.delete(r.id)
+			}
+			return next
+		})
+	}
+
+	const toggleRow = (id: string, checked: boolean) => {
+		setSelectedIds(prev => {
+			const next = new Set(prev)
+			if (checked) next.add(id)
+			else next.delete(id)
+			return next
+		})
+	}
 
 	// ─── Export ───
 	const handleExport = useCallback(async () => {
@@ -628,10 +640,18 @@ export default function GenerateRegisterNumberPage() {
 			previewRows.map(row => ({
 				'Sl.No': row.slNo,
 				'Learner Name': row.name,
+				'Date of Birth': row.date_of_birth || '',
 				'Roll Number': row.roll_number || '',
 				'Existing Register Number': row.existing || '',
 				'Generated Register Number': row.generated || '',
-				Status: row.status === 'skipped' ? 'Skipped' : row.status === 'replace' ? 'Re-assigned' : 'New',
+				Status:
+					row.status === 'skipped'
+						? 'Skipped'
+						: row.status === 'excluded'
+							? 'Not selected'
+							: row.status === 'replace'
+								? 'Re-assigned'
+								: 'New',
 			}))
 		)
 		const book = XLSX.utils.book_new()
@@ -644,7 +664,7 @@ export default function GenerateRegisterNumberPage() {
 		toast({ title: 'Exported', description: `${previewRows.length} rows written to Excel.` })
 	}, [previewRows, institutionCode, programCode, selectedSemester, toast])
 
-	const columnCount = 7
+	const columnCount = 8
 
 	return (
 		<SidebarProvider>
@@ -759,59 +779,37 @@ export default function GenerateRegisterNumberPage() {
 								{/* Program */}
 								<div className="space-y-2">
 									<Label className="text-sm font-semibold">Program</Label>
-									<Select
+									<SearchableSelect
 										value={programCode}
 										onValueChange={setProgramCode}
-										disabled={!institutionId || loadingPrograms}
-									>
-										<SelectTrigger className="h-9 text-sm">
-											<SelectValue
-												placeholder={
-													!institutionId
-														? 'Select an institution first'
-														: loadingPrograms
-															? 'Loading programs…'
-															: 'Select program'
-												}
-											/>
-										</SelectTrigger>
-										<SelectContent>
-											{programs.map(p => (
-												<SelectItem key={p.program_code} value={p.program_code}>
-													{p.program_code} — {p.program_name}
-												</SelectItem>
-											))}
-										</SelectContent>
-									</Select>
+										options={programOptions}
+										disabled={!institutionId}
+										loading={loadingPrograms}
+										loadingText="Loading programs…"
+										placeholder={!institutionId ? 'Select an institution first' : 'Select program'}
+										searchPlaceholder="Search program code or name…"
+										emptyText="No program found."
+										wrapText={false}
+										className="h-9 text-sm"
+									/>
 								</div>
 
 								{/* Semester */}
 								<div className="space-y-2">
 									<Label className="text-sm font-semibold">Semester</Label>
-									<Select
+									<SearchableSelect
 										value={semesterCode}
 										onValueChange={setSemesterCode}
-										disabled={!programCode || loadingSemesters}
-									>
-										<SelectTrigger className="h-9 text-sm">
-											<SelectValue
-												placeholder={
-													!programCode
-														? 'Select a program first'
-														: loadingSemesters
-															? 'Loading semesters…'
-															: 'Select semester'
-												}
-											/>
-										</SelectTrigger>
-										<SelectContent>
-											{semesters.map(s => (
-												<SelectItem key={s.code} value={s.code}>
-													{s.label}
-												</SelectItem>
-											))}
-										</SelectContent>
-									</Select>
+										options={semesterOptions}
+										disabled={!programCode}
+										loading={loadingSemesters}
+										loadingText="Loading semesters…"
+										placeholder={!programCode ? 'Select a program first' : 'Select semester'}
+										searchPlaceholder="Search semester…"
+										emptyText="No semester found."
+										wrapText={false}
+										className="h-9 text-sm"
+									/>
 								</div>
 
 								{/* Prefix */}
@@ -893,7 +891,7 @@ export default function GenerateRegisterNumberPage() {
 													variant="outline"
 													size="sm"
 													className="h-8 w-8 p-0"
-													onClick={loadCohort}
+													onClick={() => loadCohort(true)}
 													disabled={!cohortSelected || loadingLearners}
 												>
 													<RefreshCw className={`h-4 w-4 ${loadingLearners ? 'animate-spin' : ''}`} />
@@ -912,24 +910,6 @@ export default function GenerateRegisterNumberPage() {
 											<Download className="h-4 w-4 mr-1.5" />
 											Export
 										</Button>
-
-										<DropdownMenu>
-											<DropdownMenuTrigger asChild>
-												<Button variant="outline" size="sm" className="h-8 w-8 p-0">
-													<MoreHorizontal className="h-4 w-4" />
-												</Button>
-											</DropdownMenuTrigger>
-											<DropdownMenuContent align="end" className="w-56">
-												<DropdownMenuItem
-													disabled={assigned.length === 0}
-													onClick={() => setConfirmClearCohort(true)}
-													className="text-red-600 focus:text-red-600 focus:bg-red-50 dark:focus:bg-red-950/20"
-												>
-													<Trash2 className="h-4 w-4 mr-2" />
-													Release all numbers ({assigned.length})
-												</DropdownMenuItem>
-											</DropdownMenuContent>
-										</DropdownMenu>
 
 										<Button
 											size="sm"
@@ -979,13 +959,21 @@ export default function GenerateRegisterNumberPage() {
 										<Table>
 											<TableHeader className="sticky top-0 z-10 bg-muted/50">
 												<TableRow>
+													<TableHead className="w-10">
+														<Checkbox
+															checked={allFilteredSelected ? true : someFilteredSelected ? 'indeterminate' : false}
+															onCheckedChange={checked => toggleAllFiltered(checked === true)}
+															disabled={selectableFiltered.length === 0}
+															aria-label="Select all learners"
+														/>
+													</TableHead>
 													<TableHead className="text-xs font-semibold w-16">Sl.No</TableHead>
 													<TableHead className="text-xs font-semibold">Learner Name</TableHead>
+												<TableHead className="text-xs font-semibold">Date of Birth</TableHead>
 													<TableHead className="text-xs font-semibold">Roll Number</TableHead>
 													<TableHead className="text-xs font-semibold">Existing Reg. No</TableHead>
 													<TableHead className="text-xs font-semibold">Generated Reg. No</TableHead>
 													<TableHead className="text-xs font-semibold">Status</TableHead>
-													<TableHead className="text-xs font-semibold w-12" />
 												</TableRow>
 											</TableHeader>
 											<TableBody>
@@ -1026,9 +1014,21 @@ export default function GenerateRegisterNumberPage() {
 													</TableRow>
 												) : (
 													pagedRows.map(row => (
-														<TableRow key={row.id} className="hover:bg-muted/50">
+														<TableRow
+															key={row.id}
+															className={`hover:bg-muted/50 ${row.status === 'excluded' ? 'opacity-60' : ''}`}
+														>
+															<TableCell>
+																<Checkbox
+																	checked={row.status !== 'skipped' && selectedIds.has(row.id)}
+																	onCheckedChange={checked => toggleRow(row.id, checked === true)}
+																	disabled={row.status === 'skipped'}
+																	aria-label={`Select ${row.name}`}
+																/>
+															</TableCell>
 															<TableCell className="text-sm tabular-nums">{row.slNo}</TableCell>
 															<TableCell className="text-sm font-medium">{row.name || '—'}</TableCell>
+														<TableCell className="text-sm tabular-nums">{row.date_of_birth || '—'}</TableCell>
 															<TableCell className="text-sm">{row.roll_number || '—'}</TableCell>
 															<TableCell className="text-sm">{row.existing || '—'}</TableCell>
 															<TableCell className="text-sm font-semibold tabular-nums">
@@ -1039,36 +1039,16 @@ export default function GenerateRegisterNumberPage() {
 																	<Badge variant="secondary" className="text-xs">
 																		Skipped
 																	</Badge>
+																) : row.status === 'excluded' ? (
+																	<Badge variant="outline" className="text-xs text-muted-foreground">
+																		Not selected
+																	</Badge>
 																) : row.status === 'replace' ? (
 																	<Badge variant="outline" className="text-xs">
 																		Re-assign
 																	</Badge>
 																) : (
 																	<Badge className="text-xs">New</Badge>
-																)}
-															</TableCell>
-															<TableCell>
-																{row.assignedId && (
-																	<DropdownMenu>
-																		<DropdownMenuTrigger asChild>
-																			<Button variant="ghost" size="sm" className="h-7 w-7 p-0">
-																				<MoreHorizontal className="h-4 w-4" />
-																			</Button>
-																		</DropdownMenuTrigger>
-																		<DropdownMenuContent align="end">
-																			<DropdownMenuItem disabled className="text-xs">
-																				Assigned: {row.existing}
-																			</DropdownMenuItem>
-																			<DropdownMenuSeparator />
-																			<DropdownMenuItem
-																				onClick={() => setReleaseTarget(row)}
-																				className="text-red-600 focus:text-red-600 focus:bg-red-50 dark:focus:bg-red-950/20"
-																			>
-																				<Trash2 className="h-4 w-4 mr-2" />
-																				Release number
-																			</DropdownMenuItem>
-																		</DropdownMenuContent>
-																	</DropdownMenu>
 																)}
 															</TableCell>
 														</TableRow>
@@ -1095,6 +1075,7 @@ export default function GenerateRegisterNumberPage() {
 														{size}
 													</SelectItem>
 												))}
+												<SelectItem value={String(ALL_ROWS)}>All</SelectItem>
 											</SelectContent>
 										</Select>
 										<span className="text-xs text-muted-foreground">per page</span>
@@ -1142,10 +1123,10 @@ export default function GenerateRegisterNumberPage() {
 									<span className="font-medium">{selectedSemester?.label}</span> will be numbered{' '}
 									<span className="font-medium">{numberRange}</span>.
 								</p>
-								{!skipExisting && alreadyNumberedCount > 0 && (
+								{!skipExisting && selectedNumberedCount > 0 && (
 									<p className="text-red-600">
-										{alreadyNumberedCount} learner{alreadyNumberedCount === 1 ? '' : 's'} already hold a
-										register number and will be re-assigned, replacing the existing one.
+										{selectedNumberedCount} selected learner{selectedNumberedCount === 1 ? '' : 's'} already
+										hold a register number and will be re-assigned, replacing the existing one.
 									</p>
 								)}
 								{skipExisting && alreadyNumberedCount > 0 && (
@@ -1154,6 +1135,17 @@ export default function GenerateRegisterNumberPage() {
 										register number and will be skipped.
 									</p>
 								)}
+								{learners.length - selectedIds.size > 0 && (
+									<p>
+										{learners.length - selectedIds.size} learner
+										{learners.length - selectedIds.size === 1 ? ' is' : 's are'} not selected and will be left
+										unchanged.
+									</p>
+								)}
+								<p>
+									Exam registrations and any marks or results still carrying the old number (usually the
+									roll number) are updated to the new one.
+								</p>
 							</div>
 						</AlertDialogDescription>
 					</AlertDialogHeader>
@@ -1166,67 +1158,7 @@ export default function GenerateRegisterNumberPage() {
 				</AlertDialogContent>
 			</AlertDialog>
 
-			{/* ===== Confirm release single ===== */}
-			<AlertDialog open={releaseTarget !== null} onOpenChange={open => !open && setReleaseTarget(null)}>
-				<AlertDialogContent>
-					<AlertDialogHeader>
-						<AlertDialogTitle>Release this register number?</AlertDialogTitle>
-						<AlertDialogDescription>
-							{releaseTarget?.existing} will be released from {releaseTarget?.name}. The number becomes
-							available again and the learner can be re-numbered.
-						</AlertDialogDescription>
-					</AlertDialogHeader>
-					<AlertDialogFooter>
-						<AlertDialogCancel>Cancel</AlertDialogCancel>
-						<AlertDialogAction
-							onClick={() => {
-								const target = releaseTarget
-								setReleaseTarget(null)
-								if (target?.assignedId) {
-									releaseNumbers(
-										{ institutions_id: institutionId, ids: [target.assignedId] },
-										'Register number released'
-									)
-								}
-							}}
-						>
-							Release
-						</AlertDialogAction>
-					</AlertDialogFooter>
-				</AlertDialogContent>
-			</AlertDialog>
 
-			{/* ===== Confirm release cohort ===== */}
-			<AlertDialog open={confirmClearCohort} onOpenChange={setConfirmClearCohort}>
-				<AlertDialogContent>
-					<AlertDialogHeader>
-						<AlertDialogTitle>Release all {assigned.length} register numbers?</AlertDialogTitle>
-						<AlertDialogDescription>
-							Every register number issued for {selectedProgram?.program_code} ·{' '}
-							{selectedSemester?.label} will be removed. This cannot be undone, but the cohort can be
-							re-generated afterwards.
-						</AlertDialogDescription>
-					</AlertDialogHeader>
-					<AlertDialogFooter>
-						<AlertDialogCancel>Cancel</AlertDialogCancel>
-						<AlertDialogAction
-							onClick={() => {
-								setConfirmClearCohort(false)
-								releaseNumbers(
-									{
-										institutions_id: institutionId,
-										program_code: programCode,
-										semester_code: semesterCode,
-									},
-									'Cohort cleared'
-								)
-							}}
-						>
-							Release all
-						</AlertDialogAction>
-					</AlertDialogFooter>
-				</AlertDialogContent>
-			</AlertDialog>
 		</SidebarProvider>
 	)
 }

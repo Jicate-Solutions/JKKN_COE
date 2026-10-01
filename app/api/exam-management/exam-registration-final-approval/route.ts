@@ -141,6 +141,7 @@ export async function GET(request: Request) {
 			summary: totalsOf(filtered),
 			migration_ready: migrationReady,
 			charge_columns_ready: cohort.charge_columns_ready,
+			hidden_off_roll: cohort.hidden_off_roll,
 		}
 
 		return NextResponse.json(response)

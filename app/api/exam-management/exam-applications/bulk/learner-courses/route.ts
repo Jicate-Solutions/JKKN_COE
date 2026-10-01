@@ -12,6 +12,7 @@ import {
 	type PaperFeeHead,
 } from '@/lib/exam-fee/calculate'
 import type { BulkLearnerRef } from '@/types/exam-applications'
+import { getOffRollRegisterNumbers, isOffRoll } from '@/lib/myjkkn-off-roll-learners'
 
 /** Guard rail - one page of learners at a time keeps the batched queries bounded */
 const MAX_LEARNERS = 500
@@ -40,6 +41,8 @@ export async function POST(request: Request) {
 			return NextResponse.json({ error: 'examination_session_id is required' }, { status: 400 })
 		}
 
+		// Learners MyJKKN marks inactive / exited are dropped from the selection
+		const offRoll = await getOffRollRegisterNumbers()
 		const learners: BulkLearnerRef[] = (Array.isArray(body.learners) ? body.learners : [])
 			.map((l: any) => ({
 				student_id: l?.student_id || l?.id || null,
@@ -48,7 +51,7 @@ export async function POST(request: Request) {
 				program_code: l?.program_code || null,
 				semester: l?.semester != null ? Number(l.semester) : null,
 			}))
-			.filter((l: BulkLearnerRef) => l.register_number || l.student_id)
+			.filter((l: BulkLearnerRef) => (l.register_number || l.student_id) && !isOffRoll(offRoll, l.register_number))
 
 		if (learners.length === 0) {
 			return NextResponse.json({ error: 'Select at least one learner' }, { status: 400 })
