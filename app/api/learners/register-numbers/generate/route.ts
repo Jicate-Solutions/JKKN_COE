@@ -51,10 +51,6 @@ export async function POST(request: Request) {
 			start_number,
 			learners,
 			preview_only = false,
-			// When true (default) learners who already hold a real register number
-			// keep it and consume no slot. A number equal to the roll number is a
-			// placeholder and does not count.
-			skip_existing = true,
 		} = body as {
 			institutions_id?: string
 			program_code?: string
@@ -63,8 +59,13 @@ export async function POST(request: Request) {
 			start_number?: string
 			learners?: IncomingLearner[]
 			preview_only?: boolean
-			skip_existing?: boolean
 		}
+
+		// Existing numbers are locked: a learner who already holds a real register
+		// number keeps it and consumes no slot, whatever the client sends. A number
+		// equal to the roll number is a placeholder and does not count. Allowing
+		// renumbering needs a deliberate option, not this flag.
+		const skip_existing = true
 
 		// -- Validate --
 		if (!institutions_id) {
@@ -128,7 +129,7 @@ export async function POST(request: Request) {
 		if (targets.length === 0) {
 			return NextResponse.json(
 				{
-					error: 'Every selected learner already has a register number. Turn off "Skip learners who already have one" to re-assign.',
+					error: 'Every selected learner already has a register number. Existing register numbers are locked and cannot be re-assigned here.',
 					skipped,
 				},
 				{ status: 400 }

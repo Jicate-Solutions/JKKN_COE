@@ -53,6 +53,36 @@ export function hasRealRegisterNumber(registerNumber: string | null | undefined,
 	return reg !== roll
 }
 
+/**
+ * Where a cohort's numbering left off, so late joiners continue the sequence.
+ *
+ * Splits each number into prefix + trailing digits ('26JUGCOM040' → '26JUGCOM',
+ * '040'), takes the most common prefix, and returns the number after its
+ * highest serial, padded to the same width. Null when nothing is issued yet.
+ */
+export function nextInSequence(numbers: string[]): { prefix: string; start: string; last: string } | null {
+	const byPrefix = new Map<string, { count: number; max: number; width: number; last: string }>()
+	for (const raw of numbers) {
+		const match = String(raw || '').trim().toUpperCase().match(/^(.*?)(\d+)$/)
+		if (!match || !match[1]) continue
+		const [, prefix, digits] = match
+		const value = parseInt(digits, 10)
+		const entry = byPrefix.get(prefix) || { count: 0, max: -1, width: digits.length, last: '' }
+		entry.count++
+		entry.width = Math.max(entry.width, digits.length)
+		if (value > entry.max) {
+			entry.max = value
+			entry.last = `${prefix}${digits}`
+		}
+		byPrefix.set(prefix, entry)
+	}
+	let best: [string, { count: number; max: number; width: number; last: string }] | null = null
+	for (const item of byPrefix) if (!best || item[1].count > best[1].count) best = item
+	if (!best) return null
+	const [prefix, { max, width, last }] = best
+	return { prefix, start: String(max + 1).padStart(width, '0'), last }
+}
+
 /** Normalised display name for a learner record from MyJKKN. */
 export function learnerDisplayName(learner: {
 	first_name?: string | null

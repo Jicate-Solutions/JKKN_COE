@@ -18,7 +18,6 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Badge } from '@/components/ui/badge'
-import { Switch } from '@/components/ui/switch'
 import { Checkbox } from '@/components/ui/checkbox'
 import {
 	Select,
@@ -66,6 +65,7 @@ import {
 	buildRegisterNumber,
 	hasRealRegisterNumber,
 	learnerDisplayName,
+	nextInSequence,
 	parseStartNumber,
 	sortAlphabetically,
 } from '@/lib/utils/register-number'
@@ -222,7 +222,10 @@ export default function GenerateRegisterNumberPage() {
 	// ── Step 4: Prefix & start number ──
 	const [prefix, setPrefix] = useState('')
 	const [startNumber, setStartNumber] = useState('001')
-	const [skipExisting, setSkipExisting] = useState(true)
+	// Locked: a learner whose register number differs from the roll number keeps
+	// it and is never renumbered here. Renumbering would need an explicit option
+	// sending skip_existing:false — and the server forces true until one exists.
+	const skipExisting = true
 
 	// ── Cohort (MyJKKN learners_profiles holds the register numbers) ──
 	const [learners, setLearners] = useState<CohortLearner[]>([])
@@ -469,11 +472,19 @@ export default function GenerateRegisterNumberPage() {
 	)
 	const isNumbered = (r: PreviewRow) => hasRealRegisterNumber(r.register_number, r.roll_number)
 	const alreadyNumberedCount = useMemo(() => previewRows.filter(isNumbered).length, [previewRows])
-	// Already-numbered learners among the ticked ones — what the confirm dialog warns about.
-	const selectedNumberedCount = useMemo(
-		() => previewRows.filter(r => selectedIds.has(r.id) && isNumbered(r)).length,
-		[previewRows, selectedIds]
+	// Where this cohort's numbering left off. Late joiners continue the sequence.
+	const sequence = useMemo(
+		() => nextInSequence(learners.filter(l => hasRealRegisterNumber(l.register_number, l.roll_number)).map(l => l.register_number)),
+		[learners]
 	)
+
+	// Each time a cohort loads, prefill prefix + start from the numbers already
+	// issued, so adding late joiners can't restart at 001 and clash. Still editable.
+	useEffect(() => {
+		if (!sequence) return
+		setPrefix(sequence.prefix)
+		setStartNumber(sequence.start)
+	}, [sequence])
 	const numberRange = useMemo(() => {
 		const issuing = previewRows.filter(r => r.generated)
 		if (issuing.length === 0) return '—'
@@ -848,23 +859,18 @@ export default function GenerateRegisterNumberPage() {
 									</p>
 								</div>
 
-								{/* Skip toggle */}
+								{/* Existing numbers are locked */}
 								<div className="space-y-2">
 									<Label className="text-sm font-semibold">Existing Register Numbers</Label>
-									<div className="flex items-center gap-3 h-9">
-										<Switch
-											id="skip-existing"
-											checked={skipExisting}
-											onCheckedChange={setSkipExisting}
-										/>
-										<label htmlFor="skip-existing" className="text-sm cursor-pointer">
-											Skip learners who already have one
-										</label>
+									<div className="flex items-center h-9 text-sm">
+										{alreadyNumberedCount > 0
+											? `${alreadyNumberedCount} learner${alreadyNumberedCount === 1 ? '' : 's'} locked`
+											: 'None issued yet'}
 									</div>
 									<p className="text-xs text-muted-foreground">
-										{skipExisting
-											? 'Skipped learners keep their number and consume no slot in the sequence.'
-											: 'Every learner is renumbered — previously issued numbers are replaced.'}
+										{sequence
+											? `Already numbered up to ${sequence.last} — new learners continue from ${sequence.prefix}${sequence.start}.`
+											: 'Learners whose register number differs from their roll number keep it and are skipped.'}
 									</p>
 								</div>
 							</div>
@@ -1123,13 +1129,7 @@ export default function GenerateRegisterNumberPage() {
 									<span className="font-medium">{selectedSemester?.label}</span> will be numbered{' '}
 									<span className="font-medium">{numberRange}</span>.
 								</p>
-								{!skipExisting && selectedNumberedCount > 0 && (
-									<p className="text-red-600">
-										{selectedNumberedCount} selected learner{selectedNumberedCount === 1 ? '' : 's'} already
-										hold a register number and will be re-assigned, replacing the existing one.
-									</p>
-								)}
-								{skipExisting && alreadyNumberedCount > 0 && (
+								{alreadyNumberedCount > 0 && (
 									<p>
 										{alreadyNumberedCount} learner{alreadyNumberedCount === 1 ? '' : 's'} already hold a
 										register number and will be skipped.
