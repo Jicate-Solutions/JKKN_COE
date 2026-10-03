@@ -133,6 +133,23 @@ export function buildLatinSerifFontFaceCss(): string {
 }`
 }
 
+/**
+ * The raw font file of one Tamil face, by its CSS family name — embedded into a
+ * Word export so the paper opens correctly on a PC that does not have Bamini /
+ * Suntommy / Noto Sans Tamil installed. Null when the file is not on disk.
+ */
+export function readTamilFontFile(cssName: string): Buffer | null {
+	const spec = FONT_FILES.find(f => f.cssName.toLowerCase() === cssName.toLowerCase())
+	if (!spec) return null
+	const file = findFontFile(spec.files)
+	if (!file) return null
+	try {
+		return fs.readFileSync(file)
+	} catch {
+		return null
+	}
+}
+
 /** Which Tamil faces are available for logging / UI hints. */
 export function listAvailableTamilFonts(): string[] {
 	return FONT_FILES.filter((f) => !!findFontFile(f.files)).map((f) => f.cssName)

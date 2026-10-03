@@ -309,6 +309,7 @@ export default function QuestionPapersPage() {
 	const [selected, setSelected] = useState<Set<string>>(new Set())
 	const [downloadingZip, setDownloadingZip] = useState(false)
 	const [downloadingZip2up, setDownloadingZip2up] = useState(false)
+	const [downloadingZipWord, setDownloadingZipWord] = useState(false)
 
 	// Authoring
 	const [sheetOpen, setSheetOpen] = useState(false)
@@ -917,7 +918,9 @@ Clear them anyway?`)) {
 	const toggleSelectAll = () =>
 		setSelected(allSelected ? new Set() : new Set(selectablePapers.map(p => p.id)))
 
-	const downloadSelectedZip = async (layout: 'single' | '2up' = 'single') => {
+	// 'single' / '2up' are the two PDF layouts; 'docx' is the same paper as an
+	// editable Word document (always one paper per file — Word has no 2-up).
+	const downloadSelectedZip = async (layout: 'single' | '2up' | 'docx' = 'single') => {
 		// Board-wise: if nothing selected but filters are ready, download all authored papers listed
 		let chosen = papers.filter(p => selected.has(p.id))
 		if (chosen.length === 0 && filterMode === 'board') {
@@ -942,20 +945,23 @@ Clear them anyway?`)) {
 			toast({ title: 'Select at least one paper', variant: 'destructive' })
 			return
 		}
-		const setLoading = layout === '2up' ? setDownloadingZip2up : setDownloadingZip
+		const setLoading = layout === 'docx' ? setDownloadingZipWord : layout === '2up' ? setDownloadingZip2up : setDownloadingZip
+		const query = layout === 'docx' ? '?format=docx' : layout === '2up' ? '?layout=2up' : ''
 		try {
 			setLoading(true)
 			const JSZip = (await import('jszip')).default
 			const zip = new JSZip()
 			let ok = 0
 			for (const [i, p] of chosen.entries()) {
-				const apiUrl = `/api/pre-exam/question-papers/${p.id}/pdf${layout === '2up' ? '?layout=2up' : ''}`
+				const apiUrl = `/api/pre-exam/question-papers/${p.id}/pdf${query}`
 				const res = await fetch(apiUrl)
 				if (!res.ok) continue
 				const blob = await res.blob()
 				// Same name as a single download, with an index prefix so the ZIP keeps
 				// the on-screen order and two papers can never collide inside it.
-				const name = `${String(i + 1).padStart(3, '0')}_${paperPdfFilename(p, { variant: layout })}`
+				const name = `${String(i + 1).padStart(3, '0')}_${
+					layout === 'docx' ? paperPdfFilename(p, { ext: 'docx' }) : paperPdfFilename(p, { variant: layout })
+				}`
 				zip.file(name, blob)
 				ok++
 			}
@@ -965,12 +971,12 @@ Clear them anyway?`)) {
 			a.href = objectUrl
 			const boardSuffix =
 				filterMode === 'board' && selectedBoard ? `_${selectedBoard}` : ''
-			a.download = `question-papers-CIA${ciaRound}${boardSuffix}${layout === '2up' ? '-2up' : ''}.zip`
+			a.download = `question-papers-CIA${ciaRound}${boardSuffix}${layout === '2up' ? '-2up' : layout === 'docx' ? '-word' : ''}.zip`
 			document.body.appendChild(a)
 			a.click()
 			a.remove()
 			URL.revokeObjectURL(objectUrl)
-			toast({ title: `Downloaded ${ok} paper(s)${layout === '2up' ? ' (2-up print layout)' : ''}` })
+			toast({ title: `Downloaded ${ok} paper(s)${layout === '2up' ? ' (2-up print layout)' : layout === 'docx' ? ' (Word)' : ''}` })
 		} catch (e: any) {
 			toast({ title: 'Download failed', description: e.message, variant: 'destructive' })
 		} finally {
@@ -1116,6 +1122,35 @@ Clear them anyway?`)) {
 			URL.revokeObjectURL(objectUrl)
 		} catch (e: any) {
 			toast({ title: 'PDF download failed', description: e.message, variant: 'destructive' })
+		}
+	}
+
+	/** The same paper as an editable Word document (.docx) — same fonts, sizes and alignment. */
+	const downloadWord = async (p: {
+		id: string
+		course_code?: string
+		subject_title?: string
+		cia_round?: number
+		cia_round_name?: string
+		set_label?: string
+	}) => {
+		try {
+			const res = await fetch(`/api/pre-exam/question-papers/${p.id}/pdf?format=docx`)
+			if (!res.ok) {
+				let msg = `Word export failed (${res.status})`
+				try { const d = await res.json(); if (d?.error) msg = d.error } catch { /* not json */ }
+				throw new Error(msg)
+			}
+			const objectUrl = URL.createObjectURL(await res.blob())
+			const a = document.createElement('a')
+			a.href = objectUrl
+			a.download = paperPdfFilename(p, { ext: 'docx' })
+			document.body.appendChild(a)
+			a.click()
+			a.remove()
+			URL.revokeObjectURL(objectUrl)
+		} catch (e: any) {
+			toast({ title: 'Word download failed', description: e.message, variant: 'destructive' })
 		}
 	}
 
@@ -1558,6 +1593,29 @@ Clear them anyway?`)) {
 									: selected.size}
 								)
 							</Button>
+							<Button
+								variant="outline"
+								size="sm"
+								onClick={() => downloadSelectedZip('docx')}
+								disabled={
+									downloadingZipWord ||
+									(filterMode === 'board'
+										? !boardFiltersReady || selectablePapers.length === 0
+										: selected.size === 0)
+								}
+								title="Download the papers as editable Word documents (.docx) — ZIP"
+							>
+								{downloadingZipWord ? (
+									<Loader2 className="mr-2 h-4 w-4 animate-spin" />
+								) : (
+									<FileText className="mr-2 h-4 w-4" />
+								)}
+								Word ZIP (
+								{filterMode === 'board' && selected.size === 0
+									? selectablePapers.length
+									: selected.size}
+								)
+							</Button>
 								{filterMode === 'program' && (
 								<Button
 									variant="outline"
@@ -1646,6 +1704,9 @@ Clear them anyway?`)) {
 															</DropdownMenuItem>
 															<DropdownMenuItem onClick={() => downloadPdf(p, '2up')} disabled={!p.authored}>
 																<FileDown className="mr-2 h-4 w-4" /> Export PDF (2-up)
+															</DropdownMenuItem>
+															<DropdownMenuItem onClick={() => downloadWord(p)} disabled={!p.authored}>
+																<FileText className="mr-2 h-4 w-4" /> Export Word
 															</DropdownMenuItem>
 															<DropdownMenuSeparator />
 															{p.status === 'submitted' && (
@@ -2208,6 +2269,9 @@ Clear them anyway?`)) {
 							</Button>
 							<Button variant="outline" onClick={() => downloadPdf(paper, '2up')} title="A4 landscape — two identical copies side by side (cut down the middle for printing)">
 								<FileDown className="mr-2 h-4 w-4" /> PDF (2-up)
+							</Button>
+							<Button variant="outline" onClick={() => downloadWord(paper)} title="The same paper as an editable Word document (.docx)">
+								<FileText className="mr-2 h-4 w-4" /> Word
 							</Button>
 								{(paper.status === 'draft' || canEditAnyStatus) && !hasAuthored && (
 									<Button variant="outline" onClick={() => rebuildPaper()} disabled={savingPaper} title="Rebuild empty slots from the current template">

@@ -1,6 +1,6 @@
 // Printable A4 PDF of one End-Semester paper's ANSWER KEY / scheme of valuation.
 //
-// GET /api/pre-exam/ese-question-papers/:id/answer-key-pdf
+// GET /api/pre-exam/ese-question-papers/:id/answer-key-pdf[?format=docx]
 //
 // The key is written by the examiner under each question (questions[].answer_key)
 // and is never printed on the question paper itself — this is the document the
@@ -10,6 +10,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
 import { buildAnswerKeyPdfHtml } from '@/lib/ia/build-paper-pdf-html'
+import { buildAnswerKeyDocx, DOCX_MIME } from '@/lib/ia/build-paper-docx'
 import { contentDisposition } from '@/lib/ia/paper-filename'
 
 export const dynamic = 'force-dynamic'
@@ -17,10 +18,11 @@ export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
 export const maxDuration = 60
 
-export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
 	const { id } = await params
 	try {
 		const supabase = getSupabaseServer()
+		const url = new URL(req.url)
 
 		// Distinguish "paper missing" from "renderer failed" so the client shows a
 		// real reason rather than a blank 500.
@@ -38,6 +40,22 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
 				{ error: `Paper not found (id ${id}). The list may be stale — refresh.` },
 				{ status: 404 }
 			)
+		}
+
+		// ?format=docx — the same paper as an editable Word document (no Chromium).
+		if (url.searchParams.get('format') === 'docx') {
+			const doc = await buildAnswerKeyDocx(supabase, id, 'ese')
+			if (!doc) {
+				return NextResponse.json({ error: 'Word document could not be built' }, { status: 500 })
+			}
+			return new NextResponse(doc.buffer, {
+				status: 200,
+				headers: {
+					'Content-Type': DOCX_MIME,
+					'Content-Disposition': contentDisposition(doc.filename),
+					'Cache-Control': 'no-store, max-age=0',
+				},
+			})
 		}
 
 		const result = await buildAnswerKeyPdfHtml(supabase, id, 'ese')

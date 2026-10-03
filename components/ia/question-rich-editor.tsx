@@ -145,6 +145,24 @@ function QuestionRichEditorImpl({ value, onChange, onBlur, disabled, placeholder
 		setEqOpen(true)
 	}, [editor])
 
+	/**
+	 * Double-click a formula to edit it — the Word gesture. The formula is
+	 * selected first, so the dialog's result replaces THAT formula.
+	 */
+	const onFormulaDoubleClick = (e: React.MouseEvent<HTMLDivElement>) => {
+		if (!editor || disabled) return
+		const el = (e.target as HTMLElement | null)?.closest?.('.qp-math') as HTMLElement | null
+		if (!el) return
+		e.preventDefault()
+		try {
+			editor.commands.setNodeSelection(editor.view.posAtDOM(el, 0))
+		} catch {
+			/* fall back to whatever the click itself selected */
+		}
+		setEqInitial(el.getAttribute('data-latex') || '')
+		setEqOpen(true)
+	}
+
 	const onEquationInsert = (latex: string) => {
 		if (!editor) return
 		if (editor.isActive('mathInline')) editor.chain().focus().updateMath(latex).run()
@@ -224,7 +242,7 @@ function QuestionRichEditorImpl({ value, onChange, onBlur, disabled, placeholder
 						: undefined
 				}
 			>
-				<EditorContent editor={editor} className="qp-rich-editor" />
+				<EditorContent editor={editor} className="qp-rich-editor" onDoubleClick={onFormulaDoubleClick} />
 			</div>
 
 			<EquationEditorDialog

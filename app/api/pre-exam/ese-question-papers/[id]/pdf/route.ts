@@ -1,6 +1,6 @@
 // Printable A4 PDF for one End-Semester question paper.
 //
-// GET /api/pre-exam/ese-question-papers/:id/pdf[?layout=2up]
+// GET /api/pre-exam/ese-question-papers/:id/pdf[?layout=2up][?format=docx]
 //
 // Same renderer as the CIA papers — it is told which table to read from, and an
 // ESE paper prints the examination's own heading rather than a CIA round.
@@ -8,6 +8,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
 import { buildPaperPdfHtml } from '@/lib/ia/build-paper-pdf-html'
+import { buildPaperDocx, DOCX_MIME } from '@/lib/ia/build-paper-docx'
 import { contentDisposition } from '@/lib/ia/paper-filename'
 
 export const dynamic = 'force-dynamic'
@@ -38,6 +39,22 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 				{ error: `Paper not found (id ${id}). The list may be stale — refresh.` },
 				{ status: 404 }
 			)
+		}
+
+		// ?format=docx — the same paper as an editable Word document (no Chromium).
+		if (url.searchParams.get('format') === 'docx') {
+			const doc = await buildPaperDocx(supabase, id, 'ese')
+			if (!doc) {
+				return NextResponse.json({ error: 'Word document could not be built' }, { status: 500 })
+			}
+			return new NextResponse(doc.buffer, {
+				status: 200,
+				headers: {
+					'Content-Type': DOCX_MIME,
+					'Content-Disposition': contentDisposition(doc.filename),
+					'Cache-Control': 'no-store, max-age=0',
+				},
+			})
 		}
 
 		const result = await buildPaperPdfHtml(supabase, id, url.origin, variant, 'ese')

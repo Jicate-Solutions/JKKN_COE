@@ -356,6 +356,14 @@ export function AssignmentsTab({ institutionsId, session, refreshKey, onChanged 
 	const openAnswerKeyPdf = (paperId: string) => {
 		window.open(`/api/pre-exam/ese-question-papers/${paperId}/answer-key-pdf`, '_blank', 'noopener')
 	}
+	// The same two documents as editable Word files (.docx): same routes, asked
+	// for with ?format=docx. The browser saves them rather than opening a tab.
+	const downloadPaperWord = (paperId: string) => {
+		window.open(`/api/pre-exam/ese-question-papers/${paperId}/pdf?format=docx`, '_blank', 'noopener')
+	}
+	const downloadAnswerKeyWord = (paperId: string) => {
+		window.open(`/api/pre-exam/ese-question-papers/${paperId}/answer-key-pdf?format=docx`, '_blank', 'noopener')
+	}
 	// The answer key PDF is offered once the appointment covers the key, or once
 	// a key exists on the paper regardless (the type may have changed since).
 	const hasAnswerKeyPdf = (r: { assignment_type?: string | null; answer_keyed?: boolean; authored?: boolean }) =>
@@ -537,16 +545,28 @@ export function AssignmentsTab({ institutionsId, session, refreshKey, onChanged 
 															{r.order_email_sent_at ? 'Re-send order e-mail' : 'E-mail the order'}
 														</DropdownMenuItem>
 														{r.authored && (
-															<DropdownMenuItem onClick={() => openPaperPdf(r.paper_id)}>
-																<ExternalLink className="h-4 w-4 mr-2" />
-																Question paper PDF
-															</DropdownMenuItem>
+															<>
+																<DropdownMenuItem onClick={() => openPaperPdf(r.paper_id)}>
+																	<ExternalLink className="h-4 w-4 mr-2" />
+																	Question paper PDF
+																</DropdownMenuItem>
+																<DropdownMenuItem onClick={() => downloadPaperWord(r.paper_id)}>
+																	<Download className="h-4 w-4 mr-2" />
+																	Question paper Word
+																</DropdownMenuItem>
+															</>
 														)}
 														{hasAnswerKeyPdf(r) && (
-															<DropdownMenuItem onClick={() => openAnswerKeyPdf(r.paper_id)}>
-																<KeyRound className="h-4 w-4 mr-2" />
-																Answer key PDF
-															</DropdownMenuItem>
+															<>
+																<DropdownMenuItem onClick={() => openAnswerKeyPdf(r.paper_id)}>
+																	<KeyRound className="h-4 w-4 mr-2" />
+																	Answer key PDF
+																</DropdownMenuItem>
+																<DropdownMenuItem onClick={() => downloadAnswerKeyWord(r.paper_id)}>
+																	<KeyRound className="h-4 w-4 mr-2" />
+																	Answer key Word
+																</DropdownMenuItem>
+															</>
 														)}
 														<DropdownMenuSeparator />
 														{r.status === 'submitted' && (
@@ -835,15 +855,35 @@ export function AssignmentsTab({ institutionsId, session, refreshKey, onChanged 
 											<ExternalLink className="h-4 w-4 mr-1.5" />
 											Open PDF
 										</Button>
+										<Button
+											variant="outline"
+											size="sm"
+											onClick={() => downloadPaperWord(detail.paper_id)}
+											title="The same paper as an editable Word document (.docx)"
+										>
+											<Download className="h-4 w-4 mr-1.5" />
+											Word
+										</Button>
 										{hasAnswerKeyPdf({
 											assignment_type: detail.assignment_type,
 											authored: (detail.questions || []).some((q: any) => plainText(q.question_text)),
 											answer_keyed: (detail.questions || []).some(hasAnswerKey),
 										}) && (
-											<Button variant="outline" size="sm" onClick={() => openAnswerKeyPdf(detail.paper_id)}>
-												<KeyRound className="h-4 w-4 mr-1.5" />
-												Answer key PDF
-											</Button>
+											<>
+												<Button variant="outline" size="sm" onClick={() => openAnswerKeyPdf(detail.paper_id)}>
+													<KeyRound className="h-4 w-4 mr-1.5" />
+													Answer key PDF
+												</Button>
+												<Button
+													variant="outline"
+													size="sm"
+													onClick={() => downloadAnswerKeyWord(detail.paper_id)}
+													title="The answer key as an editable Word document (.docx)"
+												>
+													<KeyRound className="h-4 w-4 mr-1.5" />
+													Answer key Word
+												</Button>
+											</>
 										)}
 									</div>
 								</div>

@@ -1,6 +1,34 @@
 import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
 import { fetchAllMyJKKNPrograms } from '@/lib/myjkkn-api'
+import { getOffRollRegisterNumbers, isOffRoll } from '@/lib/myjkkn-off-roll-learners'
+
+const ID_CHUNK = 200   // keeps .in() lists inside the GET URL limit
+
+/**
+ * Of the given exam_registration ids, the ones whose learner MyJKKN marks
+ * inactive / exited. This page works with learners on the rolls only, so these
+ * are left out of every list and count and cannot be allotted.
+ */
+async function findOffRollRegistrationIds(supabase: any, registrationIds: string[]): Promise<Set<string>> {
+	const result = new Set<string>()
+	const ids = [...new Set(registrationIds.filter(Boolean))]
+	if (ids.length === 0) return result
+
+	const offRoll = await getOffRollRegisterNumbers()
+	if (offRoll.size === 0) return result
+
+	for (let i = 0; i < ids.length; i += ID_CHUNK) {
+		const { data } = await supabase
+			.from('exam_registrations')
+			.select('id, stu_register_no')
+			.in('id', ids.slice(i, i + ID_CHUNK))
+		for (const r of data || []) {
+			if (isOffRoll(offRoll, r.stu_register_no)) result.add(r.id)
+		}
+	}
+	return result
+}
 
 // ---------------------------------------------------------------------------
 // GET — Fetch data for batch allotment page
@@ -147,11 +175,18 @@ export async function GET(request: Request) {
 				const timetableIds = sorted.map((r: any) => r.id)
 				const { data: assignments } = await supabase
 					.from('practical_batch_students')
-					.select('exam_timetable_id')
+					.select('exam_timetable_id, exam_registration_id')
 					.in('exam_timetable_id', timetableIds)
+
+				// Learners who left after being allotted do not count towards a batch
+				const offRollRegIds = await findOffRollRegistrationIds(
+					supabase,
+					(assignments || []).map((a: any) => a.exam_registration_id)
+				)
 
 				const countMap = new Map<string, number>()
 				for (const a of assignments || []) {
+					if (offRollRegIds.has(a.exam_registration_id)) continue
 					countMap.set(a.exam_timetable_id, (countMap.get(a.exam_timetable_id) || 0) + 1)
 				}
 
@@ -191,7 +226,7 @@ export async function GET(request: Request) {
 				// Get ALL registrations for this course.
 				// fee_paid is not filtered on - the flag is unreliable here, and gating on
 				// it left registered learners unallotted.
-				const { data: allRegistrations, error: regError } = await supabase
+				const { data: fetchedRegistrations, error: regError } = await supabase
 					.from('exam_registrations')
 					.select('id, stu_register_no, student_name, is_regular, program_code')
 					.eq('institutions_id', institutionId)
@@ -203,6 +238,14 @@ export async function GET(request: Request) {
 					console.error('Error fetching registrations:', regError)
 					return NextResponse.json({ error: 'Failed to fetch registrations' }, { status: 400 })
 				}
+
+				// Only learners still on the rolls: one MyJKKN marks inactive / exited
+				// keeps their registration row but must not be allotted to a batch.
+				const offRoll = await getOffRollRegisterNumbers()
+				const allRegistrations = offRoll.size === 0
+					? fetchedRegistrations
+					: (fetchedRegistrations || []).filter((r: any) => !isOffRoll(offRoll, r.stu_register_no))
+
 				if (!allRegistrations || allRegistrations.length === 0) {
 					return NextResponse.json({
 						students: [],
@@ -290,7 +333,9 @@ export async function GET(request: Request) {
 				return NextResponse.json({
 					students,
 					total_registered: allRegistrations.length,
-					total_assigned: assignedRegIds.size,
+					// counted from the on-roll registrations, so a learner who left after
+					// being allotted is not included
+					total_assigned: allRegistrations.filter((r: any) => assignedRegIds.has(r.id)).length,
 					total_unassigned: students.length,
 				})
 			}
@@ -320,7 +365,7 @@ export async function GET(request: Request) {
 				// Get institutions_id from first assignment for MyJKKN lookup
 				const baInstitutionId = (assignments as any)?.[0]?.institutions_id
 
-				const { data: students, error: studentsError } = await supabase
+				const { data: assignedStudents, error: studentsError } = await supabase
 					.from('exam_registrations')
 					.select('id, stu_register_no, student_name, is_regular, program_code')
 					.in('id', regIds)
@@ -329,6 +374,12 @@ export async function GET(request: Request) {
 					console.error('Error fetching assigned students:', studentsError)
 					return NextResponse.json({ error: 'Failed to fetch students' }, { status: 400 })
 				}
+
+				// Only learners still on the rolls
+				const baOffRoll = await getOffRollRegisterNumbers()
+				const students = baOffRoll.size === 0
+					? assignedStudents
+					: (assignedStudents || []).filter((r: any) => !isOffRoll(baOffRoll, r.stu_register_no))
 
 				// Get program names from MyJKKN
 				const baProgramCodes = [...new Set((students || []).map((r: any) => r.program_code).filter(Boolean))]
@@ -425,10 +476,23 @@ export async function POST(request: Request) {
 
 		const { data: existingAssignments } = await supabase
 			.from('practical_batch_students')
-			.select('id')
+			.select('id, exam_registration_id')
 			.eq('exam_timetable_id', timetable_id)
 
-		const currentCount = existingAssignments?.length || 0
+		// Only learners still on the rolls can be allotted, and only they count
+		// towards the capacity (matching the count the page shows).
+		const offRollRegIds = await findOffRollRegistrationIds(supabase, [
+			...exam_registration_ids,
+			...(existingAssignments || []).map((a: any) => a.exam_registration_id),
+		])
+		if (exam_registration_ids.some((id: string) => offRollRegIds.has(id))) {
+			return NextResponse.json({
+				error: 'Some selected learners are no longer active. Refresh the list and try again.',
+			}, { status: 400 })
+		}
+
+		const currentCount = (existingAssignments || [])
+			.filter((a: any) => !offRollRegIds.has(a.exam_registration_id)).length
 		const totalAfterAssign = currentCount + exam_registration_ids.length
 
 		if (totalAfterAssign > capacity) {

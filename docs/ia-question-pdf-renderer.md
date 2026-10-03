@@ -141,7 +141,32 @@ untouched (verified: all 98 cmap mappings identical before/after).
 
 ---
 
-## 8. Related docs
+## 8. Word (.docx) export
+
+Same routes, `?format=docx`: `…/question-papers/:id/pdf`, `…/ese-question-papers/:id/pdf`,
+`…/ese-question-papers/:id/answer-key-pdf`. Built by `lib/ia/build-paper-docx.ts` with the `docx`
+library — no Chromium. It reuses `loadPaperContext` and `prepareQuestionHtml`, so it prints the
+same content, and mirrors this stylesheet value for value (A4, 8mm margins, Times 11pt, one
+fixed-layout table 15mm | question | 12mm | 20mm, 4px padding, justified question text).
+
+| Piece | How |
+|---|---|
+| Formulae | LaTeX → KaTeX MathML → `mathml2omml` → native Word equations, tidied and repaired in `lib/ia/latex-omml.ts` (stretchy fences, operands of ∫/∑, text spaces, `<` escaping) |
+| Question HTML | `lib/ia/mini-markup.ts` parses the sanitized HTML; walked into paragraphs, runs and nested tables |
+| Author tables | Column widths are ESTIMATED from the text — a nested table without widths collapses to one letter per line in Word |
+| Tamil | Each Tamil stretch is its own run naming the face on every font slot, and the face (Noto / Bamini / Suntommy) is embedded in the file. Word ignores the complex-script slot otherwise and prints boxes |
+| Lone equations | A zero-width space keeps an equation that is alone on its line inline; Word would centre it as a display equation |
+| Figures | Embedded from the bytes `loadPaperContext` pre-fetched; WebP is re-encoded to PNG via `sharp` |
+
+Differences by nature: Word paginates for itself (no two-sheet squeeze, no 2-up layout).
+
+**Verify in Word, not by eye on the XML.** Word is installed on the dev box: open the file through
+COM (`Documents.Open` → `ExportAsFixedFormat`) and read the PDF. Every defect above was invisible in
+the XML and obvious in Word.
+
+---
+
+## 9. Related docs
 
 - MyJKKN editor: `MyJKKN/docs/ia-question-math-table-editor.md`
 - COE editor port spec: `docs/ia-question-math-table-editor-spec.md`

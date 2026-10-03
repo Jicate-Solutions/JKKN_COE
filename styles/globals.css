@@ -590,5 +590,6 @@ div[class*="bug-reporter"] button:last-child {
 .qp-rich-editor .ProseMirror th { font-weight: 600; background: hsl(var(--muted) / 0.4); }
 .qp-rich-editor .ProseMirror .selectedCell { background: hsl(var(--primary) / 0.12); }
 /* Inline math atom */
-.qp-rich-editor .qp-math { white-space: nowrap; padding: 0 1px; cursor: pointer; }
+.qp-rich-editor .qp-math { white-space: nowrap; padding: 0 1px; cursor: pointer; border-radius: 3px; transition: background-color 0.12s; }
+.qp-rich-editor [contenteditable='true'] .qp-math:hover { background: hsl(var(--primary) / 0.1); }
 .qp-rich-editor .qp-math.ProseMirror-selectednode { outline: 2px solid hsl(var(--primary)); border-radius: 2px; }

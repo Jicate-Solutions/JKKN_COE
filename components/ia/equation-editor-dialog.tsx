@@ -2,21 +2,29 @@
 
 // Word-style equation editor.
 //
-// Laid out like Microsoft Word's Equation Tools ribbon, because that is the
-// editor every examiner already knows:
+// Laid out like Microsoft Word's Equation Tools, because that is the editor
+// every examiner already knows:
 //
-//   ┌ Symbols ─────────────────────────┐ ┌ Structures ───────────────────────┐
-//   │ [set ▾]  ± ∞ = ≠ ~ × ÷ ! ∝ < ≪ … │ │ Fraction Script Radical Integral … │
-//   │          ≤ ≥ ∓ ≅ ≈ ≡ ∀ ∁ ∂ √ …   │ │   each opens a gallery of shapes   │
-//   └──────────────────────────────────┘ └────────────────────────────────────┘
+//   ┌ Symbols ───────────────────────────────────────────────── [set ▾] ───────┐
+//   │ ± ∞ = ≠ ~ × ÷ ! ∝ < ≪ > ≫ ≤ ≥ ∓ ≅ ≈ ≡ ∀ ∁ ∂ √ …   (two rows, scrolls)   │
+//   └──────────────────────────────────────────────────────────────────────────┘
+//   ┌ Structures ──────────────────────────────────────────────────────────────┐
+//   │ Fraction  Script  Radical  Integral  …   each opens a gallery of shapes  │
+//   └──────────────────────────────────────────────────────────────────────────┘
 //   ┌ Type equation here ──────────────────────────────────────────────────────┐
-//   │                              (live preview)                              │
+//   │        the equation itself — click a box and type, edit in place         │
 //   └──────────────────────────────────────────────────────────────────────────┘
 //
-// A structure drops in with EMPTY BOXES (□) where the values go, exactly as
-// Word does; the first box is selected so typing fills it, and Tab moves to
-// the next. What is stored is plain LaTeX (the same contract as before), so the
-// on-screen render and the printed paper are unchanged.
+// The equation is edited VISUALLY (components/ia/math-field): a structure drops
+// in with empty boxes, the examiner clicks a box — or presses Tab — and types
+// into it, and any part of a finished formula can be clicked and changed. The
+// LaTeX behind it is kept out of the way, under "LaTeX source", for the few who
+// want to type or paste it.
+//
+// What is stored is plain LaTeX (the same contract as before), so the on-screen
+// render and the printed paper are unchanged. Every formula is also run through
+// KaTeX — the engine that prints the paper — and a warning shows if it would
+// not print.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import katex from 'katex'
@@ -24,14 +32,16 @@ import 'katex/dist/katex.min.css'
 import {
 	Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog'
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import * as PopoverPrimitive from '@radix-ui/react-popover'
+import { Popover, PopoverTrigger } from '@/components/ui/popover'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
-import { ChevronDown, ChevronLeft, ChevronRight, Eraser } from 'lucide-react'
+import { AlertTriangle, ChevronDown, ChevronLeft, ChevronRight, Code2, Eraser } from 'lucide-react'
 import { stripLatexDelimiters } from '@/lib/ia/latex-paste'
 import { cn } from '@/lib/utils'
-import { PLACEHOLDER, STRUCTURES, SYMBOL_SETS, type MathToken } from '@/lib/ia/math-catalog'
+import { STRUCTURES, SYMBOL_SETS, type MathToken } from '@/lib/ia/math-catalog'
+import { MathField, type MathFieldHandle } from './math-field'
 
 interface Props {
 	open: boolean
@@ -52,6 +62,17 @@ function render(latex: string, display: boolean): string {
 	}
 }
 
+/** Would the paper's own renderer accept this? Null when it would; the reason when not. */
+function printProblem(latex: string): string | null {
+	if (!latex.trim()) return null
+	try {
+		katex.renderToString(latex, { throwOnError: true, displayMode: true })
+		return null
+	} catch (e: any) {
+		return String(e?.message || 'This formula cannot be printed').replace(/^KaTeX parse error:\s*/, '')
+	}
+}
+
 /** One palette button: a symbol (small) or a structure tile (large). */
 function MathButton({
 	token,
@@ -67,119 +88,88 @@ function MathButton({
 		<button
 			type="button"
 			title={token.title || token.latex}
+			// Keep the caret where it is in the equation while the palette is clicked.
 			onMouseDown={e => e.preventDefault()}
 			onClick={() => onPick(token.latex)}
 			className={cn(
 				'flex items-center justify-center rounded border bg-white transition-colors hover:border-blue-400 hover:bg-blue-50',
-				size === 'symbol' ? 'h-8 min-w-8 px-1 text-sm' : 'h-16 px-2 text-base [&_.katex-display]:my-0 overflow-hidden'
+				size === 'symbol' ? 'h-9 min-w-9 px-1 text-[15px]' : 'h-[68px] overflow-hidden px-2 text-base [&_.katex-display]:my-0'
 			)}
 			dangerouslySetInnerHTML={{ __html: html }}
 		/>
 	)
 }
 
-/** How many empty boxes the equation still has. */
-function countPlaceholders(latex: string): number {
-	return (latex.match(PH_RE) || []).length
-}
-
 export function EquationEditorDialog({ open, onOpenChange, initialLatex, onInsert }: Props) {
 	const [latex, setLatex] = useState('')
 	const [symbolSet, setSymbolSet] = useState(SYMBOL_SETS[0].name)
 	const [openGroup, setOpenGroup] = useState<string | null>(null)
-	const taRef = useRef<HTMLTextAreaElement | null>(null)
+	const [showSource, setShowSource] = useState(false)
+	const fieldRef = useRef<MathFieldHandle | null>(null)
+	// The galleries are rendered INSIDE this element, not in <body>. A dialog
+	// locks scrolling for everything outside itself, so a gallery portalled to
+	// <body> could not be scrolled with the mouse wheel.
+	const [dialogEl, setDialogEl] = useState<HTMLDivElement | null>(null)
 
 	useEffect(() => {
 		if (open) {
 			setLatex(initialLatex || '')
 			setOpenGroup(null)
+			setShowSource(false)
 		}
 	}, [open, initialLatex])
 
-	/** Select [start, end) in the source box once React has painted the new value. */
-	const selectLater = useCallback((start: number, end: number) => {
-		requestAnimationFrame(() => {
-			const ta = taRef.current
-			if (!ta) return
-			ta.focus()
-			ta.setSelectionRange(start, end)
-		})
+	/** Palette → the equation, at the caret. A structure lands with its first box selected. */
+	const insertToken = useCallback((token: string) => {
+		fieldRef.current?.insert(token)
+		setOpenGroup(null)
 	}, [])
 
-	/** Move to the next / previous empty box, wrapping round. Returns false when there is none. */
-	const jumpPlaceholder = useCallback(
-		(dir: 1 | -1): boolean => {
-			const ta = taRef.current
-			const text = ta?.value ?? latex
-			const boxes: number[] = []
-			for (const m of text.matchAll(PH_RE)) boxes.push(m.index ?? 0)
-			if (boxes.length === 0) return false
-			const from = dir === 1 ? (ta?.selectionEnd ?? text.length) : (ta?.selectionStart ?? 0)
-			let target: number | undefined
-			if (dir === 1) target = boxes.find(i => i >= from) ?? boxes[0]
-			else {
-				const before = boxes.filter(i => i < from)
-				target = before.length ? before[before.length - 1] : boxes[boxes.length - 1]
-			}
-			selectLater(target, target + PLACEHOLDER.length)
-			return true
-		},
-		[latex, selectLater]
-	)
+	const empties = useMemo(() => (latex.match(PH_RE) || []).length, [latex])
+	const problem = useMemo(() => printProblem(latex), [latex])
 
-	/**
-	 * Insert at the caret (replacing any selection). A structure lands with its
-	 * first box selected, so the next keystroke fills it — the Word behaviour.
-	 */
-	const insertToken = useCallback(
-		(token: string) => {
-			const ta = taRef.current
-			// Before the source box has been focused there is no caret worth
-			// honouring — append, so editing an old formula does not prepend.
-			const focused = !!ta && document.activeElement === ta
-			const start = focused ? ta.selectionStart : latex.length
-			const end = focused ? ta.selectionEnd : latex.length
-			const before = latex.slice(0, start)
-			const after = latex.slice(end)
-			// A breathing space so two symbols in a row do not fuse into one command.
-			const needsSpace = /[a-zA-Z]$/.test(before) && token.startsWith('\\')
-			const inserted = (needsSpace ? ' ' : '') + token
-			setLatex(before + inserted + after)
-			const firstBox = inserted.search(PH_RE)
-			if (firstBox >= 0) selectLater(start + firstBox, start + firstBox + PLACEHOLDER.length)
-			else selectLater(start + inserted.length, start + inserted.length)
-			setOpenGroup(null)
-		},
-		[latex, selectLater]
-	)
-
-	const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-		if (e.key === 'Tab') {
-			if (jumpPlaceholder(e.shiftKey ? -1 : 1)) e.preventDefault()
-		}
+	const submit = () => {
+		// Read the field itself: a keystroke made an instant ago may not have
+		// reached `latex` yet, and it must not be left out of what is inserted.
+		const current = fieldRef.current?.getLatex() || latex
+		if (!current.trim() || printProblem(current)) return
+		// MathType / Overleaf copies arrive wrapped in $…$ or […]; store bare LaTeX.
+		const v = stripLatexDelimiters(current)
+		if (v) onInsert(v)
+		onOpenChange(false)
 	}
-
-	const previewHtml = useMemo(() => (latex.trim() ? render(latex, true) : ''), [latex])
-	const empties = useMemo(() => countPlaceholders(latex), [latex])
 	const activeSet = SYMBOL_SETS.find(s => s.name === symbolSet) || SYMBOL_SETS[0]
 
 	return (
 		<Dialog open={open} onOpenChange={onOpenChange}>
-			<DialogContent className="max-w-5xl gap-0 p-0 overflow-hidden">
-				<DialogHeader className="border-b px-5 pb-3 pt-4 text-left">
+			<DialogContent
+				ref={setDialogEl}
+				className="w-[96vw] max-w-[1400px] gap-0 overflow-visible p-0"
+				// Esc inside the equation belongs to the equation, not to "close and lose it".
+				onEscapeKeyDown={e => {
+					if (document.activeElement?.tagName === 'MATH-FIELD') e.preventDefault()
+				}}
+			>
+				{/* The scrolling body. The galleries are siblings of this, so they are
+				    not clipped by it. */}
+				<div className="max-h-[94vh] overflow-y-auto rounded-[inherit]">
+				<DialogHeader className="border-b px-6 pb-3 pt-4 text-left">
 					<DialogTitle>Equation</DialogTitle>
 					<DialogDescription>
-						Pick a structure or a symbol, then type into each box. Tab moves to the next box.
+						Pick a structure or a symbol, then click a box and type into it. Tab moves to the next box.
 					</DialogDescription>
 				</DialogHeader>
 
-				{/* ── The ribbon: Symbols on the left, Structures on the right ── */}
-				<div className="grid grid-cols-1 gap-3 border-b bg-slate-50 px-5 py-3 lg:grid-cols-[minmax(0,1fr)_auto]">
-					<div className="min-w-0 rounded-md border bg-white">
-						<div className="flex items-center gap-2 px-2 pt-1.5">
+				{/* ── The ribbon: Symbols, then Structures ──
+				    Stacked, each the full width of the dialog. Side by side the
+				    Structures row claimed its natural width and squeezed the symbol
+				    grid to one column, hiding the set picker. */}
+				<div className="space-y-2 border-b bg-slate-50 px-6 py-3">
+					<div className="rounded-md border bg-white">
+						<div className="flex flex-wrap items-center justify-between gap-2 border-b px-2.5 py-1.5">
 							<span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Symbols</span>
 							<Select value={symbolSet} onValueChange={setSymbolSet}>
-								<SelectTrigger className="h-7 w-52 text-xs" aria-label="Symbol set">
+								<SelectTrigger className="h-7 w-56 text-xs" aria-label="Symbol set">
 									<SelectValue />
 								</SelectTrigger>
 								<SelectContent>
@@ -191,16 +181,21 @@ export function EquationEditorDialog({ open, onOpenChange, initialLatex, onInser
 								</SelectContent>
 							</Select>
 						</div>
-						<div className="grid max-h-[92px] grid-cols-[repeat(auto-fill,minmax(34px,1fr))] gap-0.5 overflow-y-auto p-2 [scrollbar-width:thin]">
+						{/* Three rows on show, the rest a scroll away. */}
+						<div className="grid max-h-[132px] grid-cols-[repeat(auto-fill,minmax(38px,1fr))] gap-1 overflow-y-auto p-2 [scrollbar-width:thin]">
 							{activeSet.tokens.map((tok, i) => (
 								<MathButton key={`${tok.latex}-${i}`} token={tok} size="symbol" onPick={insertToken} />
 							))}
 						</div>
 					</div>
 
-					<div className="rounded-md border bg-white px-2 pb-2 pt-1.5">
-						<span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Structures</span>
-						<div className="mt-1 flex flex-wrap gap-0.5">
+					<div className="rounded-md border bg-white">
+						<div className="border-b px-2.5 py-1.5">
+							<span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Structures</span>
+						</div>
+						{/* auto-fit by the dialog's OWN width, not the screen's: all eleven in
+						    one row when there is room, two tidy rows when there is not. */}
+						<div className="grid grid-cols-[repeat(auto-fit,minmax(92px,1fr))] gap-0.5 p-1.5">
 							{STRUCTURES.map(g => (
 								<Popover key={g.key} open={openGroup === g.key} onOpenChange={o => setOpenGroup(o ? g.key : null)}>
 									<PopoverTrigger asChild>
@@ -208,110 +203,143 @@ export function EquationEditorDialog({ open, onOpenChange, initialLatex, onInser
 											type="button"
 											onMouseDown={e => e.preventDefault()}
 											className={cn(
-												'flex w-[76px] flex-col items-center rounded px-1 pb-1 pt-1.5 transition-colors hover:bg-slate-100',
-												openGroup === g.key && 'bg-slate-100'
+												'flex w-full flex-col items-center rounded-md border border-transparent px-1 pb-1.5 pt-2 transition-colors hover:border-slate-200 hover:bg-slate-50',
+												openGroup === g.key && 'border-blue-300 bg-blue-50'
 											)}
 										>
 											<span
-												className="flex h-8 items-center justify-center text-base [&_.katex]:text-[15px]"
+												className="flex h-10 items-center justify-center text-base [&_.katex]:text-[16px]"
 												dangerouslySetInnerHTML={{ __html: render(g.icon, false) }}
 											/>
-											<span className="mt-0.5 flex items-center gap-0.5 text-[11px] leading-tight text-slate-700">
+											<span className="mt-1 flex items-center gap-0.5 text-center text-xs leading-tight text-slate-700">
 												{g.name}
-												<ChevronDown className="h-3 w-3 text-slate-400" />
+												<ChevronDown className="h-3 w-3 shrink-0 text-slate-400" />
 											</span>
 										</button>
 									</PopoverTrigger>
-									<PopoverContent align="start" className="w-[440px] max-h-[70vh] overflow-y-auto p-0 [scrollbar-width:thin]">
+									<PopoverPrimitive.Portal container={dialogEl}>
+									<PopoverPrimitive.Content
+										align="start"
+										sideOffset={4}
+										collisionPadding={12}
+										// Opening a gallery must not pull the caret out of the equation.
+										onOpenAutoFocus={e => e.preventDefault()}
+										onCloseAutoFocus={e => e.preventDefault()}
+										className="z-50 w-[min(460px,calc(100vw-2rem))] max-h-[min(var(--radix-popover-content-available-height),560px)] overflow-y-auto overscroll-contain rounded-md border bg-popover p-0 text-popover-foreground shadow-lg outline-none [scrollbar-width:thin]"
+									>
 										{g.sections.map(sec => (
 											<div key={sec.name}>
-												<div className="sticky top-0 border-b bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700">{sec.name}</div>
-												<div className="grid grid-cols-4 gap-2 p-3">
+												<div className="sticky top-0 z-10 border-b bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700">{sec.name}</div>
+												<div className="grid grid-cols-3 gap-2 p-3 sm:grid-cols-4">
 													{sec.items.map((tok, i) => (
 														<MathButton key={`${tok.latex}-${i}`} token={tok} size="tile" onPick={insertToken} />
 													))}
 												</div>
 											</div>
 										))}
-									</PopoverContent>
+									</PopoverPrimitive.Content>
+									</PopoverPrimitive.Portal>
 								</Popover>
 							))}
 						</div>
 					</div>
 				</div>
 
-				{/* ── The equation ── */}
-				<div className="space-y-3 px-5 py-4">
-					<div className="flex min-h-[110px] items-center justify-center rounded-md border bg-white p-4 text-lg [&_.katex-display]:my-0">
-						{latex.trim() ? (
-							<span dangerouslySetInnerHTML={{ __html: previewHtml }} />
-						) : (
-							<span className="rounded border border-dashed border-slate-300 px-3 py-1 text-sm text-slate-400">Type equation here</span>
-						)}
+				{/* ── The equation: edited in place ── */}
+				<div className="space-y-3 px-6 py-4">
+					<div
+						className="rounded-md border-2 border-slate-200 bg-white transition-colors focus-within:border-blue-400"
+						// Enter inserts — the keyboard stays on the equation throughout.
+						// Ctrl / Alt + Enter is left alone: the field uses it to add a row
+						// to a matrix. So is Enter while a raw \command is being typed.
+						onKeyDown={e => {
+							if (e.key !== 'Enter' || e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) return
+							if (fieldRef.current?.isTypingCommand()) return
+							e.preventDefault()
+							submit()
+						}}
+					>
+						<MathField ref={fieldRef} value={latex} onChange={setLatex} />
 					</div>
 
 					<div className="flex flex-wrap items-center justify-between gap-2 text-xs">
 						<span className={cn(empties > 0 ? 'text-amber-700' : 'text-muted-foreground')}>
 							{empties > 0
-								? `${empties} empty box${empties === 1 ? '' : 'es'} to fill — Tab jumps to the next one`
+								? `${empties} empty box${empties === 1 ? '' : 'es'} — click a box and type, or press Tab for the next one`
 								: latex.trim()
-									? 'No empty boxes left'
-									: 'Nothing entered yet'}
+									? 'Click anywhere in the equation to change it'
+									: 'Click in the box above and type, or pick a structure'}
 						</span>
-						<span className="flex items-center gap-1">
-							<Button type="button" variant="outline" size="sm" className="h-7 px-2 text-xs" onClick={() => jumpPlaceholder(-1)} disabled={empties === 0}>
+						<span className="flex flex-wrap items-center gap-1">
+							<Button type="button" variant="outline" size="sm" className="h-7 px-2 text-xs" onMouseDown={e => e.preventDefault()} onClick={() => fieldRef.current?.previousBox()} disabled={empties === 0}>
 								<ChevronLeft className="h-3.5 w-3.5" />
 								Previous box
 							</Button>
-							<Button type="button" variant="outline" size="sm" className="h-7 px-2 text-xs" onClick={() => jumpPlaceholder(1)} disabled={empties === 0}>
+							<Button type="button" variant="outline" size="sm" className="h-7 px-2 text-xs" onMouseDown={e => e.preventDefault()} onClick={() => fieldRef.current?.nextBox()} disabled={empties === 0}>
 								Next box
 								<ChevronRight className="h-3.5 w-3.5" />
 							</Button>
-							<Button type="button" variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={() => { setLatex(''); selectLater(0, 0) }} disabled={!latex}>
-								<Eraser className="h-3.5 w-3.5 mr-1" />
+							<Button
+								type="button"
+								variant="ghost"
+								size="sm"
+								className="h-7 px-2 text-xs"
+								onClick={() => {
+									setLatex('')
+									requestAnimationFrame(() => fieldRef.current?.focus())
+								}}
+								disabled={!latex}
+							>
+								<Eraser className="mr-1 h-3.5 w-3.5" />
 								Clear
+							</Button>
+							<Button type="button" variant="ghost" size="sm" className={cn('h-7 px-2 text-xs', showSource && 'bg-slate-100')} onClick={() => setShowSource(v => !v)}>
+								<Code2 className="mr-1 h-3.5 w-3.5" />
+								LaTeX source
 							</Button>
 						</span>
 					</div>
 
-					<div>
-						<Textarea
-							ref={taRef}
-							rows={3}
-							value={latex}
-							onChange={e => setLatex(e.target.value)}
-							onKeyDown={onKeyDown}
-							placeholder="The equation appears here as you build it. You can also type LaTeX directly, e.g. x = \frac{-b \pm \sqrt{b^2-4ac}}{2a}"
-							className="font-mono text-sm"
-							spellCheck={false}
-						/>
-						<p className="mt-1 text-[11px] text-muted-foreground">
-							Each <span className="font-mono">\square</span> is an empty box. Paste from MathType or Overleaf works too.
-						</p>
-					</div>
+					{problem && (
+						<div className="flex items-start gap-2 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-800" role="alert">
+							<AlertTriangle className="mt-px h-3.5 w-3.5 shrink-0" />
+							<span>
+								<span className="font-semibold">This equation will not print as shown.</span> {problem}. Change that part, or remove it.
+							</span>
+						</div>
+					)}
+
+					{showSource && (
+						<div>
+							<Textarea
+								rows={3}
+								value={latex}
+								onChange={e => setLatex(e.target.value)}
+								placeholder="Type or paste LaTeX, e.g. x = \frac{-b \pm \sqrt{b^2-4ac}}{2a}"
+								className="font-mono text-sm"
+								spellCheck={false}
+							/>
+							<p className="mt-1 text-[11px] text-muted-foreground">
+								For those who prefer it. Each <span className="font-mono">\square</span> is an empty box. A paste from MathType or Overleaf works here.
+							</p>
+						</div>
+					)}
 				</div>
 
-				<DialogFooter className="border-t px-5 py-3 sm:justify-between">
-					<span className="text-xs text-muted-foreground self-center">
-						{empties > 0 && 'Boxes left empty print as a small square.'}
+				<DialogFooter className="border-t px-6 py-3 sm:justify-between">
+					<span className="self-center text-xs text-muted-foreground">
+						{empties > 0 ? 'A box left empty prints as a small square.' : 'Enter inserts the equation. In a matrix, Ctrl + Enter adds a row.'}
 					</span>
 					<span className="flex gap-2">
 						<Button variant="outline" onClick={() => onOpenChange(false)}>
 							Cancel
 						</Button>
-						<Button
-							onClick={() => {
-								// MathType / Overleaf copies arrive wrapped in $…$ or […]; store bare LaTeX.
-								const v = stripLatexDelimiters(latex)
-								if (v) onInsert(v)
-								onOpenChange(false)
-							}}
-							disabled={!latex.trim()}
-						>
+						<Button onClick={submit} disabled={!latex.trim() || !!problem} title="Enter">
 							{initialLatex ? 'Update equation' : 'Insert equation'}
 						</Button>
 					</span>
 				</DialogFooter>
+				</div>
 			</DialogContent>
 		</Dialog>
 	)

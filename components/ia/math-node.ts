@@ -53,6 +53,16 @@ export const MathInline = Node.create<MathOptions>({
 		return [{ tag: 'span[data-latex]' }]
 	},
 
+	/**
+	 * The plain-text form of a formula: its LaTeX, in $…$. Without this a copied
+	 * formula has NO text on the clipboard, so it could not be pasted into the
+	 * equation dialog (or anything that is not this editor), and a copied
+	 * sentence lost its formulae outside the editor.
+	 */
+	renderText({ node }) {
+		return node.attrs.latex ? '$' + node.attrs.latex + '$' : ''
+	},
+
 	renderHTML({ HTMLAttributes, node }) {
 		// Static string child keeps the persisted span human-readable; the PDF
 		// renderer reads data-latex and ignores the inner content.
@@ -67,6 +77,7 @@ export const MathInline = Node.create<MathOptions>({
 		return ({ node }) => {
 			const dom = document.createElement('span')
 			dom.className = 'qp-math'
+			dom.title = 'Double-click to edit this equation'
 			dom.setAttribute('data-latex', node.attrs.latex || '')
 			const render = (latex: string) => {
 				try {
@@ -102,6 +113,11 @@ export const MathInline = Node.create<MathOptions>({
 				key: new PluginKey('mathInlineLatexPaste'),
 				props: {
 					handlePaste: (view, event) => {
+						// A copy made in THIS editor carries its own HTML, formulae and
+						// formatting intact — leave it to the normal paste. The LaTeX
+						// splitter below is for plain text coming from elsewhere.
+						const html = event.clipboardData?.getData('text/html') || ''
+						if (/data-pm-slice|data-latex=/.test(html)) return false
 						const text = event.clipboardData?.getData('text/plain') || ''
 						const segments = splitLatexSegments(text)
 						if (!segments) return false

@@ -84,6 +84,48 @@ interface RoomAllocation {
 	student_count: number
 }
 
+// Learner-clash pre-check result for a bulk upload: one entry per date + session with clashes
+interface UploadClashSlot {
+	exam_date: string
+	session: string
+	course_codes: string[]
+	rows: number[]
+	conflict_count: number
+	conflicts: { stu_register_no: string; student_name: string; course_codes: string[] }[]
+}
+
+// Read one upload row - supports both old headers and new headers with * suffix
+const parseUploadRow = (row: any) => {
+	const institution_code = String(row['Institution Code *'] || row['Institution Code'] || row.institution_code || '').trim()
+	const examination_session_code = String(row['Examination Session Code *'] || row['Examination Session Code'] || row.examination_session_code || '').trim()
+	const course_code = String(row['Course Code *'] || row['Course Code'] || row.course_code || '').trim()
+
+	// Handle date - Excel may return Date object or string
+	const rawExamDate = row['Exam Date *'] || row['Exam Date'] || row.exam_date || ''
+	let exam_date = ''
+	if (rawExamDate instanceof Date) {
+		// Convert Date object to YYYY-MM-DD
+		exam_date = rawExamDate.toISOString().split('T')[0]
+	} else if (typeof rawExamDate === 'number') {
+		// Excel serial date number - convert to Date then to string
+		const excelEpoch = new Date(1899, 11, 30) // Excel epoch is Dec 30, 1899
+		const dateObj = new Date(excelEpoch.getTime() + rawExamDate * 86400000)
+		exam_date = dateObj.toISOString().split('T')[0]
+	} else {
+		exam_date = String(rawExamDate).trim()
+	}
+
+	const session = String(row['Session (FN/AN) *'] || row['Session (FN/AN)'] || row['Session'] || row.session || '').trim()
+	const exam_mode = String(row['Exam Mode'] || row.exam_mode || 'Offline').trim()
+	const exam_type = String(row['Exam Type'] || row.exam_type || 'Theory').trim()
+	const batch_capacity_raw = row['Batch Capacity'] || row.batch_capacity || null
+	const batch_capacity = batch_capacity_raw ? parseInt(String(batch_capacity_raw)) : null
+	const is_published = String(row['Is Published'] || row.is_published || 'No').toLowerCase() === 'yes'
+	const instructions = String(row['Instructions'] || row.instructions || '').trim()
+
+	return { institution_code, examination_session_code, course_code, exam_date, session, exam_mode, exam_type, batch_capacity, is_published, instructions }
+}
+
 export default function ExamTimetablesListPage() {
 	const router = useRouter()
 	const { toast } = useToast()
@@ -192,6 +234,14 @@ export default function ExamTimetablesListPage() {
 	}>>([])
 
 	const [showErrorDialog, setShowErrorDialog] = useState(false)
+
+	// Learner-clash guard for uploads: when the file would put a learner in two courses on
+	// the same date + session, hold the parsed rows here until the user cancels or overrides.
+	const [uploadClash, setUploadClash] = useState<{
+		rows: any[]
+		conflict_count: number
+		slots: UploadClashSlot[]
+	} | null>(null)
 
 	// Import progress tracking state
 	const [importInProgress, setImportInProgress] = useState(false)
@@ -920,7 +970,7 @@ export default function ExamTimetablesListPage() {
 	}
 
 	// Process Upload - Validate and Save
-	const processUpload = async (rows: any[]) => {
+	const processUpload = async (rows: any[], allowClashes = false) => {
 		let successCount = 0
 		let errorCount = 0
 		const uploadErrorsList: Array<{
@@ -956,6 +1006,58 @@ export default function ExamTimetablesListPage() {
 		}
 		const sessionMap = new Map(sessionsForLookup.map((s: any) => [s.session_code, s]))
 
+		// Learner-clash pre-check: before saving anything, ask the server whether the file
+		// puts any learner in two different courses on the same date + session.
+		if (!allowClashes) {
+			const candidates = rows
+				.map((row, i) => {
+					const r = parseUploadRow(row)
+					const institution = institutionMap.get(r.institution_code)
+					const examSession: any = sessionMap.get(r.examination_session_code)
+					const slotSession = r.session.toUpperCase()
+					if (!institution || !examSession || !r.course_code) return null
+					if (userInstitution && institution.id !== userInstitution.id) return null
+					if (!/^\d{4}-\d{2}-\d{2}$/.test(r.exam_date) || !['FN', 'AN'].includes(slotSession)) return null
+					return {
+						row: i + 2, // +2 for header row in Excel
+						institutions_id: institution.id,
+						examination_session_id: examSession.id,
+						course_code: r.course_code,
+						exam_date: r.exam_date,
+						session: slotSession,
+					}
+				})
+				.filter(Boolean)
+
+			if (candidates.length > 0) {
+				try {
+					const res = await fetch('/api/exam-management/exam-timetables/upload-precheck', {
+						method: 'POST',
+						headers: { 'Content-Type': 'application/json' },
+						body: JSON.stringify({ rows: candidates }),
+					})
+					if (!res.ok) throw new Error('Pre-check failed')
+					const data = await res.json()
+					if ((data.slots || []).length > 0) {
+						setUploadClash({ rows, conflict_count: data.conflict_count || 0, slots: data.slots })
+						setLoading(false)
+						setImportInProgress(false)
+						return
+					}
+				} catch (e) {
+					console.error('Upload clash pre-check error:', e)
+					setLoading(false)
+					setImportInProgress(false)
+					toast({
+						title: "❌ Clash Check Failed",
+						description: "Could not check learner exam clashes, so nothing was uploaded. Please try again.",
+						variant: "destructive",
+					})
+					return
+				}
+			}
+		}
+
 		for (let i = 0; i < rows.length; i++) {
 			// Update progress
 			setImportProgress({ current: i + 1, total: rows.length })
@@ -964,33 +1066,10 @@ export default function ExamTimetablesListPage() {
 			const rowNumber = i + 2 // +2 for header row in Excel
 			const validationErrors: string[] = []
 
-			// Extract fields - support both old headers and new headers with * suffix
-			const institution_code = String(row['Institution Code *'] || row['Institution Code'] || row.institution_code || '').trim()
-			const examination_session_code = String(row['Examination Session Code *'] || row['Examination Session Code'] || row.examination_session_code || '').trim()
-			const course_code = String(row['Course Code *'] || row['Course Code'] || row.course_code || '').trim()
-
-			// Handle date - Excel may return Date object or string
-			const rawExamDate = row['Exam Date *'] || row['Exam Date'] || row.exam_date || ''
-			let exam_date = ''
-			if (rawExamDate instanceof Date) {
-				// Convert Date object to YYYY-MM-DD
-				exam_date = rawExamDate.toISOString().split('T')[0]
-			} else if (typeof rawExamDate === 'number') {
-				// Excel serial date number - convert to Date then to string
-				const excelEpoch = new Date(1899, 11, 30) // Excel epoch is Dec 30, 1899
-				const dateObj = new Date(excelEpoch.getTime() + rawExamDate * 86400000)
-				exam_date = dateObj.toISOString().split('T')[0]
-			} else {
-				exam_date = String(rawExamDate).trim()
-			}
-
-			const session = String(row['Session (FN/AN) *'] || row['Session (FN/AN)'] || row['Session'] || row.session || '').trim()
-			const exam_mode = String(row['Exam Mode'] || row.exam_mode || 'Offline').trim()
-			const exam_type = String(row['Exam Type'] || row.exam_type || 'Theory').trim()
-			const batch_capacity_raw = row['Batch Capacity'] || row.batch_capacity || null
-			const batch_capacity = batch_capacity_raw ? parseInt(String(batch_capacity_raw)) : null
-			const is_published = String(row['Is Published'] || row.is_published || 'No').toLowerCase() === 'yes'
-			const instructions = String(row['Instructions'] || row.instructions || '').trim()
+			const {
+				institution_code, examination_session_code, course_code, exam_date, session,
+				exam_mode, exam_type, batch_capacity, is_published, instructions,
+			} = parseUploadRow(row)
 
 			// Validation
 			if (!institution_code) validationErrors.push('Institution Code required')
@@ -1839,6 +1918,78 @@ export default function ExamTimetablesListPage() {
 							</Button>
 							<AlertDialogAction onClick={() => setShowErrorDialog(false)}>
 								Close
+							</AlertDialogAction>
+						</AlertDialogFooter>
+					</AlertDialogContent>
+				</AlertDialog>
+
+				{/* Upload learner exam clash — nothing is saved until the user overrides */}
+				<AlertDialog open={!!uploadClash} onOpenChange={(open) => { if (!open) setUploadClash(null) }}>
+					<AlertDialogContent className="max-w-2xl">
+						<AlertDialogHeader>
+							<AlertDialogTitle className="flex items-center gap-2 text-red-600">
+								<AlertTriangle className="h-5 w-5" />
+								Learner Exam Clash
+							</AlertDialogTitle>
+							<AlertDialogDescription asChild>
+								<div className="space-y-3">
+									<p>
+										This file would make {uploadClash?.conflict_count} learner{(uploadClash?.conflict_count || 0) === 1 ? '' : 's'} sit
+										two different courses on the same date and session, across {uploadClash?.slots.length} slot{(uploadClash?.slots.length || 0) === 1 ? '' : 's'}.
+										Nothing has been uploaded yet. Fix the dates in the file, or upload anyway if this is intentional.
+									</p>
+									<div className="max-h-[50vh] overflow-y-auto space-y-3">
+										{uploadClash?.slots.map((slot) => (
+											<div key={`${slot.exam_date}-${slot.session}`} className="rounded-md border">
+												<div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 bg-red-50 border-b text-sm">
+													<span className="font-semibold text-slate-900">
+														{formatDate(slot.exam_date)} · {slot.session}
+													</span>
+													<span className="text-xs text-red-700">
+														{slot.conflict_count} learner{slot.conflict_count === 1 ? '' : 's'} · file row{slot.rows.length === 1 ? '' : 's'} {slot.rows.join(', ')}
+													</span>
+												</div>
+												<div className="max-h-48 overflow-y-auto divide-y">
+													{slot.conflicts.map((c) => (
+														<div key={c.stu_register_no} className="flex items-start justify-between gap-3 px-3 py-2 text-sm">
+															<div className="min-w-0">
+																<div className="font-mono text-xs">{c.stu_register_no}</div>
+																<div className="truncate text-muted-foreground">{c.student_name}</div>
+															</div>
+															<div className="flex flex-wrap justify-end gap-1">
+																{c.course_codes.map((code) => (
+																	<Badge key={code} variant="outline" className="text-[10px] font-mono border-red-300 text-red-700 bg-red-50">
+																		{code}
+																	</Badge>
+																))}
+															</div>
+														</div>
+													))}
+												</div>
+												{slot.conflict_count > slot.conflicts.length && (
+													<p className="px-3 py-1.5 border-t text-xs text-muted-foreground">
+														Showing {slot.conflicts.length} of {slot.conflict_count} clashing learners.
+													</p>
+												)}
+											</div>
+										))}
+									</div>
+								</div>
+							</AlertDialogDescription>
+						</AlertDialogHeader>
+						<AlertDialogFooter>
+							<AlertDialogCancel>Cancel Upload</AlertDialogCancel>
+							<AlertDialogAction
+								className="bg-red-600 hover:bg-red-700 focus:ring-red-600"
+								onClick={() => {
+									const rows = uploadClash?.rows || []
+									setUploadClash(null)
+									setLoading(true)
+									setImportInProgress(true)
+									processUpload(rows, true)
+								}}
+							>
+								Upload anyway
 							</AlertDialogAction>
 						</AlertDialogFooter>
 					</AlertDialogContent>

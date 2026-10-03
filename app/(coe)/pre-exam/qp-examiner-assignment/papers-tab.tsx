@@ -5,7 +5,11 @@
 // A paper appears here only once its examiner has submitted it (or the CoE has
 // accepted it); drafts stay out, so nothing half-written is ever printed. The
 // office opens one paper, or selects many and takes them as a single ZIP — one
-// PDF per paper, with the answer keys alongside when asked for.
+// file per paper, with the answer keys alongside when asked for.
+//
+// Every download — a single paper, a single key, the ZIP — comes in the format
+// chosen on the toolbar: PDF (the document of record, fixed layout) or Word (the
+// same paper as an editable .docx, for a last correction before printing).
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Button } from '@/components/ui/button'
@@ -35,6 +39,10 @@ interface Props {
 }
 
 type Filter = 'all' | 'submitted' | 'accepted'
+
+/** What a download arrives as. */
+type FileFormat = 'pdf' | 'docx'
+const FORMAT_LABEL: Record<FileFormat, string> = { pdf: 'PDF', docx: 'Word' }
 
 function saveBlob(blob: Blob, filename: string) {
 	const url = URL.createObjectURL(blob)
@@ -80,6 +88,7 @@ export function PapersTab({ institutionsId, session, refreshKey }: Props) {
 	const [search, setSearch] = useState('')
 	const [selected, setSelected] = useState<Set<string>>(new Set())
 	const [withKeys, setWithKeys] = useState(false)
+	const [format, setFormat] = useState<FileFormat>('pdf')
 	const [bulk, setBulk] = useState<{ total: number; done: number; failed: { name: string; error: string }[]; running: boolean } | null>(null)
 
 	const load = useCallback(async () => {
@@ -142,22 +151,25 @@ export function PapersTab({ institutionsId, session, refreshKey }: Props) {
 	const selectedRows = rows.filter(r => selected.has(r.id))
 	const keyCount = selectedRows.filter(r => r.answer_keyed).length
 
-	const paperUrl = (r: AssignmentRow) => `/api/pre-exam/ese-question-papers/${r.paper_id}/pdf`
-	const keyUrl = (r: AssignmentRow) => `/api/pre-exam/ese-question-papers/${r.paper_id}/answer-key-pdf`
+	// Same routes for both formats; Word is asked for with ?format=docx.
+	const formatQs = format === 'docx' ? '?format=docx' : ''
+	const paperUrl = (r: AssignmentRow) => `/api/pre-exam/ese-question-papers/${r.paper_id}/pdf${formatQs}`
+	const keyUrl = (r: AssignmentRow) => `/api/pre-exam/ese-question-papers/${r.paper_id}/answer-key-pdf${formatQs}`
 	const labelOf = (r: AssignmentRow) => `${r.course_code || 'paper'}${r.set_label ? ` (Set ${r.set_label})` : ''}`
 
 	const downloadOne = async (r: AssignmentRow, kind: 'paper' | 'key') => {
 		try {
 			const res = await fetch(kind === 'paper' ? paperUrl(r) : keyUrl(r))
 			if (!res.ok) throw new Error(await failureOf(res))
-			saveBlob(await res.blob(), filenameOf(res, `${safe(labelOf(r))}${kind === 'key' ? '_AnswerKey' : ''}.pdf`))
+			saveBlob(await res.blob(), filenameOf(res, `${safe(labelOf(r))}${kind === 'key' ? '_AnswerKey' : ''}.${format}`))
 		} catch (e: any) {
 			toast({ title: 'Download failed', description: e.message, variant: 'destructive' })
 		}
 	}
 
-	// Each PDF is a Chromium render, so they are fetched one at a time and zipped
-	// in the browser — no single request has to outlive the whole batch.
+	// Each PDF is a Chromium render, so files are fetched one at a time and zipped
+	// in the browser — no single request has to outlive the whole batch. The Word
+	// copies take the same path, in the format chosen on the toolbar.
 	const downloadZip = async () => {
 		const targets = selectedRows
 		if (targets.length === 0) return
@@ -178,9 +190,11 @@ export function PapersTab({ institutionsId, session, refreshKey }: Props) {
 				try {
 					const res = await fetch(kind === 'paper' ? paperUrl(row) : keyUrl(row))
 					if (!res.ok) throw new Error(await failureOf(res))
-					let name = filenameOf(res, `${safe(labelOf(row))}${kind === 'key' ? '_AnswerKey' : ''}.pdf`)
-					if (used.has(name)) name = name.replace(/\.pdf$/i, `_${safe(row.examiner?.full_name || String(i + 1))}.pdf`)
-					if (used.has(name)) name = name.replace(/\.pdf$/i, `_${i + 1}.pdf`)
+					let name = filenameOf(res, `${safe(labelOf(row))}${kind === 'key' ? '_AnswerKey' : ''}.${format}`)
+					// Two sets of one subject share a name: tell them apart before the extension.
+					const tagged = (tag: string) => name.replace(/(\.[A-Za-z0-9]+)?$/, ext => `_${tag}${ext}`)
+					if (used.has(name)) name = tagged(safe(row.examiner?.full_name || String(i + 1)))
+					if (used.has(name)) name = tagged(String(i + 1))
 					used.add(name)
 					zip.file(kind === 'key' ? `Answer Keys/${name}` : withKeys ? `Question Papers/${name}` : name, await res.arrayBuffer())
 				} catch (e: any) {
@@ -190,10 +204,10 @@ export function PapersTab({ institutionsId, session, refreshKey }: Props) {
 			}
 			if (used.size > 0) {
 				const blob = await zip.generateAsync({ type: 'blob' })
-				saveBlob(blob, `QuestionPapers_${safe(session?.session_code || 'session')}.zip`)
+				saveBlob(blob, `QuestionPapers_${safe(session?.session_code || 'session')}${format === 'docx' ? '_Word' : ''}.zip`)
 			}
 			if (failed.length === 0) {
-				toast({ title: 'Question papers downloaded', description: `${used.size} PDF${used.size === 1 ? '' : 's'} in one ZIP.` })
+				toast({ title: 'Question papers downloaded', description: `${used.size} ${FORMAT_LABEL[format]} file${used.size === 1 ? '' : 's'} in one ZIP.` })
 				setBulk(null)
 			} else {
 				setBulk({ total: jobs.length, done: jobs.length, failed: [...failed], running: false })
@@ -278,6 +292,33 @@ export function PapersTab({ institutionsId, session, refreshKey }: Props) {
 							<RefreshCw className={cn('h-4 w-4 mr-1.5', loading && 'animate-spin')} />
 							Refresh
 						</Button>
+						{/* One format for every download on this tab: the row buttons and the ZIP. */}
+						<div className="inline-flex items-center gap-1.5">
+							<span className="text-xs text-muted-foreground">Download as</span>
+							<div className="inline-flex rounded-md border overflow-hidden" role="radiogroup" aria-label="Download format">
+								{(Object.keys(FORMAT_LABEL) as FileFormat[]).map(f => (
+									<button
+										key={f}
+										type="button"
+										role="radio"
+										aria-checked={format === f}
+										onClick={() => setFormat(f)}
+										disabled={!!bulk?.running}
+										title={
+											f === 'pdf'
+												? 'Fixed layout — the copy that is printed'
+												: 'Editable Word document (.docx) — same fonts, sizes and alignment'
+										}
+										className={cn(
+											'px-3 py-1.5 text-xs font-medium border-r last:border-r-0',
+											format === f ? 'bg-emerald-700 text-white' : 'bg-white text-slate-700 hover:bg-slate-50'
+										)}
+									>
+										{FORMAT_LABEL[f]}
+									</button>
+								))}
+							</div>
+						</div>
 						<label className="flex items-center gap-1.5 text-xs text-slate-700 cursor-pointer select-none">
 							<Checkbox checked={withKeys} onCheckedChange={v => setWithKeys(v === true)} />
 							Include answer keys
@@ -289,7 +330,7 @@ export function PapersTab({ institutionsId, session, refreshKey }: Props) {
 					</div>
 					<p className="text-xs text-muted-foreground">
 						Only papers the examiner has submitted are listed. Tick the box in the header to select all, then download
-						them as one ZIP — one PDF per paper
+						them as one ZIP — one {FORMAT_LABEL[format]} file per paper
 						{withKeys && selectedRows.length > 0 ? `, plus ${keyCount} answer key${keyCount === 1 ? '' : 's'} in their own folder` : ''}.
 					</p>
 				</CardContent>
@@ -367,7 +408,7 @@ export function PapersTab({ institutionsId, session, refreshKey }: Props) {
 											<TableCell className="text-right whitespace-nowrap">
 												<Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => downloadOne(r, 'paper')}>
 													<Download className="h-3.5 w-3.5 mr-1" />
-													PDF
+													{FORMAT_LABEL[format]}
 												</Button>
 												<Button
 													variant="ghost"
@@ -375,7 +416,7 @@ export function PapersTab({ institutionsId, session, refreshKey }: Props) {
 													className="h-7 text-xs"
 													disabled={!r.answer_keyed}
 													onClick={() => downloadOne(r, 'key')}
-													title={r.answer_keyed ? 'Answer key / scheme of valuation' : 'No answer key on this paper'}
+													title={r.answer_keyed ? `Answer key / scheme of valuation (${FORMAT_LABEL[format]})` : 'No answer key on this paper'}
 												>
 													<KeyRound className="h-3.5 w-3.5 mr-1" />
 													Key

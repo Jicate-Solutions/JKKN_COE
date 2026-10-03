@@ -221,6 +221,7 @@ interface SubjectData {
 	is_regular: boolean
 	subject_order: number
 	subject_semester: number  // The course's own semester (from course_offerings.semester)
+	course_type_code: string | null  // e.g. 'NME-II' — shared by alternative electives, used as the column slot key
 }
 
 interface StudentData {
@@ -258,6 +259,7 @@ interface StudentData {
 	result_date: string
 	folio_number: string  // CERT_NO
 	subjects: SubjectData[]
+	columns: (SubjectData | null)[]  // subjects laid out on the shared SUBn columns (null = blank slot)
 	// Additional fields at end (after all subjects)
 	aadhaar_name: string
 	admission_year: string
@@ -338,16 +340,21 @@ export async function GET(req: NextRequest) {
 		// numeric marks (MAX/MIN = 0) but the student still EARNS the credit when
 		// they pass. We special-case them below using this map (keyed by course_id).
 		const resultTypeMap = new Map<string, string>()
+		// course_type_code (e.g. 'NME-II') lets alternative electives share one SUBn column.
+		const courseTypeCodeMap = new Map<string, string>()
 		const courseIdList = Array.from(new Set(viewData.map((r: any) => r.course_id).filter(Boolean)))
 		if (courseIdList.length > 0) {
 			const { data: courseRows, error: courseErr } = await supabase
 				.from('courses')
-				.select('id, result_type')
+				.select('id, result_type, course_type_code')
 				.in('id', courseIdList)
 			if (courseErr) {
 				console.error('[NAD Export] Failed to fetch course result_types:', courseErr)
 			} else if (courseRows) {
-				for (const cr of courseRows) resultTypeMap.set(cr.id, cr.result_type || 'Mark')
+				for (const cr of courseRows) {
+					resultTypeMap.set(cr.id, cr.result_type || 'Mark')
+					if (cr.course_type_code) courseTypeCodeMap.set(cr.id, String(cr.course_type_code).trim().toUpperCase())
+				}
 			}
 		}
 
@@ -410,6 +417,7 @@ export async function GET(req: NextRequest) {
 					result_date: row.RESULT_DATE || '',
 					folio_number: row.folio_number || '',  // CERT_NO
 					subjects: [],
+					columns: [],
 					// Additional fields (enriched from MyJKKN)
 					aadhaar_name: '',
 					admission_year: ''
@@ -454,7 +462,8 @@ export async function GET(req: NextRequest) {
 				raw_pass_status: row.raw_pass_status || 'Pass',  // For REMARKS mapping
 				is_regular: row.is_regular_subject !== false,
 				subject_order: row.subject_order || 0,
-			subject_semester: row.subject_semester || 1
+			subject_semester: row.subject_semester || 1,
+			course_type_code: courseTypeCodeMap.get(row.course_id) || null
 			}
 
 			student.subjects.push(subjectData)
@@ -527,6 +536,63 @@ export async function GET(req: NextRequest) {
 				csv: '',
 				row_count: 0
 			})
+		}
+
+		// ── Lay subjects out on shared SUBn columns per programme + semester ────
+		// Filling columns positionally breaks when learners differ: a learner on an
+		// alternative elective (24UCHNM2 instead of the cohort's 24UCMNM2) has no
+		// course_mapping row in their programme, so the view orders it 999 → last,
+		// every later course slides one column left and Disaster Management lands in
+		// the NME column. Instead each regular course gets a fixed column per cohort,
+		// keyed by course_type_code (alternatives share 'NME-II') or course_code, and
+		// a learner without that course leaves the column blank. Arrear papers differ
+		// per learner and follow the regular columns positionally.
+		const cohorts = new Map<string, StudentData[]>()
+		for (const student of Array.from(studentMap.values())) {
+			const cohortKey = `${student.program_code}|${student.semester}`
+			const list = cohorts.get(cohortKey) || []
+			list.push(student)
+			cohorts.set(cohortKey, list)
+		}
+		for (const cohortStudents of Array.from(cohorts.values())) {
+			// A type code repeated within one learner's papers (e.g. a generic 'CORE')
+			// can't identify a single column — fall back to course_code for it.
+			const ambiguousTypes = new Set<string>()
+			for (const student of cohortStudents) {
+				const seen = new Set<string>()
+				for (const s of student.subjects) {
+					if (!s.is_regular || !s.course_type_code) continue
+					if (seen.has(s.course_type_code)) ambiguousTypes.add(s.course_type_code)
+					seen.add(s.course_type_code)
+				}
+			}
+			const slotKey = (s: SubjectData) =>
+				s.course_type_code && !ambiguousTypes.has(s.course_type_code)
+					? `type:${s.course_type_code}`
+					: `code:${s.course_code}`
+
+			// Column order = average position of the slot across the cohort.
+			const positions = new Map<string, { sum: number; n: number }>()
+			for (const student of cohortStudents) {
+				student.subjects.filter(s => s.is_regular).forEach((s, idx) => {
+					const p = positions.get(slotKey(s)) || { sum: 0, n: 0 }
+					p.sum += idx
+					p.n += 1
+					positions.set(slotKey(s), p)
+				})
+			}
+			const slotOrder = Array.from(positions.entries())
+				.sort((a, b) => (a[1].sum / a[1].n - b[1].sum / b[1].n) || a[0].localeCompare(b[0]))
+				.map(([key]) => key)
+
+			for (const student of cohortStudents) {
+				const bySlot = new Map<string, SubjectData>()
+				for (const s of student.subjects) if (s.is_regular) bySlot.set(slotKey(s), s)
+				student.columns = [
+					...slotOrder.map(key => bySlot.get(key) || null),
+					...student.subjects.filter(s => !s.is_regular)
+				]
+			}
 		}
 
 		// ── Bulk-fetch TOT_CREDIT / TOT_CREDIT_POINTS from semester_results ──────
@@ -781,7 +847,7 @@ export async function GET(req: NextRequest) {
 		// Find max subjects needed
 		let actualMaxSubjects = 0
 		for (const student of Array.from(studentMap.values())) {
-			actualMaxSubjects = Math.max(actualMaxSubjects, student.subjects.length)
+			actualMaxSubjects = Math.max(actualMaxSubjects, student.columns.length)
 		}
 		actualMaxSubjects = Math.min(actualMaxSubjects, maxSubjects)
 
@@ -847,7 +913,7 @@ export async function GET(req: NextRequest) {
 
 			// Subject columns
 			for (let i = 0; i < actualMaxSubjects; i++) {
-				const subject = student.subjects[i]
+				const subject = student.columns[i]
 
 				if (subject) {
 					const isTheory = subject.course_category === 'THEORY'

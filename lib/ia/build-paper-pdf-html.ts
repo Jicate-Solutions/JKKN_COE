@@ -102,7 +102,7 @@ export interface BuildPaperPdfResult {
 const LETTERHEAD = JKKN_LETTERHEAD
 const loadLogoDataUri = loadPublicImageDataUri
 
-function formatDuration(mins?: number | null): string {
+export function formatDuration(mins?: number | null): string {
 	if (!mins || mins <= 0) return '1 Hour'
 	const h = mins / 60
 	if (Number.isInteger(h)) return `${h} Hour${h > 1 ? 's' : ''}`
@@ -134,7 +134,7 @@ function getProgramTypeFromCode(programCode?: string | null): 'UG' | 'PG' {
 }
 
 /** Decode the HTML entities Tiptap escapes into the data-latex attribute. */
-function decodeEntities(s: string): string {
+export function decodeEntities(s: string): string {
 	return s
 		.replace(/&amp;/g, '&')
 		.replace(/&lt;/g, '<')
@@ -221,9 +221,19 @@ function unwrapSingleItemList(html: string): string {
 	return m[2]
 }
 
+/**
+ * Steps 1 and 2 only — the sanitized, shell-free HTML with every formula still a
+ * <span data-latex>. The Word export (lib/ia/build-paper-docx.ts) starts from
+ * this, so both documents print exactly the same content.
+ */
+export function prepareQuestionHtml(raw: string): string {
+	if (!raw) return ''
+	return unwrapSingleItemList(unwrapSingleCellTables(sanitizeHtml(raw)))
+}
+
 function renderQuestionHtml(raw: string): string {
 	if (!raw) return ''
-	const clean = unwrapSingleItemList(unwrapSingleCellTables(sanitizeHtml(raw)))
+	const clean = prepareQuestionHtml(raw)
 	// Replace the (atom) math spans with their typeset form.
 	return clean.replace(
 		/<span[^>]*\bdata-latex="([^"]*)"[^>]*>(?:.*?)<\/span>/g,
@@ -271,6 +281,29 @@ function questionImageHtml(image: any): string {
 		: null
 	const src = inline ?? escapeHtml(img.url).replace(/"/g, '&quot;')
 	return `<div class="q-img"><img src="${src}" style="width:${pct}%"/></div>`
+}
+
+/**
+ * A question's sub-divisions, ready to print.
+ *
+ * readSubQuestions() normalises each sub-division, and in doing so rebuilds its
+ * figure through readQuestionImage() — which keeps only the persisted fields. The
+ * bytes loadPaperContext pre-fetched from Drive (`inline_src`) were lost there,
+ * so a figure attached to "11 a) i." printed as a blank gap while the same figure
+ * on a whole question printed fine. This carries `inline_src` back across, by
+ * position: both lists are in display order.
+ */
+export function readSubQuestionsForPrint(q: any): Array<ReturnType<typeof readSubQuestions>[number]> {
+	const raw: any[] = (Array.isArray(q?.sub_questions) ? q.sub_questions : [])
+		.slice()
+		.sort((a: any, b: any) => (a?.display_order ?? 0) - (b?.display_order ?? 0))
+	const withBytes = (ref: any, source: any) =>
+		ref && typeof source?.inline_src === 'string' ? { ...ref, inline_src: source.inline_src } : ref
+	return readSubQuestions(q).map((sb, i) => ({
+		...sb,
+		image: withBytes(sb.image, raw[i]?.image),
+		answer_key_image: withBytes(sb.answer_key_image, raw[i]?.answer_key_image),
+	}))
 }
 
 /**
@@ -424,7 +457,7 @@ function buildHtml(ctx: {
 
 					// Author-defined sub-divisions ("12 a) i. (8) / ii. (7)"): the parent
 					// row keeps only its optional stem — marks and CO/K move to the subs.
-					const subs = readSubQuestions(q)
+					const subs = readSubQuestionsForPrint(q)
 					if (subs.length > 0) {
 						// With no stem, the question number rides the first sub-division's row
 						// (as in a printed paper) instead of taking an empty row of its own.
@@ -691,7 +724,7 @@ async function ciaExamLine(supabase: any, paper: any): Promise<string> {
 }
 
 /** Everything both renderers need about one paper, fetched and derived once. */
-interface PaperContext {
+export interface PaperContext {
 	paper: any
 	institutionName: string
 	address: string
@@ -712,7 +745,7 @@ interface PaperContext {
  * headings both the question paper and its answer key print. Null when the
  * paper isn't found.
  */
-async function loadPaperContext(supabase: any, id: string, source: PaperSource): Promise<PaperContext | null> {
+export async function loadPaperContext(supabase: any, id: string, source: PaperSource): Promise<PaperContext | null> {
 	const { data: paper, error } = await supabase
 		.from(PAPER_TABLE[source])
 		.select('*')
@@ -1008,7 +1041,7 @@ function buildAnswerKeyHtml(ctx: PaperContext & { hideSet: boolean }): string {
 					optionLineHtml(q.options, q.option_font ?? defaultFont)
 				// Sub-divisions print under the stem, each with its own marks and its
 				// own key beneath it — each sub-division is valued separately.
-				const subs = readSubQuestions(q)
+				const subs = readSubQuestionsForPrint(q)
 				const subsHtml = subs
 					.map(sb => {
 						const marks = sb.marks == null ? '' : ` <span class="sub-marks">(${sb.marks})</span>`
