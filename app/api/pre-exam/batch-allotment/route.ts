@@ -459,12 +459,16 @@ export async function POST(request: Request) {
 		// Verify timetable exists and is Practical
 		const { data: timetable, error: ttError } = await supabase
 			.from('exam_timetables')
-			.select('id, batch_capacity, exam_type')
+			.select('id, batch_capacity, exam_type, exam_date')
 			.eq('id', timetable_id)
 			.single()
 
 		if (ttError || !timetable) {
 			return NextResponse.json({ error: 'Timetable entry not found' }, { status: 404 })
+		}
+
+		if (isExamDatePast((timetable as any).exam_date)) {
+			return NextResponse.json({ error: 'Exam date has passed - this batch can no longer be edited' }, { status: 400 })
 		}
 
 		if ((timetable as any).exam_type !== 'Practical') {
@@ -535,6 +539,146 @@ export async function POST(request: Request) {
 }
 
 // ---------------------------------------------------------------------------
+// PATCH — Edit a batch: take selected learners out, or move them to another batch
+// Body: { action: 'remove' | 'move', timetable_id, exam_registration_ids: string[],
+//         target_timetable_id? (move only) }
+// ---------------------------------------------------------------------------
+
+const MAX_EDIT_IDS = 200
+
+/** Whether the exam date of a batch is already over (such a batch is not edited) */
+function isExamDatePast(examDate: string | null | undefined): boolean {
+	if (!examDate) return false
+	const today = new Date()
+	today.setHours(0, 0, 0, 0)
+	const date = new Date(examDate)
+	date.setHours(0, 0, 0, 0)
+	return date < today
+}
+
+export async function PATCH(request: Request) {
+	try {
+		const body = await request.json()
+		const supabase = getSupabaseServer()
+		const { action, timetable_id, target_timetable_id } = body
+		const registrationIds: string[] = Array.isArray(body.exam_registration_ids)
+			? [...new Set((body.exam_registration_ids as string[]).filter(Boolean))]
+			: []
+
+		if (action !== 'remove' && action !== 'move') {
+			return NextResponse.json({ error: 'action must be remove or move' }, { status: 400 })
+		}
+		if (!timetable_id) return NextResponse.json({ error: 'timetable_id required' }, { status: 400 })
+		if (registrationIds.length === 0) {
+			return NextResponse.json({ error: 'exam_registration_ids array required' }, { status: 400 })
+		}
+		if (registrationIds.length > MAX_EDIT_IDS) {
+			return NextResponse.json({ error: `Select at most ${MAX_EDIT_IDS} learners at a time` }, { status: 400 })
+		}
+
+		const { data: source, error: sourceError } = await supabase
+			.from('exam_timetables')
+			.select('id, exam_date, exam_type, course_id, examination_session_id, institutions_id')
+			.eq('id', timetable_id)
+			.single()
+
+		if (sourceError || !source) {
+			return NextResponse.json({ error: 'Timetable entry not found' }, { status: 404 })
+		}
+		if (isExamDatePast((source as any).exam_date)) {
+			return NextResponse.json({ error: 'Exam date has passed - this batch can no longer be edited' }, { status: 400 })
+		}
+
+		if (action === 'remove') {
+			const { data, error } = await supabase
+				.from('practical_batch_students')
+				.delete()
+				.eq('exam_timetable_id', timetable_id)
+				.in('exam_registration_id', registrationIds)
+				.select('id')
+
+			if (error) {
+				console.error('Error removing batch assignments:', error)
+				return NextResponse.json({ error: 'Failed to remove learners from the batch' }, { status: 500 })
+			}
+			return NextResponse.json({ success: true, removed: data?.length || 0 })
+		}
+
+		// action === 'move'
+		if (!target_timetable_id) {
+			return NextResponse.json({ error: 'target_timetable_id required' }, { status: 400 })
+		}
+		if (target_timetable_id === timetable_id) {
+			return NextResponse.json({ error: 'Choose a different batch to move to' }, { status: 400 })
+		}
+
+		const { data: target, error: targetError } = await supabase
+			.from('exam_timetables')
+			.select('id, exam_date, exam_type, batch_capacity, course_id, examination_session_id, institutions_id')
+			.eq('id', target_timetable_id)
+			.single()
+
+		if (targetError || !target) {
+			return NextResponse.json({ error: 'Target batch not found' }, { status: 404 })
+		}
+
+		const src = source as any
+		const tgt = target as any
+		if (
+			tgt.exam_type !== 'Practical' ||
+			tgt.course_id !== src.course_id ||
+			tgt.examination_session_id !== src.examination_session_id ||
+			tgt.institutions_id !== src.institutions_id
+		) {
+			return NextResponse.json({ error: 'Target batch is not a practical batch of the same course' }, { status: 400 })
+		}
+		if (isExamDatePast(tgt.exam_date)) {
+			return NextResponse.json({ error: 'Exam date of the target batch has passed' }, { status: 400 })
+		}
+
+		// Capacity of the target, counted the same way the page shows it
+		const { data: targetAssignments } = await supabase
+			.from('practical_batch_students')
+			.select('exam_registration_id')
+			.eq('exam_timetable_id', target_timetable_id)
+
+		const offRollRegIds = await findOffRollRegistrationIds(
+			supabase,
+			(targetAssignments || []).map((a: any) => a.exam_registration_id)
+		)
+		const targetCount = (targetAssignments || [])
+			.filter((a: any) => !offRollRegIds.has(a.exam_registration_id)).length
+		const capacity = tgt.batch_capacity || 0
+
+		if (targetCount + registrationIds.length > capacity) {
+			return NextResponse.json({
+				error: `Cannot move ${registrationIds.length} learners — target batch has ${targetCount}/${capacity} assigned, would exceed capacity`,
+			}, { status: 400 })
+		}
+
+		const { data: moved, error: moveError } = await supabase
+			.from('practical_batch_students')
+			.update({ exam_timetable_id: target_timetable_id })
+			.eq('exam_timetable_id', timetable_id)
+			.in('exam_registration_id', registrationIds)
+			.select('id')
+
+		if (moveError) {
+			if (moveError.code === '23505') {
+				return NextResponse.json({ error: 'Some learners are already assigned to the target batch' }, { status: 400 })
+			}
+			console.error('Error moving batch assignments:', moveError)
+			return NextResponse.json({ error: 'Failed to move learners' }, { status: 500 })
+		}
+
+		return NextResponse.json({ success: true, moved: moved?.length || 0 })
+	} catch (error) {
+		console.error('Error in PATCH /api/pre-exam/batch-allotment:', error)
+		return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
+	}
+}
+
+// ---------------------------------------------------------------------------
 // DELETE — Remove all assignments for a specific timetable row (re-assign)
 // Query param: timetable_id
 // ---------------------------------------------------------------------------
@@ -546,6 +690,16 @@ export async function DELETE(request: Request) {
 		const supabase = getSupabaseServer()
 
 		if (!timetableId) return NextResponse.json({ error: 'timetable_id required' }, { status: 400 })
+
+		const { data: timetable } = await supabase
+			.from('exam_timetables')
+			.select('exam_date')
+			.eq('id', timetableId)
+			.single()
+
+		if (isExamDatePast((timetable as any)?.exam_date)) {
+			return NextResponse.json({ error: 'Exam date has passed - this batch can no longer be edited' }, { status: 400 })
+		}
 
 		const { error } = await supabase
 			.from('practical_batch_students')

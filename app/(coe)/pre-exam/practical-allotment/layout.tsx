@@ -111,8 +111,9 @@ export default function PracticalAllotmentLayout({
 						})}
 					</div>
 
-					{/* Tab content */}
-					{children}
+					{/* Tab content -- in its own fragment so the routed page is not
+					    reconciled as an unkeyed sibling of the breadcrumb and tabs */}
+					<>{children}</>
 				</div>
 			</SidebarInset>
 		</SidebarProvider>

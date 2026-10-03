@@ -31,8 +31,15 @@ import {
 	PopoverTrigger,
 } from '@/components/ui/popover'
 import { Checkbox } from '@/components/ui/checkbox'
+import {
+	Select,
+	SelectContent,
+	SelectItem,
+	SelectTrigger,
+	SelectValue,
+} from '@/components/ui/select'
 import { useToast } from '@/hooks/common/use-toast'
-import { Users, Check, ChevronsUpDown, Save, Lock, RefreshCcw, Eye } from 'lucide-react'
+import { Users, Check, ChevronsUpDown, Save, Lock, RefreshCcw, Eye, UserMinus, ArrowRightLeft } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useInstitutionFilter } from '@/hooks/use-institution-filter'
 import { useSessionSync } from '@/hooks/use-session-sync'
@@ -130,6 +137,11 @@ export default function BatchAllotmentPage() {
 	const [selectedProgramFilter, setSelectedProgramFilter] = useState<string>('')
 	const [programFilterOpen, setProgramFilterOpen] = useState(false)
 
+	// Editing a batch -- learners ticked in the assigned table, and where to move them
+	const [selectedAssignedIds, setSelectedAssignedIds] = useState<Set<string>>(new Set())
+	const [moveTargetId, setMoveTargetId] = useState<string>('')
+	const [editing, setEditing] = useState(false)
+
 	// Effective institution ID -- from explicit selection or from context
 	const effectiveInstitutionId = selectedInstitutionId || contextInstitutionId || ''
 
@@ -202,6 +214,8 @@ export default function BatchAllotmentPage() {
 			setAssignedStudents([])
 			setIsViewingAssigned(false)
 			setSelectedProgramFilter('')
+			setSelectedAssignedIds(new Set())
+			setMoveTargetId('')
 		}
 	}
 
@@ -276,7 +290,7 @@ export default function BatchAllotmentPage() {
 		institutionId: string,
 		sessionId: string,
 		courseId: string
-	) => {
+	): Promise<Batch[] | null> => {
 		try {
 			setLoadingBatches(true)
 			const url = appendToUrl(
@@ -289,12 +303,14 @@ export default function BatchAllotmentPage() {
 			if (!response.ok) throw new Error('Failed to load batches')
 			const data = await response.json()
 			setBatches(data)
+			return data
 		} catch {
 			toast({
 				title: '❌ Error',
 				description: 'Failed to load practical batches',
 				variant: 'destructive',
 			})
+			return null
 		} finally {
 			setLoadingBatches(false)
 		}
@@ -392,37 +408,48 @@ export default function BatchAllotmentPage() {
 	// Batch selection -- auto-select top N students by remaining capacity
 	// ---------------------------------------------------------------------------
 
-	const handleBatchSelect = async (batchId: string) => {
-		const batch = batches.find(b => b.id === batchId)
+	const handleBatchSelect = async (
+		batchId: string,
+		options: { batchList?: Batch[]; autoSelect?: boolean } = {}
+	) => {
+		const batch = (options.batchList || batches).find(b => b.id === batchId)
 		const isFull = batch ? batch.assigned_count >= batch.batch_capacity : false
+		const hasAssigned = batch ? batch.assigned_count > 0 : false
 
 		setSelectedBatchId(batchId)
 		setSelectedProgramFilter('')
+		setSelectedAssignedIds(new Set())
+		setMoveTargetId('')
 		setLoadingStudents(true)
 
-		if (isFull) {
-			// View mode — fetch assigned students (read-only)
-			setIsViewingAssigned(true)
-			setUnassignedStudents([])
-			setSelectedStudentIds(new Set())
+		// Learners already in this batch -- shown (and editable) for any batch that has some
+		if (hasAssigned) {
 			try {
 				const url = `/api/pre-exam/batch-allotment?action=batch-assigned-students&timetableId=${batchId}`
 				const response = await fetch(url)
 				const data = await response.json()
 				setAssignedStudents(Array.isArray(data) ? data : [])
 			} catch {
+				setAssignedStudents([])
 				toast({
 					title: '❌ Error',
 					description: 'Failed to load assigned learners',
 					variant: 'destructive',
 				})
-			} finally {
-				setLoadingStudents(false)
 			}
+		} else {
+			setAssignedStudents([])
+		}
+
+		if (isFull) {
+			// Full batch — nothing more to assign
+			setIsViewingAssigned(true)
+			setUnassignedStudents([])
+			setSelectedStudentIds(new Set())
+			setLoadingStudents(false)
 		} else {
 			// Assign mode — fetch unassigned students (with checkboxes)
 			setIsViewingAssigned(false)
-			setAssignedStudents([])
 			try {
 				const url = `/api/pre-exam/batch-allotment?action=unassigned-students` +
 					`&institutionId=${effectiveInstitutionId}` +
@@ -435,11 +462,14 @@ export default function BatchAllotmentPage() {
 				setTotalRegistered(data.total_registered || 0)
 				setTotalAssigned(data.total_assigned || 0)
 
-				// Auto-select top N (remaining capacity for this batch)
+				// Auto-select top N (remaining capacity for this batch). Skipped after an
+				// edit, where it would re-tick the learner who was just taken out.
 				const remaining = batch ? batch.batch_capacity - batch.assigned_count : 0
 				const autoSelected = new Set<string>()
-				for (let i = 0; i < Math.min(remaining, students.length); i++) {
-					autoSelected.add(students[i].exam_registration_id)
+				if (options.autoSelect !== false) {
+					for (let i = 0; i < Math.min(remaining, students.length); i++) {
+						autoSelected.add(students[i].exam_registration_id)
+					}
 				}
 				setSelectedStudentIds(autoSelected)
 			} catch {
@@ -451,6 +481,72 @@ export default function BatchAllotmentPage() {
 			} finally {
 				setLoadingStudents(false)
 			}
+		}
+	}
+
+	// ---------------------------------------------------------------------------
+	// Edit handlers -- take selected learners out of a batch, or move them to another
+	// ---------------------------------------------------------------------------
+
+	const toggleAssigned = (regId: string) => {
+		setSelectedAssignedIds(prev => {
+			const next = new Set(prev)
+			if (next.has(regId)) {
+				next.delete(regId)
+			} else {
+				next.add(regId)
+			}
+			return next
+		})
+	}
+
+	const handleEditBatch = async (action: 'remove' | 'move') => {
+		if (selectedAssignedIds.size === 0 || !selectedBatchId) return
+		if (action === 'move' && !moveTargetId) return
+
+		const batchId = selectedBatchId
+		const count = selectedAssignedIds.size
+		const targetNo = batches.find(b => b.id === moveTargetId)?.batch_no
+
+		setEditing(true)
+		try {
+			const response = await fetch('/api/pre-exam/batch-allotment', {
+				method: 'PATCH',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					action,
+					timetable_id: batchId,
+					exam_registration_ids: Array.from(selectedAssignedIds),
+					...(action === 'move' ? { target_timetable_id: moveTargetId } : {}),
+				}),
+			})
+			const result = await response.json()
+			if (response.ok && result.success) {
+				toast({
+					title: action === 'move' ? '✅ Moved' : '✅ Removed',
+					description: action === 'move'
+						? `${result.moved ?? count} learner(s) moved to Batch ${targetNo}`
+						: `${result.removed ?? count} learner(s) removed from the batch — they are back in the unassigned list`,
+					className: 'bg-green-50 border-green-200 text-green-800',
+				})
+				// Reload the counts, then this batch with its new lists
+				const fresh = await loadBatches(effectiveInstitutionId, selectedSessionId, selectedCourseId)
+				await handleBatchSelect(batchId, { batchList: fresh || batches, autoSelect: false })
+			} else {
+				toast({
+					title: '❌ Failed',
+					description: result.error || 'Failed to update the batch',
+					variant: 'destructive',
+				})
+			}
+		} catch {
+			toast({
+				title: '❌ Error',
+				description: 'Network error while updating the batch',
+				variant: 'destructive',
+			})
+		} finally {
+			setEditing(false)
 		}
 	}
 
@@ -547,7 +643,7 @@ export default function BatchAllotmentPage() {
 	const totalUnassigned = totalRegistered - totalAssigned
 
 	// Program filter derived values
-	const currentStudentList = isViewingAssigned ? assignedStudents : unassignedStudents
+	const currentStudentList = [...assignedStudents, ...unassignedStudents]
 	const programMap = new Map<string, string>()
 	for (const s of currentStudentList) {
 		if (s.program_code && !programMap.has(s.program_code)) {
@@ -564,6 +660,9 @@ export default function BatchAllotmentPage() {
 	const filteredAssigned = activeProgramFilter
 		? assignedStudents.filter(s => s.program_code === activeProgramFilter)
 		: assignedStudents
+
+	// Batches the ticked learners can be moved to
+	const moveTargets = batches.filter(b => b.id !== selectedBatchId && !isBatchLocked(b))
 
 	// Batch date formatter
 	const formatBatchDate = (dateStr: string): string => {
@@ -842,7 +941,7 @@ export default function BatchAllotmentPage() {
 														</div>
 													)}
 													{isFull && !isLocked && (
-														<span className="text-[10px] text-muted-foreground mt-1">Click to view</span>
+														<span className="text-[10px] text-muted-foreground mt-1">Click to view / edit</span>
 													)}
 												</div>
 											)
@@ -875,7 +974,7 @@ export default function BatchAllotmentPage() {
 							)}
 
 							{/* ========== ASSIGNED STUDENTS TABLE (View mode) ========== */}
-							{!loadingStudents && selectedBatchId && isViewingAssigned && assignedStudents.length > 0 && (
+							{!loadingStudents && selectedBatchId && assignedStudents.length > 0 && (
 								<Card className="shadow-md">
 									<CardHeader className="pb-3">
 										<div className="flex items-center justify-between flex-wrap gap-2">
@@ -946,6 +1045,20 @@ export default function BatchAllotmentPage() {
 											<Table>
 												<TableHeader>
 													<TableRow className="bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-600 hover:to-emerald-600">
+														<TableHead className="w-10 text-white">
+															<Checkbox
+																checked={
+																	filteredAssigned.length > 0 &&
+																	filteredAssigned.every(s => selectedAssignedIds.has(s.exam_registration_id))
+																}
+																onCheckedChange={(checked) => {
+																	setSelectedAssignedIds(checked
+																		? new Set(filteredAssigned.map(s => s.exam_registration_id))
+																		: new Set())
+																}}
+																className="border-white data-[state=checked]:bg-white data-[state=checked]:text-green-600"
+															/>
+														</TableHead>
 														<TableHead className="w-12 text-white font-semibold text-sm">#</TableHead>
 														<TableHead className="text-white font-semibold text-sm">Register No</TableHead>
 														<TableHead className="text-white font-semibold text-sm">Name</TableHead>
@@ -957,8 +1070,17 @@ export default function BatchAllotmentPage() {
 													{filteredAssigned.map((student, idx) => (
 														<TableRow
 															key={student.exam_registration_id}
-															className="hover:bg-green-50/50 dark:hover:bg-green-900/10"
+															className={cn(
+																'hover:bg-green-50/50 dark:hover:bg-green-900/10',
+																selectedAssignedIds.has(student.exam_registration_id) && 'bg-green-50/40 dark:bg-green-900/10'
+															)}
 														>
+															<TableCell className="py-2">
+																<Checkbox
+																	checked={selectedAssignedIds.has(student.exam_registration_id)}
+																	onCheckedChange={() => toggleAssigned(student.exam_registration_id)}
+																/>
+															</TableCell>
 															<TableCell className="font-medium text-sm py-2">
 																{idx + 1}
 															</TableCell>
@@ -990,18 +1112,65 @@ export default function BatchAllotmentPage() {
 
 										{/* Reassign action at bottom */}
 										{!isBatchLocked(selectedBatch!) && (
-											<div className="flex items-center justify-between">
+											<div className="flex items-center justify-between flex-wrap gap-2">
 												<p className="text-xs text-muted-foreground">
-													{assignedStudents.length} learners assigned to Batch {selectedBatch?.batch_no}
+													{selectedAssignedIds.size > 0
+														? `${selectedAssignedIds.size} of ${assignedStudents.length} learners selected — remove them or move them to another batch`
+														: `${assignedStudents.length} learners assigned to Batch ${selectedBatch?.batch_no}. Tick learners to edit.`}
 												</p>
-												<Button
-													variant="outline"
-													onClick={() => handleReassign(selectedBatchId)}
-													className="h-8 text-xs text-orange-600 border-orange-200 hover:bg-orange-50 hover:text-orange-800"
-												>
-													<RefreshCcw className="h-3.5 w-3.5 mr-1.5" />
-													Reassign Batch
-												</Button>
+												<div className="flex items-center gap-2 flex-wrap">
+													{moveTargets.length > 0 && (
+														<>
+															<Select value={moveTargetId} onValueChange={setMoveTargetId}>
+																<SelectTrigger className="h-8 w-[230px] text-xs">
+																	<SelectValue placeholder="Move to batch..." />
+																</SelectTrigger>
+																<SelectContent>
+																	{moveTargets.map(b => {
+																		const free = b.batch_capacity - b.assigned_count
+																		return (
+																			<SelectItem
+																				key={b.id}
+																				value={b.id}
+																				disabled={free < Math.max(selectedAssignedIds.size, 1)}
+																				className="text-xs"
+																			>
+																				Batch {b.batch_no} · {formatBatchDate(b.exam_date)} {b.session} ({free} free)
+																			</SelectItem>
+																		)
+																	})}
+																</SelectContent>
+															</Select>
+															<Button
+																variant="outline"
+																onClick={() => handleEditBatch('move')}
+																disabled={editing || selectedAssignedIds.size === 0 || !moveTargetId}
+																className="h-8 text-xs text-violet-700 border-violet-200 hover:bg-violet-50 hover:text-violet-800"
+															>
+																<ArrowRightLeft className="h-3.5 w-3.5 mr-1.5" />
+																Move
+															</Button>
+														</>
+													)}
+													<Button
+														variant="outline"
+														onClick={() => handleEditBatch('remove')}
+														disabled={editing || selectedAssignedIds.size === 0}
+														className="h-8 text-xs text-red-600 border-red-200 hover:bg-red-50 hover:text-red-700"
+													>
+														<UserMinus className="h-3.5 w-3.5 mr-1.5" />
+														Remove Selected
+													</Button>
+													<Button
+														variant="outline"
+														onClick={() => handleReassign(selectedBatchId)}
+														disabled={editing}
+														className="h-8 text-xs text-orange-600 border-orange-200 hover:bg-orange-50 hover:text-orange-800"
+													>
+														<RefreshCcw className="h-3.5 w-3.5 mr-1.5" />
+														Reassign Batch
+													</Button>
+												</div>
 											</div>
 										)}
 									</CardContent>

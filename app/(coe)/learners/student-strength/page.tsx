@@ -165,7 +165,7 @@ export default function StudentStrengthPage() {
 	async function handleExcel() {
 		if (!report) return
 		try {
-			const XLSX = await import('xlsx')
+			const XLSX = await import('@/lib/utils/excel-compat')
 
 			const { has_aided, max_year, ug_rows, pg_rows, ug_subtotal, pg_subtotal, grand_total } = report
 
@@ -213,7 +213,7 @@ export default function StudentStrengthPage() {
 			const ws = XLSX.utils.aoa_to_sheet(wsData)
 			const wb = XLSX.utils.book_new()
 			XLSX.utils.book_append_sheet(wb, ws, 'Student Strength')
-			XLSX.writeFile(wb, `student-strength-${report.exam_session_name.replace(/\s+/g, '-')}.xlsx`)
+			await XLSX.writeFile(wb, `student-strength-${report.exam_session_name.replace(/\s+/g, '-')}.xlsx`)
 		} catch {
 			toast({ title: '❌ Excel Error', description: 'Could not generate Excel file', variant: 'destructive' })
 		}

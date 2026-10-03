@@ -27,14 +27,14 @@ import { createRequire } from 'module'
 function katexDistDir(): string | null {
 	const candidates: string[] = []
 	try {
-		const req = createRequire(path.join(process.cwd(), 'package.json'))
-		candidates.push(path.join(path.dirname(req.resolve('katex/package.json')), 'dist'))
+		const req = createRequire(/*turbopackIgnore: true*/ path.join(/*turbopackIgnore: true*/ process.cwd(), 'package.json'))
+		candidates.push(path.join(/*turbopackIgnore: true*/ path.dirname(req.resolve(/*turbopackIgnore: true*/ 'katex/package.json')), 'dist'))
 	} catch {
 		// resolve can fail under bundlers — fall through to the literal paths.
 	}
-	candidates.push(path.join(process.cwd(), 'node_modules', 'katex', 'dist'))
+	candidates.push(path.join(/*turbopackIgnore: true*/ process.cwd(), 'node_modules', 'katex', 'dist'))
 	for (const dir of candidates) {
-		if (fs.existsSync(path.join(dir, 'katex.min.css'))) return dir
+		if (fs.existsSync(/*turbopackIgnore: true*/ path.join(dir, 'katex.min.css'))) return dir
 	}
 	return null
 }
@@ -57,18 +57,18 @@ export function buildKatexCss(): string {
 		return ''
 	}
 	try {
-		let css = fs.readFileSync(path.join(dist, 'katex.min.css'), 'utf8')
+		let css = fs.readFileSync(/*turbopackIgnore: true*/ path.join(dist, 'katex.min.css'), 'utf8')
 		// Drop the woff/ttf sources first: they are relative URLs Chromium cannot
 		// resolve inside a setContent() page, and woff2 alone covers every face.
 		css = css.replace(/,\s*url\([^)]*\.(?:woff|ttf)\)\s*format\("(?:woff|truetype)"\)/g, '')
 		let missing = 0
 		css = css.replace(/url\(\s*["']?([^)"']+?\.woff2)["']?\s*\)/g, (whole, rel: string) => {
-			const file = path.join(dist, rel)
-			if (!fs.existsSync(file)) {
+			const file = path.join(/*turbopackIgnore: true*/ dist, rel)
+			if (!fs.existsSync(/*turbopackIgnore: true*/ file)) {
 				missing++
 				return whole
 			}
-			return `url(data:font/woff2;base64,${fs.readFileSync(file).toString('base64')})`
+			return `url(data:font/woff2;base64,${fs.readFileSync(/*turbopackIgnore: true*/ file).toString('base64')})`
 		})
 		if (missing > 0) {
 			console.warn(`[QP PDF] ${missing} KaTeX font file(s) missing under ${dist}/fonts`)
