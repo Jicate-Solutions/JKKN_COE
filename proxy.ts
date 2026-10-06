@@ -37,6 +37,10 @@ const publicApiRoutes = [
 	// cookies; the routes authenticate both audiences themselves
 	// (app/api/examiner/question-paper/*).
 	'/api/examiner/question-paper',
+	// Scheduled jobs (vercel.json crons). Vercel Cron carries no COE cookies;
+	// every route under it must check `Authorization: Bearer <CRON_SECRET>`
+	// and refuse to run when the secret is not configured.
+	'/api/cron',
 ]
 
 // Exact public API paths (regex): shared by COE staff AND external examiners,

@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useState } from 'react'
 import { AppSidebar } from '@/components/layout/app-sidebar'
 import { AppHeader } from '@/components/layout/app-header'
 import { AppFooter } from '@/components/layout/app-footer'
@@ -43,7 +43,9 @@ import { TAMIL_FONT_FAMILIES } from '@/lib/ia/tamil-font-meta'
 import { QuestionImageField } from '@/components/ia/question-image-field'
 import { optionEditorValue, richTextToPlain } from '@/lib/ia/rich-text'
 import { paperPdfFilename } from '@/lib/ia/paper-filename'
-import { validatePaperComplete, requiresCompletion } from '@/lib/ia/validate-paper'
+import {
+	validatePaperDetailed, requiresCompletion, problemAnchor, plainText, type PaperProblem,
+} from '@/lib/ia/validate-paper'
 
 interface Institution {
 	id: string
@@ -224,6 +226,36 @@ function MultiSearchableSelect({
 				</Command>
 			</PopoverContent>
 		</Popover>
+	)
+}
+
+const FIELD_INVALID = 'border-rose-400 ring-1 ring-rose-300'
+
+/**
+ * Wraps one field of a question: gives it its anchor id (so "Fix" can scroll to
+ * it), the message when it has a problem, and a brief flash after a jump.
+ * Module-level on purpose — defined inside the page it would remount every rich
+ * editor on every keystroke.
+ */
+function FieldFrame({
+	anchor, errors, flashing, className, children,
+}: {
+	anchor: string
+	errors?: PaperProblem[]
+	flashing?: boolean
+	className?: string
+	children: React.ReactNode
+}) {
+	return (
+		<div id={anchor} className={cn('rounded-md transition-shadow', flashing && 'ring-2 ring-rose-400 ring-offset-2', className)}>
+			{children}
+			{errors && errors.length > 0 && (
+				<p className="mt-1 flex items-start gap-1 text-[11px] text-rose-700" role="alert">
+					<AlertTriangle className="mt-px h-3 w-3 shrink-0" />
+					<span>{[...new Set(errors.map(e => e.short))].join(' · ')}</span>
+				</p>
+			)}
+		</div>
 	)
 }
 
@@ -726,6 +758,7 @@ export default function QuestionPapersPage() {
 		setQuestions([])
 		setDirty(false)
 		setSavedInfo(null)
+		setShowCompletionErrors(false)
 		try {
 			const res = await fetch(`/api/pre-exam/question-papers/${p.id}`)
 			if (res.ok) {
@@ -767,23 +800,17 @@ export default function QuestionPapersPage() {
 		)
 	}
 
-	const addSubQuestion = (q: IaPaperQuestion) => {
-		const subs = readSubQuestions(q)
-		if (subs.length >= MAX_SUB_QUESTIONS) return
-		const parentMarks = Number(q.marks) || 0
-		// First split seeds two halves of the parent budget (8 + 7 for a 15-mark slot);
-		// later additions come in at 0 so the author allocates deliberately.
-		const seeded: IaPaperSubQuestion[] =
-			subs.length === 0
-				? [
-					{ id: newId(), label: romanLabel(0), question_text: null, marks: Math.ceil(parentMarks / 2), co_code: q.co_code || null, k_level: q.k_level || null, display_order: 1 },
-					{ id: newId(), label: romanLabel(1), question_text: null, marks: Math.floor(parentMarks / 2), co_code: q.co_code || null, k_level: q.k_level || null, display_order: 2 },
-				]
-				: [...subs, { id: newId(), label: romanLabel(subs.length), question_text: null, marks: 0, co_code: null, k_level: null, display_order: subs.length + 1 }]
-		patchSubs(q.id, seeded)
+	// "Split into (i)/(ii)": two sub-divisions with half the marks each (16 → 8 + 8),
+	// empty text and no CO / K-level — each sub-division is tagged on its own.
+	const splitQuestion = (q: IaPaperQuestion) => {
+		const half = q.marks != null ? Number(q.marks) / 2 : null
+		patchSubs(q.id, [
+			{ id: newId(), label: romanLabel(0), question_text: null, marks: half, co_code: null, k_level: null, display_order: 1 },
+			{ id: newId(), label: romanLabel(1), question_text: null, marks: half, co_code: null, k_level: null, display_order: 2 },
+		])
 	}
 
-	// Both read the CURRENT question inside the state update rather than the
+	// These read the CURRENT question inside the state update rather than the
 	// `questions` this render saw: a rich-text box keeps the handler it was last
 	// rendered with (QuestionRichEditor is memoised), so a handler from an older
 	// render must still apply its change to the latest sub-divisions.
@@ -794,6 +821,25 @@ export default function QuestionPapersPage() {
 				if (q.id !== qid) return q
 				const next = readSubQuestions(q).map(s => (s.id === subId ? { ...s, ...patch } : s))
 				return { ...q, sub_questions: next.length > 0 ? relabelSubs(next) : null }
+			})
+		)
+	}
+
+	// A later sub-division comes in with no marks, so the author allocates deliberately.
+	const addSubQuestion = (qid: string) => {
+		setDirty(true)
+		setQuestions(prev =>
+			prev.map(q => {
+				if (q.id !== qid) return q
+				const subs = readSubQuestions(q)
+				if (subs.length >= MAX_SUB_QUESTIONS) return q
+				return {
+					...q,
+					sub_questions: relabelSubs([
+						...subs,
+						{ id: newId(), label: romanLabel(subs.length), question_text: null, marks: null, co_code: null, k_level: null, display_order: subs.length + 1 },
+					]),
+				}
 			})
 		)
 	}
@@ -809,33 +855,64 @@ export default function QuestionPapersPage() {
 		)
 	}
 
-	// Blocks Save/Submit while any split question's marks don't add up to its parent.
+	// A split question's marks must add up to its parent. A DRAFT may still be
+	// saved half-allocated — an author must be able to stop and come back — so
+	// this only blocks a save on a paper that has already left draft.
 	const subMarkErrors = useMemo(() => validateSubMarks(questions), [questions])
 
-	// Everything still missing before the paper may leave the author's hands.
-	// Save is NEVER blocked by these — only Submit and Approve are.
-	const completionErrors = useMemo(
-		() => validatePaperComplete(questions, paper?.template_parts),
+	// Everything still missing before the paper may leave the author's hands,
+	// each pinned to the field it is about. Saving a draft is NEVER blocked by
+	// these — only Submit and Approve are.
+	const problems = useMemo(
+		() => validatePaperDetailed(questions, paper?.template_parts),
 		[questions, paper?.template_parts]
 	)
-	// The list only appears once a Submit/Approve has actually been blocked —
-	// showing it while the author is still typing would just be noise.
+	const completionErrors = useMemo(() => problems.map(p => p.message), [problems])
+	const problemsByAnchor = useMemo(() => {
+		const m = new Map<string, PaperProblem[]>()
+		for (const p of problems) m.set(p.anchor, [...(m.get(p.anchor) || []), p])
+		return m
+	}, [problems])
+	const incompleteQuestionIds = useMemo(
+		() => new Set(problems.map(p => p.questionId).filter((id): id is string => !!id)),
+		[problems]
+	)
+	// The list and the field frames only appear once a Submit/Approve has actually
+	// been blocked — showing them while the author is still typing would just be noise.
 	const [showCompletionErrors, setShowCompletionErrors] = useState(false)
+	const showFieldErrors = showCompletionErrors && editable
+	/** The problems on one field, or none. */
+	const at = (anchor: string): PaperProblem[] | undefined =>
+		showFieldErrors ? problemsByAnchor.get(anchor) : undefined
+	const invalidClass = (anchor: string) => (at(anchor)?.length ? FIELD_INVALID : '')
+
+	// "Fix": scroll the offending field into view and flash it.
+	const [flash, setFlash] = useState<string | null>(null)
+	const scrollToAnchor = useCallback((anchor: string) => {
+		const el = document.getElementById(anchor)
+		if (!el) return
+		el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+		setFlash(anchor)
+		window.setTimeout(() => setFlash(f => (f === anchor ? null : f)), 2000)
+	}, [])
 
 	const saveQuestions = async (nextStatus?: string, allowClear = false) => {
 		if (!paper) return
 		// Submit / Approve need a complete paper: every question entered, CO and
 		// K-level chosen, every option filled. Save stays free-form.
-		if (requiresCompletion(nextStatus) && completionErrors.length > 0) {
+		if (requiresCompletion(nextStatus) && problems.length > 0) {
 			setShowCompletionErrors(true)
 			toast({
 				title: `Cannot ${nextStatus === 'approved' ? 'approve' : 'submit'} — ${completionErrors.length} item(s) incomplete`,
 				description: completionErrors.slice(0, 3).join(' · ') + (completionErrors.length > 3 ? ' …' : ''),
 				variant: 'destructive',
 			})
+			// Take the author to the first one; the frames need a render to appear.
+			const first = problems[0].anchor
+			window.setTimeout(() => scrollToAnchor(first), 80)
 			return
 		}
-		if (editable && subMarkErrors.length > 0) {
+		if (editable && (nextStatus || paper.status) !== 'draft' && subMarkErrors.length > 0) {
 			toast({
 				title: 'Sub-division marks don’t add up',
 				description: subMarkErrors.slice(0, 3).join(' · '),
@@ -1247,6 +1324,51 @@ Clear them anyway?`)) {
 		const defined = (paper?.course_outcomes || []).map(c => c.co_code)
 		return defined.length > 0 ? defined : ['CO1', 'CO2', 'CO3', 'CO4', 'CO5', 'CO6']
 	}, [paper])
+
+	/** CO + K-level selectors for the right-hand side of a question / sub-division row. */
+	const coKSelects = (
+		coAnchor: string,
+		kAnchor: string,
+		co: string | null | undefined,
+		k: string | null | undefined,
+		onCo: (v: string) => void,
+		onK: (v: string) => void
+	) => (
+		<div className="flex shrink-0 items-start gap-1.5">
+			<FieldFrame anchor={coAnchor} errors={at(coAnchor)} flashing={flash === coAnchor} className="w-[88px]">
+				<Select value={co || ''} onValueChange={onCo}>
+					<SelectTrigger className={cn('h-7 px-2 text-xs', invalidClass(coAnchor))} aria-label="Course Outcome">
+						<SelectValue placeholder="CO *" />
+					</SelectTrigger>
+					<SelectContent>
+						{coOptions.map(code => (
+							<SelectItem key={code} value={code}>{code}</SelectItem>
+						))}
+					</SelectContent>
+				</Select>
+			</FieldFrame>
+			<FieldFrame anchor={kAnchor} errors={at(kAnchor)} flashing={flash === kAnchor} className="w-[136px]">
+				<Select value={k || ''} onValueChange={onK}>
+					<SelectTrigger className={cn('h-7 px-2 text-xs', invalidClass(kAnchor))} aria-label="K-level">
+						<SelectValue placeholder="K-level *" />
+					</SelectTrigger>
+					<SelectContent>
+						{K_LEVELS.map(kl => (
+							<SelectItem key={kl.code} value={kl.code}>{kl.label}</SelectItem>
+						))}
+					</SelectContent>
+				</Select>
+			</FieldFrame>
+		</div>
+	)
+
+	/** Read-only CO / K-level tags, for a paper that can no longer be edited. */
+	const coKTags = (co: string | null | undefined, k: string | null | undefined) => (
+		<span className="flex shrink-0 items-center gap-1 text-[11px] font-medium text-muted-foreground">
+			<span className="rounded border px-1.5 py-0.5">{co || 'CO —'}</span>
+			<span className="rounded border px-1.5 py-0.5">{k || 'K —'}</span>
+		</span>
+	)
 
 	// True once any question text/option has been entered — Rebuild is hidden for such papers
 	const hasAuthored = useMemo(
@@ -1906,7 +2028,16 @@ Clear them anyway?`)) {
 								Click <span className="font-medium text-foreground">Save</span> to persist questions — the header shows
 								<span className="text-green-700"> ✓ Saved N answer(s)</span>. Once a paper has entered questions,
 								<span className="font-medium text-foreground"> Rebuild will not erase it</span> (Rebuild All skips it; per-paper Rebuild asks to confirm).
+								A draft saves as it is; <span className="font-medium text-foreground">Submit</span> checks every question, CO, K-level and option.
 							</p>
+							{editable && (
+								<p className="rounded bg-muted/50 px-3 py-2 text-xs text-muted-foreground">
+									Paste from Word keeps paragraphs, bold / italic / underline, sub / superscript, lists and tables.
+									It loses Equation Editor and MathType objects and pictures — use
+									<span className="font-medium text-foreground"> Σ Equation</span> (or paste the formula as LaTeX) for the
+									formula, and paste a screenshot with <span className="font-medium text-foreground">Ctrl+V</span> for the figure.
+								</p>
+							)}
 
 							{[...groupedQuestions.entries()].map(([label, qs]) => {
 								const part = partByLabel.get(label)
@@ -1920,7 +2051,7 @@ Clear them anyway?`)) {
 												<div className="text-sm font-semibold">
 													PART {label}
 													{part
-														? ` — (${answerCount} x ${part.marks_per_question} = ${answerCount * part.marks_per_question})${
+														? ` – (${answerCount} x ${part.marks_per_question} = ${answerCount * part.marks_per_question})${
 															answerCount < part.num_questions ? ` · answer ${answerCount} of ${part.num_questions}` : ''
 														}`
 														: ''}
@@ -1950,7 +2081,7 @@ Clear them anyway?`)) {
 										<div className="space-y-3 p-3">
 											{qs.map(q => {
 												// Sub-divisions: the template fixes this slot's marks; the author
-												// splits that budget across i. / ii. — it must add up exactly.
+												// splits that budget across (i) / (ii) — it must add up exactly.
 												const subs = readSubQuestions(q)
 												const split = subs.length > 0
 												const budget = Number(q.marks) || 0
@@ -1958,274 +2089,294 @@ Clear them anyway?`)) {
 												const balanced = allocated === budget && subs.every(sb => sb.marks != null)
 												// The template's per-part "Split questions" switch can turn this off.
 												const splittable = canSplit(q) && part?.allow_split !== false
+												const isMcq = Array.isArray(q.options) && q.options.length > 0
+												const complete = !incompleteQuestionIds.has(q.id)
+												const textAnchor = problemAnchor(q.id, 'question_text')
+												const marksAnchor = problemAnchor(q.id, 'marks')
 												return (
-													// data-qp-image-scope: Ctrl+V anywhere in this question
-													// attaches the screenshot here — see QuestionImageField.
+													<Fragment key={q.id}>
+													{/* A choice alternative (11 b) is the same card, indented and
+													    dashed, under an (OR) line. */}
+													{q.is_choice_alternative && (
+														<div className="ml-6 flex items-center gap-2 text-[11px] font-medium text-muted-foreground">
+															<span className="h-px flex-1 bg-border" />
+															(OR)
+															<span className="h-px flex-1 bg-border" />
+														</div>
+													)}
+													{/* data-qp-image-scope: Ctrl+V anywhere in this question
+													    attaches the screenshot here — see QuestionImageField. */}
 													<div
-														key={q.id}
+														id={`qp-q-${q.id}`}
 														data-qp-image-scope
-														className="rounded border bg-background p-2"
-													>
-													<div className="mb-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-														<span className="font-medium text-foreground">
-															{q.is_choice_alternative ? '(OR) ' : ''}Q{q.question_number}
-															{q.sub_label ? ` ${q.sub_label})` : ''}
-														</span>
-														<span>· {budget} marks</span>
-														{split && (
-															<Badge
-																variant="outline"
-																className={
-																	balanced
-																		? 'bg-green-100 text-green-700 border-green-200'
-																		: 'bg-red-100 text-red-700 border-red-200'
-																}
-															>
-																{subs.length} sub-division{subs.length > 1 ? 's' : ''} · {allocated}/{budget}
-															</Badge>
+														className={cn(
+															'rounded border bg-background',
+															q.is_choice_alternative && 'ml-6 border-dashed',
+															showFieldErrors && !complete && 'border-rose-300'
 														)}
-														{editable && splittable && (
+													>
+													<div className="space-y-2 p-2">
+														{/* Row 1: number and marks on the left, CO + K-level on the right. */}
+														<div className="flex flex-wrap items-start justify-between gap-2">
+															<span className="flex items-center gap-2">
+																<span className="inline-flex items-center rounded-md border bg-muted/50 px-2 py-0.5 text-sm font-semibold tabular-nums">
+																	Q{q.question_number}
+																	{q.sub_label ? ` ${q.sub_label})` : ''}
+																</span>
+																<span className="text-xs text-muted-foreground">{budget} {budget === 1 ? 'mark' : 'marks'}</span>
+																{editable && complete && (
+																	<CheckCircle2 className="h-4 w-4 text-emerald-500" aria-label="Complete" />
+																)}
+															</span>
+															{split ? (
+																<span className="text-[11px] text-muted-foreground">CO and K-level per sub-division</span>
+															) : editable ? (
+																coKSelects(
+																	problemAnchor(q.id, 'co_code'),
+																	problemAnchor(q.id, 'k_level'),
+																	q.co_code,
+																	q.k_level,
+																	v => updateQuestion(q.id, { co_code: v }),
+																	v => updateQuestion(q.id, { k_level: v })
+																)
+															) : (
+																coKTags(q.co_code, q.k_level)
+															)}
+														</div>
+
+														{/* The question itself — or, once split, the optional common stem. */}
+														{!editable && plainText(q.question_text) === '' ? (
+															split ? null : <p className="text-sm italic text-muted-foreground">Question not entered</p>
+														) : (
+															<FieldFrame anchor={textAnchor} errors={at(textAnchor)} flashing={flash === textAnchor}>
+																<QuestionRichEditor
+																	value={q.question_text || ''}
+																	disabled={!editable}
+																	placeholder={split ? 'Common stem (optional)…' : 'Type the question…'}
+																	className={invalidClass(textAnchor)}
+																	defaultFontFamily={paper.default_font}
+																	onChange={html => updateQuestion(q.id, { question_text: html })}
+																/>
+															</FieldFrame>
+														)}
+
+														{(editable || q.image) && (
+															<QuestionImageField
+																paperId={paper.id}
+																value={q.image}
+																disabled={!editable}
+																onChange={image => updateQuestion(q.id, { image })}
+															/>
+														)}
+
+														{isMcq && (
+															<>
+																<div className="grid grid-cols-1 gap-2 md:grid-cols-2">
+																	{(q.options || []).map(o => {
+																		const oAnchor = problemAnchor(q.id, 'option', { optionKey: o.key })
+																		return (
+																			<FieldFrame key={o.key} anchor={oAnchor} errors={at(oAnchor)} flashing={flash === oAnchor}>
+																				<div className="flex items-start gap-1">
+																					<span className="mt-2 w-5 text-xs text-muted-foreground">{o.key})</span>
+																					{/* Choices author exactly like questions do — equations,
+																					    sub/superscript — and inherit the paper's language. */}
+																					<QuestionRichEditor
+																						variant="compact"
+																						className={cn('flex-1', invalidClass(oAnchor))}
+																						value={optionEditorValue(o)}
+																						disabled={!editable}
+																						placeholder={`Option ${o.key} *`}
+																						defaultFontFamily={q.option_font || paper.default_font}
+																						onChange={html =>
+																							updateOption(q.id, o.key, {
+																								text_html: html || null,
+																								text: richTextToPlain(html),
+																							})
+																						}
+																					/>
+																				</div>
+																			</FieldFrame>
+																		)
+																	})}
+																</div>
+																<div className="flex flex-wrap items-center justify-between gap-2">
+																	<div className="flex items-center gap-1">
+																		<Label className="text-xs">Answer</Label>
+																		<Select
+																			value={q.correct_option || ''}
+																			onValueChange={v => updateQuestion(q.id, { correct_option: v })}
+																			disabled={!editable}
+																		>
+																			<SelectTrigger className="h-7 w-16 px-2 text-xs">
+																				<SelectValue placeholder="—" />
+																			</SelectTrigger>
+																			<SelectContent>
+																				{(q.options || []).map(o => (
+																					<SelectItem key={o.key} value={o.key}>
+																						{o.key}
+																					</SelectItem>
+																				))}
+																			</SelectContent>
+																		</Select>
+																	</div>
+																	{/* Language of THIS question's options only; "Default"
+																	    follows the paper's Default Language. */}
+																	<div className="flex items-center gap-1">
+																		<Label className="whitespace-nowrap text-xs">Option font</Label>
+																		<Select
+																			value={q.option_font || 'default'}
+																			onValueChange={v => updateQuestion(q.id, { option_font: v === 'default' ? null : v })}
+																			disabled={!editable}
+																		>
+																			<SelectTrigger className="h-7 w-[150px] px-2 text-xs">
+																				<SelectValue placeholder="Default" />
+																			</SelectTrigger>
+																			<SelectContent>
+																				<SelectItem value="default" className="text-xs">Default</SelectItem>
+																				{TAMIL_FONT_FAMILIES.map(f => (
+																					<SelectItem key={f.id} value={f.cssName} className="text-xs">
+																						{f.label}
+																					</SelectItem>
+																				))}
+																			</SelectContent>
+																		</Select>
+																	</div>
+																</div>
+															</>
+														)}
+
+														{/* Sub-divisions (i), (ii) … */}
+														{split && (
+															<div className="space-y-3 border-l-2 border-border pl-3">
+																{subs.map(sb => {
+																	const sText = problemAnchor(q.id, 'question_text', { subId: sb.id })
+																	const sMarks = problemAnchor(q.id, 'marks', { subId: sb.id })
+																	return (
+																		/* Its own paste scope: Ctrl+V inside this sub-division
+																		   attaches the screenshot to ITS figure, not the parent's. */
+																		<div key={sb.id} data-qp-image-scope className="space-y-1.5">
+																			<div className="flex flex-wrap items-start justify-between gap-2">
+																				<span className="pt-1 text-xs font-semibold">({sb.label})</span>
+																				{editable ? (
+																					<div className="flex items-start gap-1.5">
+																						<FieldFrame anchor={sMarks} errors={at(sMarks)} flashing={flash === sMarks} className="w-[72px]">
+																							<Input
+																								type="number"
+																								min={0}
+																								max={budget}
+																								step="0.5"
+																								className={cn('h-7 px-2 text-xs', invalidClass(sMarks))}
+																								value={sb.marks ?? ''}
+																								placeholder="Marks *"
+																								aria-label="Marks"
+																								onChange={e =>
+																									updateSubQuestion(q.id, sb.id, {
+																										marks: e.target.value === '' ? null : Number(e.target.value),
+																									})
+																								}
+																							/>
+																						</FieldFrame>
+																						{coKSelects(
+																							problemAnchor(q.id, 'co_code', { subId: sb.id }),
+																							problemAnchor(q.id, 'k_level', { subId: sb.id }),
+																							sb.co_code,
+																							sb.k_level,
+																							v => updateSubQuestion(q.id, sb.id, { co_code: v }),
+																							v => updateSubQuestion(q.id, sb.id, { k_level: v })
+																						)}
+																						<Button
+																							size="icon"
+																							variant="ghost"
+																							className="h-7 w-7 text-muted-foreground hover:text-destructive"
+																							onClick={() => removeSubQuestion(q.id, sb.id)}
+																							aria-label="Remove sub-division"
+																							title="Remove this sub-division"
+																						>
+																							<X className="h-3.5 w-3.5" />
+																						</Button>
+																					</div>
+																				) : (
+																					<span className="flex items-center gap-2">
+																						{sb.marks != null && (
+																							<span className="text-[11px] text-muted-foreground">{sb.marks} marks</span>
+																						)}
+																						{coKTags(sb.co_code, sb.k_level)}
+																					</span>
+																				)}
+																			</div>
+																			{!editable && plainText(sb.question_text) === '' ? (
+																				<p className="text-sm italic text-muted-foreground">Question not entered</p>
+																			) : (
+																				<FieldFrame anchor={sText} errors={at(sText)} flashing={flash === sText}>
+																					<QuestionRichEditor
+																						variant="compact"
+																						value={sb.question_text || ''}
+																						disabled={!editable}
+																						placeholder="Type this sub-division…"
+																						className={invalidClass(sText)}
+																						defaultFontFamily={paper.default_font}
+																						onChange={html => updateSubQuestion(q.id, sb.id, { question_text: html })}
+																					/>
+																				</FieldFrame>
+																			)}
+																			{(editable || sb.image) && (
+																				<QuestionImageField
+																					paperId={paper.id}
+																					value={sb.image}
+																					disabled={!editable}
+																					onChange={image => updateSubQuestion(q.id, sb.id, { image })}
+																					label={`Add image to (${sb.label})`}
+																				/>
+																			)}
+																		</div>
+																	)
+																})}
+																{editable && subs.length < MAX_SUB_QUESTIONS && (
+																	<Button
+																		size="sm"
+																		variant="ghost"
+																		className="h-7 px-2 text-xs"
+																		onClick={() => addSubQuestion(q.id)}
+																		title="Add another sub-division (i, ii, iii…)"
+																	>
+																		<Plus className="mr-1 h-3.5 w-3.5" />
+																		Add sub-division
+																	</Button>
+																)}
+															</div>
+														)}
+													</div>
+
+													{/* Foot: marks, and the split control. */}
+													<div className="flex flex-wrap items-center justify-between gap-2 rounded-b border-t bg-muted/30 px-2 py-1.5 text-xs text-muted-foreground">
+														<FieldFrame anchor={marksAnchor} errors={at(marksAnchor)} flashing={flash === marksAnchor}>
+															<span>
+																Marks: {budget}
+																{split && (
+																	<>
+																		{' · '}
+																		<span className={cn(!balanced && 'font-medium text-red-600')}>
+																			sub-divisions {allocated} / {budget}
+																		</span>
+																	</>
+																)}
+															</span>
+														</FieldFrame>
+														{editable && splittable && !split && (
 															<Button
 																size="sm"
 																variant="ghost"
-																className="ml-auto h-6 px-2 text-xs"
-																disabled={subs.length >= MAX_SUB_QUESTIONS}
-																onClick={() => addSubQuestion(q)}
-																title={
-																	split
-																		? 'Add another sub-division (i, ii, iii…)'
-																		: `Split this ${budget}-mark question into sub-divisions`
-																}
+																className="h-6 px-2 text-xs"
+																onClick={() => splitQuestion(q)}
+																title={`Split this ${budget}-mark question into sub-divisions`}
 															>
 																<Split className="mr-1 h-3 w-3" />
-																{split ? 'Add sub-division' : 'Split into sub-divisions'}
+																Split into (i)/(ii)
 															</Button>
 														)}
 													</div>
-													<QuestionRichEditor
-														value={q.question_text || ''}
-														disabled={!editable}
-														placeholder={
-															split
-																? 'Optional shared stem — e.g. “For the circuit shown below:” (leave blank to print nothing)'
-																: 'Enter the question…'
-														}
-														defaultFontFamily={paper.default_font}
-														onChange={html => updateQuestion(q.id, { question_text: html })}
-													/>
-
-													<QuestionImageField
-														paperId={paper.id}
-														value={q.image}
-														disabled={!editable}
-														onChange={image => updateQuestion(q.id, { image })}
-													/>
-
-													{Array.isArray(q.options) && q.options.length > 0 && (
-														<div className="mt-2 grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-3">
-															{q.options.map(o => (
-																<div key={o.key} className="flex items-start gap-1">
-																	<span className="mt-2 w-5 text-xs text-muted-foreground">{o.key})</span>
-																	{/* Choices author exactly like questions do — equations,
-																	    sub/superscript — and inherit the paper's language. */}
-																	<QuestionRichEditor
-																		variant="compact"
-																		className="flex-1"
-																		value={optionEditorValue(o)}
-																		disabled={!editable}
-																		placeholder={`Option ${o.key}`}
-																		defaultFontFamily={q.option_font || paper.default_font}
-																		onChange={html =>
-																			updateOption(q.id, o.key, {
-																				text_html: html || null,
-																				text: richTextToPlain(html),
-																			})
-																		}
-																	/>
-																</div>
-															))}
-														</div>
-													)}
-
-													<div className="mt-2 flex flex-wrap items-center gap-2">
-														{Array.isArray(q.options) && q.options.length > 0 && (
-															<div className="flex items-center gap-1">
-																<Label className="text-xs">Answer</Label>
-																<Select
-																	value={q.correct_option || ''}
-																	onValueChange={v => updateQuestion(q.id, { correct_option: v })}
-																	disabled={!editable}
-																>
-																	<SelectTrigger className="h-8 w-16">
-																		<SelectValue placeholder="—" />
-																	</SelectTrigger>
-																	<SelectContent>
-																		{q.options.map(o => (
-																			<SelectItem key={o.key} value={o.key}>
-																				{o.key}
-																			</SelectItem>
-																		))}
-																	</SelectContent>
-																</Select>
-															</div>
-														)}
-														{!split && (
-															<div className="flex items-center gap-1">
-																<Label className="text-xs">CO <span className="text-red-500">*</span></Label>
-																<Select
-																	value={q.co_code || ''}
-																	onValueChange={v => updateQuestion(q.id, { co_code: v })}
-																	disabled={!editable}
-																>
-																	<SelectTrigger className={cn('h-8 w-24', editable && !q.co_code && 'border-red-300 text-red-600')}>
-																		<SelectValue placeholder="CO" />
-																	</SelectTrigger>
-																	<SelectContent>
-																		{coOptions.map(code => (
-																			<SelectItem key={code} value={code}>
-																				{code}
-																			</SelectItem>
-																		))}
-																	</SelectContent>
-																</Select>
-															</div>
-														)}
-														{!split && (
-															<div className="flex items-center gap-1">
-																<Label className="text-xs">K <span className="text-red-500">*</span></Label>
-																<Select
-																	value={q.k_level || ''}
-																	onValueChange={v => updateQuestion(q.id, { k_level: v })}
-																	disabled={!editable}
-																>
-																	<SelectTrigger className={cn('h-8 w-20', editable && !q.k_level && 'border-red-300 text-red-600')}>
-																		<SelectValue placeholder="K" />
-																	</SelectTrigger>
-																	<SelectContent>
-																		{K_LEVELS.map(k => (
-																			<SelectItem key={k.code} value={k.code}>
-																				{k.code}
-																			</SelectItem>
-																		))}
-																	</SelectContent>
-																</Select>
-															</div>
-														)}
 													</div>
-
-													{split && (
-														<div className="mt-2 space-y-2 rounded border border-dashed bg-muted/20 p-2">
-															<div className="flex items-center justify-between text-xs">
-																<span className="font-medium">Sub-divisions</span>
-																<span className={balanced ? 'text-green-700' : 'text-red-600'}>
-																	{balanced ? (
-																		`Allocated ${allocated} / ${budget} ✓`
-																	) : (
-																		<span className="inline-flex items-center gap-1">
-																			<AlertTriangle className="h-3 w-3" />
-																			Allocated {allocated} / {budget} — must total {budget}
-																		</span>
-																	)}
-																</span>
-															</div>
-															{subs.map(sb => (
-																<div
-																	key={sb.id}
-																	data-qp-image-scope
-																	className="rounded border bg-background p-2"
-																>
-																	<div className="mb-1 flex flex-wrap items-center gap-2 text-xs">
-																		<span className="font-medium">{sb.label}.</span>
-																		<div className="flex items-center gap-1">
-																			<Label className="text-xs">Marks</Label>
-																			<Input
-																				type="number"
-																				min={0}
-																				max={budget}
-																				step="0.5"
-																				className="h-7 w-20"
-																				value={sb.marks ?? ''}
-																				disabled={!editable}
-																				onChange={e =>
-																					updateSubQuestion(q.id, sb.id, {
-																						marks: e.target.value === '' ? null : Number(e.target.value),
-																					})
-																				}
-																			/>
-																		</div>
-																		{(
-																			<div className="flex items-center gap-1">
-																				<Label className="text-xs">CO <span className="text-red-500">*</span></Label>
-																				<Select
-																					value={sb.co_code || ''}
-																					onValueChange={v => updateSubQuestion(q.id, sb.id, { co_code: v })}
-																					disabled={!editable}
-																				>
-																					<SelectTrigger className={cn('h-7 w-24', editable && !sb.co_code && 'border-red-300 text-red-600')}>
-																						<SelectValue placeholder="CO" />
-																					</SelectTrigger>
-																					<SelectContent>
-																						{coOptions.map(code => (
-																							<SelectItem key={code} value={code}>
-																								{code}
-																							</SelectItem>
-																						))}
-																					</SelectContent>
-																				</Select>
-																			</div>
-																		)}
-																		{(
-																			<div className="flex items-center gap-1">
-																				<Label className="text-xs">K <span className="text-red-500">*</span></Label>
-																				<Select
-																					value={sb.k_level || ''}
-																					onValueChange={v => updateSubQuestion(q.id, sb.id, { k_level: v })}
-																					disabled={!editable}
-																				>
-																					<SelectTrigger className={cn('h-7 w-20', editable && !sb.k_level && 'border-red-300 text-red-600')}>
-																						<SelectValue placeholder="K" />
-																					</SelectTrigger>
-																					<SelectContent>
-																						{K_LEVELS.map(k => (
-																							<SelectItem key={k.code} value={k.code}>
-																								{k.code}
-																							</SelectItem>
-																						))}
-																					</SelectContent>
-																				</Select>
-																			</div>
-																		)}
-																		{editable && (
-																			<Button
-																				size="sm"
-																				variant="ghost"
-																				className="ml-auto h-6 px-2 text-xs text-destructive"
-																				onClick={() => removeSubQuestion(q.id, sb.id)}
-																				title="Remove this sub-division"
-																			>
-																				<X className="h-3 w-3" />
-																			</Button>
-																		)}
-																	</div>
-																	<QuestionRichEditor
-																		value={sb.question_text || ''}
-																		disabled={!editable}
-																		placeholder={`Sub-division ${sb.label}…`}
-																		defaultFontFamily={paper.default_font}
-																		onChange={html => updateSubQuestion(q.id, sb.id, { question_text: html })}
-																	/>
-																	<QuestionImageField
-																		paperId={paper.id}
-																		value={sb.image}
-																		disabled={!editable}
-																		onChange={image => updateSubQuestion(q.id, sb.id, { image })}
-																		label={`Add image to ${sb.label}.`}
-																	/>
-																</div>
-															))}
-														</div>
-													)}
-												</div>
+													</Fragment>
 												)
 											})}
 										</div>
@@ -2234,11 +2385,12 @@ Clear them anyway?`)) {
 							})}
 
 							{/* Actions */}
-							{editable && subMarkErrors.length > 0 && (
+							{/* A draft saves half-allocated; a paper past draft does not. */}
+							{editable && paper.status !== 'draft' && subMarkErrors.length > 0 && (
 								<div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
 									<div className="mb-1 flex items-center gap-1 font-medium">
 										<AlertTriangle className="h-3.5 w-3.5" />
-										Sub-division marks must total the question’s marks
+										Sub-division marks must total the question’s marks before this {paper.status} paper can be saved
 									</div>
 									<ul className="ml-4 list-disc space-y-0.5">
 										{subMarkErrors.map(msg => (
@@ -2247,20 +2399,27 @@ Clear them anyway?`)) {
 									</ul>
 								</div>
 							)}
-							{showCompletionErrors && completionErrors.length > 0 && (
+							{showFieldErrors && problems.length > 0 && (
 								<div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
 									<div className="mb-1 flex items-center gap-1 font-medium">
 										<AlertTriangle className="h-3.5 w-3.5" />
-										{completionErrors.length} item(s) to complete before submitting
+										{problems.length} item(s) to complete before submitting
 									</div>
-									<ul className="ml-4 list-disc space-y-0.5">
-										{completionErrors.slice(0, 8).map(msg => (
-											<li key={msg}>{msg}</li>
+									{/* Every problem has a field anchor — "Fix" scrolls to it and flashes it. */}
+									<ul className="max-h-40 space-y-0.5 overflow-y-auto pr-1">
+										{problems.map((p, i) => (
+											<li key={`${p.anchor}-${p.field}-${i}`} className="flex items-start justify-between gap-3">
+												<span>{p.message}</span>
+												<button
+													type="button"
+													className="shrink-0 font-medium underline underline-offset-2 hover:text-red-900"
+													onClick={() => scrollToAnchor(p.anchor)}
+												>
+													Fix
+												</button>
+											</li>
 										))}
 									</ul>
-									{completionErrors.length > 8 && (
-										<div className="mt-1 pl-4">…and {completionErrors.length - 8} more</div>
-									)}
 								</div>
 							)}
 							<div className="sticky bottom-0 flex flex-wrap justify-end gap-2 border-t bg-background py-3">
@@ -2282,7 +2441,7 @@ Clear them anyway?`)) {
 									<Button
 										variant="outline"
 										onClick={() => saveQuestions()}
-										disabled={savingPaper || (editable && subMarkErrors.length > 0)}
+										disabled={savingPaper || (editable && paper.status !== 'draft' && subMarkErrors.length > 0)}
 									>
 										{savingPaper ? (
 											<Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -2293,10 +2452,7 @@ Clear them anyway?`)) {
 									</Button>
 								)}
 								{paper.status === 'draft' && (
-									<Button
-										onClick={() => saveQuestions('submitted')}
-										disabled={savingPaper || (editable && subMarkErrors.length > 0)}
-									>
+									<Button onClick={() => saveQuestions('submitted')} disabled={savingPaper}>
 										<Send className="mr-2 h-4 w-4" /> Submit
 									</Button>
 								)}

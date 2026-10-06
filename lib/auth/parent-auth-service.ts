@@ -166,33 +166,51 @@ class ParentAuthService {
 		}
 	}
 
-	async refreshToken(): Promise<boolean> {
+	// One refresh at a time: a page that fires several requests gets several
+	// 401s at once, and a second refresh with an already-rotated token would fail.
+	private refreshInFlight: Promise<boolean> | null = null
+
+	refreshToken(): Promise<boolean> {
+		if (!this.refreshInFlight) {
+			this.refreshInFlight = this.performRefresh().finally(() => {
+				this.refreshInFlight = null
+			})
+		}
+		return this.refreshInFlight
+	}
+
+	private async performRefresh(): Promise<boolean> {
+		// The refresh_token cookie is httpOnly, so it is normally invisible here.
+		// The server route reads it from the request cookies instead; only send
+		// it in the body when a client-readable copy exists.
 		const refreshToken = Cookies.get('refresh_token')
-		if (!refreshToken) return false
 
 		try {
 			const response = await fetch('/api/token/refresh', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ refresh_token: refreshToken }),
+				credentials: 'include',
+				body: JSON.stringify(refreshToken ? { refresh_token: refreshToken } : {}),
 			})
 
 			if (!response.ok) {
-				this.clearSession()
+				// 4xx = the parent app rejected the refresh token for good.
+				// Anything else may be transient, so keep the session.
+				if (response.status >= 400 && response.status < 500) this.clearSession()
 				return false
 			}
 
 			const data = await response.json()
+			if (!data.access_token) return false
+
+			// The route also sets both cookies server-side (the refresh token as
+			// httpOnly); this just keeps the readable access token in step.
 			const isProduction = typeof window !== 'undefined' && window.location.protocol === 'https:'
 			Cookies.set('access_token', data.access_token, { expires: 7, path: '/', sameSite: 'Lax', secure: isProduction })
-			if (data.refresh_token) {
-				Cookies.set('refresh_token', data.refresh_token, { expires: 30, path: '/', sameSite: 'Lax', secure: isProduction })
-			}
 			localStorage.setItem('auth_timestamp', Date.now().toString())
 
 			return true
 		} catch {
-			this.clearSession()
 			return false
 		}
 	}

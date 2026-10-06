@@ -8,6 +8,10 @@
     {
       "path": "/api/cron/expire-api-keys",
       "schedule": "0 * * * *"
+    },
+    {
+      "path": "/api/cron/sync-learner-identity",
+      "schedule": "30 20 * * *"
     }
   ]
 }

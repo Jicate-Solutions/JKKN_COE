@@ -15,7 +15,11 @@ export async function POST(request: Request) {
 	const authHeader = request.headers.get('authorization')
 	const cronSecret = process.env.CRON_SECRET
 
-	if (cronSecret && authHeader !== `Bearer ${cronSecret}`) {
+	// /api/cron is reachable without a COE login, so no secret means no run.
+	if (!cronSecret) {
+		return NextResponse.json({ error: 'CRON_SECRET is not configured' }, { status: 503 })
+	}
+	if (authHeader !== `Bearer ${cronSecret}`) {
 		return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 	}
 
@@ -88,3 +92,6 @@ export async function POST(request: Request) {
 		keys: expiredKeys.map((k) => k.access_key_id),
 	})
 }
+
+// Vercel Cron calls with GET.
+export const GET = POST

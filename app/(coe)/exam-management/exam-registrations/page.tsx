@@ -31,6 +31,7 @@ import { Switch } from "@/components/ui/switch"
 import Link from "next/link"
 import { PlusCircle, Edit, Trash2, Search, ChevronLeft, ChevronRight, ArrowUpDown, ArrowUp, ArrowDown, ClipboardCheck, TrendingUp, FileSpreadsheet, RefreshCw, CheckCircle, XCircle, AlertTriangle, FileJson, Download, Upload, Loader2, LayoutList, MoreHorizontal, ChevronDown } from "lucide-react"
 import { useSessionSync } from "@/hooks/use-session-sync"
+import { LearnerSyncDialog } from "@/components/exam-management/learner-sync-dialog"
 
 
 export default function ExamRegistrationsPage() {
@@ -141,6 +142,7 @@ export default function ExamRegistrationsPage() {
 	const [importInProgress, setImportInProgress] = useState(false)
 	const [importProgress, setImportProgress] = useState({ current: 0, total: 0 })
 	const [deleteTarget, setDeleteTarget] = useState<ExamRegistration | null>(null)
+	const [learnerSyncOpen, setLearnerSyncOpen] = useState(false)
 
 	// Register number lookup state
 	const [registerNoInput, setRegisterNoInput] = useState("")
@@ -1592,15 +1594,15 @@ t				</div>
 							<CardHeader className="flex-shrink-0 px-4 py-3 border-b">
 								<div className="space-y-3">
 									{/* Row 1: Title (Left) & Action Buttons (Right) - Same Line */}
-									<div className="flex items-center justify-between">
+									<div className="flex items-center justify-between gap-4">
 										{/* Title Section - Left */}
-										<div>
-											<h2 className="text-base font-semibold">All Exam Registrations</h2>
+										<div className="shrink-0">
+											<h2 className="text-base font-semibold whitespace-nowrap">All Exam Registrations</h2>
 											<p className="text-xs text-muted-foreground">Manage learner exam course registrations</p>
 										</div>
 
 										{/* Action Buttons - Right */}
-										<div className="flex items-center gap-1.5">
+										<div className="flex items-center justify-end flex-wrap gap-2">
 											<Tooltip>
 												<TooltipTrigger asChild>
 													<Button variant="outline" size="sm" onClick={fetchExamRegistrations} disabled={loading} className="h-8 w-8 p-0">
@@ -1640,6 +1642,16 @@ t				</div>
 												Import
 											</Button>
 
+											<Tooltip>
+												<TooltipTrigger asChild>
+													<Button variant="outline" size="sm" onClick={() => setLearnerSyncOpen(true)} className="h-8 text-sm px-3.5 mx-1 font-medium whitespace-nowrap border-emerald-300 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 hover:text-emerald-800 hover:border-emerald-400 dark:border-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-300 dark:hover:bg-emerald-900/50 dark:hover:text-emerald-200">
+														<RefreshCw className="h-3.5 w-3.5 mr-2" />
+														Sync from MyJKKN
+													</Button>
+												</TooltipTrigger>
+												<TooltipContent>Update learner names and register numbers changed in MyJKKN</TooltipContent>
+											</Tooltip>
+
 											<Link href="/exam-management/exam-registrations/bulk-create">
 												<Button variant="outline" size="sm" className="h-8 text-sm px-3">
 													<LayoutList className="h-3.5 w-3.5 mr-1.5" />
@@ -1647,26 +1659,35 @@ t				</div>
 												</Button>
 											</Link>
 
-											<Link href="/exam-management/exam-registrations/program-wise">
-												<Button variant="outline" size="sm" className="h-8 text-sm px-3">
-													<LayoutList className="h-3.5 w-3.5 mr-1.5" />
-													Program Wise
-												</Button>
-											</Link>
-
-											<Link href="/exam-management/exam-registrations/course-wise">
-												<Button variant="outline" size="sm" className="h-8 text-sm px-3">
-													<LayoutList className="h-3.5 w-3.5 mr-1.5" />
-													Course Wise
-												</Button>
-											</Link>
-
-											<Link href="/exam-management/exam-registrations/learner-wise">
-												<Button variant="outline" size="sm" className="h-8 text-sm px-3">
-													<LayoutList className="h-3.5 w-3.5 mr-1.5" />
-													Learner Wise
-												</Button>
-											</Link>
+											<DropdownMenu>
+												<DropdownMenuTrigger asChild>
+													<Button variant="outline" size="sm" className="h-8 text-sm px-3">
+														<LayoutList className="h-3.5 w-3.5 mr-1.5" />
+														View By
+														<ChevronDown className="h-3 w-3 ml-1" />
+													</Button>
+												</DropdownMenuTrigger>
+												<DropdownMenuContent align="end" className="w-44">
+													<DropdownMenuItem asChild>
+														<Link href="/exam-management/exam-registrations/program-wise" className="cursor-pointer">
+															<LayoutList className="h-3.5 w-3.5 mr-2" />
+															Program Wise
+														</Link>
+													</DropdownMenuItem>
+													<DropdownMenuItem asChild>
+														<Link href="/exam-management/exam-registrations/course-wise" className="cursor-pointer">
+															<LayoutList className="h-3.5 w-3.5 mr-2" />
+															Course Wise
+														</Link>
+													</DropdownMenuItem>
+													<DropdownMenuItem asChild>
+														<Link href="/exam-management/exam-registrations/learner-wise" className="cursor-pointer">
+															<LayoutList className="h-3.5 w-3.5 mr-2" />
+															Learner Wise
+														</Link>
+													</DropdownMenuItem>
+												</DropdownMenuContent>
+											</DropdownMenu>
 
 											<Button size="sm" onClick={openAdd} disabled={loading} className="h-8 text-sm px-4">
 												<PlusCircle className="h-3.5 w-3.5 mr-1.5" />
@@ -2259,6 +2280,13 @@ t				</div>
 					</div>
 				</SheetContent>
 			</Sheet>
+
+			<LearnerSyncDialog
+				open={learnerSyncOpen}
+				onOpenChange={setLearnerSyncOpen}
+				institutionsId={institutionId}
+				onSynced={fetchExamRegistrations}
+			/>
 
 			{/* Delete Confirmation Dialog */}
 			<AlertDialog open={!!deleteTarget} onOpenChange={(open) => { if (!open) setDeleteTarget(null) }}>

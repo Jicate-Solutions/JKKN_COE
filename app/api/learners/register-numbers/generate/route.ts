@@ -233,25 +233,23 @@ export async function POST(request: Request) {
 			console.error('[register-numbers/generate] MyJKKN profile errors:', profileSync.errors)
 		}
 
-		// -- 2. COE tables still carrying the old value --
-		// Only learners whose profile actually changed, so COE never runs ahead of MyJKKN.
+		// -- 2. COE tables --
+		// Only learners whose profile actually changed, so COE never runs ahead of
+		// MyJKKN. Rows are matched on student_id, whatever value they hold: exam
+		// registration pasted in the roll number of the day, and a learner who has
+		// since changed programme carries a roll number MyJKKN no longer shows.
 		const updatedIds = new Set(profileSync.updatedIds)
 		const written = assignments.filter(a => updatedIds.has(a.learner.id))
 
-		const { updated: synced, errors: syncErrors } = await syncRegisterNumbers(
+		const { updated: synced, replaced, errors: syncErrors } = await syncRegisterNumbers(
 			supabase,
-			institutions_id,
-			written.map(a => ({
-				learnerId: a.learner.id,
-				from: a.learner.register_number,
-				// Exam registration pasted the roll number in when there was no
-				// register number — accept it too, whatever MyJKKN held.
-				alsoFrom: [a.learner.roll_number],
-				to: a.register_number,
-			}))
+			written.map(a => ({ learnerId: a.learner.id, to: a.register_number }))
 		)
 		if (syncErrors.length > 0) {
 			console.error('[register-numbers/generate] COE sync errors:', syncErrors)
+		}
+		if (Object.keys(replaced).length > 0) {
+			console.log('[register-numbers/generate] exam registration numbers replaced:', JSON.stringify(replaced))
 		}
 		const syncSummary = describeSync(synced)
 

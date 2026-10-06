@@ -178,6 +178,7 @@ export const MathField = forwardRef<MathFieldHandle, Props>(function MathField(
 					border: 0;
 					outline: none;
 					background: transparent;
+					color: #020617;
 					--caret-color: #0b6d41;
 					--selection-background-color: #bfdbfe;
 					--selection-color: #0f172a;
@@ -188,6 +189,8 @@ export const MathField = forwardRef<MathFieldHandle, Props>(function MathField(
 				math-field.qp-math-field::part(virtual-keyboard-toggle),
 				math-field.qp-math-field::part(menu-toggle) { display: none; }
 				math-field.qp-math-field::part(content) { justify-content: center; }
+				/* "Type equation here": a prompt, but one that can be read. */
+				math-field.qp-math-field::part(placeholder) { color: #475569; opacity: 1; }
 			`}</style>
 			<div ref={hostRef} />
 			{!ready && (

@@ -1,8 +1,9 @@
 'use client'
 
 import { useCallback } from 'react'
-import { useRouter, usePathname } from 'next/navigation'
+import { usePathname } from 'next/navigation'
 import { useAuth } from '@/lib/auth/auth-context-parent'
+import { parentAuthService } from '@/lib/auth/parent-auth-service'
 
 const REFRESHABLE_CODES = new Set([
 	'SESSION_EXPIRED',
@@ -19,8 +20,8 @@ const REFRESHABLE_CODES = new Set([
  *      or no code at all), call `refreshSession()` to mint a new
  *      access_token via /api/token/refresh, then retry the original
  *      request once.
- *   3. If retry still 401s, redirect to /login with the current path
- *      as the redirect target.
+ *   3. If retry still 401s, clear the client session and redirect to
+ *      /login with the current path as the redirect target.
  *
  * Callers can opt out of the redirect by passing `{ noRedirectOn401: true }`
  * — they then receive the 401 response and handle it themselves.
@@ -34,7 +35,6 @@ export interface ApiFetchOptions extends RequestInit {
 
 export function useApiFetch() {
 	const { refreshSession } = useAuth()
-	const router = useRouter()
 	const pathname = usePathname()
 
 	return useCallback(
@@ -64,10 +64,16 @@ export function useApiFetch() {
 
 			if (noRedirectOn401) return response
 
+			// The session is dead and could not be refreshed. Drop the client-side
+			// session BEFORE going to /login: the login page bounces any user it
+			// still considers authenticated (access_token cookie + stored user)
+			// straight back to `redirect`, which 401s again — an endless loop.
+			// Hard navigation so AuthProvider restarts with no user.
+			parentAuthService.clearSession()
 			const redirectTo = pathname || '/'
-			router.push(`/login?redirect=${encodeURIComponent(redirectTo)}`)
+			window.location.assign(`/login?redirect=${encodeURIComponent(redirectTo)}`)
 			return response
 		},
-		[refreshSession, router, pathname]
+		[refreshSession, pathname]
 	)
 }

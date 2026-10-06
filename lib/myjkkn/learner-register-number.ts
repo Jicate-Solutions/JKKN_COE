@@ -148,6 +148,45 @@ export async function findMyjkknRegisterNumberHolders(numbers: string[]): Promis
 	return holders
 }
 
+export interface MyjkknLearnerIdentity {
+	id: string
+	first_name: string | null
+	last_name: string | null
+	roll_number: string | null
+	register_number: string | null
+}
+
+/**
+ * Name and numbers MyJKKN holds for each learner id, keyed by id. Learners
+ * with no profile are simply absent. Returns null when MyJKKN is not configured.
+ */
+export async function fetchMyjkknLearnerIdentities(ids: string[]): Promise<Map<string, MyjkknLearnerIdentity> | null> {
+	const supabase = getMyjkknAdmin()
+	if (!supabase) return null
+
+	// .in() values travel in the query string, hence the chunks; a few thousand
+	// learners is ~20 of them, so they go out a handful at a time.
+	const chunks: string[][] = []
+	for (let i = 0; i < ids.length; i += 150) chunks.push(ids.slice(i, i + 150))
+
+	const identities = new Map<string, MyjkknLearnerIdentity>()
+	for (let i = 0; i < chunks.length; i += CONCURRENCY) {
+		const results = await Promise.all(
+			chunks.slice(i, i + CONCURRENCY).map(chunk =>
+				supabase
+					.from('learners_profiles')
+					.select('id, first_name, last_name, roll_number, register_number')
+					.in('id', chunk)
+			)
+		)
+		for (const { data, error } of results) {
+			if (error) throw new Error(`MyJKKN lookup failed: ${error.message}`)
+			for (const row of data || []) identities.set(row.id, row as MyjkknLearnerIdentity)
+		}
+	}
+	return identities
+}
+
 /** One-line summary for the API response message. */
 export function describeProfileSync(result: ProfileSyncResult): string {
 	if (!result.configured) return 'MyJKKN profiles not updated (MYJKKN_SUPABASE_* not configured).'

@@ -18,6 +18,7 @@ import type { PdfInstitutionSettings } from '@/types/pdf-settings'
 import type { QpPortalContent } from '@/types/qp-examiner-assignment'
 import { formatIst, formatIstDate } from '@/lib/qp-portal/ist'
 import { launchHeadlessBrowser } from '@/lib/pdf/headless-browser'
+import type { PaymentStatementHead, PaymentStatementRow } from '@/lib/qp-portal/claim-payment-statement'
 import {
 	getJkknLetterhead,
 	isBoxedLetterhead,
@@ -666,16 +667,16 @@ export function buildClaimFormHtml(
 	const papersTable = multi
 		? `<table class="grid papers">
 		<thead><tr>
-			<th class="n">S.No</th><th>Subject Code</th><th class="t">Subject Title</th><th>Programme / Sem</th><th>Work</th><th class="r">Amount</th>
+			<th class="n">S.No</th><th class="c">Subject Code</th><th class="t">Subject Title</th><th class="p">Programme / Sem</th><th class="w">Work</th><th class="r">Amount</th>
 		</tr></thead>
 		<tbody>${papers
 			.map(
 				(p, i) => `<tr>
 			<td class="n">${i + 1}</td>
-			<td>${escapeHtml(p.course_code)}${p.set_label ? ` (Set ${escapeHtml(p.set_label)})` : ''}</td>
+			<td class="c">${escapeHtml(p.course_code)}${p.set_label ? ` (Set ${escapeHtml(p.set_label)})` : ''}</td>
 			<td class="t">${escapeHtml(p.title)}</td>
-			<td>${escapeHtml([p.program_code, p.semester ? `Sem ${p.semester}` : null].filter(Boolean).join(' / ') || '—')}</td>
-			<td>${escapeHtml(p.work || 'Question Paper')}</td>
+			<td class="p">${escapeHtml([p.program_code, p.semester ? `Sem ${p.semester}` : null].filter(Boolean).join(' / ') || '—')}</td>
+			<td class="w">${escapeHtml(p.work || 'Question Paper')}</td>
 			<td class="r">${escapeHtml(money(p.rate ?? rate))}</td>
 		</tr>`
 			)
@@ -703,8 +704,11 @@ export function buildClaimFormHtml(
 <style>
 	@page { size: A4 portrait; }
 	/* One page. Everything below is sized so the framed letterhead, three
-	   tables, the certification and the office box fit A4 with 15mm margins. */
-	body { font-family: ${fontFamily}; font-size: 10pt; color: #000; margin: 0; line-height: 1.35; }
+	   tables, the certification and the office box fit A4 with 15mm margins —
+	   with TWO claimed papers (the common case for a setter) at full size.
+	   Beyond that renderPdf scales the whole sheet down rather than letting the
+	   office box spill onto a second page. */
+	body { font-family: ${fontFamily}; font-size: 10pt; color: #000; margin: 0; line-height: 1.3; }
 	${LETTERHEAD_CSS}
 	.head-row { display: flex; align-items: center; gap: 10px; }
 	.head-logo { width: 74px; flex: 0 0 74px; text-align: center; }
@@ -717,30 +721,37 @@ export function buildClaimFormHtml(
 	.inst-addr { font-size: 10pt; font-weight: bold; margin-top: 2px; }
 	.inst-office { font-size: 10.5pt; font-weight: bold; margin-top: 4px; }
 	hr.rule { border: none; border-top: 2px solid ${primary}; margin: 5px 0 8px; }
-	.title { text-align: center; font-weight: bold; font-size: 12pt; text-decoration: underline; margin: 2px 0 8px; }
-	table.grid { width: 100%; border-collapse: collapse; margin-bottom: 8px; }
-	table.grid th, table.grid td { border: 1px solid #111; padding: 3px 7px; font-size: 9.5pt; text-align: left; }
+	.title { text-align: center; font-weight: bold; font-size: 12pt; text-decoration: underline; margin: 2px 0 6px; }
+	table.grid { width: 100%; border-collapse: collapse; margin-bottom: 6px; }
+	table.grid th, table.grid td { border: 1px solid #111; padding: 2px 7px; font-size: 9.5pt; text-align: left; }
 	table.grid th { width: 40%; background: #f4f4f4; font-weight: bold; }
 	table.grid + table.papers, table.papers + table.grid { margin-top: -4px; }
-	table.papers th { width: auto; text-align: left; }
-	table.papers th.n, table.papers td.n { width: 8%; text-align: center; }
-	table.papers th.t { width: 42%; }
-	table.papers th.r, table.papers td.r { width: 16%; text-align: right; white-space: nowrap; }
-	.section { font-weight: bold; margin: 0 0 3px; font-size: 10pt; }
-	.declare { margin: 6px 0 4px; font-size: 9.5pt; text-align: justify; }
-	.sign-row { display: flex; justify-content: space-between; align-items: flex-end; margin-top: 4px; }
+	/* The papers table: every column wide enough for its usual value on ONE line —
+	   "Question Paper + Answer Key" and "PCSE / Sem 2" used to wrap and double the
+	   height of every row. Only a long subject title may still take two lines. */
+	table.papers th, table.papers td { font-size: 9pt; padding: 2px 5px; }
+	table.papers th { width: auto; text-align: left; white-space: nowrap; }
+	table.papers th.n, table.papers td.n { width: 6%; text-align: center; }
+	table.papers th.c, table.papers td.c { width: 12%; white-space: nowrap; }
+	table.papers th.t { width: 36%; }
+	table.papers th.p, table.papers td.p { width: 14%; white-space: nowrap; }
+	table.papers th.w, table.papers td.w { width: 20%; white-space: nowrap; }
+	table.papers th.r, table.papers td.r { width: 12%; text-align: right; white-space: nowrap; }
+	.section { font-weight: bold; margin: 0 0 2px; font-size: 10pt; }
+	.declare { margin: 4px 0 2px; font-size: 9.5pt; text-align: justify; }
+	.sign-row { display: flex; justify-content: space-between; align-items: flex-end; margin-top: 2px; }
 	.date-cell { font-size: 9.5pt; padding-bottom: 6px; }
 	.sign-cell { text-align: center; min-width: 200px; }
-	.sign-img { height: 44px; max-width: 200px; object-fit: contain; display: block; margin: 0 auto; }
-	.sign-rule { border-top: 1px solid #000; margin-top: 3px; padding-top: 3px; font-size: 9.5pt; }
-	.pad { padding-top: 44px; }
+	.sign-img { height: 40px; max-width: 200px; object-fit: contain; display: block; margin: 0 auto; }
+	.sign-rule { border-top: 1px solid #000; margin-top: 2px; padding-top: 2px; font-size: 9.5pt; }
+	.pad { padding-top: 40px; }
 	.sign-when { font-size: 8pt; color: #444; margin-top: 1px; }
 	/* Office box — the CoE's own verification, on the same sheet. */
-	.office { border: 1px solid #000; margin-top: 10px; padding: 6px 9px 8px; page-break-inside: avoid; }
-	.office-title { text-align: center; font-weight: bold; font-size: 10pt; margin-bottom: 4px; }
+	.office { border: 1px solid #000; margin-top: 8px; padding: 5px 9px 7px; page-break-inside: avoid; }
+	.office-title { text-align: center; font-weight: bold; font-size: 10pt; margin-bottom: 3px; }
 	.office-text { margin: 0; font-size: 9.5pt; text-align: justify; }
-	.office-verified { text-align: center; font-weight: bold; font-size: 9.5pt; margin-top: 6px; }
-	.office-signs { display: flex; justify-content: space-between; margin-top: 30px; font-size: 9.5pt; }
+	.office-verified { text-align: center; font-weight: bold; font-size: 9.5pt; margin-top: 4px; }
+	.office-signs { display: flex; justify-content: space-between; margin-top: 26px; font-size: 9.5pt; }
 	.office-sign { min-width: 170px; text-align: center; border-top: 1px solid #000; padding-top: 3px; }
 </style></head>
 <body>
@@ -810,24 +821,88 @@ export function buildClaimFormHtml(
 
 // ── Rendering ───────────────────────────────────────────────────────────────
 
-async function renderPdf(html: string, ps: PdfInstitutionSettings | null): Promise<Buffer> {
+/**
+ * Pages in a Chromium-generated PDF: its page objects are plain dictionaries, so
+ * counting `/Type /Page` markers is exact (the lookahead skips the `/Pages` node).
+ */
+function countPdfPages(buffer: Buffer): number {
+	const matches = buffer.toString('latin1').match(/\/Type\s*\/Page(?![s/\w])/g)
+	return matches ? matches.length : 1
+}
+
+/** The smallest print scale a claim form may shrink to and still be read in the hand. */
+const MIN_SINGLE_PAGE_SCALE = 0.72
+
+async function renderPdf(
+	html: string,
+	ps: PdfInstitutionSettings | null,
+	opts: {
+		/**
+		 * The document must come out as ONE sheet. If it runs over at full size,
+		 * the whole sheet is printed at the largest reduced scale that fits — every
+		 * proportion kept, only the size changes — down to MIN_SINGLE_PAGE_SCALE.
+		 */
+		singlePage?: boolean
+		/**
+		 * Print "<label> · Page N of M" at the foot of every sheet. The caller
+		 * leaves a bottom margin wide enough for it (14mm is comfortable).
+		 */
+		pageNumbers?: { label: string }
+	} = {}
+): Promise<Buffer> {
 	const browser = await launchHeadlessBrowser()
 
 	try {
 		const page = await browser.newPage()
 		await page.setContent(html, { waitUntil: 'domcontentloaded' })
-		const pdf = await page.pdf({
-			format: (ps?.paper_size || 'A4') as 'A4' | 'Letter' | 'Legal',
-			landscape: (ps?.orientation || 'portrait') === 'landscape',
-			printBackground: true,
-			margin: {
-				top: s(ps, 'margin_top', '15mm'),
-				bottom: s(ps, 'margin_bottom', '15mm'),
-				left: s(ps, 'margin_left', '15mm'),
-				right: s(ps, 'margin_right', '15mm'),
-			},
-		})
-		return Buffer.from(pdf)
+		const renderAt = async (scale: number) => {
+			const out = await page.pdf({
+				format: (ps?.paper_size || 'A4') as 'A4' | 'Letter' | 'Legal',
+				landscape: (ps?.orientation || 'portrait') === 'landscape',
+				printBackground: true,
+				scale,
+				...(opts.pageNumbers
+					? {
+							displayHeaderFooter: true,
+							// Chromium prints its own date / URL header unless a blank one is given.
+							headerTemplate: '<span></span>',
+							footerTemplate: `<div style="width:100%;font-size:8pt;font-family:'Times New Roman',Times,serif;color:#333;padding:0 ${s(ps, 'margin_left', '15mm')} 0 ${s(ps, 'margin_left', '15mm')};display:flex;justify-content:space-between;">
+								<span>${escapeHtml(opts.pageNumbers.label)}</span>
+								<span>Page <span class="pageNumber"></span> of <span class="totalPages"></span></span>
+							</div>`,
+						}
+					: {}),
+				margin: {
+					top: s(ps, 'margin_top', '15mm'),
+					bottom: s(ps, 'margin_bottom', '15mm'),
+					left: s(ps, 'margin_left', '15mm'),
+					right: s(ps, 'margin_right', '15mm'),
+				},
+			})
+			return Buffer.from(out)
+		}
+
+		let best = await renderAt(1)
+		if (opts.singlePage && countPdfPages(best) > 1) {
+			// Largest scale that still fits one page: binary search between the floor
+			// and 1. Four probes land within ~2% of the true threshold. A form that
+			// overflows even at the floor is returned at the floor rather than at full
+			// size — the office box must stay on the sheet with the claim it verifies.
+			let lo = MIN_SINGLE_PAGE_SCALE
+			let hi = 1
+			best = await renderAt(lo)
+			for (let i = 0; i < 4; i++) {
+				const mid = (lo + hi) / 2
+				const probe = await renderAt(mid)
+				if (countPdfPages(probe) <= 1) {
+					best = probe
+					lo = mid
+				} else {
+					hi = mid
+				}
+			}
+		}
+		return best
 	} finally {
 		await browser.close()
 	}
@@ -873,7 +948,9 @@ export async function generateExaminerOrderPdf(data: ExaminerOrderData): Promise
 export async function generateClaimFormPdf(data: ClaimFormData): Promise<Buffer> {
 	const logos = await loadLogos(data.pdf_settings, data.institution.logo_path)
 	const assets: OrderAssets = { ...logos, ...loadLetterheadAssets(data.institution.institution_code) }
-	return renderPdf(buildClaimFormHtml(data, assets), data.pdf_settings)
+	// One sheet, always: the office's verification box must sit under the claim
+	// it certifies, never alone on a second page.
+	return renderPdf(buildClaimFormHtml(data, assets), data.pdf_settings, { singlePage: true })
 }
 
 // ── Consolidated claim report ───────────────────────────────────────────────
@@ -918,7 +995,7 @@ export function buildClaimReportHtml(data: ClaimReportData, letterheadLogoBase64
 
 	let grandQp = 0
 	let grandAk = 0
-	const body = data.examiners
+	const groups = data.examiners
 		.map((e, i) => {
 			const span = Math.max(e.papers.length, 1)
 			const total = e.papers.reduce((t, p) => t + p.qp_amount + p.ak_amount, 0)
@@ -950,7 +1027,16 @@ export function buildClaimReportHtml(data: ClaimReportData, letterheadLogoBase64
 				)
 				.join('')}</tbody>`
 		})
-		.join('')
+	// The Grand Total rides inside the last examiner's group so it can never be
+	// stranded alone at the top of a fresh sheet.
+	const grandTotalRow = `<tr class="total">
+			<td colspan="5" class="r">Grand Total</td>
+			<td class="r">${money(grandQp)}</td><td class="r">${money(grandAk)}</td><td class="r">${money(grandQp + grandAk)}</td>
+		</tr>`
+	const body =
+		groups.length > 0
+			? groups.slice(0, -1).join('') + groups[groups.length - 1].replace(/<\/tbody>$/, `${grandTotalRow}</tbody>`)
+			: `<tbody><tr><td colspan="8" class="c">No claim has been submitted in this session.</td></tr>${grandTotalRow}</tbody>`
 
 	return `<!DOCTYPE html>
 <html><head><meta charset="utf-8" />
@@ -988,11 +1074,7 @@ export function buildClaimReportHtml(data: ClaimReportData, letterheadLogoBase64
 			<th>S.No</th><th>Examiner Particulars</th><th>Bank Details for Payment</th><th>Subject Code</th>
 			<th>Subject Name</th><th>Question Paper (Rs.)</th><th>Answer Key (Rs.)</th><th>Total Amount Claimed (Rs.)</th>
 		</tr></thead>
-		${body || '<tbody><tr><td colspan="8" class="c">No claim has been submitted in this session.</td></tr></tbody>'}
-		<tbody><tr class="total">
-			<td colspan="5" class="r">Grand Total</td>
-			<td class="r">${money(grandQp)}</td><td class="r">${money(grandAk)}</td><td class="r">${money(grandQp + grandAk)}</td>
-		</tr></tbody>
+		${body}
 	</table>
 	<div class="sign"><div>Prepared by</div><div>Deputy Controller of Examinations</div><div>Controller of Examinations</div></div>
 </body></html>`
@@ -1001,14 +1083,122 @@ export function buildClaimReportHtml(data: ClaimReportData, letterheadLogoBase64
 export async function generateClaimReportPdf(data: ClaimReportData): Promise<Buffer> {
 	const { letterheadLogoBase64 } = loadLetterheadAssets(data.institution.institution_code)
 	const html = buildClaimReportHtml(data, letterheadLogoBase64)
-	return renderPdf(html, {
-		paper_size: 'A4',
-		orientation: 'landscape',
-		margin_top: '10mm',
-		margin_bottom: '10mm',
-		margin_left: '10mm',
-		margin_right: '10mm',
-	} as PdfInstitutionSettings)
+	return renderPdf(
+		html,
+		{
+			paper_size: 'A4',
+			orientation: 'landscape',
+			margin_top: '10mm',
+			margin_bottom: '14mm',
+			margin_left: '10mm',
+			margin_right: '10mm',
+		} as PdfInstitutionSettings,
+		{ pageNumbers: { label: `Consolidated Claim Report – ${data.session_name}` } }
+	)
+}
+
+// ── Bank claim (payment statement) ──────────────────────────────────────────
+//
+// The same sheet accounts gets as a workbook (lib/qp-portal/claim-payment-
+// statement.ts) — one line per examiner: bank, branch, account, IFSC, amount —
+// printed on the college letterhead with the total at the foot, for the file.
+
+export interface PaymentStatementPdfData {
+	institution: { name: string; institution_code: string }
+	head: PaymentStatementHead
+	rows: PaymentStatementRow[]
+}
+
+export function buildPaymentStatementHtml(data: PaymentStatementPdfData, letterheadLogoBase64: string | null): string {
+	const money = (n: number) => (n ? Number(n).toLocaleString('en-IN') : '0')
+	const boxed = boxedLetterheadHtml(data.institution.institution_code, letterheadLogoBase64)
+	const header = boxed || `<div class="plain-name">${escapeHtml(data.institution.name.toUpperCase())}</div>`
+	const date = data.head.date || new Date()
+	const ist = new Date(date.getTime() + 5.5 * 60 * 60 * 1000)
+	const dated = `${String(ist.getUTCDate()).padStart(2, '0')}.${String(ist.getUTCMonth() + 1).padStart(2, '0')}.${ist.getUTCFullYear()}`
+	const subtitle = [data.head.programmes, 'Autonomous', data.head.work || 'Question Paper Setting', data.head.session, 'Examinations']
+		.filter(Boolean)
+		.join(' - ')
+
+	const total = data.rows.reduce((t, r) => t + (Number(r.amount) || 0), 0)
+	const lines = data.rows.map(
+		(r, i) => `<tr>
+			<td class="c">${i + 1}</td>
+			<td>${escapeHtml(r.full_name)}</td>
+			<td>${escapeHtml(r.bank_name || '')}</td>
+			<td>${escapeHtml(r.branch || '')}</td>
+			<td class="nw">${escapeHtml(r.account_number || '')}</td>
+			<td class="nw">${escapeHtml(r.ifsc || '')}</td>
+			<td class="c">${money(r.amount)}</td>
+			<td></td>
+		</tr>`
+	)
+	const totalRow = `<tr class="total"><td colspan="6" style="text-align:right">Total</td><td class="c">${money(total)}</td><td></td></tr>`
+	// The Total stays with the last examiner, never alone at the top of a new sheet.
+	const body =
+		lines.length > 0
+			? `<tbody>${lines.slice(0, -1).join('')}</tbody><tbody class="keep">${lines[lines.length - 1]}${totalRow}</tbody>`
+			: `<tbody><tr><td colspan="8" class="c">No claim has been submitted in this session.</td></tr>${totalRow}</tbody>`
+
+	return `<!DOCTYPE html>
+<html><head><meta charset="utf-8" />
+<style>
+	* { box-sizing: border-box; }
+	body { font-family: 'Times New Roman', Times, serif; font-size: 10pt; color: #000; margin: 0; }
+	${LETTERHEAD_CSS}
+	.lh { border-bottom: 1pt solid #000; padding-bottom: 2mm; }
+	.plain-name { text-align: center; font-weight: bold; font-size: 14pt; border-bottom: 1pt solid #000; padding-bottom: 2mm; }
+	/* The sheet's own two heading rows, as on the workbook: office + date, then the session line. */
+	.office-row { display: flex; align-items: center; margin-top: 2.5mm; }
+	.office-row .office { flex: 1; text-align: center; font-weight: bold; font-size: 11.5pt; }
+	.office-row .date { font-weight: bold; font-size: 10pt; min-width: 24mm; text-align: right; }
+	.session { text-align: center; font-weight: bold; font-size: 10.5pt; margin: 1mm 0 3mm; }
+	table { width: 100%; border-collapse: collapse; }
+	thead { display: table-header-group; }
+	tr, tbody.keep { break-inside: avoid; page-break-inside: avoid; }
+	th, td { border: 0.7pt solid #000; padding: 1.4mm 2mm; vertical-align: middle; font-size: 9.5pt; }
+	th { font-weight: bold; text-align: left; background: #eee; }
+	th.c, td.c { text-align: center; }
+	.nw { white-space: nowrap; }
+	tr.total td { font-weight: bold; background: #f4f4f4; }
+	.sign { display: flex; justify-content: space-between; margin-top: 16mm; font-weight: bold; font-size: 10pt; break-inside: avoid; }
+	.sign div { min-width: 55mm; text-align: center; }
+</style></head><body>
+	${header}
+	<div class="office-row">
+		<div class="office">OFFICE OF THE CONTROLLER OF EXAMINATIONS</div>
+		<div class="date">${escapeHtml(dated)}</div>
+	</div>
+	<div class="session">${escapeHtml(subtitle)}</div>
+	<table>
+		<colgroup>
+			<col style="width:6%" /><col style="width:24%" /><col style="width:16%" /><col style="width:15%" />
+			<col style="width:15%" /><col style="width:11%" /><col style="width:7%" /><col style="width:6%" />
+		</colgroup>
+		<thead><tr>
+			<th class="c">S. No</th><th>Name of the Examiner</th><th>Name of the Bank</th><th>Branch</th>
+			<th>Account Number</th><th>IFSC Code</th><th class="c">Amount</th><th>Remarks</th>
+		</tr></thead>
+		${body}
+	</table>
+	<div class="sign"><div>Prepared by</div><div>Deputy Controller of Examinations</div><div>Controller of Examinations</div></div>
+</body></html>`
+}
+
+export async function generatePaymentStatementPdf(data: PaymentStatementPdfData): Promise<Buffer> {
+	const { letterheadLogoBase64 } = loadLetterheadAssets(data.institution.institution_code)
+	return renderPdf(
+		buildPaymentStatementHtml(data, letterheadLogoBase64),
+		{
+			paper_size: 'A4',
+			orientation: 'landscape',
+			margin_top: '10mm',
+			margin_bottom: '14mm',
+			margin_left: '10mm',
+			margin_right: '10mm',
+		} as PdfInstitutionSettings,
+		{ pageNumbers: { label: `Bank Claim – ${data.head.session}` } }
+	)
 }
 
 /** File name for a saved order / claim, safe on every OS. */

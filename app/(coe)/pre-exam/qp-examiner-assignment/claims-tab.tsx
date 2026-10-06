@@ -25,6 +25,7 @@ import {
 	Loader2, RefreshCw, Search, Download, FileSpreadsheet, Eye, ChevronDown, ChevronRight,
 	CheckCircle2, Clock, XCircle, FileArchive, FileText,
 } from 'lucide-react'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { cn } from '@/lib/utils'
 import { formatIst } from '@/lib/qp-portal/ist'
 import { QP_CLAIM_STATUS_LABELS, type QpClaimStatus } from '@/types/qp-examiner-assignment'
@@ -189,14 +190,23 @@ export function ClaimsTab({ institutionsId, session, refreshKey }: Props) {
 	const pdfUrl = (examinerId: string, download = false) =>
 		`/api/pre-exam/qp-examiner-assignments/claims/pdf?${scopeQs({ examiner_id: examinerId, ...(download ? { download: '1' } : {}) })}`
 
-	const downloadReport = async (scope: 'claimed' | 'all') => {
+	/** Open a letterhead PDF in a new tab: the consolidated report, or the bank claim sheet. */
+	const openStatement = (format: 'pdf' | 'bankpdf') => {
+		const extra: Record<string, string> = { format }
+		if (selectedRows.length > 0) extra.examiner_ids = selectedRows.map(r => r.examiner_id).join(',')
+		window.open(`/api/pre-exam/qp-examiner-assignments/claims?${scopeQs(extra)}`, '_blank', 'noopener')
+	}
+
+	// 'xlsx' is the two-sheet claim report; 'bank' is the one-line-per-examiner
+	// payment statement in the office's own layout, for accounts.
+	const downloadReport = async (scope: 'claimed' | 'all', format: 'xlsx' | 'bank' = 'xlsx') => {
 		setReporting(true)
 		try {
-			const extra: Record<string, string> = { format: 'xlsx', scope }
+			const extra: Record<string, string> = { format, scope }
 			if (selectedRows.length > 0) extra.examiner_ids = selectedRows.map(r => r.examiner_id).join(',')
 			const res = await fetch(`/api/pre-exam/qp-examiner-assignments/claims?${scopeQs(extra)}`)
 			if (!res.ok) throw new Error(await failureOf(res))
-			saveBlob(await res.blob(), filenameOf(res, 'ExaminerClaimReport.xlsx'))
+			saveBlob(await res.blob(), filenameOf(res, format === 'bank' ? 'BankClaim.xlsx' : 'ExaminerClaimReport.xlsx'))
 		} catch (e: any) {
 			toast({ title: 'Report not downloaded', description: e.message, variant: 'destructive' })
 		} finally {
@@ -316,34 +326,65 @@ export function ClaimsTab({ institutionsId, session, refreshKey }: Props) {
 							<RefreshCw className={cn('h-4 w-4 mr-1.5', loading && 'animate-spin')} />
 							Refresh
 						</Button>
-						<Button
-							variant="outline"
-							size="sm"
-							onClick={() => downloadReport(filter === 'claimed' ? 'claimed' : 'all')}
-							disabled={reporting || rows.length === 0}
-							title={
-								filter === 'claimed'
-									? 'Claimed papers only, with the bank account to pay'
-									: 'Every appointment in the session, claimed or not'
-							}
-						>
-							{reporting ? <Loader2 className="h-4 w-4 mr-1.5 animate-spin" /> : <FileSpreadsheet className="h-4 w-4 mr-1.5" />}
-							Claim report (Excel)
-						</Button>
-						<Button
-							variant="outline"
-							size="sm"
-							onClick={() => {
-								const extra: Record<string, string> = { format: 'pdf' }
-								if (selectedRows.length > 0) extra.examiner_ids = selectedRows.map(r => r.examiner_id).join(',')
-								window.open(`/api/pre-exam/qp-examiner-assignments/claims?${scopeQs(extra)}`, '_blank', 'noopener')
-							}}
-							disabled={!rows.some(r => r.claimed_count > 0)}
-							title="Every claim of the session on one statement, with the bank details and the question paper / answer key split"
-						>
-							<FileText className="h-4 w-4 mr-1.5" />
-							Consolidated report (PDF)
-						</Button>
+						{/* The two statements as PDF, on the letterhead: the full consolidated
+						    report, and the bank claim sheet. Choosing one opens it. */}
+						<DropdownMenu>
+							<DropdownMenuTrigger asChild>
+								<Button variant="outline" size="sm" disabled={!rows.some(r => r.claimed_count > 0)}>
+									<FileText className="h-4 w-4 mr-1.5" />
+									PDF
+									<ChevronDown className="h-3.5 w-3.5 ml-1.5 opacity-70" />
+								</Button>
+							</DropdownMenuTrigger>
+							<DropdownMenuContent align="end">
+								<DropdownMenuItem
+									onClick={() => openStatement('pdf')}
+									title="Every claim of the session on one statement, with the bank details and the question paper / answer key split"
+								>
+									<FileText className="h-4 w-4 mr-2" />
+									Consolidated report
+								</DropdownMenuItem>
+								<DropdownMenuItem
+									onClick={() => openStatement('bankpdf')}
+									title="One line per examiner — bank, branch, account number, IFSC and the total claimed — on the letterhead, with the total"
+								>
+									<FileText className="h-4 w-4 mr-2" />
+									Bank claim
+								</DropdownMenuItem>
+							</DropdownMenuContent>
+						</DropdownMenu>
+						{/* The two workbooks behind one button: the payment statement for
+						    accounts, and the full claim report. Choosing one downloads it. */}
+						<DropdownMenu>
+							<DropdownMenuTrigger asChild>
+								<Button variant="outline" size="sm" disabled={reporting || rows.length === 0}>
+									{reporting ? <Loader2 className="h-4 w-4 mr-1.5 animate-spin" /> : <FileSpreadsheet className="h-4 w-4 mr-1.5" />}
+									Excel
+									<ChevronDown className="h-3.5 w-3.5 ml-1.5 opacity-70" />
+								</Button>
+							</DropdownMenuTrigger>
+							<DropdownMenuContent align="end">
+								<DropdownMenuItem
+									onClick={() => downloadReport('claimed', 'bank')}
+									disabled={!rows.some(r => r.claimed_count > 0)}
+									title="One line per examiner — bank, branch, account number, IFSC and the total claimed — in the payment statement layout for accounts"
+								>
+									<FileSpreadsheet className="h-4 w-4 mr-2" />
+									Bank claim
+								</DropdownMenuItem>
+								<DropdownMenuItem
+									onClick={() => downloadReport(filter === 'claimed' ? 'claimed' : 'all')}
+									title={
+										filter === 'claimed'
+											? 'Claimed papers only, with the bank account to pay — Summary and Paper-wise sheets'
+											: 'Every appointment in the session, claimed or not — Summary and Paper-wise sheets'
+									}
+								>
+									<FileSpreadsheet className="h-4 w-4 mr-2" />
+									Claim report
+								</DropdownMenuItem>
+							</DropdownMenuContent>
+						</DropdownMenu>
 						<Button size="sm" onClick={downloadForms} disabled={selectedRows.length === 0 || !!bulk?.running}>
 							{selectedRows.length > 1 ? <FileArchive className="h-4 w-4 mr-1.5" /> : <Download className="h-4 w-4 mr-1.5" />}
 							Download {selectedRows.length || ''} claim form{selectedRows.length === 1 ? '' : 's'}

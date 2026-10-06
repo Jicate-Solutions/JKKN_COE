@@ -6,6 +6,11 @@
 //     → the Examiner Claim Report as a workbook (Summary + Paper-wise sheets)
 // GET …&format=pdf[&examiner_ids=a,b]
 //     → the Consolidated Claim Report, on the college letterhead (claimed papers only)
+// GET …&format=bank[&examiner_ids=a,b]
+//     → the consolidated payment statement for accounts: one line per examiner with
+//       the bank account and the total claimed, in the office's own sheet layout
+// GET …&format=bankpdf[&examiner_ids=a,b]
+//     → the same statement on the college letterhead, as a PDF for the file
 //
 // One claim form covers every paper an examiner claimed in the session, so the
 // examiner — not the paper — is the unit here, exactly as on the claim PDF.
@@ -15,7 +20,8 @@ import ExcelJS from 'exceljs'
 import { getSupabaseServer } from '@/lib/supabase-server'
 import { requireUserPermission } from '@/lib/auth/check-user-permission'
 import { describeAcceptedWork } from '@/lib/qp-portal/assignment-service'
-import { generateClaimReportPdf } from '@/lib/pdf/examiner-order'
+import { generateClaimReportPdf, generatePaymentStatementPdf } from '@/lib/pdf/examiner-order'
+import { buildPaymentStatement } from '@/lib/qp-portal/claim-payment-statement'
 import { logAccess } from '@/lib/qp-portal/guard'
 import { formatIst } from '@/lib/qp-portal/ist'
 import { QP_CLAIM_STATUS_LABELS, type QpClaimStatus } from '@/types/qp-examiner-assignment'
@@ -335,7 +341,7 @@ export async function GET(req: NextRequest) {
 		let data = await loadClaims(supabase, institutionsId, sessionId)
 
 		const format = searchParams.get('format')
-		if (format !== 'xlsx' && format !== 'pdf') {
+		if (format !== 'xlsx' && format !== 'pdf' && format !== 'bank' && format !== 'bankpdf') {
 			const claimedExaminers = data.filter(d => d.claimed_count > 0)
 			return NextResponse.json({
 				data,
@@ -399,6 +405,68 @@ export async function GET(req: NextRequest) {
 					'Content-Disposition': `inline; filename="ConsolidatedClaimReport_${code}_${sessCode}.pdf"`,
 					'Cache-Control': 'no-store, max-age=0',
 				},
+			})
+		}
+
+		if (format === 'bank' || format === 'bankpdf') {
+			const claimedOnly = data.filter(d => d.claimed_count > 0)
+			// The heading names the college's degrees ("B.E / M.E / MBA"); a college
+			// with none on record is named by the programmes claimed against instead.
+			const { data: degrees } = await supabase
+				.from('degrees')
+				.select('degree_code, display_name')
+				.eq('institution_code', (inst as any)?.institution_code || '')
+			const degreeNames = [
+				...new Set(((degrees || []) as any[]).map(d => String(d.display_name || d.degree_code || '').trim()).filter(Boolean)),
+			]
+			const programmeCodes = [
+				...new Set(claimedOnly.flatMap(d => d.papers.filter(p => CLAIMED.includes(p.claim_status)).map(p => p.program_code || ''))),
+			]
+				.filter(Boolean)
+				.sort()
+			const statementRows = claimedOnly.map(d => ({
+				full_name: d.full_name,
+				bank_name: d.bank?.bank_name || null,
+				branch: d.bank?.branch || null,
+				account_number: d.bank?.account_number || null,
+				ifsc: d.bank?.ifsc || null,
+				amount: d.claimed_amount,
+			}))
+			const statementHead = {
+				programmes: (degreeNames.length ? degreeNames : programmeCodes).join(' / '),
+				session: (sess as any)?.session_name || (sess as any)?.session_code || '',
+			}
+			const asPdf = format === 'bankpdf'
+			const buffer = asPdf
+				? await generatePaymentStatementPdf({
+						institution: { name: (inst as any)?.name || '', institution_code: (inst as any)?.institution_code || '' },
+						head: statementHead,
+						rows: statementRows,
+					})
+				: await buildPaymentStatement(statementRows, statementHead)
+			// The statement carries bank account numbers — record who took it.
+			await logAccess(req, {
+				action: 'claim_report_download',
+				institutions_id: institutionsId,
+				performed_by_user_id: perm.userId || null,
+				performed_by_email: perm.email || null,
+				performed_by_role: 'coe',
+				module: 'claim',
+				detail: { format, examiners: claimedOnly.length, examination_session_id: sessionId },
+			})
+			return new NextResponse(new Uint8Array(buffer), {
+				status: 200,
+				headers: asPdf
+					? {
+							'Content-Type': 'application/pdf',
+							'Content-Disposition': `inline; filename="BankClaim_${code}_${sessCode}.pdf"`,
+							'Cache-Control': 'no-store, max-age=0',
+						}
+					: {
+							'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+							'Content-Disposition': `attachment; filename="BankClaim_${code}_${sessCode}.xlsx"`,
+							'Cache-Control': 'no-store, max-age=0',
+						},
 			})
 		}
 

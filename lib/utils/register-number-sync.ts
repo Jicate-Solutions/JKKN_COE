@@ -1,31 +1,31 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 
 /**
- * Propagates a learner's register number change across the COE tables that
- * store it as text.
+ * Propagates a learner's register number across the COE tables that store it
+ * as text.
  *
  * Learners without a register number are exam-registered with their roll
  * number pasted into the register number field. Once the CoE issues the real
- * number, every row still carrying the old value must follow, or hall tickets,
- * mark entry and results keep printing the roll number.
+ * number, every row for that learner must follow, or hall tickets, mark entry
+ * and results keep printing the old value.
  *
- * Each update is scoped to institution + learner + the OLD value (or a blank
- * one: learners registered before they had a roll number were saved with an
- * empty register number), so a row that already holds a different number is
- * never touched. Audit logs (exam_registration_approval_logs) are deliberately
- * left as written.
+ * Rows are matched on `student_id` alone — the MyJKKN learners_profiles id,
+ * which never changes. The value a row currently holds is NOT part of the
+ * match: roll numbers get reissued (a learner who moves programme keeps rows
+ * under the old roll), so matching on "the old number" silently skips rows.
+ *
+ * Callers must therefore pass only learners whose number is really changing.
+ * Audit logs (exam_registration_approval_logs) are deliberately left as written.
  */
 
 export interface RegisterNumberChange {
+	/** MyJKKN learners_profiles.id — stored as student_id across COE. */
 	learnerId: string
-	from: string
-	/** Other values the rows may still hold, e.g. the roll number when `from` is the MyJKKN number. */
-	alsoFrom?: string[]
 	to: string
 }
 
 /** Tables keyed by student_id, with the column holding the register number. */
-const STUDENT_TABLES: [table: string, column: string][] = [
+export const STUDENT_TABLES: [table: string, column: string][] = [
 	['exam_registrations', 'stu_register_no'],
 	['exam_registration_fee_details', 'stu_register_no'],
 	['exam_fee_concessions', 'stu_register_no'],
@@ -35,34 +35,45 @@ const STUDENT_TABLES: [table: string, column: string][] = [
 	['consolidated_results', 'register_number'],
 	['revaluation_registrations', 'student_register_number'],
 	['revaluation_final_marks', 'register_number'],
-	['student_result_view_cache', 'register_number'],
-	['student_cia_view_cache', 'register_number'],
 ]
 
 /** Tables with no student_id — reached through the learner's exam registrations. */
-const REGISTRATION_TABLES: [table: string, column: string][] = [
+export const REGISTRATION_TABLES: [table: string, column: string][] = [
 	['seat_allocations', 'student_reg_no'],
 	['student_dummy_numbers', 'actual_register_number'],
 ]
 
+/**
+ * Precomputed learner views. The register number also sits inside the JSON
+ * payload, so the row is dropped and rebuilt from exam_registrations on the
+ * next read rather than patched.
+ */
+export const CACHE_TABLES = ['student_result_view_cache', 'student_cia_view_cache']
+
 const CONCURRENCY = 8
+// .in() values travel in the query string; chunk so the URL is not truncated.
+export const ID_CHUNK = 100
 
 /**
- * Rewrites `column` to `to` on the rows `scope` selects, where the column holds
- * one of the old values or is blank/null. Three plain updates instead of one
- * `.or()` filter: a column filter inside `.or()` on an UPDATE has failed with
+ * Sets `column` to `to` on every row `scope` selects that does not already
+ * hold it. Two plain updates instead of one `.or()` filter: `neq` never matches
+ * NULL, and a column filter inside `.or()` on an UPDATE has failed with
  * "column … does not exist" (seen on MyJKKN learners_profiles).
+ *
+ * A caller that has already read the rows can switch off the pass it knows
+ * would match nothing, saving a round trip per table.
  */
-async function rewriteOld(
+export async function rewriteColumn(
 	supabase: SupabaseClient,
 	table: string,
 	column: string,
 	scope: (q: any) => any,
-	olds: string[],
-	to: string
+	to: string,
+	only: { values: boolean; nulls: boolean } = { values: true, nulls: true }
 ): Promise<{ count: number; error: string | null }> {
-	const passes: ((q: any) => any)[] = [(q: any) => q.eq(column, ''), (q: any) => q.is(column, null)]
-	if (olds.length > 0) passes.unshift((q: any) => q.in(column, olds))
+	const passes: ((q: any) => any)[] = []
+	if (only.values) passes.push((q: any) => q.neq(column, to))
+	if (only.nulls) passes.push((q: any) => q.is(column, null))
 
 	let count = 0
 	for (const pass of passes) {
@@ -75,64 +86,86 @@ async function rewriteOld(
 
 async function syncOne(
 	supabase: SupabaseClient,
-	institutionsId: string,
 	change: RegisterNumberChange,
 	totals: Record<string, number>,
+	replaced: Record<string, string[]>,
 	errors: string[]
 ) {
-	// Registration ids are read before exam_registrations is rewritten, while the
-	// old value still identifies them.
+	// Read before exam_registrations is rewritten: the ids reach the tables with
+	// no student_id, and the values being overwritten go into the log.
 	const { data: regs, error: regError } = await supabase
 		.from('exam_registrations')
-		.select('id')
-		.eq('institutions_id', institutionsId)
+		.select('id, stu_register_no')
 		.eq('student_id', change.learnerId)
 		.range(0, 999)
 	if (regError) errors.push(`exam_registrations lookup: ${regError.message}`)
 	const registrationIds = (regs || []).map(r => r.id)
 
-	const olds = [...new Set([change.from, ...(change.alsoFrom || [])].map(v => (v || '').trim()).filter(Boolean))]
+	const previous = [...new Set((regs || []).map(r => String(r.stu_register_no ?? '').trim()))]
 		.filter(v => v !== change.to)
+	if (previous.length > 0) replaced[change.learnerId] = previous
 
 	const record = (table: string, { count, error }: { count: number; error: string | null }) => {
 		if (error) errors.push(`${table}: ${error}`)
 		totals[table] = (totals[table] || 0) + count
 	}
 
+	const byLearner = (q: any) => q.eq('student_id', change.learnerId)
 	for (const [table, column] of STUDENT_TABLES) {
-		const byLearner = (q: any) => q.eq('institutions_id', institutionsId).eq('student_id', change.learnerId)
-		record(table, await rewriteOld(supabase, table, column, byLearner, olds, change.to))
+		record(table, await rewriteColumn(supabase, table, column, byLearner, change.to))
 	}
 
-	if (registrationIds.length === 0) return
 	for (const [table, column] of REGISTRATION_TABLES) {
-		const byRegistration = (q: any) =>
-			q.eq('institutions_id', institutionsId).in('exam_registration_id', registrationIds)
-		record(table, await rewriteOld(supabase, table, column, byRegistration, olds, change.to))
+		for (let i = 0; i < registrationIds.length; i += ID_CHUNK) {
+			const ids = registrationIds.slice(i, i + ID_CHUNK)
+			const byRegistration = (q: any) => q.in('exam_registration_id', ids)
+			record(table, await rewriteColumn(supabase, table, column, byRegistration, change.to))
+		}
+	}
+
+	for (const [table, result] of Object.entries(await dropLearnerViewCaches(supabase, change.learnerId))) {
+		record(table, result)
 	}
 }
 
 /**
- * Rewrites `from` → `to` for each learner. Returns per-table row counts and
- * any errors; a failure on one table does not stop the others.
+ * Drops a learner's precomputed views so the next read rebuilds them from
+ * exam_registrations. Needed after any change to the name or register number.
+ */
+export async function dropLearnerViewCaches(
+	supabase: SupabaseClient,
+	learnerId: string
+): Promise<Record<string, { count: number; error: string | null }>> {
+	const dropped: Record<string, { count: number; error: string | null }> = {}
+	for (const table of CACHE_TABLES) {
+		const { data, error } = await supabase.from(table).delete().eq('student_id', learnerId).select('student_id')
+		dropped[table] = { count: data?.length || 0, error: error?.message || null }
+	}
+	return dropped
+}
+
+/**
+ * Carries each learner's new register number into every COE table. Returns
+ * per-table row counts (rows rewritten; for the view caches, rows dropped), the
+ * values that were overwritten on each learner's exam registrations, and any
+ * errors — a failure on one table does not stop the others.
  */
 export async function syncRegisterNumbers(
 	supabase: SupabaseClient,
-	institutionsId: string,
 	changes: RegisterNumberChange[]
-): Promise<{ updated: Record<string, number>; errors: string[] }> {
+): Promise<{ updated: Record<string, number>; replaced: Record<string, string[]>; errors: string[] }> {
 	const updated: Record<string, number> = {}
+	const replaced: Record<string, string[]> = {}
 	const errors: string[] = []
-	// No `from` is still work: blank/null rows are always rewritten.
 	const work = changes.filter(c => c.learnerId && c.to)
 
 	for (let i = 0; i < work.length; i += CONCURRENCY) {
 		await Promise.all(
-			work.slice(i, i + CONCURRENCY).map(change => syncOne(supabase, institutionsId, change, updated, errors))
+			work.slice(i, i + CONCURRENCY).map(change => syncOne(supabase, change, updated, replaced, errors))
 		)
 	}
 
-	return { updated, errors: [...new Set(errors)] }
+	return { updated, replaced, errors: [...new Set(errors)] }
 }
 
 /** "exam_registrations 7, final_marks 2" — for toasts and logs. */

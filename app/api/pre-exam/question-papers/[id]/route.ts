@@ -136,9 +136,12 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
 			}
 			patch.questions = nextQuestions
 
-			// Sub-division marks must add up to the parent question's marks. The UI
-			// blocks Save, but a stale tab or a direct API call must not slip past.
-			const subErrors = validateSubMarks(patch.questions)
+			// Sub-division marks must add up to the parent question's marks — once the
+			// paper has left draft. A DRAFT saves half-allocated (an author must be able
+			// to stop and come back); Submit catches it through the completeness rules
+			// below. The UI blocks Save past draft, but a stale tab or a direct API call
+			// must not slip past.
+			const subErrors = (status || paper.status) === 'draft' ? [] : validateSubMarks(patch.questions)
 			if (subErrors.length > 0) {
 				return NextResponse.json(
 					{ error: 'SUB_MARKS', message: subErrors.join(' · ') },
