@@ -6,11 +6,12 @@
 // mirrors the PDF's stylesheet value for value rather than inventing a layout:
 //
 //   page      A4 portrait, 8mm margins (answer key: 14mm foot + page footer)
-//   type      Times New Roman 11pt; headings 12 / 11pt bold centred;
-//             CO · K-Level · part instruction 9pt bold; marks 10pt bold
+//   type      Times New Roman 12pt; headings 13 / 12pt bold centred;
+//             CO · K-Level · part instruction 10pt bold; marks 11pt bold
+//             (the sizes are the PDF's own — PAPER_TYPE.single)
 //   table     ONE fixed-layout table for the whole paper —
 //             15mm | question | 12mm CO | 20mm K-Level   (key: 15mm | text | 16mm)
-//             4px cell padding, 15.5pt minimum line, question text justified
+//             4px cell padding, 16pt minimum line, question text justified
 //   content   the SAME sanitized HTML the PDF prints (prepareQuestionHtml), walked
 //             into Word paragraphs, runs and tables
 //
@@ -49,6 +50,7 @@ import {
 import {
 	formatDuration,
 	loadPaperContext,
+	PAPER_TYPE,
 	prepareQuestionHtml,
 	readSubQuestionsForPrint,
 	type PaperContext,
@@ -88,9 +90,12 @@ const COL_BODY = TEXT_W - COL_QNO - COL_CO - COL_KL
 const COL_MK = mm(16)
 const COL_KEY_BODY = TEXT_W - COL_QNO - COL_MK
 
+/** The full-sheet PDF's type sizes (points) — the Word copy prints the same. */
+const T = PAPER_TYPE.single
+
 const PAD = px(4)
-/** `line-height: 15.5pt` on every cell of the paper table, as a minimum. */
-const ROW_LINE = 310
+/** The PDF's absolute `line-height` on every cell of the paper table, as a minimum. */
+const ROW_LINE = T.line * 20
 
 const LATIN = 'Times New Roman'
 const TAMIL_UNICODE = 'Noto Sans Tamil'
@@ -390,8 +395,8 @@ const htmlToBlocks = (rawHtml: string, base: RunStyle, env: Env, avail: number):
 // one letter per line. So each column is given the width its content asks for,
 // estimated from the text, and the set is scaled down when it would overflow.
 
-/** Average advance of an 11pt Times character, with a little slack. */
-const CHAR_TWIPS = 125
+/** Average advance of a 12pt Times character, with a little slack. */
+const CHAR_TWIPS = 136
 const INNER_PAD = px(4)
 const MIN_COLUMN = mm(6)
 /** A cell of running prose asks for no more than this many characters a line. */
@@ -870,7 +875,7 @@ function splitLine(left: string, right: string, env: Env, o: { before?: number; 
 
 /** Colour and size of each line of the boxed letterhead — the PDF's .lh-* rules. */
 const LETTERHEAD_LINE: Record<string, TextOpts> = {
-	'lh-name': { bold: true, size: 12.5, color: '1A7A3C' },
+	'lh-name': { bold: true, size: 13.5, color: '1A7A3C' },
 	'lh-trust': { bold: true, size: 9.5, color: 'E6007E' },
 	'lh-approve': { bold: true, size: 8.5 },
 	'lh-naac': { bold: true, size: 8.5, color: 'E6007E' },
@@ -883,8 +888,8 @@ async function letterheadBlocks(ctx: PaperContext, env: Env): Promise<Array<Para
 	const boxed = letterhead?.style === 'boxed' && (letterhead?.lines?.length || 0) > 0
 	if (!boxed) {
 		return [
-			textPara(institutionName.toUpperCase(), { bold: true, size: 13, align: 'center' }, env),
-			...(address ? [textPara(address, { size: 9, align: 'center', before: px(2) }, env)] : []),
+			textPara(institutionName.toUpperCase(), { bold: true, size: T.name, align: 'center' }, env),
+			...(address ? [textPara(address, { size: T.addr, align: 'center', before: px(2) }, env)] : []),
 		]
 	}
 
@@ -961,7 +966,7 @@ function registerGrid(cells: number, env: Env): Array<Paragraph | Table> {
 				new TableRow({
 					height: { value: box, rule: HeightRule.EXACT },
 					children: [
-						cell([textPara('Register Number', { bold: true, size: 10.5, align: 'right' }, env)], {
+						cell([textPara('Register Number', { bold: true, size: T.register, align: 'right' }, env)], {
 							width: label,
 							valign: VerticalAlignTable.CENTER,
 							margins: { top: 0, bottom: 0, left: 0, right: mm(3) },
@@ -985,9 +990,9 @@ function registerGrid(cells: number, env: Env): Array<Paragraph | Table> {
 function examHeadings(ctx: PaperContext, env: Env): Paragraph[] {
 	const boxed = ctx.letterhead?.style === 'boxed' && (ctx.letterhead?.lines?.length || 0) > 0
 	return [
-		textPara(ctx.examHeading, { bold: true, size: 12, align: 'center', before: boxed ? mm(3) : px(4) }, env),
-		textPara(ctx.examLine, { bold: true, size: 11, align: 'center', before: px(2) }, env),
-		...(ctx.semesterText ? [textPara(ctx.semesterText, { bold: true, size: 11, align: 'center', before: px(2) }, env)] : []),
+		textPara(ctx.examHeading, { bold: true, size: T.exam, align: 'center', before: boxed ? mm(3) : px(4) }, env),
+		textPara(ctx.examLine, { bold: true, size: T.sub, align: 'center', before: px(2) }, env),
+		...(ctx.semesterText ? [textPara(ctx.semesterText, { bold: true, size: T.sub, align: 'center', before: px(2) }, env)] : []),
 	]
 }
 
@@ -1028,7 +1033,7 @@ async function pack(
 		styles: {
 			default: {
 				document: {
-					run: { font: BASE_FONT, size: pt(11) },
+					run: { font: BASE_FONT, size: pt(T.body) },
 					paragraph: { spacing: { before: 0, after: 0 } },
 				},
 			},
@@ -1066,7 +1071,7 @@ export async function buildPaperDocx(
 	const { paper, grouped, partByLabel, defaultFont } = ctx
 	const env = newEnv()
 
-	const small = { bold: true, size: 9, align: 'center' as Align, rowLine: true }
+	const small = { bold: true, size: T.small, align: 'center' as Align, rowLine: true }
 	const rows: TableRow[] = []
 	let partIndex = 0
 	for (const [label, qs] of grouped.entries()) {
@@ -1081,7 +1086,7 @@ export async function buildPaperDocx(
 						[
 							textPara(heading, { bold: true, align: 'center', keepNext: true, rowLine: true }, env),
 							...(part?.instruction
-								? [textPara(String(part.instruction), { bold: true, size: 9, align: 'center', before: px(2), keepNext: true, rowLine: true }, env)]
+								? [textPara(String(part.instruction), { bold: true, size: T.small, align: 'center', before: px(2), keepNext: true, rowLine: true }, env)]
 								: []),
 						],
 						{ width: COL_QNO + COL_BODY, span: 2, margins: headMargins }
@@ -1161,7 +1166,11 @@ export async function buildPaperDocx(
 				layout: TableLayoutType.FIXED,
 				borders: NO_BORDERS,
 				rows,
-			})
+			}),
+			// Word closes a document that ends in a table with an empty paragraph of
+			// its own, a full line tall — on a paper that fills its sheet that line
+			// alone tips over into a blank extra page. A sliver takes its place.
+			sliver()
 		)
 	}
 
@@ -1184,7 +1193,7 @@ function keyBlock(label: string, body: Block[], o: { missing: boolean; indent?: 
 		kind: 'p',
 		align: 'left',
 		before: px(4),
-		children: [...runs(label.toUpperCase(), { bold: true, size: pt(8.5), color: '333333' }, env)],
+		children: [...runs(label.toUpperCase(), { bold: true, size: pt(T.small - 0.5), color: '333333' }, env)],
 	}
 	const content: Block[] = o.missing
 		? [{ kind: 'p', align: 'left', children: [...runs('Not entered', { italics: true, color: 'BB0000' }, env)] }]
@@ -1252,12 +1261,12 @@ export async function buildAnswerKeyDocx(
 						[
 							textPara(heading, { bold: true, align: 'center', keepNext: true, rowLine: true }, env),
 							...(part?.instruction
-								? [textPara(String(part.instruction), { bold: true, size: 9, align: 'center', before: px(2), keepNext: true, rowLine: true }, env)]
+								? [textPara(String(part.instruction), { bold: true, size: T.small, align: 'center', before: px(2), keepNext: true, rowLine: true }, env)]
 								: []),
 						],
 						{ width: COL_QNO + COL_KEY_BODY, span: 2, margins: headMargins, borders: headRule }
 					),
-					cell([textPara('Marks', { bold: true, size: 9, align: 'center', keepNext: true, rowLine: true }, env)], {
+					cell([textPara('Marks', { bold: true, size: T.small, align: 'center', keepNext: true, rowLine: true }, env)], {
 						width: COL_MK,
 						margins: headMargins,
 						borders: headRule,
@@ -1313,7 +1322,7 @@ export async function buildAnswerKeyDocx(
 						cell([textPara(questionPrefix(q), { bold: true, rowLine: true }, env)], { width: COL_QNO, borders: ruled }),
 						cell(content, { width: COL_KEY_BODY, borders: ruled }),
 						cell(
-							[textPara(marks == null || marks === '' ? '' : String(marks), { bold: true, size: 10, align: 'center', rowLine: true }, env)],
+							[textPara(marks == null || marks === '' ? '' : String(marks), { bold: true, size: T.small + 1, align: 'center', rowLine: true }, env)],
 							{ width: COL_MK, borders: ruled }
 						),
 					],
@@ -1335,9 +1344,9 @@ export async function buildAnswerKeyDocx(
 			alignment: AlignmentType.CENTER,
 			spacing: { before: px(6), after: 0 },
 			border: { top: { ...band, space: 2 }, bottom: { ...band, space: 2 } },
-			children: [new TextRun({ text: 'ANSWER KEY & SCHEME OF VALUATION', bold: true, size: pt(12.5), characterSpacing: 8 })],
+			children: [new TextRun({ text: 'ANSWER KEY & SCHEME OF VALUATION', bold: true, size: pt(T.exam + 0.5), characterSpacing: 8 })],
 		}),
-		textPara('Confidential – for valuation use only. Not to be issued to learners.', { italics: true, size: 9, align: 'center', before: px(4) }, env),
+		textPara('Confidential – for valuation use only. Not to be issued to learners.', { italics: true, size: T.small, align: 'center', before: px(4) }, env),
 		splitLine(`Subject Code: ${paper.course_code || ''}`, setLabel ? `Set: ${setLabel}` : '', env, { before: px(6) }),
 		textPara(`Subject Title: ${paper.subject_title || ''}`, { bold: true }, env),
 		splitLine(`Time: ${formatDuration(paper.duration_minutes)}`, `Maximum: ${Number(paper.max_marks) || 0} Marks`, env),
@@ -1368,7 +1377,7 @@ export async function buildAnswerKeyDocx(
 				new TableRow({
 					cantSplit: true,
 					children: [
-						cell([textPara(`Answer key entered for ${keyed} of ${allQuestions.length} questions.`, { size: 9, color: '333333' }, env)], {
+						cell([textPara(`Answer key entered for ${keyed} of ${allQuestions.length} questions.`, { size: T.small, color: '333333' }, env)], {
 							width: TEXT_W - signW,
 							valign: VerticalAlignTable.BOTTOM,
 							margins: { left: 0 },
@@ -1378,7 +1387,7 @@ export async function buildAnswerKeyDocx(
 								new Paragraph({
 									alignment: AlignmentType.CENTER,
 									border: { top: { ...rule(0.7), space: 2 } },
-									children: [new TextRun({ text: 'Signature of the Question Paper Setter', size: pt(10) })],
+									children: [new TextRun({ text: 'Signature of the Question Paper Setter', size: pt(T.small + 1) })],
 								}),
 							],
 							{ width: signW, valign: VerticalAlignTable.BOTTOM, margins: { left: 0, right: 0 } }
@@ -1386,7 +1395,9 @@ export async function buildAnswerKeyDocx(
 					],
 				}),
 			],
-		})
+		}),
+		// As on the question paper: no full-height closing paragraph after the table.
+		sliver()
 	)
 
 	const footerLabel = ['Answer Key', paper.course_code, hideSet ? '' : paper.set_label ? `Set ${paper.set_label}` : '']

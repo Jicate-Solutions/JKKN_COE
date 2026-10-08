@@ -7,6 +7,8 @@ import {
 	fetchAllMyJKKNLearnerProfiles,
 	fetchAllMyJKKNPrograms,
 } from '@/lib/myjkkn-api'
+import { getOffRollRegisterNumbers, isOffRoll, offRollKey } from '@/lib/myjkkn-off-roll-learners'
+import { ACTIVE_REGISTRATION_STATUSES } from '@/lib/exam-registration-status'
 import type {
 	StudentStrengthReport,
 	ProgramStrengthRow,
@@ -15,7 +17,7 @@ import type {
 } from '@/types/student-strength-report'
 
 // ── Next.js data cache for MyJKKN API responses ───────────────────────────────
-// These endpoints are slow (22 pages × 200 records for learners).
+// These endpoints are slow (~39 pages × 200 records for learners).
 // Cache them so repeat report loads are near-instant.
 
 const getCachedInstitutions = unstable_cache(
@@ -33,30 +35,43 @@ const getCachedPrograms = unstable_cache(
 // Learner profiles: 1 hour TTL. Keyed by institution_id arg so each institution
 // gets its own cache bucket. MyJKKN returns all learners regardless of institution_id,
 // so we only need to call once and filter client-side.
-// IMPORTANT: Only cache the 4 fields we actually use — full profiles are ~10MB which
+// IMPORTANT: Only cache the 5 fields we actually use — full profiles are ~10MB which
 // exceeds Next.js's 2MB unstable_cache limit.
-type SlimLearner = { register_number: string; institution_id: string; institution_code: string; program_code: string }
+type SlimLearner = {
+	register_number: string
+	institution_id: string
+	institution_code: string
+	program_code: string
+	lifecycle_status: string
+}
 
 const getCachedLearners = unstable_cache(
 	async (institutionId: string): Promise<SlimLearner[]> => {
 		const learners = await fetchAllMyJKKNLearnerProfiles({
 			institution_id: institutionId,
+			// Every lifecycle state, not just active: a graduated learner missing from
+			// the sweep has no AIDED/SF answer and used to fall into the SF column.
+			lifecycle_status: 'all',
 			all: true,
 			limit: 200, // API max is 200/page; must equal actual max so fetchAllPages paginates
 		} as Parameters<typeof fetchAllMyJKKNLearnerProfiles>[0])
-		return (learners as Record<string, unknown>[]).map(l => ({
-			register_number: String(l.register_number ?? ''),
-			institution_id:  String(l.institution_id  ?? ''),
-			institution_code: String(l.institution_code ?? ''),
-			program_code:    String(l.program_code    ?? ''),
-		}))
+		return (learners as Record<string, unknown>[])
+			// Enquiry / reserved profiles carry no register number and can never match
+			.filter(l => String(l.register_number ?? '').trim())
+			.map(l => ({
+				register_number: String(l.register_number ?? ''),
+				institution_id:  String(l.institution_id  ?? ''),
+				institution_code: String(l.institution_code ?? ''),
+				program_code:    String(l.program_code    ?? ''),
+				lifecycle_status: String(l.lifecycle_status ?? ''),
+			}))
 	},
-	['myjkkn-learners'],
+	['myjkkn-learners-all-statuses'],
 	{ revalidate: 3600, tags: ['myjkkn-learners'] } // 1 hour
 )
 
 // unstable_cache does not coalesce concurrent misses: every report request that lands
-// while the first sweep is still running starts its own 25-page crawl, and MyJKKN
+// while the first sweep is still running starts its own 39-page crawl, and MyJKKN
 // answers the pile-up with 500s. Share one in-flight sweep per institution instead.
 // Failures are not retained — the entry is dropped as soon as the sweep settles.
 const inflightLearners = new Map<string, Promise<SlimLearner[]>>()
@@ -110,6 +125,15 @@ type RegistrationRow = {
  * Generates a pre-exam student strength report showing enrollment by program,
  * academic year, and funding type (AIDED / SF).
  *
+ * Counts learners who have applied for the exam: registration_status 'Applied'
+ * or 'Approved' (final approval moves an applied row on to 'Approved', and past
+ * sessions hold nothing but 'Approved'). 'Pending' registrations are not counted.
+ *
+ * Active learners only: registrations of learners MyJKKN marks inactive / exited
+ * are dropped before counting (lib/myjkkn-off-roll-learners). Graduated learners
+ * stay — lifecycle_status is today's status, so dropping them would empty the
+ * final year of every past session.
+ *
  * AIDED/SF logic:
  * - CAS institution has 2 myjkkn_institution_ids; name containing "(Aided)" → AIDED
  * - All other institutions → SF only
@@ -155,6 +179,9 @@ export async function GET(request: Request) {
 					)
 					.eq('institutions_id', institutions_id)
 					.eq('examination_session_id', examination_session_id)
+					// Applied for the exam: still 'Applied', or already past it ('Approved').
+					// A 'Pending' row is only a registration — the learner has not applied.
+					.in('registration_status', ACTIVE_REGISTRATION_STATUSES)
 					.order('id')
 					.range(offset, offset + pageSize - 1)
 
@@ -178,7 +205,7 @@ export async function GET(request: Request) {
 			return all
 		}
 
-		const [institutionResult, sessionResult, allRegistrations] = await Promise.all([
+		const [institutionResult, sessionResult, fetchedRegistrations, offRoll] = await Promise.all([
 			supabase
 				.from('institutions')
 				.select('id, name, institution_code, myjkkn_institution_ids')
@@ -190,6 +217,8 @@ export async function GET(request: Request) {
 				.eq('id', examination_session_id)
 				.single(),
 			fetchRegistrations(),
+			// Never throws; when MyJKKN cannot be read the set is empty and nobody is left out
+			getOffRollRegisterNumbers(),
 		])
 
 		const { data: institution, error: instError } = institutionResult
@@ -197,12 +226,33 @@ export async function GET(request: Request) {
 			return NextResponse.json({ error: 'Institution not found' }, { status: 404 })
 		}
 
-		if (allRegistrations.length === 0) {
+		if (fetchedRegistrations.length === 0) {
+			// Tell "nobody has applied yet" apart from "nothing registered at all"
+			const { count: registeredCount } = await supabase
+				.from('exam_registrations')
+				.select('id', { count: 'exact', head: true })
+				.eq('institutions_id', institutions_id)
+				.eq('examination_session_id', examination_session_id)
 			return NextResponse.json(
-				{ error: 'No exam registrations found for this session' },
+				{
+					error: registeredCount
+						? `No learner has applied for this session yet (${registeredCount} registrations are still Pending)`
+						: 'No exam registrations found for this session',
+				},
 				{ status: 404 }
 			)
 		}
+
+		// ── Active learners only ─────────────────────────────────────────────────
+		// exam_registrations knows nothing about a learner leaving, so a learner who
+		// discontinued after registering would still be counted in the strength.
+		// MyJKKN decides who is on the rolls: inactive / exited learners are left out.
+		const offRollRegisterNumbers = new Set<string>()
+		const allRegistrations = fetchedRegistrations.filter(r => {
+			if (!isOffRoll(offRoll, r.stu_register_no)) return true
+			offRollRegisterNumbers.add(offRollKey(r.stu_register_no))
+			return false
+		})
 
 		const { data: session } = sessionResult
 		const myjkknIds: string[] = institution.myjkkn_institution_ids || []
@@ -247,7 +297,7 @@ export async function GET(request: Request) {
 		// They feed two things: the AIDED/SF split and a program_code fallback for
 		// registrations that lack one. An institution with no aided arm whose
 		// registrations all carry a program_code gets an identical report without
-		// paying for — or failing on — the 25-page MyJKKN profile sweep.
+		// paying for — or failing on — the 39-page MyJKKN profile sweep.
 		const needsProgramFallback = allRegistrations.some(r => !(r.program_code || '').trim())
 		const allLearners: SlimLearner[] =
 			myjkknIds.length > 0 && (has_aided || needsProgramFallback)
@@ -256,8 +306,9 @@ export async function GET(request: Request) {
 
 		// ── Build learner map (register_number → AIDED/SF) ───────────────────────
 		// Filter to learners whose institution_id belongs to this COE institution.
-		// AIDED always wins: if a learner appears as SF first, AIDED overwrites it.
-		type LearnerInfo = { type: 'AIDED' | 'SF'; program_code: string }
+		// A register number can sit on more than one profile: the active profile
+		// outranks a non-active one, and between equals AIDED wins.
+		type LearnerInfo = { type: 'AIDED' | 'SF'; program_code: string; active: boolean }
 		const learnerMap = new Map<string, LearnerInfo>()
 
 		for (const learner of allLearners) {
@@ -278,11 +329,17 @@ export async function GET(request: Request) {
 				institutionTypeMap.get(lInstCode) ||
 				'SF'
 
+			const active = learner.lifecycle_status.trim().toLowerCase() === 'active'
 			const existing = learnerMap.get(rawReg)
-			if (!existing || type === 'AIDED') {
+			if (
+				!existing ||
+				(active && !existing.active) ||
+				(active === existing.active && type === 'AIDED')
+			) {
 				learnerMap.set(rawReg, {
 					type,
 					program_code: learner.program_code,
+					active,
 				})
 			}
 		}
@@ -416,6 +473,7 @@ export async function GET(request: Request) {
 			generated_at: new Date().toISOString(),
 			has_aided,
 			max_year: maxYear,
+			off_roll_excluded: offRollRegisterNumbers.size,
 			ug_rows,
 			pg_rows,
 			ug_subtotal,

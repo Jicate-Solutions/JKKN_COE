@@ -31,6 +31,7 @@ import {
 	ChevronRight,
 	Users,
 	Download,
+	AlertCircle,
 } from "lucide-react"
 import type { ReportType } from "@/types/exam-registration-reports"
 import { generateExamRegistrationReportPdf } from "@/lib/utils/generate-exam-registration-report-pdf"
@@ -41,6 +42,14 @@ interface InstitutionOption {
 	id: string
 	institution_code: string
 	name: string
+}
+
+/** A programme's learners who are registered but have not applied - absent from the Exam Application reports */
+interface NotAppliedProgram {
+	program_code: string
+	learners: number
+	/** false when the programme has no applied learner at all, so it is missing from the report entirely */
+	in_report: boolean
 }
 
 interface ProgramOption {
@@ -151,6 +160,7 @@ export default function ExamRegistrationReportsPage() {
 		institution_code: string
 		session_name: string
 		session_code: string
+		not_applied: NotAppliedProgram[]
 	} | null>(null)
 
 	// Loading states
@@ -331,6 +341,7 @@ export default function ExamRegistrationReportsPage() {
 				institution_code: result.institution_code || '',
 				session_name: result.session_name || '',
 				session_code: result.session_code || '',
+				not_applied: (result.not_applied || []) as NotAppliedProgram[],
 			}
 			reportCacheRef.current.set(cacheKey, { data, meta })
 			setReportData(data)
@@ -392,6 +403,25 @@ export default function ExamRegistrationReportsPage() {
 
 		return [...map.values()].sort((a, b) => (a.order - b.order) || a.code.localeCompare(b.code))
 	}, [programs, reportData])
+
+	// ── Registered but not applied (Exam Application reports only) ──
+	// Those reports cover applied learners, so a programme with none is not in
+	// reportData - and so not in programOptions either. Named here so it shows as
+	// unavailable, with the reason, instead of silently disappearing from the filter.
+	const { absentPrograms, notAppliedElsewhere } = useMemo(() => {
+		const list = reportMeta?.not_applied ?? []
+		const nameByCode = new Map(programs.map(p => [p.program_code, p.program_name || '']))
+		const onReport = list.filter(p => p.in_report)
+		return {
+			absentPrograms: list
+				.filter(p => !p.in_report)
+				.map(p => ({ code: p.program_code, name: nameByCode.get(p.program_code) || '', learners: p.learners })),
+			notAppliedElsewhere: {
+				learners: onReport.reduce((sum, p) => sum + p.learners, 0),
+				programs: onReport.length,
+			},
+		}
+	}, [reportMeta, programs])
 
 	// Drop programs that no longer exist once a new report is generated
 	useEffect(() => {
@@ -1206,6 +1236,22 @@ export default function ExamRegistrationReportsPage() {
 															</CommandItem>
 														))}
 													</CommandGroup>
+													{absentPrograms.length > 0 && (
+														<CommandGroup heading="Registered, not applied">
+															{absentPrograms.map((prog) => (
+																<CommandItem
+																	key={prog.code}
+																	value={`${prog.code} ${prog.name}`}
+																	disabled
+																	className="text-xs"
+																>
+																	<span className="mr-2 h-3 w-3 shrink-0" />
+																	<span className="truncate">{prog.name ? `${prog.code} - ${prog.name}` : prog.code}</span>
+																	<span className="ml-auto pl-2 shrink-0 text-muted-foreground">{prog.learners} not applied</span>
+																</CommandItem>
+															))}
+														</CommandGroup>
+													)}
 												</CommandList>
 											</Command>
 										</PopoverContent>
@@ -1458,6 +1504,29 @@ export default function ExamRegistrationReportsPage() {
 												Excel
 											</Button>
 										</div>
+									</div>
+								</div>
+							)}
+
+							{/* Registered but not applied — why a programme or learner is missing from the application report */}
+							{reportMeta && !loadingReport && (absentPrograms.length > 0 || notAppliedElsewhere.learners > 0) && (
+								<div className="text-xs text-amber-700 dark:text-amber-400 flex items-start gap-1.5">
+									<AlertCircle className="h-3 w-3 mt-0.5 shrink-0" />
+									<div className="space-y-0.5">
+										{absentPrograms.length > 0 && (
+											<p>
+												Not on this report - registered but no learner has applied:{' '}
+												<span className="font-semibold">
+													{absentPrograms.map(p => `${p.code} (${p.learners})`).join(', ')}
+												</span>
+												. Apply them from Exam Management &gt; Exam Applications, or use Student Exam Registration for the registration list.
+											</p>
+										)}
+										{notAppliedElsewhere.learners > 0 && (
+											<p>
+												{notAppliedElsewhere.learners} more registered learner{notAppliedElsewhere.learners === 1 ? '' : 's'} across {notAppliedElsewhere.programs} program{notAppliedElsewhere.programs === 1 ? '' : 's'} on this report have not applied and are left out.
+											</p>
+										)}
 									</div>
 								</div>
 							)}

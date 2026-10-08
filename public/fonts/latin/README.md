@@ -1,24 +1,37 @@
-# Latin body serif for question-paper PDFs (optional)
+# Latin body serif for question-paper PDFs
 
 The question-paper PDF is rendered by headless Chromium. On Vercel that Chromium
 (`@sparticuz/chromium`) ships **only Open Sans** — there is no `Times New Roman`.
-So a paper printed locally on Windows (Times) and the same paper printed in
-production (Open Sans) do not look identical.
+Without a font in this folder a paper printed in production comes out sans-serif,
+while the same paper printed locally on Windows is in Times.
 
-Drop **one** Times-metric TTF in this folder and it is auto-embedded as `QP Serif`,
-the first family in the PDF font stack — production then matches local output.
+The family in this folder is embedded as `QP Serif`, the first family in the PDF
+font stack, so every machine prints the same Times-metric paper.
 
-Recognised filenames (first match wins):
+## What is here
 
-| File | Font |
-|---|---|
-| `Tinos-Regular.ttf` | Tinos — metric-compatible with Times New Roman (Apache 2.0) |
-| `LiberationSerif-Regular.ttf` | Liberation Serif — also Times-metric (OFL) |
-| `TimesNewRoman.ttf` / `times.ttf` | Times New Roman (licence-restricted — do not commit) |
-| `NotoSerif-Regular.ttf` | Noto Serif (OFL) |
+**Liberation Serif 2.1.5** — regular, bold, italic and bold-italic. It is
+metric-compatible with Times New Roman (same widths, same line breaks) and is
+licensed under the SIL Open Font License; see `LiberationSerif-LICENSE.txt`.
+The files are unmodified — the licence reserves the font name, so do not subset
+or edit them under the same name.
 
-No file here is fine: Chromium falls back to the host serif. Restart the Next.js
-server after adding or replacing a `.ttf`.
+## Recognised families (first whose regular face is present wins)
+
+| Regular | Bold / Italic / Bold-italic | Font |
+|---|---|---|
+| `Tinos-Regular.ttf` | `Tinos-Bold.ttf`, `Tinos-Italic.ttf`, `Tinos-BoldItalic.ttf` | Tinos — Times-metric (Apache 2.0) |
+| `LiberationSerif-Regular.ttf` | `LiberationSerif-Bold.ttf`, `-Italic.ttf`, `-BoldItalic.ttf` | Liberation Serif — Times-metric (OFL) |
+| `TimesNewRoman.ttf` | — | Times New Roman (licence-restricted — do not commit) |
+| `times.ttf` | `timesbd.ttf`, `timesi.ttf`, `timesbi.ttf` | Times New Roman (licence-restricted — do not commit) |
+| `NotoSerif-Regular.ttf` | `NotoSerif-Bold.ttf`, `-Italic.ttf`, `-BoldItalic.ttf` | Noto Serif (OFL) |
+
+The bold and italic faces are optional, but without them Chromium fakes bold by
+smearing the regular face — and headings, question numbers and the CO / K-Level
+columns are all bold. Restart the Next.js server after adding or replacing a file.
+
+The Word export does not use these files: it names `Times New Roman`, which every
+PC with Word already has.
 
 ## Do not put Tamil fonts here
 

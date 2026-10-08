@@ -5,6 +5,7 @@ import {
 	fetchAllMyJKKNPrograms,
 	fetchAllMyJKKNBatches,
 } from '@/lib/myjkkn-api'
+import { normalizeDateOfBirth } from '@/lib/myjkkn-learner-enrichment'
 
 export async function GET(request: NextRequest) {
 	try {
@@ -67,15 +68,24 @@ export async function GET(request: NextRequest) {
 			}
 		}
 
-		// Collect batch UUIDs matching the batch_code
+		// Collect batch UUIDs matching the batch_code.
+		// Deliberately NOT narrowed to our institutions: the batches API ignores
+		// institution_id, and CAS learners are routinely attached to a batch row owned by
+		// another institution (most PG learners are), so the code is the only reliable key.
 		const batchUUIDs = new Set<string>()
+		let batchName = ''
 		for (const batches of batchResults) {
 			for (const b of batches) {
 				if ((b as any).batch_code === batchCode && (b as any).id) {
 					batchUUIDs.add((b as any).id)
+					if (!batchName) batchName = (b as any).batch_name || ''
 				}
 			}
 		}
+
+		// Two-digit intake year of the selected batch ("UGB26" / "2026-2029" -> "26"),
+		// used to place learners MyJKKN has not attached to any batch yet.
+		const batchYear = batchCode.match(/(\d{2})$/)?.[1] || batchName.match(/^\d{2}(\d{2})/)?.[1] || null
 
 		if (programUUIDs.size === 0) {
 			return NextResponse.json({
@@ -117,7 +127,16 @@ export async function GET(request: NextRequest) {
 				// Filter: must match program UUID
 				if (!programUUIDs.has(learner.program_id)) continue
 				// Filter: must match batch UUID (if we found batch UUIDs)
-				if (batchUUIDs.size > 0 && !batchUUIDs.has(learner.batch_id)) continue
+				if (learner.batch_id) {
+					if (batchUUIDs.size > 0 && !batchUUIDs.has(learner.batch_id)) continue
+				} else if (batchYear) {
+					// No batch in MyJKKN (the whole 2026 aided intake, and part of the
+					// self-financing one) — fall back to the intake year in the learner's
+					// register / roll number. Applicants with neither number stay out.
+					if (learnerIntakeYear(learner) !== batchYear) continue
+				} else if (batchUUIDs.size > 0) {
+					continue
+				}
 
 				seenIds.add(learner.id)
 				allLearners.push(learner)
@@ -151,6 +170,17 @@ export async function GET(request: NextRequest) {
 	}
 }
 
+// Intake year from the register number (26JUGENG001, C23UG102ENG006) or, for learners
+// not yet numbered, the roll number (AUG26EN01). Null when neither carries one.
+function learnerIntakeYear(learner: any): string | null {
+	for (const value of [learner.register_number, learner.roll_number]) {
+		const text = String(value || '').trim().toUpperCase()
+		const match = text.match(/^(\d{2})[A-Z]/) || text.match(/^[A-Z]+(\d{2})[A-Z]/)
+		if (match) return match[1]
+	}
+	return null
+}
+
 function formatLearnerName(learner: any): string {
 	const parts: string[] = []
 	if (learner.first_name) parts.push(learner.first_name)
@@ -159,15 +189,9 @@ function formatLearnerName(learner: any): string {
 }
 
 function formatDOB(dob: string | null | undefined): string {
-	if (!dob) return '-'
-	try {
-		const date = new Date(dob)
-		if (isNaN(date.getTime())) return dob
-		const day = date.getDate().toString().padStart(2, '0')
-		const month = (date.getMonth() + 1).toString().padStart(2, '0')
-		const year = date.getFullYear()
-		return `${day}-${month}-${year}`
-	} catch {
-		return dob
-	}
+	// MyJKKN stores some DOBs as Excel serials ("39793"); new Date() reads those as the year
+	const iso = normalizeDateOfBirth(dob)
+	if (!iso) return '-'
+	const [year, month, day] = iso.split('-')
+	return `${day}-${month}-${year}`
 }

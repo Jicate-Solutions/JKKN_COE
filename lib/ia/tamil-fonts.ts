@@ -37,18 +37,55 @@ const FONT_FILES: FontFaceSpec[] = [
 ]
 
 /**
- * Optional Latin serif for the PDF body, embedded as 'QP Serif'.
+ * Latin serif for the PDF body, embedded as 'QP Serif'.
  * Headless Chromium on Vercel has NO Times New Roman (@sparticuz/chromium ships
- * Open Sans only). Drop a Times-metric TTF here to make the printed paper look the
- * same everywhere; without it Chromium just falls back to the host serif.
+ * Open Sans only), so without a file here a paper printed in production comes
+ * out in a sans-serif face. A Times-metric family in public/fonts/latin/ makes
+ * the printed paper look the same everywhere.
+ *
+ * Each entry is one family; the first whose regular face is on disk wins. The
+ * bold / italic faces are optional — Chromium synthesises any that are missing,
+ * but a smeared regular is visibly not the real bold, and half the paper
+ * (headings, question numbers, CO / K-Level) is bold.
  */
-const LATIN_SERIF_FILES = [
-	'Tinos-Regular.ttf',
-	'LiberationSerif-Regular.ttf',
-	'TimesNewRoman.ttf',
-	'times.ttf',
-	'NotoSerif-Regular.ttf',
+interface LatinSerifFamily {
+	regular: string
+	bold?: string
+	italic?: string
+	boldItalic?: string
+}
+
+const LATIN_SERIF_FAMILIES: LatinSerifFamily[] = [
+	{
+		regular: 'Tinos-Regular.ttf',
+		bold: 'Tinos-Bold.ttf',
+		italic: 'Tinos-Italic.ttf',
+		boldItalic: 'Tinos-BoldItalic.ttf',
+	},
+	{
+		regular: 'LiberationSerif-Regular.ttf',
+		bold: 'LiberationSerif-Bold.ttf',
+		italic: 'LiberationSerif-Italic.ttf',
+		boldItalic: 'LiberationSerif-BoldItalic.ttf',
+	},
+	{ regular: 'TimesNewRoman.ttf' },
+	{ regular: 'times.ttf', bold: 'timesbd.ttf', italic: 'timesi.ttf', boldItalic: 'timesbi.ttf' },
+	{
+		regular: 'NotoSerif-Regular.ttf',
+		bold: 'NotoSerif-Bold.ttf',
+		italic: 'NotoSerif-Italic.ttf',
+		boldItalic: 'NotoSerif-BoldItalic.ttf',
+	},
 ]
+
+/**
+ * What 'QP Serif' may set: Latin, Greek (α β μ Ω typed straight into a question),
+ * punctuation, super/subscripts, currency, letterlike and number forms, arrows
+ * and mathematical operators. NEVER the Tamil block — that stays with Noto Sans
+ * Tamil, further down the stack.
+ */
+const LATIN_SERIF_RANGE =
+	'U+0000-024F, U+0370-03FF, U+2000-206F, U+2070-209F, U+20A0-20BF, U+2100-218F, U+2190-2BFF'
 
 function fontsDir(sub: 'tamil' | 'latin' = 'tamil'): string {
 	return path.join(process.cwd(), 'public', 'fonts', sub)
@@ -114,23 +151,35 @@ export function buildTamilFontFaceCss(): string {
 }
 
 /**
- * @font-face for the Latin body serif ('QP Serif'), if a TTF was placed in
- * public/fonts/latin/. Returns '' when none is present — the stack then falls back
- * to the host's serif. Latin-only range so it can never shadow Tamil glyphs.
+ * @font-face rules for the Latin body serif ('QP Serif') — one per face of the
+ * first family found in public/fonts/latin/. Returns '' when none is present —
+ * the stack then falls back to the host's serif. The range is limited so it can
+ * never shadow Tamil glyphs.
  */
 export function buildLatinSerifFontFaceCss(): string {
-	const file = findFontFile(LATIN_SERIF_FILES, 'latin')
-	if (!file) return ''
-	const loaded = readFontAsDataUri(file)
-	if (!loaded) return ''
-	return `@font-face {
+	const family = LATIN_SERIF_FAMILIES.find(f => !!findFontFile([f.regular], 'latin'))
+	if (!family) return ''
+	const faces: Array<{ file?: string; weight: string; style: string }> = [
+		{ file: family.regular, weight: 'normal', style: 'normal' },
+		{ file: family.bold, weight: 'bold', style: 'normal' },
+		{ file: family.italic, weight: 'normal', style: 'italic' },
+		{ file: family.boldItalic, weight: 'bold', style: 'italic' },
+	]
+	const blocks: string[] = []
+	for (const face of faces) {
+		const file = face.file ? findFontFile([face.file], 'latin') : null
+		const loaded = file ? readFontAsDataUri(file) : null
+		if (!loaded) continue
+		blocks.push(`@font-face {
 	font-family: 'QP Serif';
 	src: url(${loaded.dataUri}) format('${loaded.format}');
-	font-weight: normal;
-	font-style: normal;
+	font-weight: ${face.weight};
+	font-style: ${face.style};
 	font-display: block;
-	unicode-range: U+0000-024F, U+2000-206F, U+20A0-20BF, U+2190-2BFF;
-}`
+	unicode-range: ${LATIN_SERIF_RANGE};
+}`)
+	}
+	return blocks.join('\n')
 }
 
 /**

@@ -27,6 +27,7 @@ export interface StudentStrengthReport {
 	generated_at: string
 	has_aided: boolean     // true if this institution has AIDED+SF split
 	max_year: number       // highest academic year present in data
+	off_roll_excluded: number // registered learners left out because MyJKKN says they have left
 	ug_rows: ProgramStrengthRow[]
 	pg_rows: ProgramStrengthRow[]
 	ug_subtotal: SubtotalRow

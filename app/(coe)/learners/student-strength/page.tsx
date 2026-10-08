@@ -293,7 +293,7 @@ export default function StudentStrengthPage() {
 								Student Strength Report
 							</CardTitle>
 							<CardDescription>
-								Pre-exam enrollment by programme, academic year, and funding type (AIDED / SF)
+								Active learners who have applied for the exam, by programme, academic year, and funding type (AIDED / SF)
 							</CardDescription>
 						</CardHeader>
 						<CardContent>
@@ -381,6 +381,9 @@ export default function StudentStrengthPage() {
 									<CardDescription>
 										{report.ug_rows.length} UG programmes · {report.pg_rows.length} PG programmes ·
 										Generated {new Date(report.generated_at).toLocaleString('en-IN')}
+										{report.off_roll_excluded > 0 && (
+											<> · Active learners only — {report.off_roll_excluded} no longer on the rolls left out</>
+										)}
 									</CardDescription>
 								</div>
 								<div className='flex gap-2'>

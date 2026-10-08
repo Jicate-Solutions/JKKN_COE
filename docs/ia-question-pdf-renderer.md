@@ -119,9 +119,11 @@ the entire paper printed Tamil (PDF text layer still English). The stack is now
 `BASE_FONT_STACK` in `build-paper-pdf-html.ts`: Latin serifs + Noto Sans Tamil, no legacy
 faces. Same fix applied to `.qp-rich-editor-body` in `styles/globals.css`.
 
-Optional: drop a Times-metric TTF in `public/fonts/latin/` and it is embedded as
-`QP Serif` (first in the stack), so Vercel output matches local Times rendering.
-See `public/fonts/latin/README.md`.
+`public/fonts/latin/` carries Liberation Serif (regular, bold, italic, bold-italic —
+metric-compatible with Times New Roman), embedded as `QP Serif`, first in the stack, so
+Vercel prints the same Times-metric paper as a local Windows machine. Type sizes for
+both PDF layouts and the Word copy are set in one table, `PAPER_TYPE`, in
+`build-paper-pdf-html.ts`. See `public/fonts/latin/README.md`.
 
 ### 6.2 OTS rejects malformed legacy TTFs
 

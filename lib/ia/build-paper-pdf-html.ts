@@ -321,11 +321,42 @@ export type PdfVariant = 'single' | '2up'
 const MAX_PAGES = 2
 
 /**
- * The smallest print scale that keeps an 11pt paper legible in the hand (~7.7pt).
+ * Type sizes of the printed paper, in points — the one place they are set, so the
+ * three exports agree: both PDF layouts read their own row, and the Word copy
+ * (build-paper-docx.ts) and the answer key read `single`.
+ *
+ *   body      question text, subject lines
+ *   line      the row's line height (absolute — see table.paper td)
+ *   small     CO · K-Level · part instruction
+ *   name/addr the plain (un-boxed) letterhead
+ *   exam      "UG - DEGREE EXAMINATIONS"
+ *   sub       the examination and semester lines under it
+ *   register  the "Register Number" label
+ *
+ * The 2-up sheet is A4 landscape cut in half, so each copy is an A5 page: one
+ * point under the full sheet is as large as it goes before a one-hour CIA paper
+ * stops fitting a single sheet.
+ */
+export const PAPER_TYPE = {
+	single: { body: 12, line: 16, small: 10, name: 14, addr: 10, exam: 13, sub: 12, register: 11.5 },
+	twoUp: { body: 11, line: 14.5, small: 10, name: 13, addr: 9.5, exam: 12, sub: 11, register: 10 },
+} as const
+
+/**
+ * The smallest print scale that keeps a 12pt paper legible in the hand (~8.4pt).
  * A paper that still overflows at this size has more content than two sheets can
  * hold, and is printed full size instead — see buildPaperPdfHtml.
  */
 const MIN_PRINT_SCALE = 0.7
+
+/**
+ * A paper within MAX_PAGES is still printed a little smaller when that saves a
+ * whole sheet: at 12pt a one-hour CIA paper can leave its last question alone
+ * overleaf, and that is a second sheet for every learner in the hall. The limit
+ * is the size papers were printed at before the type was enlarged (11pt on the
+ * full sheet), so no paper comes out smaller than it used to.
+ */
+const SHEET_SAVING_SCALE = 11 / 12
 
 /**
  * Pages in a Chromium-generated PDF. Its page objects are written as plain
@@ -372,20 +403,21 @@ function letterheadMarkup(
 
 /** Letterhead rules for letterheadMarkup(); the 2-up sheet prints them smaller. */
 function letterheadCss(isTwoUp: boolean): string {
+	const t = isTwoUp ? PAPER_TYPE.twoUp : PAPER_TYPE.single
 	return `
 	/* Boxed letterhead: logo at the left, the college's coloured name block centred. */
 	.lh { display: flex; align-items: center; gap: 3mm; border: 0.8pt solid #000; padding: 1.5mm 2mm; }
-	.lh-logo img { height: ${isTwoUp ? '11mm' : '16mm'}; width: auto; }
+	.lh-logo img { height: ${isTwoUp ? '13mm' : '16mm'}; width: auto; }
 	.lh-text { flex: 1; text-align: center; }
-	.lh-name { color: #1a7a3c; font-weight: bold; font-size: ${isTwoUp ? '9.5pt' : '12.5pt'}; line-height: 1.15; }
-	.lh-trust { color: #e6007e; font-weight: bold; font-size: ${isTwoUp ? '7.5pt' : '9.5pt'}; }
-	.lh-approve { font-weight: bold; font-size: ${isTwoUp ? '7pt' : '8.5pt'}; }
-	.lh-naac { color: #e6007e; font-weight: bold; font-size: ${isTwoUp ? '7pt' : '8.5pt'}; }
-	.lh-addr { font-weight: bold; font-size: ${isTwoUp ? '7pt' : '8.5pt'}; }
-	.lh-web { font-size: ${isTwoUp ? '6.5pt' : '8pt'}; color: #1a4fd6; text-decoration: underline; }
+	.lh-name { color: #1a7a3c; font-weight: bold; font-size: ${isTwoUp ? '11pt' : '13.5pt'}; line-height: 1.15; }
+	.lh-trust { color: #e6007e; font-weight: bold; font-size: ${isTwoUp ? '8.5pt' : '9.5pt'}; }
+	.lh-approve { font-weight: bold; font-size: ${isTwoUp ? '8pt' : '8.5pt'}; }
+	.lh-naac { color: #e6007e; font-weight: bold; font-size: ${isTwoUp ? '8pt' : '8.5pt'}; }
+	.lh-addr { font-weight: bold; font-size: ${isTwoUp ? '8pt' : '8.5pt'}; }
+	.lh-web { font-size: ${isTwoUp ? '7.5pt' : '8pt'}; color: #1a4fd6; text-decoration: underline; }
 	.lh + .head-exam { margin-top: 3mm; }
-	.head-name { text-align: center; font-weight: bold; font-size: 13pt; }
-	.head-addr { text-align: center; font-size: 9pt; margin-top: 2px; }`
+	.head-name { text-align: center; font-weight: bold; font-size: ${t.name}pt; }
+	.head-addr { text-align: center; font-size: ${t.addr}pt; margin-top: 2px; }`
 }
 
 function buildHtml(ctx: {
@@ -414,6 +446,7 @@ function buildHtml(ctx: {
 }): string {
 	const { variant, institutionName, address, examHeading, examLine, semesterText, paper, grouped, partByLabel, tamilFontCss, katexCss, defaultFont, letterhead, logoDataUri } = ctx
 	const isTwoUp = variant === '2up'
+	const t = isTwoUp ? PAPER_TYPE.twoUp : PAPER_TYPE.single
 
 	// One table for the WHOLE paper (part headings are full-width rows) so every
 	// question row — across Part A, B, C — shares identical column geometry and the
@@ -558,18 +591,17 @@ function buildHtml(ctx: {
 		   (the editor's Font / Option font dropdowns). Unicode Tamil still falls
 		   through to Noto because of its unicode-range. */
 		font-family: ${BASE_FONT_STACK};
-		color: #000; font-size: ${isTwoUp ? '9pt' : '11pt'};
+		color: #000; font-size: ${t.body}pt;
 	}
 	#sheet { transform-origin: top left; }
 	/* 2-up print: two identical copies side by side, dashed cut-line between them. */
 	#sheet.twoup { display: flex; align-items: stretch; width: 100%; }
 	#sheet.twoup .copy { flex: 1; min-width: 0; }
 	#sheet.twoup .copy:first-child { border-right: 1px dashed #999; padding-right: 6mm; margin-right: 6mm; }
-	${isTwoUp ? '.head-name{font-size:11pt}.head-exam{font-size:10pt}.head-cia,.head-sem{font-size:9pt}' : ''}
 	/* Register Number grid (engineering-college papers): label + empty digit cells,
 	   right-aligned above the letterhead. */
 	.rn { display: flex; align-items: center; justify-content: flex-end; gap: 3mm; margin-bottom: 2mm; }
-	.rn-lbl { font-weight: bold; font-size: ${isTwoUp ? '8.5pt' : '10.5pt'}; }
+	.rn-lbl { font-weight: bold; font-size: ${t.register}pt; }
 	.rn-grid { display: flex; }
 	.rn-grid i {
 		display: block;
@@ -580,9 +612,9 @@ function buildHtml(ctx: {
 	}
 	.rn-grid i:first-child { border-left: 0.7pt solid #000; }
 	${letterheadCss(isTwoUp)}
-	.head-exam { text-align: center; font-weight: bold; font-size: 12pt; margin-top: 4px; }
-	.head-cia { text-align: center; font-weight: bold; font-size: 11pt; margin-top: 2px; }
-	.head-sem { text-align: center; font-weight: bold; font-size: 11pt; margin-top: 2px; }
+	.head-exam { text-align: center; font-weight: bold; font-size: ${t.exam}pt; margin-top: 4px; }
+	.head-cia { text-align: center; font-weight: bold; font-size: ${t.sub}pt; margin-top: 2px; }
+	.head-sem { text-align: center; font-weight: bold; font-size: ${t.sub}pt; margin-top: 2px; }
 	.meta { margin-top: 6px; }
 	.meta-row { display: flex; justify-content: space-between; }
 	.meta .title { font-weight: bold; }
@@ -600,7 +632,7 @@ function buildHtml(ctx: {
 	table.paper td {
 		border: none; vertical-align: top;
 		padding: ${isTwoUp ? '2.5px 3px' : '4px 4px'};
-		line-height: ${isTwoUp ? '12.5pt' : '15.5pt'};
+		line-height: ${t.line}pt;
 		word-wrap: break-word; overflow-wrap: break-word;
 	}
 	/* Pagination, in blocks rather than rows: a <tbody class="grp"> holds one whole
@@ -616,11 +648,11 @@ function buildHtml(ctx: {
 	.part-hdr td { padding-top: ${isTwoUp ? '8px' : '16px'}; padding-bottom: ${isTwoUp ? '2px' : '4px'}; }
 	.part-hdr.first td { padding-top: 2px; }
 	.part-head { text-align: center; font-weight: bold; }
-	.part-instr { font-weight: bold; font-size: 9pt; margin-top: 2px; }
-	.co-head, .kl-head { text-align: center; font-weight: bold; font-size: 9pt; white-space: nowrap; vertical-align: bottom; }
+	.part-instr { font-weight: bold; font-size: ${t.small}pt; margin-top: 2px; }
+	.co-head, .kl-head { text-align: center; font-weight: bold; font-size: ${t.small}pt; white-space: nowrap; vertical-align: bottom; }
 	.qno { font-weight: bold; white-space: nowrap; }
-	.co { text-align: center; font-weight: bold; font-size: 9pt; }
-	.kl { text-align: center; font-weight: bold; font-size: 9pt; }
+	.co { text-align: center; font-weight: bold; font-size: ${t.small}pt; }
+	.kl { text-align: center; font-weight: bold; font-size: ${t.small}pt; }
 	/* (OR) sits midway between the two alternatives it separates. */
 	.or { text-align: center; font-weight: bold; padding-top: ${isTwoUp ? '3px' : '6px'}; padding-bottom: ${isTwoUp ? '1px' : '3px'}; }
 	/* Question text is set justified, as on the printed papers; an alignment the
@@ -931,11 +963,38 @@ export async function buildPaperPdfHtml(
 			return { scale, buffer, pages: countPdfPages(buffer) }
 		}
 
+		// Largest scale between a floor known to print `target` pages and full size,
+		// known not to: a binary search. Four probes land within ~2% of the true
+		// threshold, finer than the eye reads off the page.
+		const largestScaleFor = async (target: number, floor: Awaited<ReturnType<typeof renderAt>>, probes: number) => {
+			let found = floor
+			let lo = floor.scale
+			let hi = 1
+			for (let i = 0; i < probes; i++) {
+				const mid = (lo + hi) / 2
+				const probe = await renderAt(mid)
+				if (probe.pages <= target) {
+					found = probe
+					lo = mid
+				} else {
+					hi = mid
+				}
+			}
+			return found
+		}
+
 		// A CIA paper is a hand-out, not a booklet: it must come off the press as
 		// MAX_PAGES sheets. Full size first — that is what nearly every paper needs —
 		// and only a paper that overflows pays for the search below.
 		let best = await renderAt(1)
-		if (best.pages > MAX_PAGES) {
+		if (best.pages > 1 && best.pages <= MAX_PAGES) {
+			// See SHEET_SAVING_SCALE: a slightly smaller print that drops a sheet wins.
+			const saver = await renderAt(SHEET_SAVING_SCALE)
+			if (saver.pages < best.pages) {
+				best = await largestScaleFor(saver.pages, saver, 3)
+				console.info(`[QP PDF] ${paper.course_code || id} printed at ${best.scale.toFixed(3)}x to save a sheet (${best.pages} page(s))`)
+			}
+		} else if (best.pages > MAX_PAGES) {
 			const floor = await renderAt(MIN_PRINT_SCALE)
 			// Aim for MAX_PAGES; when even the smallest legible size cannot reach it —
 			// three full-page balance-sheet problems simply are not a two-page paper —
@@ -943,22 +1002,9 @@ export async function buildPaperPdfHtml(
 			// what actually saves a page only makes the paper harder to read.
 			const target = Math.max(MAX_PAGES, floor.pages)
 			if (best.pages > target) {
-				// Largest scale that still meets the target: binary search between the
-				// floor (known to meet it) and 1 (known not to). Four probes land within
-				// ~2% of the true threshold, finer than the eye reads off the page.
-				best = floor
-				let lo = MIN_PRINT_SCALE
-				let hi = 1
-				for (let i = 0; i < 4; i++) {
-					const mid = (lo + hi) / 2
-					const probe = await renderAt(mid)
-					if (probe.pages <= target) {
-						best = probe
-						lo = mid
-					} else {
-						hi = mid
-					}
-				}
+				// Largest scale that still meets the target, between the floor (known to
+				// meet it) and 1 (known not to).
+				best = await largestScaleFor(target, floor, 4)
 			}
 			const how = `${best.pages} page(s) at ${best.scale.toFixed(3)}x`
 			if (best.pages > MAX_PAGES) {
@@ -1016,6 +1062,7 @@ function subAnswerKeyHtml(q: any, sb: any): string {
 
 function buildAnswerKeyHtml(ctx: PaperContext & { hideSet: boolean }): string {
 	const { institutionName, address, examHeading, examLine, semesterText, paper, grouped, partByLabel, tamilFontCss, katexCss, defaultFont, letterhead, logoDataUri, hideSet } = ctx
+	const t = PAPER_TYPE.single
 
 	const partsRows = [...grouped.entries()]
 		.map(([label, qs], partIdx) => {
@@ -1079,19 +1126,19 @@ function buildAnswerKeyHtml(ctx: PaperContext & { hideSet: boolean }): string {
 	html, body {
 		margin: 0; padding: 0;
 		font-family: ${BASE_FONT_STACK};
-		color: #000; font-size: 11pt;
+		color: #000; font-size: ${t.body}pt;
 	}
 	${letterheadCss(false)}
-	.head-exam { text-align: center; font-weight: bold; font-size: 12pt; margin-top: 4px; }
-	.head-cia { text-align: center; font-weight: bold; font-size: 11pt; margin-top: 2px; }
-	.head-sem { text-align: center; font-weight: bold; font-size: 11pt; margin-top: 2px; }
+	.head-exam { text-align: center; font-weight: bold; font-size: ${t.exam}pt; margin-top: 4px; }
+	.head-cia { text-align: center; font-weight: bold; font-size: ${t.sub}pt; margin-top: 2px; }
+	.head-sem { text-align: center; font-weight: bold; font-size: ${t.sub}pt; margin-top: 2px; }
 	/* The document's own title: a ruled band so a valuer never mistakes it for the paper. */
 	.doc-title {
 		margin-top: 6px; padding: 3px 0;
 		border-top: 1.2pt solid #000; border-bottom: 1.2pt solid #000;
-		text-align: center; font-weight: bold; font-size: 12.5pt; letter-spacing: 0.5px;
+		text-align: center; font-weight: bold; font-size: ${t.exam + 0.5}pt; letter-spacing: 0.5px;
 	}
-	.doc-conf { text-align: center; font-size: 9pt; font-style: italic; margin-top: 2px; }
+	.doc-conf { text-align: center; font-size: ${t.small}pt; font-style: italic; margin-top: 2px; }
 	.meta { margin-top: 6px; }
 	.meta-row { display: flex; justify-content: space-between; }
 	.meta .title { font-weight: bold; }
@@ -1101,7 +1148,7 @@ function buildAnswerKeyHtml(ctx: PaperContext & { hideSet: boolean }): string {
 	table.paper td {
 		border: none; vertical-align: top;
 		padding: 4px 4px;
-		line-height: 15.5pt;
+		line-height: ${t.line}pt;
 		word-wrap: break-word; overflow-wrap: break-word;
 	}
 	/* Every question is ruled off from the next so a long key never reads into
@@ -1113,10 +1160,10 @@ function buildAnswerKeyHtml(ctx: PaperContext & { hideSet: boolean }): string {
 	.part-hdr td { padding-top: 14px; padding-bottom: 4px; border-bottom: 0.9pt solid #000 !important; }
 	.part-hdr.first td { padding-top: 4px; }
 	.part-head { text-align: center; font-weight: bold; }
-	.part-instr { font-weight: bold; font-size: 9pt; margin-top: 2px; }
-	.mk-head { text-align: center; font-weight: bold; font-size: 9pt; white-space: nowrap; vertical-align: bottom; }
+	.part-instr { font-weight: bold; font-size: ${t.small}pt; margin-top: 2px; }
+	.mk-head { text-align: center; font-weight: bold; font-size: ${t.small}pt; white-space: nowrap; vertical-align: bottom; }
 	.qno { font-weight: bold; white-space: nowrap; }
-	.mk { text-align: center; font-weight: bold; font-size: 10pt; }
+	.mk { text-align: center; font-weight: bold; font-size: ${t.small + 1}pt; }
 	.or { text-align: center; font-weight: bold; padding-top: 6px; padding-bottom: 3px; }
 	/* Question text is set justified, as on the printed papers; an alignment the
 	   setter chose explicitly (inline style) still wins. */
@@ -1136,7 +1183,7 @@ function buildAnswerKeyHtml(ctx: PaperContext & { hideSet: boolean }): string {
 		margin-top: 4px; padding: 3px 6px 4px;
 		background: #f4f6f8; border-left: 2pt solid #333;
 	}
-	.ak-lbl { display: block; font-size: 8.5pt; font-weight: bold; text-transform: uppercase; letter-spacing: 0.4px; color: #333; margin-bottom: 1px; }
+	.ak-lbl { display: block; font-size: ${t.small - 0.5}pt; font-weight: bold; text-transform: uppercase; letter-spacing: 0.4px; color: #333; margin-bottom: 1px; }
 	.ak-body p { margin: 0 0 2px; }
 	.ak-body p:last-child { margin-bottom: 0; }
 	.ak-correct { margin-bottom: 2px; }
@@ -1151,9 +1198,9 @@ function buildAnswerKeyHtml(ctx: PaperContext & { hideSet: boolean }): string {
 	.qp-math .katex { line-height: 1.2; text-indent: 0; }
 	math { font-family: ${BASE_FONT_STACK}; font-size: 1em; }
 	/* Setter's signature at the foot of the last sheet. */
-	.sign { margin-top: 14mm; display: flex; justify-content: space-between; align-items: flex-end; break-inside: avoid; page-break-inside: avoid; font-size: 10pt; }
+	.sign { margin-top: 14mm; display: flex; justify-content: space-between; align-items: flex-end; break-inside: avoid; page-break-inside: avoid; font-size: ${t.small + 1}pt; }
 	.sign .line { border-top: 0.7pt solid #000; padding-top: 2px; min-width: 60mm; text-align: center; }
-	.sign .note { font-size: 9pt; color: #333; }
+	.sign .note { font-size: ${t.small}pt; color: #333; }
 </style></head>
 <body>
 	<div id="sheet">

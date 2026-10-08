@@ -349,6 +349,40 @@ async function buildFinalApprovalReport(
 	})
 }
 
+/**
+ * Learners registered in the session who have not applied for a single paper,
+ * counted per programme. The Exam Application reports leave them out by design,
+ * so a programme whose learners are all still Pending just vanishes from the
+ * report and from its Program filter - this is what lets the page say so.
+ *
+ * `in_report` is false for a programme with no applied learner at all.
+ */
+function summarizeNotApplied(appliedRows: any[], notAppliedRows: any[]) {
+	const appliedLearners = new Set<string>()
+	const appliedPrograms = new Set<string>()
+	for (const r of appliedRows) {
+		if (r.stu_register_no) appliedLearners.add(String(r.stu_register_no).toUpperCase())
+		if (r.program_code) appliedPrograms.add(r.program_code)
+	}
+
+	const learnersByProgram = new Map<string, Set<string>>()
+	for (const r of notAppliedRows) {
+		const regNo = String(r.stu_register_no || '').toUpperCase()
+		// A learner with some papers applied is on the report already
+		if (!regNo || !r.program_code || appliedLearners.has(regNo)) continue
+		if (!learnersByProgram.has(r.program_code)) learnersByProgram.set(r.program_code, new Set())
+		learnersByProgram.get(r.program_code)!.add(regNo)
+	}
+
+	return [...learnersByProgram]
+		.map(([program_code, learners]) => ({
+			program_code,
+			learners: learners.size,
+			in_report: appliedPrograms.has(program_code),
+		}))
+		.sort((a, b) => a.program_code.localeCompare(b.program_code))
+}
+
 export async function GET(request: Request) {
 	try {
 		const supabase = getSupabaseServer()
@@ -387,7 +421,7 @@ export async function GET(request: Request) {
 		}
 
 		// ── Phase 1: Fetch institution, session, and registrations in parallel ──
-		const [{ data: institution }, { data: session }, allRegistrations] = await Promise.all([
+		const [{ data: institution }, { data: session }, allRegistrations, notAppliedRows] = await Promise.all([
 			supabase.from('institutions').select('id, institution_code, name, myjkkn_institution_ids').eq('id', institutions_id).single(),
 			supabase.from('examination_sessions').select('id, session_code, session_name').eq('id', examination_session_id).single(),
 			fetchAllPaginated((from, to) => {
@@ -402,11 +436,28 @@ export async function GET(request: Request) {
 					.order('id', { ascending: true })
 					.range(from, to)
 			}),
+			// The complement of APPLIED_FILTER among live registrations: Pending, and
+			// 'Approved' with no payment_date (registration approved, not applied for)
+			isApplicationReport
+				? fetchAllPaginated((from, to) =>
+					supabase
+						.from('exam_registrations')
+						.select('stu_register_no, program_code')
+						.eq('institutions_id', institutions_id)
+						.eq('examination_session_id', examination_session_id)
+						.not('registration_status', 'in', '(Applied,Cancelled,Rejected,Withdrawn)')
+						.or('registration_status.neq.Approved,payment_date.is.null')
+						.order('id', { ascending: true })
+						.range(from, to)
+				)
+				: Promise.resolve([] as any[]),
 		])
 
 		if (!institution || !session) {
 			return NextResponse.json({ error: 'Institution or Session not found' }, { status: 404 })
 		}
+
+		const notApplied = isApplicationReport ? summarizeNotApplied(allRegistrations, notAppliedRows) : null
 
 		if (allRegistrations.length === 0) {
 			if (isApplicationReport) {
@@ -420,6 +471,7 @@ export async function GET(request: Request) {
 				session_code: session.session_code,
 				generated_at: new Date().toISOString(),
 				data: [],
+				...(notApplied ? { not_applied: notApplied } : {}),
 			})
 		}
 
@@ -1019,6 +1071,7 @@ export async function GET(request: Request) {
 			session_code: session.session_code,
 			generated_at: new Date().toISOString(),
 			data: responseData,
+			...(notApplied ? { not_applied: notApplied } : {}),
 		})
 	} catch (e) {
 		console.error('Exam registration reports API error:', e)
