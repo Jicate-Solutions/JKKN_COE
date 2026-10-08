@@ -128,6 +128,8 @@ type RegistrationRow = {
  * Counts learners who have applied for the exam: registration_status 'Applied'
  * or 'Approved' (final approval moves an applied row on to 'Approved', and past
  * sessions hold nothing but 'Approved'). 'Pending' registrations are not counted.
+ * Only current-semester papers (is_regular) count, so the learner's year comes
+ * from the papers of the semester they are in and arrear-only learners are left out.
  *
  * Active learners only: registrations of learners MyJKKN marks inactive / exited
  * are dropped before counting (lib/myjkkn-off-roll-learners). Graduated learners
@@ -182,6 +184,11 @@ export async function GET(request: Request) {
 					// Applied for the exam: still 'Applied', or already past it ('Approved').
 					// A 'Pending' row is only a registration — the learner has not applied.
 					.in('registration_status', ACTIVE_REGISTRATION_STATUSES)
+					// Current-semester papers only. An arrear row says nothing about where the
+					// learner sits today: a passed-out learner clearing arrears is not on the
+					// strength, and a learner whose only applied papers are arrears would be
+					// counted a year too low. NOT (is_regular IS FALSE) keeps unflagged rows.
+					.not('is_regular', 'is', false)
 					.order('id')
 					.range(offset, offset + pageSize - 1)
 
@@ -236,7 +243,7 @@ export async function GET(request: Request) {
 			return NextResponse.json(
 				{
 					error: registeredCount
-						? `No learner has applied for this session yet (${registeredCount} registrations are still Pending)`
+						? `No learner has applied for a current-semester paper in this session yet (${registeredCount} registrations found, none of them applied)`
 						: 'No exam registrations found for this session',
 				},
 				{ status: 404 }

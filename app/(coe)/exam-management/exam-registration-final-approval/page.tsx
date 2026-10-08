@@ -249,15 +249,15 @@ function FeeBreakdown({ totals, learnersLabel = 'Selected Learners', headsAreNet
 		<div className="space-y-3">
 			<div className="grid grid-cols-2 gap-2">
 				<div className="rounded-md bg-brand-green-50 px-3 py-2 dark:bg-brand-green-900/30">
-					<p className="text-[11px] text-brand-green-700 dark:text-brand-green-300">{learnersLabel}</p>
-					<p className="text-lg font-bold font-heading tabular-nums text-brand-green-800 dark:text-brand-green-100">{totals.learners}</p>
+					<p className="text-[13px] text-brand-green-700 dark:text-brand-green-300">{learnersLabel}</p>
+					<p className="text-xl font-bold font-heading tabular-nums text-brand-green-800 dark:text-brand-green-100">{totals.learners}</p>
 				</div>
 				<div className="rounded-md bg-brand-yellow-50 px-3 py-2 dark:bg-brand-yellow-900/20">
-					<p className="text-[11px] text-brand-yellow-900/80 dark:text-brand-yellow-300">Subject Registrations</p>
-					<p className="text-lg font-bold font-heading tabular-nums text-brand-yellow-900 dark:text-brand-yellow-200">{totals.subjects}</p>
+					<p className="text-[13px] text-brand-yellow-900/80 dark:text-brand-yellow-300">Subject Registrations</p>
+					<p className="text-xl font-bold font-heading tabular-nums text-brand-yellow-900 dark:text-brand-yellow-200">{totals.subjects}</p>
 				</div>
 			</div>
-			<dl className="space-y-1.5 text-xs text-foreground">
+			<dl className="space-y-1.5 text-sm text-foreground">
 				<div className="flex justify-between"><dt className="text-muted-foreground">Exam Fee</dt><dd className="tabular-nums">{money(totals.exam_fee)}</dd></div>
 				<div className="flex justify-between"><dt className="text-muted-foreground">Application Fee</dt><dd className="tabular-nums">{money(totals.application_fee)}</dd></div>
 				<div className="flex justify-between"><dt className="text-muted-foreground">Mark Statement Fee</dt><dd className="tabular-nums">{money(totals.mark_statement_fee)}</dd></div>
@@ -270,8 +270,8 @@ function FeeBreakdown({ totals, learnersLabel = 'Selected Learners', headsAreNet
 				)}
 			</dl>
 			<div className="flex items-center justify-between rounded-md border border-brand-green-200 bg-brand-green-50 px-3 py-2 dark:border-brand-green-800 dark:bg-brand-green-900/30">
-				<span className="text-sm font-medium text-brand-green-800 dark:text-brand-green-200">Final Amount</span>
-				<span className="text-base font-bold font-heading tabular-nums text-brand-green dark:text-brand-green-300">{money(totals.final_amount)}</span>
+				<span className="text-base font-medium text-brand-green-800 dark:text-brand-green-200">Final Amount</span>
+				<span className="text-lg font-bold font-heading tabular-nums text-brand-green dark:text-brand-green-300">{money(totals.final_amount)}</span>
 			</div>
 		</div>
 	)
@@ -280,7 +280,7 @@ function FeeBreakdown({ totals, learnersLabel = 'Selected Learners', headsAreNet
 function Pager({ page, totalPages, total, onPage }: { page: number; totalPages: number; total: number; onPage: (p: number) => void }) {
 	if (total <= PAGE_SIZE) return null
 	return (
-		<div className="flex items-center justify-between px-4 py-2 border-t text-xs text-muted-foreground">
+		<div className="flex items-center justify-between px-4 py-2 border-t text-sm text-muted-foreground">
 			<span>Showing {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, total)} of {total}</span>
 			<div className="flex items-center gap-1">
 				<Button variant="outline" size="sm" className="h-7 px-2" onClick={() => onPage(Math.max(1, page - 1))} disabled={page <= 1}>
@@ -836,10 +836,10 @@ export default function FinalExamRegistrationApprovalPage() {
 								<BadgeCheck className="h-5 w-5" />
 							</div>
 							<div>
-								<h1 className="text-lg font-semibold tracking-tight font-heading text-brand-green-800 dark:text-brand-green-200">
+								<h1 className="text-xl font-semibold tracking-tight font-heading text-brand-green-800 dark:text-brand-green-200">
 									Final Exam Registration Approval
 								</h1>
-								<p className="text-xs text-muted-foreground mt-0.5">
+								<p className="text-sm text-muted-foreground mt-0.5">
 									Collect the exam fee and give the registration its final approval. Approving a learner approves every subject they applied for.
 								</p>
 							</div>
@@ -851,8 +851,8 @@ export default function FinalExamRegistrationApprovalPage() {
 							<Card className="border-brand-yellow-400 bg-brand-yellow-50 dark:border-brand-yellow-800 dark:bg-brand-yellow-900/20">
 								<CardContent className="p-4 flex items-center justify-between">
 									<div>
-										<p className="text-2xl font-bold tracking-tight font-heading text-brand-yellow-900 dark:text-brand-yellow-300">{pendingSummary.learners}</p>
-										<p className="text-xs font-medium text-brand-yellow-900/70 dark:text-brand-yellow-300/80 mt-0.5">Pending Learners</p>
+										<p className="text-3xl font-bold tracking-tight font-heading text-brand-yellow-900 dark:text-brand-yellow-300">{pendingSummary.learners}</p>
+										<p className="text-sm font-medium text-brand-yellow-900/70 dark:text-brand-yellow-300/80 mt-0.5">Pending Learners</p>
 									</div>
 									<div className="flex h-10 w-10 items-center justify-center rounded-full bg-brand-yellow-500 text-brand-yellow-900">
 										<Clock className="h-5 w-5" />
@@ -862,8 +862,8 @@ export default function FinalExamRegistrationApprovalPage() {
 							<Card className="border-brand-green-100 bg-white dark:border-brand-green-900/60 dark:bg-gray-900">
 								<CardContent className="p-4 flex items-center justify-between">
 									<div>
-										<p className="text-2xl font-bold tracking-tight font-heading text-brand-green-800 dark:text-brand-green-200">{money(pendingSummary.final_amount)}</p>
-										<p className="text-xs font-medium text-muted-foreground mt-0.5">Pending Amount</p>
+										<p className="text-3xl font-bold tracking-tight font-heading text-brand-green-800 dark:text-brand-green-200">{money(pendingSummary.final_amount)}</p>
+										<p className="text-sm font-medium text-muted-foreground mt-0.5">Pending Amount</p>
 									</div>
 									<div className="flex h-10 w-10 items-center justify-center rounded-full bg-brand-green-50 text-brand-green dark:bg-brand-green-900/40 dark:text-brand-green-300">
 										<IndianRupee className="h-5 w-5" />
@@ -873,8 +873,8 @@ export default function FinalExamRegistrationApprovalPage() {
 							<Card className="border-brand-green-100 bg-white dark:border-brand-green-900/60 dark:bg-gray-900">
 								<CardContent className="p-4 flex items-center justify-between">
 									<div>
-										<p className="text-2xl font-bold tracking-tight font-heading text-brand-green-800 dark:text-brand-green-200">{approvedSummary.learners}</p>
-										<p className="text-xs font-medium text-muted-foreground mt-0.5">Approved Learners</p>
+										<p className="text-3xl font-bold tracking-tight font-heading text-brand-green-800 dark:text-brand-green-200">{approvedSummary.learners}</p>
+										<p className="text-sm font-medium text-muted-foreground mt-0.5">Approved Learners</p>
 									</div>
 									<div className="flex h-10 w-10 items-center justify-center rounded-full bg-brand-green-50 text-brand-green dark:bg-brand-green-900/40 dark:text-brand-green-300">
 										<Users className="h-5 w-5" />
@@ -884,8 +884,8 @@ export default function FinalExamRegistrationApprovalPage() {
 							<Card className="border-0 bg-gradient-to-br from-brand-green-600 to-brand-green-800 text-white shadow-md">
 								<CardContent className="p-4 flex items-center justify-between">
 									<div>
-										<p className="text-2xl font-bold tracking-tight font-heading">{money(approvedSummary.final_amount)}</p>
-										<p className="text-xs font-medium text-brand-green-100 mt-0.5">Collected Amount</p>
+										<p className="text-3xl font-bold tracking-tight font-heading">{money(approvedSummary.final_amount)}</p>
+										<p className="text-sm font-medium text-brand-green-100 mt-0.5">Collected Amount</p>
 									</div>
 									<div className="flex h-10 w-10 items-center justify-center rounded-full bg-white/15 text-white">
 										<BadgeCheck className="h-5 w-5" />
@@ -900,7 +900,7 @@ export default function FinalExamRegistrationApprovalPage() {
 								<AlertTriangle className="h-4 w-4" />
 								<AlertTitle>Final approval is not set up yet</AlertTitle>
 								<AlertDescription>
-									Run <code className="text-xs">supabase/migrations/20260912_exam_registration_final_approval.sql</code> and then <code className="text-xs">supabase/migrations/20260919_final_approval_manual_late_fine.sql</code> in the Supabase SQL Editor.
+									Run <code className="text-sm">supabase/migrations/20260912_exam_registration_final_approval.sql</code> and then <code className="text-sm">supabase/migrations/20260919_final_approval_manual_late_fine.sql</code> in the Supabase SQL Editor.
 								</AlertDescription>
 							</Alert>
 						)}
@@ -909,13 +909,13 @@ export default function FinalExamRegistrationApprovalPage() {
 								<AlertTriangle className="h-4 w-4" />
 								<AlertTitle>Application and mark statement fees are not stored yet</AlertTitle>
 								<AlertDescription>
-									Run <code className="text-xs">supabase/migrations/20260824_add_application_fees_to_exam_registrations.sql</code>. Until then those columns show ₹0 and only the per-paper exam fee is approved.
+									Run <code className="text-sm">supabase/migrations/20260824_add_application_fees_to_exam_registrations.sql</code>. Until then those columns show ₹0 and only the per-paper exam fee is approved.
 								</AlertDescription>
 							</Alert>
 						)}
 
 						{cohort && cohort.hidden_off_roll > 0 && (
-							<p className="text-xs text-muted-foreground">
+							<p className="text-sm text-muted-foreground">
 								{cohort.hidden_off_roll} applied learner{cohort.hidden_off_roll === 1 ? ' is' : 's are'} not listed because MyJKKN marks them inactive or exited. Only active learners can be approved.
 							</p>
 						)}
@@ -926,14 +926,14 @@ export default function FinalExamRegistrationApprovalPage() {
 								<CheckCircle2 className="h-4 w-4 text-brand-green" />
 								<AlertTitle>Final registration approval completed successfully.</AlertTitle>
 								<AlertDescription>
-									<div className="grid grid-cols-1 sm:grid-cols-4 gap-x-6 gap-y-1 mt-1 text-sm">
+									<div className="grid grid-cols-1 sm:grid-cols-4 gap-x-6 gap-y-1 mt-1 text-base">
 										<span>Learners Approved : <strong>{lastResult.students_approved}</strong></span>
 										<span>Subjects Updated : <strong>{lastResult.subjects_updated}</strong></span>
 										<span>Total Amount : <strong>{money(lastResult.totals.final_amount)}</strong></span>
 										<span>Mode of Payment : <strong>{lastResult.payment_mode}</strong></span>
 									</div>
 									{lastResult.skipped.length > 0 && (
-										<p className="mt-2 text-xs text-amber-700 dark:text-amber-300">
+										<p className="mt-2 text-sm text-amber-700 dark:text-amber-300">
 											{lastResult.skipped.length} selected learner{lastResult.skipped.length === 1 ? ' was' : 's were'} skipped: {lastResult.skipped.slice(0, 5).map(s => s.register_number).join(', ')}{lastResult.skipped.length > 5 ? '…' : ''} — {lastResult.skipped[0].reason}
 										</p>
 									)}
@@ -947,15 +947,15 @@ export default function FinalExamRegistrationApprovalPage() {
 								<div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3">
 									{mustSelectInstitution && (
 										<div className="space-y-1.5">
-											<Label className="text-xs">Institution *</Label>
+											<Label className="text-sm">Institution *</Label>
 											<Select
 												value={selectedInstitution?.id ?? ''}
 												onValueChange={(id) => selectInstitution(availableInstitutions.find(i => i.id === id) ?? null)}
 											>
-												<SelectTrigger className="h-9 text-xs"><SelectValue placeholder="Select institution" /></SelectTrigger>
+												<SelectTrigger className="h-9 text-sm"><SelectValue placeholder="Select institution" /></SelectTrigger>
 												<SelectContent>
 													{availableInstitutions.map(i => (
-														<SelectItem key={i.id} value={i.id} className="text-xs">{i.institution_code} - {i.institution_name}</SelectItem>
+														<SelectItem key={i.id} value={i.id} className="text-sm">{i.institution_code} - {i.institution_name}</SelectItem>
 													))}
 												</SelectContent>
 											</Select>
@@ -964,14 +964,14 @@ export default function FinalExamRegistrationApprovalPage() {
 
 									{mustSelectSession && (
 										<div className="space-y-1.5">
-											<Label className="text-xs">Exam Session *</Label>
+											<Label className="text-sm">Exam Session *</Label>
 											<Select value={sessionId} onValueChange={setSessionId} disabled={!institutionsId || loadingSessions}>
-												<SelectTrigger className="h-9 text-xs">
+												<SelectTrigger className="h-9 text-sm">
 													<SelectValue placeholder={loadingSessions ? 'Loading…' : 'Select session'} />
 												</SelectTrigger>
 												<SelectContent>
 													{sessions.map(s => (
-														<SelectItem key={s.id} value={s.id} className="text-xs">{s.session_code}{s.session_name ? ` - ${s.session_name}` : ''}</SelectItem>
+														<SelectItem key={s.id} value={s.id} className="text-sm">{s.session_code}{s.session_name ? ` - ${s.session_name}` : ''}</SelectItem>
 													))}
 												</SelectContent>
 											</Select>
@@ -979,23 +979,23 @@ export default function FinalExamRegistrationApprovalPage() {
 									)}
 
 									<div className="space-y-1.5">
-										<Label className="text-xs">Regulation</Label>
+										<Label className="text-sm">Regulation</Label>
 										<Select value={filters.regulation} onValueChange={v => setFilters(f => ({ ...f, regulation: v }))} disabled={!ready}>
-											<SelectTrigger className="h-9 text-xs"><SelectValue placeholder="All regulations" /></SelectTrigger>
+											<SelectTrigger className="h-9 text-sm"><SelectValue placeholder="All regulations" /></SelectTrigger>
 											<SelectContent>
-												<SelectItem value="all" className="text-xs">All Regulations</SelectItem>
+												<SelectItem value="all" className="text-sm">All Regulations</SelectItem>
 												{regulationOptions.map(o => (
-													<SelectItem key={o.value} value={o.value} className="text-xs">{o.label} ({o.count})</SelectItem>
+													<SelectItem key={o.value} value={o.value} className="text-sm">{o.label} ({o.count})</SelectItem>
 												))}
 												{filters.regulation !== 'all' && !regulationOptions.some(o => o.value === filters.regulation) && (
-													<SelectItem value={filters.regulation} className="text-xs">{filters.regulation} (0)</SelectItem>
+													<SelectItem value={filters.regulation} className="text-sm">{filters.regulation} (0)</SelectItem>
 												)}
 											</SelectContent>
 										</Select>
 									</div>
 
 									<div className="space-y-1.5">
-										<Label className="text-xs">Program</Label>
+										<Label className="text-sm">Program</Label>
 										<Popover open={programOpen} onOpenChange={setProgramOpen}>
 											<PopoverTrigger asChild>
 												<Button
@@ -1003,7 +1003,7 @@ export default function FinalExamRegistrationApprovalPage() {
 													role="combobox"
 													aria-expanded={programOpen}
 													disabled={!ready}
-													className="h-9 w-full justify-between text-xs font-normal"
+													className="h-9 w-full justify-between text-sm font-normal"
 												>
 													<span className="truncate">{programTriggerLabel}</span>
 													<ChevronsUpDown className="ml-2 h-3.5 w-3.5 shrink-0 opacity-50" />
@@ -1011,14 +1011,14 @@ export default function FinalExamRegistrationApprovalPage() {
 											</PopoverTrigger>
 											<PopoverContent className="w-[360px] p-0" align="start">
 												<Command>
-													<CommandInput placeholder="Search program code or name…" className="text-xs" />
+													<CommandInput placeholder="Search program code or name…" className="text-sm" />
 													<CommandList className="max-h-72">
-														<CommandEmpty className="py-4 text-center text-xs">No program found.</CommandEmpty>
+														<CommandEmpty className="py-4 text-center text-sm">No program found.</CommandEmpty>
 														<CommandGroup>
 															<CommandItem
 																value="__all__"
 																onSelect={() => setFilters(f => ({ ...f, programs: [] }))}
-																className="text-xs"
+																className="text-sm"
 															>
 																<Check className={cn('mr-2 h-3 w-3', filters.programs.length === 0 ? 'opacity-100' : 'opacity-0')} />
 																All Programs
@@ -1031,7 +1031,7 @@ export default function FinalExamRegistrationApprovalPage() {
 																		// Value carries code AND name so the search box matches either
 																		value={`${o.value} ${o.label}`}
 																		onSelect={() => toggleProgram(o.value)}
-																		className="text-xs"
+																		className="text-sm"
 																	>
 																		<Check className={cn('mr-2 h-3 w-3', active ? 'opacity-100' : 'opacity-0')} />
 																		<span className="truncate">{o.label}</span>
@@ -1047,7 +1047,7 @@ export default function FinalExamRegistrationApprovalPage() {
 									</div>
 
 									<div className="space-y-1.5">
-										<Label className="text-xs">Batch</Label>
+										<Label className="text-sm">Batch</Label>
 										<Popover open={batchOpen} onOpenChange={setBatchOpen}>
 											<PopoverTrigger asChild>
 												<Button
@@ -1055,7 +1055,7 @@ export default function FinalExamRegistrationApprovalPage() {
 													role="combobox"
 													aria-expanded={batchOpen}
 													disabled={!ready}
-													className="h-9 w-full justify-between text-xs font-normal"
+													className="h-9 w-full justify-between text-sm font-normal"
 												>
 													<span className="truncate">{batchTriggerLabel}</span>
 													<ChevronsUpDown className="ml-2 h-3.5 w-3.5 shrink-0 opacity-50" />
@@ -1063,14 +1063,14 @@ export default function FinalExamRegistrationApprovalPage() {
 											</PopoverTrigger>
 											<PopoverContent className="w-[240px] p-0" align="start">
 												<Command>
-													<CommandInput placeholder="Search batch…" className="text-xs" />
+													<CommandInput placeholder="Search batch…" className="text-sm" />
 													<CommandList className="max-h-72">
-														<CommandEmpty className="py-4 text-center text-xs">No batch found.</CommandEmpty>
+														<CommandEmpty className="py-4 text-center text-sm">No batch found.</CommandEmpty>
 														<CommandGroup>
 															<CommandItem
 																value="__all__"
 																onSelect={() => setFilters(f => ({ ...f, batches: [] }))}
-																className="text-xs"
+																className="text-sm"
 															>
 																<Check className={cn('mr-2 h-3 w-3', filters.batches.length === 0 ? 'opacity-100' : 'opacity-0')} />
 																All Batches
@@ -1080,7 +1080,7 @@ export default function FinalExamRegistrationApprovalPage() {
 																	key={o.value}
 																	value={o.label}
 																	onSelect={() => toggleBatch(o.value)}
-																	className="text-xs"
+																	className="text-sm"
 																>
 																	<Check className={cn('mr-2 h-3 w-3', filters.batches.includes(o.value) ? 'opacity-100' : 'opacity-0')} />
 																	<span className="truncate">{o.label}</span>
@@ -1095,16 +1095,16 @@ export default function FinalExamRegistrationApprovalPage() {
 									</div>
 
 									<div className="space-y-1.5">
-										<Label className="text-xs">Semester <span className="text-muted-foreground font-normal">(Optional)</span></Label>
+										<Label className="text-sm">Semester <span className="text-muted-foreground font-normal">(Optional)</span></Label>
 										<Select value={filters.semester} onValueChange={v => setFilters(f => ({ ...f, semester: v }))} disabled={!ready}>
-											<SelectTrigger className="h-9 text-xs"><SelectValue placeholder="All semesters" /></SelectTrigger>
+											<SelectTrigger className="h-9 text-sm"><SelectValue placeholder="All semesters" /></SelectTrigger>
 											<SelectContent>
-												<SelectItem value="all" className="text-xs">All Semesters</SelectItem>
+												<SelectItem value="all" className="text-sm">All Semesters</SelectItem>
 												{semesterOptions.map(o => (
-													<SelectItem key={o.value} value={o.value} className="text-xs">{o.label} ({o.count})</SelectItem>
+													<SelectItem key={o.value} value={o.value} className="text-sm">{o.label} ({o.count})</SelectItem>
 												))}
 												{filters.semester !== 'all' && !semesterOptions.some(o => o.value === filters.semester) && (
-													<SelectItem value={filters.semester} className="text-xs">Semester {ROMAN[Number(filters.semester)] || filters.semester} (0)</SelectItem>
+													<SelectItem value={filters.semester} className="text-sm">Semester {ROMAN[Number(filters.semester)] || filters.semester} (0)</SelectItem>
 												)}
 											</SelectContent>
 										</Select>
@@ -1118,15 +1118,15 @@ export default function FinalExamRegistrationApprovalPage() {
 											value={search}
 											onChange={e => setSearch(e.target.value)}
 											placeholder="Search register number or name"
-											className="h-9 pl-8 text-xs"
+											className="h-9 pl-8 text-sm"
 											disabled={!ready}
 										/>
 									</div>
 									<div className="flex items-center gap-2">
-										<Button variant="outline" size="sm" className={cn('h-9 text-xs gap-1.5', OUTLINE_BUTTON_CLASS)} onClick={handleReset} disabled={!filtersActive}>
+										<Button variant="outline" size="sm" className={cn('h-9 text-sm gap-1.5', OUTLINE_BUTTON_CLASS)} onClick={handleReset} disabled={!filtersActive}>
 											<RotateCcw className="h-3.5 w-3.5" /> Reset
 										</Button>
-										<Button variant="outline" size="sm" className={cn('h-9 text-xs gap-1.5', OUTLINE_BUTTON_CLASS)} onClick={handleRefresh} disabled={!ready || loading || loadingApproved}>
+										<Button variant="outline" size="sm" className={cn('h-9 text-sm gap-1.5', OUTLINE_BUTTON_CLASS)} onClick={handleRefresh} disabled={!ready || loading || loadingApproved}>
 											<RefreshCw className={cn('h-3.5 w-3.5', (loading || loadingApproved) && 'animate-spin')} /> Refresh
 										</Button>
 									</div>
@@ -1136,32 +1136,32 @@ export default function FinalExamRegistrationApprovalPage() {
 
 						<Tabs value={tab} onValueChange={v => setTab(v as TabKey)} className="space-y-3">
 							<TabsList className="h-9">
-								<TabsTrigger value="pending" className="text-xs gap-1.5">
+								<TabsTrigger value="pending" className="text-sm gap-1.5">
 									<Clock className="h-3.5 w-3.5" /> Pending
-									<Badge variant="secondary" className="ml-1 h-5 px-1.5 text-[10px] tabular-nums">{pendingSummary.learners}</Badge>
+									<Badge variant="secondary" className="ml-1 h-5 px-1.5 text-xs tabular-nums">{pendingSummary.learners}</Badge>
 								</TabsTrigger>
-								<TabsTrigger value="concession" className="text-xs gap-1.5">
+								<TabsTrigger value="concession" className="text-sm gap-1.5">
 									<HeartHandshake className="h-3.5 w-3.5" /> Fee Concession
 									{pendingSummary.concession > 0 && (
-										<Badge variant="secondary" className="ml-1 h-5 px-1.5 text-[10px] tabular-nums">{visible.filter(l => l.concession_amount > 0).length}</Badge>
+										<Badge variant="secondary" className="ml-1 h-5 px-1.5 text-xs tabular-nums">{visible.filter(l => l.concession_amount > 0).length}</Badge>
 									)}
 								</TabsTrigger>
-								<TabsTrigger value="approved" className="text-xs gap-1.5">
+								<TabsTrigger value="approved" className="text-sm gap-1.5">
 									<BadgeCheck className="h-3.5 w-3.5" /> Approved
-									<Badge variant="secondary" className="ml-1 h-5 px-1.5 text-[10px] tabular-nums">{approvedSummary.learners}</Badge>
+									<Badge variant="secondary" className="ml-1 h-5 px-1.5 text-xs tabular-nums">{approvedSummary.learners}</Badge>
 								</TabsTrigger>
-								<TabsTrigger value="report" className="text-xs gap-1.5">
+								<TabsTrigger value="report" className="text-sm gap-1.5">
 									<FileText className="h-3.5 w-3.5" /> Report
 								</TabsTrigger>
 							</TabsList>
 
 							{/* ── Pending ── */}
 							<TabsContent value="pending" className="mt-0">
-								<div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_300px] gap-3 items-start">
+								<div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_320px] gap-3 items-start">
 									<Card className="border-brand-green-100 dark:border-brand-green-900/60 overflow-hidden">
 										<CardHeader className="py-3 px-4 flex flex-row items-center justify-between space-y-0 border-b border-brand-green-100 bg-brand-cream-100 dark:border-brand-green-900/60 dark:bg-gray-900">
-											<CardTitle className="text-sm font-heading text-brand-green-800 dark:text-brand-green-200">Pending Final Approval</CardTitle>
-											<Badge variant="outline" className="text-[11px] font-medium border-brand-green-200 bg-white text-brand-green-700 dark:border-brand-green-800 dark:bg-transparent dark:text-brand-green-300">
+											<CardTitle className="text-base font-heading text-brand-green-800 dark:text-brand-green-200">Pending Final Approval</CardTitle>
+											<Badge variant="outline" className="text-[13px] font-medium border-brand-green-200 bg-white text-brand-green-700 dark:border-brand-green-800 dark:bg-transparent dark:text-brand-green-300">
 												{visible.length} learner{visible.length === 1 ? '' : 's'}{search ? ` matching "${search}"` : ''}
 											</Badge>
 										</CardHeader>
@@ -1196,19 +1196,19 @@ export default function FinalExamRegistrationApprovalPage() {
 													<TableBody>
 														{!ready ? (
 															<TableRow>
-																<TableCell colSpan={PENDING_COLUMNS} className="text-center py-10 text-sm text-muted-foreground">
+																<TableCell colSpan={PENDING_COLUMNS} className="text-center py-10 text-base text-muted-foreground">
 																	Select an institution and an exam session to list learners awaiting final approval.
 																</TableCell>
 															</TableRow>
 														) : listLoading ? (
 															<TableRow>
-																<TableCell colSpan={PENDING_COLUMNS} className="text-center py-10 text-sm text-muted-foreground">
+																<TableCell colSpan={PENDING_COLUMNS} className="text-center py-10 text-base text-muted-foreground">
 																	<Loader2 className="h-4 w-4 animate-spin inline mr-2" />Loading pending approvals…
 																</TableCell>
 															</TableRow>
 														) : pageRows.length === 0 ? (
 															<TableRow>
-																<TableCell colSpan={PENDING_COLUMNS} className="text-center py-10 text-sm text-muted-foreground">
+																<TableCell colSpan={PENDING_COLUMNS} className="text-center py-10 text-base text-muted-foreground">
 																	No learner is awaiting final approval for the selected filters.
 																</TableCell>
 															</TableRow>
@@ -1231,15 +1231,15 @@ export default function FinalExamRegistrationApprovalPage() {
 																					aria-label={`Select ${l.register_number}`}
 																				/>
 																			</TableCell>
-																			<TableCell className="text-center text-xs">{(currentPage - 1) * PAGE_SIZE + idx + 1}</TableCell>
-																			<TableCell className="text-xs font-semibold whitespace-nowrap text-brand-green-800 dark:text-brand-green-200">{l.register_number}</TableCell>
-																			<TableCell className="text-xs">{l.student_name || '—'}</TableCell>
-																			<TableCell className="text-xs">
+																			<TableCell className="text-center text-sm">{(currentPage - 1) * PAGE_SIZE + idx + 1}</TableCell>
+																			<TableCell className="text-sm font-semibold whitespace-nowrap text-brand-green-800 dark:text-brand-green-200">{l.register_number}</TableCell>
+																			<TableCell className="text-sm">{l.student_name || '—'}</TableCell>
+																			<TableCell className="text-sm">
 																				<div>{l.program_code || '—'}</div>
-																				{l.regulation_code && <div className="text-[10px] text-muted-foreground">Reg. {l.regulation_code}</div>}
+																				{l.regulation_code && <div className="text-xs text-muted-foreground">Reg. {l.regulation_code}</div>}
 																			</TableCell>
-																			<TableCell className="text-center text-xs">{romanSemester(l.semester)}</TableCell>
-																			<TableCell className="text-center text-xs">
+																			<TableCell className="text-center text-sm">{romanSemester(l.semester)}</TableCell>
+																			<TableCell className="text-center text-sm">
 																				<button
 																					type="button"
 																					onClick={() => toggleExpanded(l.key)}
@@ -1255,9 +1255,9 @@ export default function FinalExamRegistrationApprovalPage() {
 																					{isExpanded ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
 																				</button>
 																			</TableCell>
-																			<TableCell className="text-right text-xs tabular-nums">{money(l.exam_fee)}</TableCell>
-																			<TableCell className="text-right text-xs tabular-nums">{money(l.application_fee)}</TableCell>
-																			<TableCell className="text-right text-xs tabular-nums">{money(l.mark_statement_fee)}</TableCell>
+																			<TableCell className="text-right text-sm tabular-nums">{money(l.exam_fee)}</TableCell>
+																			<TableCell className="text-right text-sm tabular-nums">{money(l.application_fee)}</TableCell>
+																			<TableCell className="text-right text-sm tabular-nums">{money(l.mark_statement_fee)}</TableCell>
 																			<TableCell className="text-right">
 																				<Input
 																					type="number"
@@ -1271,21 +1271,21 @@ export default function FinalExamRegistrationApprovalPage() {
 																					disabled={approving}
 																					aria-label={`Late fine for ${l.register_number}`}
 																					className={cn(
-																						'h-7 w-20 ml-auto px-2 text-right text-xs tabular-nums',
+																						'h-7 w-20 ml-auto px-2 text-right text-sm tabular-nums',
 																						l.late_fine > 0 && 'border-brand-yellow-500 bg-brand-yellow-50 font-semibold dark:bg-brand-yellow-900/20'
 																					)}
 																				/>
 																			</TableCell>
-																			<TableCell className="text-right text-xs tabular-nums whitespace-nowrap">
+																			<TableCell className="text-right text-sm tabular-nums whitespace-nowrap">
 																				{l.concession_amount > 0 ? (
 																					<span className="font-semibold text-brand-green-700 dark:text-brand-green-300" title={`${l.concession_type || 'Fee'} concession - Exam ${money(l.concession_exam_fee)}, Application ${money(l.concession_application_fee)}, Mark Statement ${money(l.concession_mark_statement_fee)}`}>
 																						− {money(l.concession_amount)}
 																					</span>
 																				) : '—'}
 																			</TableCell>
-																			<TableCell className="text-right text-xs font-bold tabular-nums text-brand-green-800 dark:text-brand-green-200">{money(l.final_amount)}</TableCell>
+																			<TableCell className="text-right text-sm font-bold tabular-nums text-brand-green-800 dark:text-brand-green-200">{money(l.final_amount)}</TableCell>
 																			<TableCell className="text-center">
-																				<Badge variant="outline" className="text-[10px] whitespace-nowrap border-brand-yellow-400 bg-brand-yellow-100 text-brand-yellow-900 dark:border-brand-yellow-700 dark:bg-brand-yellow-900/30 dark:text-brand-yellow-200">{l.status}</Badge>
+																				<Badge variant="outline" className="text-xs whitespace-nowrap border-brand-yellow-400 bg-brand-yellow-100 text-brand-yellow-900 dark:border-brand-yellow-700 dark:bg-brand-yellow-900/30 dark:text-brand-yellow-200">{l.status}</Badge>
 																			</TableCell>
 																		</TableRow>
 																		{isExpanded && (
@@ -1293,13 +1293,13 @@ export default function FinalExamRegistrationApprovalPage() {
 																				<TableCell colSpan={PENDING_COLUMNS} className="py-2 px-6 border-l-[3px] border-l-brand-green-300 dark:border-l-brand-green-700">
 																					<div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-6 gap-y-1">
 																						{l.subjects.map(s => (
-																							<div key={s.registration_id} className="flex items-center justify-between gap-2 text-xs">
+																							<div key={s.registration_id} className="flex items-center justify-between gap-2 text-sm">
 																								<span className="truncate">
 																									<span className="font-medium">{s.course_code}</span>
 																									{s.course_name && <span className="text-muted-foreground"> — {s.course_name}</span>}
 																								</span>
 																								<span className="flex items-center gap-1.5 shrink-0">
-																									<Badge variant="outline" className={cn('text-[10px]', s.is_regular ? 'border-brand-green-200 bg-brand-green-50 text-brand-green-700 dark:border-brand-green-800 dark:bg-brand-green-900/30 dark:text-brand-green-300' : 'border-brand-yellow-400 bg-brand-yellow-100 text-brand-yellow-900 dark:border-brand-yellow-700 dark:bg-brand-yellow-900/30 dark:text-brand-yellow-200')}>
+																									<Badge variant="outline" className={cn('text-xs', s.is_regular ? 'border-brand-green-200 bg-brand-green-50 text-brand-green-700 dark:border-brand-green-800 dark:bg-brand-green-900/30 dark:text-brand-green-300' : 'border-brand-yellow-400 bg-brand-yellow-100 text-brand-yellow-900 dark:border-brand-yellow-700 dark:bg-brand-yellow-900/30 dark:text-brand-yellow-200')}>
 																										{s.is_regular ? 'Regular' : `Arrear #${s.attempt_number}`}
 																									</Badge>
 																									<span className="tabular-nums">{money(s.exam_fee)}</span>
@@ -1324,20 +1324,20 @@ export default function FinalExamRegistrationApprovalPage() {
 									{/* Selection summary */}
 									<Card className="xl:sticky xl:top-4 overflow-hidden border-brand-green-100 dark:border-brand-green-900/60">
 										<CardHeader className="py-3 px-4 bg-gradient-to-r from-brand-green-600 to-brand-green-800 text-white">
-											<CardTitle className="text-sm font-heading flex items-center gap-2">
+											<CardTitle className="text-base font-heading flex items-center gap-2">
 												<ClipboardCheck className="h-4 w-4" />
 												Selection Summary
 											</CardTitle>
 										</CardHeader>
 										<CardContent className="px-4 pb-4 pt-4 space-y-3">
 											<FeeBreakdown totals={selection} />
-											<Button className={cn('w-full h-10 text-sm gap-1.5 shadow-sm', PRIMARY_BUTTON_CLASS)} onClick={openConfirm} disabled={!canApprove}>
+											<Button className={cn('w-full h-10 text-base gap-1.5 shadow-sm', PRIMARY_BUTTON_CLASS)} onClick={openConfirm} disabled={!canApprove}>
 												{approving
 													? <><Loader2 className="h-3.5 w-3.5 animate-spin" />Approving…</>
 													: <><BadgeCheck className="h-3.5 w-3.5" />Approve Final Registration{selection.learners > 0 ? ` (${selection.learners})` : ''}</>}
 											</Button>
 											{selection.learners === 0 && (
-												<p className="text-[11px] text-muted-foreground text-center">Select one, several, or all learners to approve.</p>
+												<p className="text-[13px] text-muted-foreground text-center">Select one, several, or all learners to approve.</p>
 											)}
 										</CardContent>
 									</Card>
@@ -1357,7 +1357,7 @@ export default function FinalExamRegistrationApprovalPage() {
 									/>
 								) : (
 									<Card className="border-brand-green-100 dark:border-brand-green-900/60">
-										<CardContent className="py-10 text-center text-sm text-muted-foreground">
+										<CardContent className="py-10 text-center text-base text-muted-foreground">
 											Select an institution and an exam session to record fee concessions.
 										</CardContent>
 									</Card>
@@ -1368,22 +1368,22 @@ export default function FinalExamRegistrationApprovalPage() {
 							<TabsContent value="approved" className="mt-0">
 								<Card className="border-brand-green-100 dark:border-brand-green-900/60 overflow-hidden">
 									<CardHeader className="py-3 px-4 flex flex-row items-center justify-between space-y-0 border-b border-brand-green-100 bg-brand-cream-100 dark:border-brand-green-900/60 dark:bg-gray-900">
-										<CardTitle className="text-sm font-heading text-brand-green-800 dark:text-brand-green-200">Approved Registrations</CardTitle>
+										<CardTitle className="text-base font-heading text-brand-green-800 dark:text-brand-green-200">Approved Registrations</CardTitle>
 										<div className="flex items-center gap-2">
-											<Badge variant="outline" className="text-[11px] font-medium border-brand-green-200 bg-white text-brand-green-700 dark:border-brand-green-800 dark:bg-transparent dark:text-brand-green-300">
+											<Badge variant="outline" className="text-[13px] font-medium border-brand-green-200 bg-white text-brand-green-700 dark:border-brand-green-800 dark:bg-transparent dark:text-brand-green-300">
 												{visibleApproved.length} learner{visibleApproved.length === 1 ? '' : 's'} · {money(approvedSummary.final_amount)}
 											</Badge>
 											<Button
 												variant="outline"
 												size="sm"
-												className="h-8 text-xs gap-1.5 border-red-200 text-red-700 hover:bg-red-50 hover:text-red-800 dark:border-red-900 dark:text-red-300 dark:hover:bg-red-900/30"
+												className="h-8 text-sm gap-1.5 border-red-200 text-red-700 hover:bg-red-50 hover:text-red-800 dark:border-red-900 dark:text-red-300 dark:hover:bg-red-900/30"
 												onClick={() => { setUnapproveReason(''); setUnapproveOpen(true) }}
 												disabled={selectedApprovedRows.length === 0 || unapproving}
 											>
 												{unapproving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Undo2 className="h-3.5 w-3.5" />}
 												Unapprove{selectedApprovedRows.length > 0 ? ` (${selectedApprovedRows.length})` : ''}
 											</Button>
-											<Button size="sm" className={cn('h-8 text-xs gap-1.5', PRIMARY_BUTTON_CLASS)} onClick={handleDownloadPdf} disabled={visibleApproved.length === 0 || exporting !== null}>
+											<Button size="sm" className={cn('h-8 text-sm gap-1.5', PRIMARY_BUTTON_CLASS)} onClick={handleDownloadPdf} disabled={visibleApproved.length === 0 || exporting !== null}>
 												{exporting === 'pdf' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FileDown className="h-3.5 w-3.5" />} PDF
 											</Button>
 										</div>
@@ -1422,19 +1422,19 @@ export default function FinalExamRegistrationApprovalPage() {
 												<TableBody>
 													{!ready ? (
 														<TableRow>
-															<TableCell colSpan={APPROVED_COLUMNS} className="text-center py-10 text-sm text-muted-foreground">
+															<TableCell colSpan={APPROVED_COLUMNS} className="text-center py-10 text-base text-muted-foreground">
 																Select an institution and an exam session to list approved registrations.
 															</TableCell>
 														</TableRow>
 													) : listLoading ? (
 														<TableRow>
-															<TableCell colSpan={APPROVED_COLUMNS} className="text-center py-10 text-sm text-muted-foreground">
+															<TableCell colSpan={APPROVED_COLUMNS} className="text-center py-10 text-base text-muted-foreground">
 																<Loader2 className="h-4 w-4 animate-spin inline mr-2" />Loading approved registrations…
 															</TableCell>
 														</TableRow>
 													) : approvedPageRows.length === 0 ? (
 														<TableRow>
-															<TableCell colSpan={APPROVED_COLUMNS} className="text-center py-10 text-sm text-muted-foreground">
+															<TableCell colSpan={APPROVED_COLUMNS} className="text-center py-10 text-base text-muted-foreground">
 																No registration has been given final approval for the selected filters.
 															</TableCell>
 														</TableRow>
@@ -1453,26 +1453,26 @@ export default function FinalExamRegistrationApprovalPage() {
 																		aria-label={`Select ${r.stu_register_no}`}
 																	/>
 																</TableCell>
-																<TableCell className="text-center text-xs">{(approvedCurrentPage - 1) * PAGE_SIZE + idx + 1}</TableCell>
-																<TableCell className="text-xs font-semibold whitespace-nowrap text-brand-green-800 dark:text-brand-green-200">{r.stu_register_no}</TableCell>
-																<TableCell className="text-xs">{r.student_name || '—'}</TableCell>
-																<TableCell className="text-xs">
+																<TableCell className="text-center text-sm">{(approvedCurrentPage - 1) * PAGE_SIZE + idx + 1}</TableCell>
+																<TableCell className="text-sm font-semibold whitespace-nowrap text-brand-green-800 dark:text-brand-green-200">{r.stu_register_no}</TableCell>
+																<TableCell className="text-sm">{r.student_name || '—'}</TableCell>
+																<TableCell className="text-sm">
 																	<div>{r.program_code || '—'}</div>
-																	{r.regulation_code && <div className="text-[10px] text-muted-foreground">Reg. {r.regulation_code}</div>}
+																	{r.regulation_code && <div className="text-xs text-muted-foreground">Reg. {r.regulation_code}</div>}
 																</TableCell>
-																<TableCell className="text-center text-xs">{romanSemester(r.learner_semester)}</TableCell>
-																<TableCell className="text-center text-xs tabular-nums">{r.total_subjects}</TableCell>
-																<TableCell className="text-right text-xs tabular-nums">{money(r.exam_fee)}</TableCell>
-																<TableCell className="text-right text-xs tabular-nums">{money(r.application_fee)}</TableCell>
-																<TableCell className="text-right text-xs tabular-nums">{money(r.mark_statement_fee)}</TableCell>
-																<TableCell className="text-right text-xs tabular-nums">{money(r.late_fine)}</TableCell>
-																<TableCell className="text-right text-xs tabular-nums">{r.concession_amount > 0 ? money(r.concession_amount) : '—'}</TableCell>
-																<TableCell className="text-right text-xs font-bold tabular-nums text-brand-green-800 dark:text-brand-green-200">{money(r.final_amount)}</TableCell>
-																<TableCell className="text-center text-xs">{r.payment_mode || '—'}</TableCell>
-																<TableCell className="text-xs whitespace-nowrap">{r.payment_transaction_id || '—'}</TableCell>
-																<TableCell className="text-xs whitespace-nowrap">{approvedOn(r.approved_at)}</TableCell>
+																<TableCell className="text-center text-sm">{romanSemester(r.learner_semester)}</TableCell>
+																<TableCell className="text-center text-sm tabular-nums">{r.total_subjects}</TableCell>
+																<TableCell className="text-right text-sm tabular-nums">{money(r.exam_fee)}</TableCell>
+																<TableCell className="text-right text-sm tabular-nums">{money(r.application_fee)}</TableCell>
+																<TableCell className="text-right text-sm tabular-nums">{money(r.mark_statement_fee)}</TableCell>
+																<TableCell className="text-right text-sm tabular-nums">{money(r.late_fine)}</TableCell>
+																<TableCell className="text-right text-sm tabular-nums">{r.concession_amount > 0 ? money(r.concession_amount) : '—'}</TableCell>
+																<TableCell className="text-right text-sm font-bold tabular-nums text-brand-green-800 dark:text-brand-green-200">{money(r.final_amount)}</TableCell>
+																<TableCell className="text-center text-sm">{r.payment_mode || '—'}</TableCell>
+																<TableCell className="text-sm whitespace-nowrap">{r.payment_transaction_id || '—'}</TableCell>
+																<TableCell className="text-sm whitespace-nowrap">{approvedOn(r.approved_at)}</TableCell>
 																<TableCell className="text-center">
-																	<Badge variant="outline" className="text-[10px] whitespace-nowrap border-brand-green-200 bg-brand-green-50 text-brand-green-700 dark:border-brand-green-800 dark:bg-brand-green-900/30 dark:text-brand-green-300">Paid</Badge>
+																	<Badge variant="outline" className="text-xs whitespace-nowrap border-brand-green-200 bg-brand-green-50 text-brand-green-700 dark:border-brand-green-800 dark:bg-brand-green-900/30 dark:text-brand-green-300">Paid</Badge>
 																</TableCell>
 															</TableRow>
 														))
@@ -1489,16 +1489,16 @@ export default function FinalExamRegistrationApprovalPage() {
 							<TabsContent value="report" className="mt-0">
 								<Card className="border-brand-green-100 dark:border-brand-green-900/60 overflow-hidden">
 									<CardHeader className="py-3 px-4 border-b border-brand-green-100 bg-brand-cream-100 dark:border-brand-green-900/60 dark:bg-gray-900">
-										<CardTitle className="text-sm font-heading text-brand-green-800 dark:text-brand-green-200">Final Registration Approval Report</CardTitle>
-										<p className="text-xs text-muted-foreground">
+										<CardTitle className="text-base font-heading text-brand-green-800 dark:text-brand-green-200">Final Registration Approval Report</CardTitle>
+										<p className="text-sm text-muted-foreground">
 											Student-wise approved registrations with subject count, fee heads and totals - the same report as Reports › Exam Registration Reports. It covers the learners left by the filters above.
 										</p>
 									</CardHeader>
 									<CardContent className="p-4">
 										{listLoading ? (
-											<p className="py-8 text-center text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin inline mr-2" />Loading approved registrations…</p>
+											<p className="py-8 text-center text-base text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin inline mr-2" />Loading approved registrations…</p>
 										) : visibleApproved.length === 0 ? (
-											<p className="py-8 text-center text-sm text-muted-foreground">
+											<p className="py-8 text-center text-base text-muted-foreground">
 												{ready ? 'No registration has been given final approval for the selected filters.' : 'Select an institution and an exam session.'}
 											</p>
 										) : (
@@ -1517,24 +1517,24 @@ export default function FinalExamRegistrationApprovalPage() {
 															<TableBody>
 																{paymentModeSplit.map(row => (
 																	<TableRow key={row.mode}>
-																		<TableCell className="text-xs">{row.mode}</TableCell>
-																		<TableCell className="text-right text-xs tabular-nums">{row.learners}</TableCell>
-																		<TableCell className="text-right text-xs tabular-nums">{money(row.amount)}</TableCell>
+																		<TableCell className="text-sm">{row.mode}</TableCell>
+																		<TableCell className="text-right text-sm tabular-nums">{row.learners}</TableCell>
+																		<TableCell className="text-right text-sm tabular-nums">{money(row.amount)}</TableCell>
 																	</TableRow>
 																))}
 																<TableRow className="font-semibold hover:bg-transparent">
-																	<TableCell className="text-xs">Total</TableCell>
-																	<TableCell className="text-right text-xs tabular-nums">{approvedSummary.learners}</TableCell>
-																	<TableCell className="text-right text-xs tabular-nums">{money(approvedSummary.final_amount)}</TableCell>
+																	<TableCell className="text-sm">Total</TableCell>
+																	<TableCell className="text-right text-sm tabular-nums">{approvedSummary.learners}</TableCell>
+																	<TableCell className="text-right text-sm tabular-nums">{money(approvedSummary.final_amount)}</TableCell>
 																</TableRow>
 															</TableBody>
 														</Table>
 													</div>
 													<div className="flex items-center gap-2 flex-wrap">
-														<Button className={cn('h-9 text-xs gap-1.5', PRIMARY_BUTTON_CLASS)} onClick={handleDownloadPdf} disabled={exporting !== null}>
+														<Button className={cn('h-9 text-sm gap-1.5', PRIMARY_BUTTON_CLASS)} onClick={handleDownloadPdf} disabled={exporting !== null}>
 															{exporting === 'pdf' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FileDown className="h-3.5 w-3.5" />} Download PDF
 														</Button>
-														<Button variant="outline" className={cn('h-9 text-xs gap-1.5', OUTLINE_BUTTON_CLASS)} onClick={handleDownloadExcel} disabled={exporting !== null}>
+														<Button variant="outline" className={cn('h-9 text-sm gap-1.5', OUTLINE_BUTTON_CLASS)} onClick={handleDownloadExcel} disabled={exporting !== null}>
 															{exporting === 'excel' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FileSpreadsheet className="h-3.5 w-3.5" />} Download Excel
 														</Button>
 													</div>
@@ -1562,7 +1562,7 @@ export default function FinalExamRegistrationApprovalPage() {
 
 					<FeeBreakdown totals={unapproveSelection} headsAreNet />
 
-					<div className="max-h-28 overflow-y-auto rounded-md border px-3 py-2 text-xs space-y-0.5">
+					<div className="max-h-28 overflow-y-auto rounded-md border px-3 py-2 text-sm space-y-0.5">
 						{selectedApprovedRows.map(r => (
 							<div key={r.id} className="flex justify-between gap-2">
 								<span className="truncate"><span className="font-medium">{r.stu_register_no}</span> — {r.student_name || '—'}</span>
@@ -1572,7 +1572,7 @@ export default function FinalExamRegistrationApprovalPage() {
 					</div>
 
 					<div className="space-y-1.5">
-						<Label htmlFor="unapprove-reason" className="text-xs">Reason *</Label>
+						<Label htmlFor="unapprove-reason" className="text-sm">Reason *</Label>
 						<Textarea
 							id="unapprove-reason"
 							value={unapproveReason}
@@ -1580,9 +1580,9 @@ export default function FinalExamRegistrationApprovalPage() {
 							placeholder="Why is this approval being undone? (kept in the log)"
 							maxLength={1000}
 							rows={3}
-							className="text-sm"
+							className="text-base"
 						/>
-						<p className="text-[11px] text-muted-foreground">The undone approval, its amount and this reason are kept in the approval log. Any money already collected must be settled outside the system.</p>
+						<p className="text-[13px] text-muted-foreground">The undone approval, its amount and this reason are kept in the approval log. Any money already collected must be settled outside the system.</p>
 					</div>
 
 					<DialogFooter>
@@ -1605,7 +1605,7 @@ export default function FinalExamRegistrationApprovalPage() {
 					<FeeBreakdown totals={selection} />
 
 					<div className="space-y-2">
-						<Label className="text-xs">Mode of Payment *</Label>
+						<Label className="text-sm">Mode of Payment *</Label>
 						<RadioGroup
 							value={paymentMode}
 							onValueChange={v => setPaymentMode(v as FinalApprovalPaymentMode)}
@@ -1616,7 +1616,7 @@ export default function FinalExamRegistrationApprovalPage() {
 									key={mode}
 									htmlFor={`payment-mode-${mode}`}
 									className={cn(
-										'flex items-center gap-2 rounded-md border px-3 py-2 text-sm cursor-pointer transition-colors',
+										'flex items-center gap-2 rounded-md border px-3 py-2 text-base cursor-pointer transition-colors',
 										paymentMode === mode
 											? 'border-brand-green bg-brand-green-50 text-brand-green-800 dark:bg-brand-green-900/30 dark:text-brand-green-200'
 											: 'hover:bg-muted/60'
@@ -1631,18 +1631,18 @@ export default function FinalExamRegistrationApprovalPage() {
 
 					{paymentMode === 'Online' && (
 						<div className="space-y-1.5">
-							<Label htmlFor="payment-transaction-id" className="text-xs">Payment Transaction ID *</Label>
+							<Label htmlFor="payment-transaction-id" className="text-sm">Payment Transaction ID *</Label>
 							<Input
 								id="payment-transaction-id"
 								value={transactionId}
 								onChange={e => setTransactionId(e.target.value)}
 								placeholder="UPI / bank reference number"
 								maxLength={255}
-								className="h-9 text-sm"
+								className="h-9 text-base"
 								autoFocus
 							/>
 							{selection.learners > 1 && (
-								<p className="text-[11px] text-muted-foreground">
+								<p className="text-[13px] text-muted-foreground">
 									This transaction id is recorded against all {selection.learners} selected learners. Approve learners who paid separately one at a time.
 								</p>
 							)}

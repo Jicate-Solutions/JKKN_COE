@@ -3140,16 +3140,17 @@ function generateFinalApprovalPdf(opts: ReportPdfOptions): string {
 		['S.No', 10, 'center'],
 		['Register No', 30, 'center'],
 		['Name of the Candidate', showLateFine ? 56 : 74, 'left'],
-		['Program', 22, 'center'],
+		// "CODE - Program Name" - wraps onto a second line, the row grows to fit
+		['Program', 50, 'left'],
 		['Sem', 12, 'center'],
 		['Total\nSubjects', 18, 'center'],
-		['Exam Fee', 24, 'right'],
-		['Application\nFee', 24, 'right'],
+		['Exam Fee', 20, 'right'],
+		['Application\nFee', 20, 'right'],
 		['Mark\nStatement Fee', 26, 'right'],
 	]
-	if (showLateFine) columns.push(['Late Fine', 20, 'right'])
-	if (showConcession) columns.push(['Concession\nGiven', 22, 'right'])
-	columns.push(['Final\nAmount', 26, 'right'])
+	if (showLateFine) columns.push(['Late Fine', 18, 'right'])
+	if (showConcession) columns.push(['Concession\nGiven', 20, 'right'])
+	columns.push(['Final\nAmount', 22, 'right'])
 	if (showPayMode) columns.push(['Payment\nMode', 18, 'center'])
 	columns.push(['Status', 18, 'center'])
 
@@ -3178,13 +3179,20 @@ function generateFinalApprovalPdf(opts: ReportPdfOptions): string {
 		return y + headerHeight
 	}
 
-	const drawRow = (y: number, cells: string[], bold = false) => {
+	/** Row height that fits the tallest wrapped cell (candidate name / program) */
+	const rowHeightFor = (cells: string[], bold = false): number => {
+		doc.setFont('times', bold ? 'bold' : 'normal')
+		doc.setFontSize(8)
+		return cells.reduce((h, text, i) => Math.max(h, calcWrappedRowHeight(doc, text, widths[i] - 2, rowHeight)), rowHeight)
+	}
+
+	const drawRow = (y: number, cells: string[], height: number, bold = false) => {
 		doc.setFont('times', bold ? 'bold' : 'normal')
 		doc.setFontSize(8)
 		let x = margin
 		cells.forEach((text, i) => {
-			doc.rect(x, y, widths[i], rowHeight)
-			drawWrappedCell(doc, text, x, y, widths[i], rowHeight, columns[i][2] === 'left' ? 'left' : 'center')
+			doc.rect(x, y, widths[i], height)
+			drawWrappedCell(doc, text, x, y, widths[i], height, columns[i][2] === 'left' ? 'left' : 'center')
 			x += widths[i]
 		})
 	}
@@ -3197,17 +3205,11 @@ function generateFinalApprovalPdf(opts: ReportPdfOptions): string {
 
 	let pageNum = 1
 	rows.forEach((r, idx) => {
-		if (y + rowHeight > pageHeight - margin - footerSpace) {
-			doc.addPage()
-			pageNum++
-			y = drawHeader(doc, pageWidth, margin, opts, 'FINAL REGISTRATION APPROVAL - STUDENT WISE') + 1
-			y = drawTableHeader(y)
-		}
 		const cells = [
 			String(idx + 1),
 			String(r.stu_register_no || ''),
 			String(r.student_name || ''),
-			String(r.program_code || ''),
+			r.program_code && r.program_name ? `${r.program_code} - ${r.program_name}` : String(r.program_code || ''),
 			r.learner_semester ? toRoman(r.learner_semester) : '',
 			String(Number(r.total_subjects) || 0),
 			formatFee(feeNum(r.exam_fee)),
@@ -3219,8 +3221,15 @@ function generateFinalApprovalPdf(opts: ReportPdfOptions): string {
 		cells.push(formatFee(feeNum(r.final_amount)))
 		if (showPayMode) cells.push(String(r.payment_mode || ''))
 		cells.push(String(r.registration_status || 'Approved'))
-		drawRow(y, cells)
-		y += rowHeight
+		const height = rowHeightFor(cells)
+		if (y + height > pageHeight - margin - footerSpace) {
+			doc.addPage()
+			pageNum++
+			y = drawHeader(doc, pageWidth, margin, opts, 'FINAL REGISTRATION APPROVAL - STUDENT WISE') + 1
+			y = drawTableHeader(y)
+		}
+		drawRow(y, cells, height)
+		y += height
 	})
 
 	// Totals block (section 11 of the spec)
@@ -3246,8 +3255,9 @@ function generateFinalApprovalPdf(opts: ReportPdfOptions): string {
 	totalCells.push(formatFee(totals.final))
 	if (showPayMode) totalCells.push('')
 	totalCells.push('')
-	drawRow(y, totalCells, true)
-	y += rowHeight + 4
+	const totalHeight = rowHeightFor(totalCells, true)
+	drawRow(y, totalCells, totalHeight, true)
+	y += totalHeight + 4
 
 	doc.setFont('times', 'normal')
 	doc.setFontSize(9)

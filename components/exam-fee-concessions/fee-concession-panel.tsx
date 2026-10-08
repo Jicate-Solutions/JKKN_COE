@@ -414,7 +414,7 @@ export function FeeConcessionPanel({ institutionsId, sessionId, matchesFilters, 
 
 	const waiverCell = (r: LearnerRow, head: Head, actual: number, value: number) => (
 		<TableCell className="text-right align-top">
-			<div className="text-xs tabular-nums">{money(actual)}</div>
+			<div className="text-sm tabular-nums">{money(actual)}</div>
 			<Input
 				type="number"
 				inputMode="decimal"
@@ -427,7 +427,7 @@ export function FeeConcessionPanel({ institutionsId, sessionId, matchesFilters, 
 				disabled={r.locked || actual <= 0 || saving}
 				aria-label={`Concession on ${head} fee for ${r.learner.register_number}`}
 				className={cn(
-					'mt-1 h-7 w-20 ml-auto px-2 text-right text-xs tabular-nums',
+					'mt-1 h-7 w-20 ml-auto px-2 text-right text-sm tabular-nums',
 					value > 0 && 'border-brand-green-400 bg-brand-green-50 font-semibold dark:bg-brand-green-900/20'
 				)}
 			/>
@@ -442,8 +442,8 @@ export function FeeConcessionPanel({ institutionsId, sessionId, matchesFilters, 
 							<Card className="border-brand-green-100 bg-white dark:border-brand-green-900/60 dark:bg-gray-900">
 								<CardContent className="p-4 flex items-center justify-between">
 									<div>
-										<p className="text-2xl font-bold tracking-tight font-heading text-brand-green-800 dark:text-brand-green-200">{data?.learners.length ?? 0}</p>
-										<p className="text-xs font-medium text-muted-foreground mt-0.5">Applied Learners</p>
+										<p className="text-3xl font-bold tracking-tight font-heading text-brand-green-800 dark:text-brand-green-200">{data?.learners.length ?? 0}</p>
+										<p className="text-sm font-medium text-muted-foreground mt-0.5">Applied Learners</p>
 									</div>
 									<div className="flex h-10 w-10 items-center justify-center rounded-full bg-brand-green-50 text-brand-green dark:bg-brand-green-900/40 dark:text-brand-green-300"><Users className="h-5 w-5" /></div>
 								</CardContent>
@@ -451,8 +451,8 @@ export function FeeConcessionPanel({ institutionsId, sessionId, matchesFilters, 
 							<Card className="border-brand-green-100 bg-white dark:border-brand-green-900/60 dark:bg-gray-900">
 								<CardContent className="p-4 flex items-center justify-between">
 									<div>
-										<p className="text-2xl font-bold tracking-tight font-heading text-brand-green-800 dark:text-brand-green-200">{concessions.length}</p>
-										<p className="text-xs font-medium text-muted-foreground mt-0.5">Concessions ({appliedCount} applied)</p>
+										<p className="text-3xl font-bold tracking-tight font-heading text-brand-green-800 dark:text-brand-green-200">{concessions.length}</p>
+										<p className="text-sm font-medium text-muted-foreground mt-0.5">Concessions ({appliedCount} applied)</p>
 									</div>
 									<div className="flex h-10 w-10 items-center justify-center rounded-full bg-brand-green-50 text-brand-green dark:bg-brand-green-900/40 dark:text-brand-green-300"><HeartHandshake className="h-5 w-5" /></div>
 								</CardContent>
@@ -460,8 +460,8 @@ export function FeeConcessionPanel({ institutionsId, sessionId, matchesFilters, 
 							<Card className="border-0 bg-gradient-to-br from-brand-green-600 to-brand-green-800 text-white shadow-md">
 								<CardContent className="p-4 flex items-center justify-between">
 									<div>
-										<p className="text-2xl font-bold tracking-tight font-heading">{money(concessionTotal)}</p>
-										<p className="text-xs font-medium text-brand-green-100 mt-0.5">Total Fee Waived</p>
+										<p className="text-3xl font-bold tracking-tight font-heading">{money(concessionTotal)}</p>
+										<p className="text-sm font-medium text-brand-green-100 mt-0.5">Total Fee Waived</p>
 									</div>
 									<div className="flex h-10 w-10 items-center justify-center rounded-full bg-white/15 text-white"><IndianRupee className="h-5 w-5" /></div>
 								</CardContent>
@@ -469,8 +469,8 @@ export function FeeConcessionPanel({ institutionsId, sessionId, matchesFilters, 
 							<Card className="border-brand-yellow-400 bg-brand-yellow-50 dark:border-brand-yellow-800 dark:bg-brand-yellow-900/20">
 								<CardContent className="p-4 flex items-center justify-between">
 									<div>
-										<p className="text-2xl font-bold tracking-tight font-heading text-brand-yellow-900 dark:text-brand-yellow-300">{dirtyRows.length}</p>
-										<p className="text-xs font-medium text-brand-yellow-900/70 dark:text-brand-yellow-300/80 mt-0.5">Unsaved ({money(dirtyTotal)})</p>
+										<p className="text-3xl font-bold tracking-tight font-heading text-brand-yellow-900 dark:text-brand-yellow-300">{dirtyRows.length}</p>
+										<p className="text-sm font-medium text-brand-yellow-900/70 dark:text-brand-yellow-300/80 mt-0.5">Unsaved ({money(dirtyTotal)})</p>
 									</div>
 									<div className="flex h-10 w-10 items-center justify-center rounded-full bg-brand-yellow-500 text-brand-yellow-900"><Save className="h-5 w-5" /></div>
 								</CardContent>
@@ -482,17 +482,17 @@ export function FeeConcessionPanel({ institutionsId, sessionId, matchesFilters, 
 								<AlertTriangle className="h-4 w-4" />
 								<AlertTitle>Fee concessions are not set up yet</AlertTitle>
 								<AlertDescription>
-									Run <code className="text-xs">supabase/migrations/20260921_exam_fee_concessions.sql</code> in the Supabase SQL Editor. It creates the concession table and lets final approval take the concession off the fee.
+									Run <code className="text-sm">supabase/migrations/20260921_exam_fee_concessions.sql</code> in the Supabase SQL Editor. It creates the concession table and lets final approval take the concession off the fee.
 								</AlertDescription>
 							</Alert>
 						)}
 
 						<Tabs value={tab} onValueChange={v => setTab(v as 'learners' | 'concessions')} className="space-y-3">
 							<TabsList className="h-9">
-								<TabsTrigger value="learners" className="text-xs gap-1.5"><Users className="h-3.5 w-3.5" /> Enter Concession</TabsTrigger>
-								<TabsTrigger value="concessions" className="text-xs gap-1.5">
+								<TabsTrigger value="learners" className="text-sm gap-1.5"><Users className="h-3.5 w-3.5" /> Enter Concession</TabsTrigger>
+								<TabsTrigger value="concessions" className="text-sm gap-1.5">
 									<FileText className="h-3.5 w-3.5" /> Recorded
-									<Badge variant="secondary" className="ml-1 h-5 px-1.5 text-[10px] tabular-nums">{concessions.length}</Badge>
+									<Badge variant="secondary" className="ml-1 h-5 px-1.5 text-xs tabular-nums">{concessions.length}</Badge>
 								</TabsTrigger>
 							</TabsList>
 
@@ -501,17 +501,17 @@ export function FeeConcessionPanel({ institutionsId, sessionId, matchesFilters, 
 								<Card className="border-brand-green-100 dark:border-brand-green-900/60 overflow-hidden">
 									<CardHeader className="py-3 px-4 flex flex-row items-center justify-between gap-3 space-y-0 border-b border-brand-green-100 bg-brand-cream-100 dark:border-brand-green-900/60 dark:bg-gray-900 flex-wrap">
 										<div>
-											<CardTitle className="text-sm font-heading text-brand-green-800 dark:text-brand-green-200">Fee Concession Entry</CardTitle>
-											<p className="text-[11px] text-muted-foreground mt-0.5">1. Add the learners named in the approval letter · 2. Type the amount waived under each fee · 3. Save and upload the letter.</p>
+											<CardTitle className="text-base font-heading text-brand-green-800 dark:text-brand-green-200">Fee Concession Entry</CardTitle>
+											<p className="text-[13px] text-muted-foreground mt-0.5">1. Add the learners named in the approval letter · 2. Type the amount waived under each fee · 3. Save and upload the letter.</p>
 										</div>
 										<div className="flex items-center gap-2">
-											<Button variant="outline" size="sm" className={cn('h-8 text-xs gap-1.5', OUTLINE_BUTTON_CLASS)} onClick={openAdd} disabled={loading || saving || !(data?.migration_ready ?? false)}>
+											<Button variant="outline" size="sm" className={cn('h-8 text-sm gap-1.5', OUTLINE_BUTTON_CLASS)} onClick={openAdd} disabled={loading || saving || !(data?.migration_ready ?? false)}>
 												<UserPlus className="h-3.5 w-3.5" /> Add Learners
 											</Button>
 											{(dirtyRows.length > 0 || added.size > 0) && (
-												<Button variant="outline" size="sm" className={cn('h-8 text-xs', OUTLINE_BUTTON_CLASS)} onClick={() => { setInputs({}); setAdded(new Set()) }} disabled={saving}>Discard</Button>
+												<Button variant="outline" size="sm" className={cn('h-8 text-sm', OUTLINE_BUTTON_CLASS)} onClick={() => { setInputs({}); setAdded(new Set()) }} disabled={saving}>Discard</Button>
 											)}
-											<Button size="sm" className={cn('h-8 text-xs gap-1.5', PRIMARY_BUTTON_CLASS)} onClick={openSave} disabled={dirtyRows.length === 0 || saving || !(data?.migration_ready ?? false)}>
+											<Button size="sm" className={cn('h-8 text-sm gap-1.5', PRIMARY_BUTTON_CLASS)} onClick={openSave} disabled={dirtyRows.length === 0 || saving || !(data?.migration_ready ?? false)}>
 												<Save className="h-3.5 w-3.5" /> Save &amp; Upload Letter{dirtyRows.length > 0 ? ` (${dirtyRows.length})` : ''}
 											</Button>
 										</div>
@@ -527,9 +527,9 @@ export function FeeConcessionPanel({ institutionsId, sessionId, matchesFilters, 
 														<TableHead>Program</TableHead>
 														<TableHead className="text-center">Sem</TableHead>
 														<TableHead className="text-center">Total Subjects</TableHead>
-														<TableHead className="text-right">Exam Fee<div className="text-[10px] font-normal text-muted-foreground">actual / waive</div></TableHead>
-														<TableHead className="text-right">Application Fee<div className="text-[10px] font-normal text-muted-foreground">actual / waive</div></TableHead>
-														<TableHead className="text-right">Mark Statement Fee<div className="text-[10px] font-normal text-muted-foreground">actual / waive</div></TableHead>
+														<TableHead className="text-right">Exam Fee<div className="text-xs font-normal text-muted-foreground">actual / waive</div></TableHead>
+														<TableHead className="text-right">Application Fee<div className="text-xs font-normal text-muted-foreground">actual / waive</div></TableHead>
+														<TableHead className="text-right">Mark Statement Fee<div className="text-xs font-normal text-muted-foreground">actual / waive</div></TableHead>
 														<TableHead className="text-right">Concession</TableHead>
 														<TableHead className="text-right">Final Amount</TableHead>
 														<TableHead className="text-center">Status</TableHead>
@@ -538,18 +538,18 @@ export function FeeConcessionPanel({ institutionsId, sessionId, matchesFilters, 
 												</TableHeader>
 												<TableBody>
 													{!ready ? (
-														<TableRow><TableCell colSpan={LEARNER_COLUMNS} className="text-center py-10 text-sm text-muted-foreground">Select an institution and an exam session.</TableCell></TableRow>
+														<TableRow><TableCell colSpan={LEARNER_COLUMNS} className="text-center py-10 text-base text-muted-foreground">Select an institution and an exam session.</TableCell></TableRow>
 													) : loading ? (
-														<TableRow><TableCell colSpan={LEARNER_COLUMNS} className="text-center py-10 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin inline mr-2" />Loading learners…</TableCell></TableRow>
+														<TableRow><TableCell colSpan={LEARNER_COLUMNS} className="text-center py-10 text-base text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin inline mr-2" />Loading learners…</TableCell></TableRow>
 													) : pageRows.length === 0 ? (
 														<TableRow>
-														<TableCell colSpan={LEARNER_COLUMNS} className="text-center py-10 text-sm text-muted-foreground">
+														<TableCell colSpan={LEARNER_COLUMNS} className="text-center py-10 text-base text-muted-foreground">
 															<p>No learner on the list yet.</p>
-															<Button variant="outline" size="sm" className={cn('mt-3 h-8 text-xs gap-1.5', OUTLINE_BUTTON_CLASS)} onClick={openAdd} disabled={!(data?.migration_ready ?? false)}>
+															<Button variant="outline" size="sm" className={cn('mt-3 h-8 text-sm gap-1.5', OUTLINE_BUTTON_CLASS)} onClick={openAdd} disabled={!(data?.migration_ready ?? false)}>
 																<UserPlus className="h-3.5 w-3.5" /> Add Learners
 															</Button>
 															{(data?.learners.length ?? 0) === 0 && (
-																<p className="mt-3 text-xs">No learner of this institution has applied for the session yet - a concession is entered against the applied fee.</p>
+																<p className="mt-3 text-sm">No learner of this institution has applied for the session yet - a concession is entered against the applied fee.</p>
 															)}
 														</TableCell>
 													</TableRow>
@@ -562,34 +562,34 @@ export function FeeConcessionPanel({ institutionsId, sessionId, matchesFilters, 
 																	? 'bg-brand-green-50/50 hover:bg-brand-green-50 dark:bg-brand-green-900/10'
 																	: 'hover:bg-brand-cream-200/70 dark:hover:bg-gray-800/60'
 														)}>
-															<TableCell className="text-center text-xs align-top">{(currentPage - 1) * PAGE_SIZE + idx + 1}</TableCell>
-															<TableCell className="text-xs font-semibold whitespace-nowrap text-brand-green-800 dark:text-brand-green-200 align-top">{r.learner.register_number}</TableCell>
-															<TableCell className="text-xs align-top">{r.learner.student_name || '—'}</TableCell>
-															<TableCell className="text-xs align-top">
+															<TableCell className="text-center text-sm align-top">{(currentPage - 1) * PAGE_SIZE + idx + 1}</TableCell>
+															<TableCell className="text-sm font-semibold whitespace-nowrap text-brand-green-800 dark:text-brand-green-200 align-top">{r.learner.register_number}</TableCell>
+															<TableCell className="text-sm align-top">{r.learner.student_name || '—'}</TableCell>
+															<TableCell className="text-sm align-top">
 																<div>{r.learner.program_code || '—'}</div>
-																{r.learner.regulation_code && <div className="text-[10px] text-muted-foreground">Reg. {r.learner.regulation_code}</div>}
+																{r.learner.regulation_code && <div className="text-xs text-muted-foreground">Reg. {r.learner.regulation_code}</div>}
 															</TableCell>
-															<TableCell className="text-center text-xs align-top">{romanSemester(r.learner.semester)}</TableCell>
-															<TableCell className="text-center text-xs tabular-nums align-top">{r.learner.total_subjects}</TableCell>
+															<TableCell className="text-center text-sm align-top">{romanSemester(r.learner.semester)}</TableCell>
+															<TableCell className="text-center text-sm tabular-nums align-top">{r.learner.total_subjects}</TableCell>
 															{waiverCell(r, 'exam', r.learner.exam_fee, r.exam)}
 															{waiverCell(r, 'application', r.learner.application_fee, r.application)}
 															{waiverCell(r, 'markStatement', r.learner.mark_statement_fee, r.markStatement)}
 															<TableCell className="text-right align-top">
-																<div className={cn('text-xs tabular-nums', r.total > 0 && 'font-semibold text-brand-green-700 dark:text-brand-green-300')}>{r.total > 0 ? `− ${money(r.total)}` : '—'}</div>
+																<div className={cn('text-sm tabular-nums', r.total > 0 && 'font-semibold text-brand-green-700 dark:text-brand-green-300')}>{r.total > 0 ? `− ${money(r.total)}` : '—'}</div>
 																{!r.locked && (
-																	<button type="button" onClick={() => waiveFull(r.learner)} className="mt-1 text-[10px] text-brand-green-700 underline-offset-2 hover:underline dark:text-brand-green-300">Waive full fee</button>
+																	<button type="button" onClick={() => waiveFull(r.learner)} className="mt-1 text-xs text-brand-green-700 underline-offset-2 hover:underline dark:text-brand-green-300">Waive full fee</button>
 																)}
 															</TableCell>
-															<TableCell className="text-right text-xs font-bold tabular-nums text-brand-green-800 dark:text-brand-green-200 align-top">
+															<TableCell className="text-right text-sm font-bold tabular-nums text-brand-green-800 dark:text-brand-green-200 align-top">
 																{money(round2(r.actual - r.total))}
-																{r.total > 0 && <div className="text-[10px] font-normal text-muted-foreground line-through">{money(r.actual)}</div>}
+																{r.total > 0 && <div className="text-xs font-normal text-muted-foreground line-through">{money(r.actual)}</div>}
 															</TableCell>
 															<TableCell className="text-center align-top">
 																{r.dirty ? (
-																	<Badge variant="outline" className="text-[10px] whitespace-nowrap border-brand-yellow-400 bg-brand-yellow-100 text-brand-yellow-900 dark:border-brand-yellow-700 dark:bg-brand-yellow-900/30 dark:text-brand-yellow-200">Unsaved</Badge>
+																	<Badge variant="outline" className="text-xs whitespace-nowrap border-brand-yellow-400 bg-brand-yellow-100 text-brand-yellow-900 dark:border-brand-yellow-700 dark:bg-brand-yellow-900/30 dark:text-brand-yellow-200">Unsaved</Badge>
 																) : r.learner.concession ? (
-																	<Badge variant="outline" className="text-[10px] whitespace-nowrap border-brand-green-200 bg-brand-green-50 text-brand-green-700 dark:border-brand-green-800 dark:bg-brand-green-900/30 dark:text-brand-green-300">{r.learner.concession.concession_type}</Badge>
-																) : <span className="text-[10px] text-muted-foreground">Enter amount</span>}
+																	<Badge variant="outline" className="text-xs whitespace-nowrap border-brand-green-200 bg-brand-green-50 text-brand-green-700 dark:border-brand-green-800 dark:bg-brand-green-900/30 dark:text-brand-green-300">{r.learner.concession.concession_type}</Badge>
+																) : <span className="text-xs text-muted-foreground">Enter amount</span>}
 															</TableCell>
 															<TableCell className="text-center align-top">
 																{added.has(r.learner.key) && !r.learner.concession && (
@@ -604,7 +604,7 @@ export function FeeConcessionPanel({ institutionsId, sessionId, matchesFilters, 
 											</Table>
 										</div>
 										{visible.length > PAGE_SIZE && (
-											<div className="flex items-center justify-between px-4 py-2 border-t text-xs text-muted-foreground">
+											<div className="flex items-center justify-between px-4 py-2 border-t text-sm text-muted-foreground">
 												<span>Showing {(currentPage - 1) * PAGE_SIZE + 1}–{Math.min(currentPage * PAGE_SIZE, visible.length)} of {visible.length}</span>
 												<div className="flex items-center gap-1">
 													<Button variant="outline" size="sm" className="h-7 px-2" onClick={() => setPage(p => Math.max(1, p - 1))} disabled={currentPage <= 1}><ChevronLeft className="h-3.5 w-3.5" /></Button>
@@ -621,7 +621,7 @@ export function FeeConcessionPanel({ institutionsId, sessionId, matchesFilters, 
 							<TabsContent value="concessions" className="mt-0">
 								<Card className="border-brand-green-100 dark:border-brand-green-900/60 overflow-hidden">
 									<CardHeader className="py-3 px-4 border-b border-brand-green-100 bg-brand-cream-100 dark:border-brand-green-900/60 dark:bg-gray-900">
-										<CardTitle className="text-sm font-heading text-brand-green-800 dark:text-brand-green-200">Recorded Concessions</CardTitle>
+										<CardTitle className="text-base font-heading text-brand-green-800 dark:text-brand-green-200">Recorded Concessions</CardTitle>
 									</CardHeader>
 									<CardContent className="p-0">
 										<div className="overflow-x-auto">
@@ -644,31 +644,31 @@ export function FeeConcessionPanel({ institutionsId, sessionId, matchesFilters, 
 												</TableHeader>
 												<TableBody>
 													{loading ? (
-														<TableRow><TableCell colSpan={CONCESSION_COLUMNS} className="text-center py-10 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin inline mr-2" />Loading concessions…</TableCell></TableRow>
+														<TableRow><TableCell colSpan={CONCESSION_COLUMNS} className="text-center py-10 text-base text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin inline mr-2" />Loading concessions…</TableCell></TableRow>
 													) : visibleConcessions.length === 0 ? (
-														<TableRow><TableCell colSpan={CONCESSION_COLUMNS} className="text-center py-10 text-sm text-muted-foreground">No fee concession has been recorded for this session.</TableCell></TableRow>
+														<TableRow><TableCell colSpan={CONCESSION_COLUMNS} className="text-center py-10 text-base text-muted-foreground">No fee concession has been recorded for this session.</TableCell></TableRow>
 													) : visibleConcessions.map((c, idx) => (
 														<TableRow key={c.id} className="hover:bg-brand-cream-200/70 dark:hover:bg-gray-800/60">
-															<TableCell className="text-center text-xs">{idx + 1}</TableCell>
-															<TableCell className="text-xs font-semibold whitespace-nowrap text-brand-green-800 dark:text-brand-green-200">{c.stu_register_no}</TableCell>
-															<TableCell className="text-xs">{c.student_name || '—'}</TableCell>
-															<TableCell className="text-xs">{c.program_code || '—'}</TableCell>
-															<TableCell className="text-xs">{c.concession_type}</TableCell>
-															<TableCell className="text-right text-xs tabular-nums">{money(c.exam_fee_waiver)}</TableCell>
-															<TableCell className="text-right text-xs tabular-nums">{money(c.application_fee_waiver)}</TableCell>
-															<TableCell className="text-right text-xs tabular-nums">{money(c.mark_statement_fee_waiver)}</TableCell>
-															<TableCell className="text-right text-xs font-bold tabular-nums text-brand-green-800 dark:text-brand-green-200">{money(round2(c.exam_fee_waiver + c.application_fee_waiver + c.mark_statement_fee_waiver))}</TableCell>
-															<TableCell className="text-xs">
+															<TableCell className="text-center text-sm">{idx + 1}</TableCell>
+															<TableCell className="text-sm font-semibold whitespace-nowrap text-brand-green-800 dark:text-brand-green-200">{c.stu_register_no}</TableCell>
+															<TableCell className="text-sm">{c.student_name || '—'}</TableCell>
+															<TableCell className="text-sm">{c.program_code || '—'}</TableCell>
+															<TableCell className="text-sm">{c.concession_type}</TableCell>
+															<TableCell className="text-right text-sm tabular-nums">{money(c.exam_fee_waiver)}</TableCell>
+															<TableCell className="text-right text-sm tabular-nums">{money(c.application_fee_waiver)}</TableCell>
+															<TableCell className="text-right text-sm tabular-nums">{money(c.mark_statement_fee_waiver)}</TableCell>
+															<TableCell className="text-right text-sm font-bold tabular-nums text-brand-green-800 dark:text-brand-green-200">{money(round2(c.exam_fee_waiver + c.application_fee_waiver + c.mark_statement_fee_waiver))}</TableCell>
+															<TableCell className="text-sm">
 																<div className="whitespace-nowrap">{c.letter_ref_no || '—'}</div>
-																<div className="text-[10px] text-muted-foreground">{shortDate(c.letter_date)}</div>
+																<div className="text-xs text-muted-foreground">{shortDate(c.letter_date)}</div>
 																{c.letter_file_path && (
-																	<button type="button" onClick={() => openLetter(c)} disabled={openingLetter === c.id} className="mt-0.5 inline-flex items-center gap-1 text-[11px] text-brand-green-700 hover:underline dark:text-brand-green-300">
+																	<button type="button" onClick={() => openLetter(c)} disabled={openingLetter === c.id} className="mt-0.5 inline-flex items-center gap-1 text-[13px] text-brand-green-700 hover:underline dark:text-brand-green-300">
 																		{openingLetter === c.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Paperclip className="h-3 w-3" />} View letter
 																	</button>
 																)}
 															</TableCell>
 															<TableCell className="text-center">
-																<Badge variant="outline" className={cn('text-[10px] whitespace-nowrap', c.status === 'Applied'
+																<Badge variant="outline" className={cn('text-xs whitespace-nowrap', c.status === 'Applied'
 																	? 'border-brand-green-200 bg-brand-green-50 text-brand-green-700 dark:border-brand-green-800 dark:bg-brand-green-900/30 dark:text-brand-green-300'
 																	: 'border-brand-yellow-400 bg-brand-yellow-100 text-brand-yellow-900 dark:border-brand-yellow-700 dark:bg-brand-yellow-900/30 dark:text-brand-yellow-200')}>
 																	{c.status === 'Applied' ? 'Applied' : 'Awaiting approval'}
@@ -704,7 +704,7 @@ export function FeeConcessionPanel({ institutionsId, sessionId, matchesFilters, 
 
 					<div className="relative">
 						<Search className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-muted-foreground" />
-						<Input value={addSearch} onChange={e => setAddSearch(e.target.value)} placeholder="Register number or learner name" className="h-9 pl-8 text-sm" autoFocus />
+						<Input value={addSearch} onChange={e => setAddSearch(e.target.value)} placeholder="Register number or learner name" className="h-9 pl-8 text-base" autoFocus />
 					</div>
 
 					<div className="max-h-80 overflow-y-auto rounded-md border">
@@ -721,7 +721,7 @@ export function FeeConcessionPanel({ institutionsId, sessionId, matchesFilters, 
 							</TableHeader>
 							<TableBody>
 								{addShown.length === 0 ? (
-									<TableRow><TableCell colSpan={6} className="text-center py-8 text-sm text-muted-foreground">
+									<TableRow><TableCell colSpan={6} className="text-center py-8 text-base text-muted-foreground">
 										{(data?.learners.length ?? 0) === 0 ? 'No learner has applied for this session yet.' : 'No matching learner.'}
 									</TableCell></TableRow>
 								) : addShown.map(r => {
@@ -731,11 +731,11 @@ export function FeeConcessionPanel({ institutionsId, sessionId, matchesFilters, 
 											<TableCell className="text-center" onClick={e => e.stopPropagation()}>
 												<Checkbox checked={picked} onCheckedChange={v => togglePicked(r.learner.key, v === true)} aria-label={`Add ${r.learner.register_number}`} />
 											</TableCell>
-											<TableCell className="text-xs font-semibold whitespace-nowrap text-brand-green-800 dark:text-brand-green-200">{r.learner.register_number}</TableCell>
-											<TableCell className="text-xs">{r.learner.student_name || '—'}</TableCell>
-											<TableCell className="text-xs">{r.learner.program_code || '—'}</TableCell>
-											<TableCell className="text-center text-xs">{romanSemester(r.learner.semester)}</TableCell>
-											<TableCell className="text-right text-xs tabular-nums">{money(r.actual)}</TableCell>
+											<TableCell className="text-sm font-semibold whitespace-nowrap text-brand-green-800 dark:text-brand-green-200">{r.learner.register_number}</TableCell>
+											<TableCell className="text-sm">{r.learner.student_name || '—'}</TableCell>
+											<TableCell className="text-sm">{r.learner.program_code || '—'}</TableCell>
+											<TableCell className="text-center text-sm">{romanSemester(r.learner.semester)}</TableCell>
+											<TableCell className="text-right text-sm tabular-nums">{money(r.actual)}</TableCell>
 										</TableRow>
 									)
 								})}
@@ -743,7 +743,7 @@ export function FeeConcessionPanel({ institutionsId, sessionId, matchesFilters, 
 						</Table>
 					</div>
 					{addCandidates.length > ADD_RESULT_LIMIT && (
-						<p className="text-[11px] text-muted-foreground">Showing the first {ADD_RESULT_LIMIT} of {addCandidates.length} learners - type a register number or name to narrow the list.</p>
+						<p className="text-[13px] text-muted-foreground">Showing the first {ADD_RESULT_LIMIT} of {addCandidates.length} learners - type a register number or name to narrow the list.</p>
 					)}
 
 					<DialogFooter>
@@ -766,7 +766,7 @@ export function FeeConcessionPanel({ institutionsId, sessionId, matchesFilters, 
 						</DialogDescription>
 					</DialogHeader>
 
-					<div className="max-h-32 overflow-y-auto rounded-md border px-3 py-2 text-xs space-y-0.5">
+					<div className="max-h-32 overflow-y-auto rounded-md border px-3 py-2 text-sm space-y-0.5">
 						{dirtyRows.map(r => (
 							<div key={r.learner.key} className="flex justify-between gap-2">
 								<span className="truncate"><span className="font-medium">{r.learner.register_number}</span> — {r.learner.student_name || '—'}</span>
@@ -777,30 +777,30 @@ export function FeeConcessionPanel({ institutionsId, sessionId, matchesFilters, 
 
 					<div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
 						<div className="space-y-1.5">
-							<Label className="text-xs">Concession Type *</Label>
+							<Label className="text-sm">Concession Type *</Label>
 							<Select value={concessionType} onValueChange={setConcessionType}>
-								<SelectTrigger className="h-9 text-sm"><SelectValue /></SelectTrigger>
+								<SelectTrigger className="h-9 text-base"><SelectValue /></SelectTrigger>
 								<SelectContent>
-									{EXAM_FEE_CONCESSION_TYPES.map(t => <SelectItem key={t} value={t} className="text-sm">{t}</SelectItem>)}
+									{EXAM_FEE_CONCESSION_TYPES.map(t => <SelectItem key={t} value={t} className="text-base">{t}</SelectItem>)}
 								</SelectContent>
 							</Select>
 						</div>
 						<div className="space-y-1.5">
-							<Label htmlFor="letter-date" className="text-xs">Letter Date</Label>
-							<Input id="letter-date" type="date" value={letterDate} onChange={e => setLetterDate(e.target.value)} className="h-9 text-sm" />
+							<Label htmlFor="letter-date" className="text-sm">Letter Date</Label>
+							<Input id="letter-date" type="date" value={letterDate} onChange={e => setLetterDate(e.target.value)} className="h-9 text-base" />
 						</div>
 						<div className="space-y-1.5 sm:col-span-2">
-							<Label htmlFor="letter-ref" className="text-xs">Approval Letter Reference No. *</Label>
-							<Input id="letter-ref" value={letterRefNo} onChange={e => setLetterRefNo(e.target.value)} placeholder="e.g. JKKN/COE/FC/2026/014" maxLength={100} className="h-9 text-sm" />
+							<Label htmlFor="letter-ref" className="text-sm">Approval Letter Reference No. *</Label>
+							<Input id="letter-ref" value={letterRefNo} onChange={e => setLetterRefNo(e.target.value)} placeholder="e.g. JKKN/COE/FC/2026/014" maxLength={100} className="h-9 text-base" />
 						</div>
 						<div className="space-y-1.5 sm:col-span-2">
-							<Label htmlFor="letter-file" className="text-xs">Approval Letter {letterRequired ? '*' : '(leave empty to keep the letter on file)'}</Label>
-							<Input id="letter-file" type="file" accept={LETTER_ACCEPT} onChange={e => handleFile(e.target.files?.[0] ?? null)} className="h-9 text-xs file:text-xs" />
-							<p className="text-[11px] text-muted-foreground">PDF or image, 5 MB at most.</p>
+							<Label htmlFor="letter-file" className="text-sm">Approval Letter {letterRequired ? '*' : '(leave empty to keep the letter on file)'}</Label>
+							<Input id="letter-file" type="file" accept={LETTER_ACCEPT} onChange={e => handleFile(e.target.files?.[0] ?? null)} className="h-9 text-sm file:text-sm" />
+							<p className="text-[13px] text-muted-foreground">PDF or image, 5 MB at most.</p>
 						</div>
 						<div className="space-y-1.5 sm:col-span-2">
-							<Label htmlFor="concession-remarks" className="text-xs">Remarks</Label>
-							<Textarea id="concession-remarks" value={remarks} onChange={e => setRemarks(e.target.value)} rows={2} maxLength={500} className="text-sm" />
+							<Label htmlFor="concession-remarks" className="text-sm">Remarks</Label>
+							<Textarea id="concession-remarks" value={remarks} onChange={e => setRemarks(e.target.value)} rows={2} maxLength={500} className="text-base" />
 						</div>
 					</div>
 

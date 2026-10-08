@@ -330,7 +330,7 @@ function exportFinalApprovalExcel(opts: ExcelExportOptions): ExcelReportResult {
 			'S.No': idx + 1,
 			'Register No': row.stu_register_no || '',
 			'Name of the Candidate': row.student_name || '',
-			'Program': row.program_code || '',
+			'Program': row.program_code && row.program_name ? `${row.program_code} - ${row.program_name}` : row.program_code || '',
 			'Regulation': row.regulation_code || '',
 			'Sem': row.learner_semester ? toRoman(row.learner_semester) : '',
 			'Total Subjects': Number(row.total_subjects) || 0,
@@ -664,6 +664,7 @@ function applySheetFormatting(ws: ReturnType<typeof XLSX.utils.json_to_sheet>, r
 	ws['!cols'] = cols.map(col => {
 		if (col === 'Course Name') return { wch: 60 }
 		if (col === 'Name of the Candidate') return { wch: 30 }
+		if (col === 'Program') return { wch: 40 }
 		if (col === 'Board') return { wch: 22 }
 		if (col.includes('Fee') || col.includes('Amount')) return { wch: 18 }
 		if (col === 'Register No') return { wch: 20 }
