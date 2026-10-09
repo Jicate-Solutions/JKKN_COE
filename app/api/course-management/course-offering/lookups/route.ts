@@ -59,15 +59,41 @@ export async function GET(request: Request) {
 				return NextResponse.json({ error: 'Failed to fetch semesters' }, { status: 500 })
 			}
 
-			// Deduplicate by semester_code (semester_id may be null)
-			const seen = new Set<string>()
-			const unique: Array<{ semester_id: string | null; semester_code: string }> = []
+			// Deduplicate by semester_code. semester_id is null on some mapping rows, so keep
+			// the first non-null one per code rather than whichever row happens to come first.
+			const byCode = new Map<string, { semester_id: string | null; semester_code: string }>()
 			for (const row of data || []) {
-				if (row.semester_code && !seen.has(row.semester_code)) {
-					seen.add(row.semester_code)
-					unique.push({ semester_id: row.semester_id, semester_code: row.semester_code })
+				if (!row.semester_code) continue
+				const existing = byCode.get(row.semester_code)
+				if (!existing) {
+					byCode.set(row.semester_code, { semester_id: row.semester_id, semester_code: row.semester_code })
+				} else if (!existing.semester_id && row.semester_id) {
+					existing.semester_id = row.semester_id
 				}
 			}
+			const unique = [...byCode.values()]
+
+			// A semester_id belongs to the program, not to one regulation. When none of this
+			// regulation's rows carries it, borrow it from another regulation's rows of the
+			// same program + semester, so callers can still ask MyJKKN for that one cohort.
+			const missing = unique.filter(u => !u.semester_id).map(u => u.semester_code)
+			if (missing.length > 0) {
+				const { data: siblings, error: siblingError } = await supabase
+					.from('course_mapping')
+					.select('semester_id, semester_code')
+					.eq('institution_code', institutionCode)
+					.eq('program_code', programCode)
+					.in('semester_code', missing)
+					.not('semester_id', 'is', null)
+				if (siblingError) {
+					console.error('Lookup sibling semester ids error:', siblingError)
+				}
+				for (const row of siblings || []) {
+					const entry = byCode.get(row.semester_code)
+					if (entry && !entry.semester_id) entry.semester_id = row.semester_id
+				}
+			}
+
 			const sorted = unique.sort((a, b) => {
 				const numA = parseInt(a.semester_code.match(/(\d+)/)?.[1] || '0')
 				const numB = parseInt(b.semester_code.match(/(\d+)/)?.[1] || '0')

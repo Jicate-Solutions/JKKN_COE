@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
 import nodemailer from 'nodemailer'
+import { resolveSmtpHost } from '@/lib/services/email-service'
 
 /**
  * POST /api/smtp-config/test
@@ -34,7 +35,7 @@ export async function POST(request: NextRequest) {
 
 		// Create transporter
 		const transporter = nodemailer.createTransport({
-			host: config.smtp_host,
+			...(await resolveSmtpHost(config.smtp_host)),
 			port: config.smtp_port,
 			secure: config.smtp_secure,
 			auth: {

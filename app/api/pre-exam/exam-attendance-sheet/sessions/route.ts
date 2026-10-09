@@ -8,6 +8,7 @@
 
 import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
+import { fetchAllRows } from '@/lib/exam-applications/paginate'
 
 export async function GET(request: Request) {
 	try {
@@ -24,20 +25,26 @@ export async function GET(request: Request) {
 			)
 		}
 
-		const { data, error } = await supabase
-			.from('exam_timetables')
-			.select('session')
-			.eq('institutions_id', institutionId)
-			.eq('examination_session_id', sessionId)
-			.eq('exam_date', examDate)
-			.eq('is_published', true)
-
-		if (error) {
-			return NextResponse.json({ error: 'Failed to fetch session types', details: error }, { status: 500 })
+		// Paged to completion so Supabase's 1000-row cap cannot hide a session
+		let data: any[]
+		try {
+			data = await fetchAllRows(
+				() => supabase
+					.from('exam_timetables')
+					.select('session')
+					.eq('institutions_id', institutionId)
+					.eq('examination_session_id', sessionId)
+					.eq('exam_date', examDate)
+					.eq('is_published', true),
+				{ label: 'session types' }
+			)
+		} catch (error) {
+			console.error('[AttendanceSheet/Sessions] Fetch error:', error)
+			return NextResponse.json({ error: 'Failed to fetch session types' }, { status: 500 })
 		}
 
 		// Deduplicate sessions (FN, AN)
-		const uniqueSessions = [...new Set((data || []).map(d => d.session).filter(Boolean))]
+		const uniqueSessions = [...new Set(data.map(d => d.session).filter(Boolean))]
 
 		// Sort: FN before AN
 		uniqueSessions.sort((a, b) => {

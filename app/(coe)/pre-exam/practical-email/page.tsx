@@ -106,6 +106,7 @@ interface ExaminerRow {
 	courses: CourseEntry[]
 	last_email_status: 'SENT' | 'FAILED' | 'PENDING' | null
 	last_email_sent_at: string | null
+	last_email_error: string | null
 }
 
 interface SendProgressItem {
@@ -138,6 +139,21 @@ function formatDateTime(dateStr: string | null): string {
 	})
 }
 
+// Mails sent at the same time; each one renders its own letter PDF on the server
+const SEND_CONCURRENCY = 2
+
+// Plain-language reason for a failed send; the raw mail-server text stays in the tooltip
+function describeEmailError(raw: string | null): string {
+	if (!raw) return 'No reason recorded'
+	if (/BadCredentials|Invalid login|Username and Password not accepted/i.test(raw)) {
+		return 'Sender mailbox login rejected — the SMTP username/password is not accepted'
+	}
+	if (/ETIMEDOUT|ECONNREFUSED|ECONNRESET|ENOTFOUND|timed? ?out/i.test(raw)) {
+		return 'Could not reach the mail server'
+	}
+	return raw.split('\n')[0]
+}
+
 function ExaminerTypeBadge({ type }: { type: 'internal' | 'external' | 'skilled' }) {
 	const map = {
 		internal: 'bg-blue-100 text-blue-800 dark:bg-blue-900/20 dark:text-blue-300',
@@ -145,7 +161,7 @@ function ExaminerTypeBadge({ type }: { type: 'internal' | 'external' | 'skilled'
 		skilled: 'bg-amber-100 text-amber-800 dark:bg-amber-900/20 dark:text-amber-300',
 	}
 	return (
-		<span className={cn('px-2 py-0.5 rounded-full text-xs font-medium capitalize', map[type])}>
+		<span className={cn('px-2 py-0.5 rounded-full text-sm font-medium capitalize', map[type])}>
 			{type}
 		</span>
 	)
@@ -154,7 +170,7 @@ function ExaminerTypeBadge({ type }: { type: 'internal' | 'external' | 'skilled'
 function EmailStatusBadge({ status }: { status: 'SENT' | 'FAILED' | 'PENDING' | null }) {
 	if (!status) {
 		return (
-			<span className="px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400">
+			<span className="px-2 py-0.5 rounded-full text-sm font-medium bg-amber-100 text-amber-800 dark:bg-amber-900/20 dark:text-amber-300">
 				Not Sent
 			</span>
 		)
@@ -165,7 +181,7 @@ function EmailStatusBadge({ status }: { status: 'SENT' | 'FAILED' | 'PENDING' | 
 		PENDING: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-300',
 	}
 	return (
-		<span className={cn('px-2 py-0.5 rounded-full text-xs font-medium', map[status])}>
+		<span className={cn('px-2 py-0.5 rounded-full text-sm font-medium', map[status])}>
 			{status}
 		</span>
 	)
@@ -205,6 +221,7 @@ export default function PracticalEmailPage() {
 	// Selection (Sent tab — for resend)
 	const [resendKeys, setResendKeys] = useState<Set<string>>(new Set())
 	const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set())
+	const [activeTab, setActiveTab] = useState<'assigned' | 'status' | 'failed'>('assigned')
 
 	// Confirmation dialog
 	const [confirmOpen, setConfirmOpen] = useState(false)
@@ -213,8 +230,8 @@ export default function PracticalEmailPage() {
 	const [progressOpen, setProgressOpen] = useState(false)
 	const [progressItems, setProgressItems] = useState<SendProgressItem[]>([])
 	const [progressDone, setProgressDone] = useState(false)
-	const [currentBatchId, setCurrentBatchId] = useState<string | null>(null)
-	const pollRef = useRef<NodeJS.Timeout | null>(null)
+	// Latest loadAssignments call; an older response must not overwrite a newer one
+	const loadSeqRef = useRef(0)
 
 
 
@@ -298,6 +315,7 @@ export default function PracticalEmailPage() {
 			return
 		}
 
+		const seq = ++loadSeqRef.current
 		try {
 			setLoadingAssignments(true)
 			setSelectedKeys(new Set())
@@ -309,17 +327,26 @@ export default function PracticalEmailPage() {
 			)
 			if (!res.ok) throw new Error('Failed to load assignments')
 			const data = await res.json()
+			if (seq !== loadSeqRef.current) return
 			setExaminers(data.examiners || [])
 		} catch (err) {
+			if (seq !== loadSeqRef.current) return
 			toast({
 				title: '❌ Error',
 				description: err instanceof Error ? err.message : 'Failed to load data',
 				variant: 'destructive',
 			})
 		} finally {
-			setLoadingAssignments(false)
+			if (seq === loadSeqRef.current) setLoadingAssignments(false)
 		}
 	}, [effectiveInstitutionId, selectedSessionId, toast])
+
+	// Load as soon as an exam session is chosen (here or in the header) — no Load click needed
+	useEffect(() => {
+		if (isReady && effectiveInstitutionId && selectedSessionId) {
+			loadAssignments()
+		}
+	}, [isReady, effectiveInstitutionId, selectedSessionId])
 
 	// ---------------------------------------------------------------------------
 	// Filtering
@@ -335,23 +362,91 @@ export default function PracticalEmailPage() {
 		)
 	})
 
-	// Split into Pending (not sent / failed) and Sent tabs
-	const pendingExaminers = filteredExaminers.filter(ex => ex.last_email_status !== 'SENT')
+	// Split into Pending (never sent), Sent and Failed tabs
+	const pendingExaminers = filteredExaminers.filter(
+		ex => ex.last_email_status !== 'SENT' && ex.last_email_status !== 'FAILED'
+	)
 	const sentExaminers = filteredExaminers.filter(ex => ex.last_email_status === 'SENT')
+	const failedExaminers = filteredExaminers.filter(ex => ex.last_email_status === 'FAILED')
+	// Pending and Failed share one table — both are sent with the same action
+	const unsentExaminers = activeTab === 'failed' ? failedExaminers : pendingExaminers
+
+	function switchTab(tab: 'assigned' | 'status' | 'failed') {
+		setActiveTab(tab)
+		setSelectedKeys(new Set())
+	}
+
+	// One entry per stat card; those with a tab also drive the tab strip
+	const statCards: Array<{
+		label: string
+		count: number
+		icon: typeof Users
+		gradient: string
+		ring: string
+		tab: 'assigned' | 'status' | 'failed' | null
+		tabIdle: string
+		tabActive: string
+		chip: string
+	}> = [
+		{
+			label: 'Total Examiners',
+			count: examiners.length,
+			icon: Users,
+			gradient: 'from-slate-600 to-slate-800',
+			ring: 'ring-slate-500',
+			tab: null,
+			tabIdle: '',
+			tabActive: '',
+			chip: '',
+		},
+		{
+			label: 'Pending',
+			count: pendingExaminers.length,
+			icon: Clock,
+			gradient: 'from-amber-500 to-orange-600',
+			ring: 'ring-amber-500',
+			tab: 'assigned',
+			tabIdle: 'text-amber-700 dark:text-amber-300',
+			tabActive: 'data-[state=active]:bg-amber-500',
+			chip: 'bg-amber-100 text-amber-800',
+		},
+		{
+			label: 'Sent',
+			count: sentExaminers.length,
+			icon: MailCheck,
+			gradient: 'from-emerald-500 to-green-700',
+			ring: 'ring-emerald-500',
+			tab: 'status',
+			tabIdle: 'text-emerald-700 dark:text-emerald-300',
+			tabActive: 'data-[state=active]:bg-emerald-600',
+			chip: 'bg-emerald-100 text-emerald-800',
+		},
+		{
+			label: 'Failed',
+			count: failedExaminers.length,
+			icon: AlertCircle,
+			gradient: 'from-rose-500 to-red-700',
+			ring: 'ring-red-500',
+			tab: 'failed',
+			tabIdle: 'text-red-700 dark:text-red-300',
+			tabActive: 'data-[state=active]:bg-red-600',
+			chip: 'bg-red-100 text-red-800',
+		},
+	]
 
 // ---------------------------------------------------------------------------
 	// Selection
 	// ---------------------------------------------------------------------------
 
 	const allVisibleSelected =
-		pendingExaminers.length > 0 &&
-		pendingExaminers.every(ex => selectedKeys.has(ex.examiner_key))
+		unsentExaminers.length > 0 &&
+		unsentExaminers.every(ex => selectedKeys.has(ex.examiner_key))
 
 	const someSelected = selectedKeys.size > 0
 
 	function toggleSelectAll(checked: boolean) {
 		if (checked) {
-			setSelectedKeys(new Set(pendingExaminers.map(ex => ex.examiner_key)))
+			setSelectedKeys(new Set(unsentExaminers.map(ex => ex.examiner_key)))
 		} else {
 			setSelectedKeys(new Set())
 		}
@@ -438,7 +533,7 @@ export default function PracticalEmailPage() {
 
 	function handleSendSelected() {
 		if (selectedKeys.size === 0) return
-		sendQueueRef.current = pendingExaminers.filter(ex => selectedKeys.has(ex.examiner_key))
+		sendQueueRef.current = unsentExaminers.filter(ex => selectedKeys.has(ex.examiner_key))
 		setConfirmIsResend(false)
 		setConfirmOpen(true)
 	}
@@ -466,223 +561,68 @@ export default function PracticalEmailPage() {
 		setProgressDone(false)
 		setProgressOpen(true)
 
-		try {
-			const res = await fetch('/api/pre-exam/practical-email/send', {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({
-					examiner_keys: selectedExaminers.map(ex => ({
-						key: ex.examiner_key,
-						type: ex.examiner_type,
-					})),
-					institutions_id: effectiveInstitutionId,
-					examination_session_id: selectedSessionId,
-				}),
-			})
+		const setItem = (key: string, change: Partial<SendProgressItem>) =>
+			setProgressItems(prev => prev.map(item => (item.examiner_key === key ? { ...item, ...change } : item)))
 
-			if (!res.ok) {
-				const err = await res.json()
-				throw new Error(err.error || 'Failed to start send job')
-			}
+		// One examiner per request, SEND_CONCURRENCY at a time: every request stays far
+		// below the server's 60 s limit however many are selected, and the progress bar
+		// moves as each mail finishes instead of jumping from 0% to 100% at the end.
+		const queue = [...selectedExaminers]
+		let sentCount = 0
+		let failedCount = 0
 
-			const data = await res.json()
-			const batchId: string = data.batch_id
-
-			// Show processing error if returned
-			if (data.error) {
-				toast({
-					title: '❌ Processing Error',
-					description: data.error,
-					variant: 'destructive',
-				})
-			}
-
-			if (!batchId) {
-				// Synchronous response — update from returned results
-				if (data.results) {
-					applyResultsToProgress(data.results)
-				}
-				setProgressDone(true)
-				await loadAssignments()
-				return
-			}
-
-			// If batch already completed (synchronous processing), skip polling
-			if (data.status && data.status !== 'processing') {
-				const sentCount = data.sent_count || 0
-				const failedCount = data.failed_count || 0
-
-				setProgressItems(prev =>
-					prev.map(item => {
-						if (sentCount > 0) return { ...item, status: 'sent' as const }
-						if (failedCount > 0) return { ...item, status: 'failed' as const, error: data.error }
-						return { ...item, status: 'failed' as const, error: data.error || 'No emails processed' }
+		async function worker() {
+			for (let examiner = queue.shift(); examiner; examiner = queue.shift()) {
+				setItem(examiner.examiner_key, { status: 'sending' })
+				try {
+					const res = await fetch('/api/pre-exam/practical-email/send', {
+						method: 'POST',
+						headers: { 'Content-Type': 'application/json' },
+						body: JSON.stringify({
+							examiner_keys: [{ key: examiner.examiner_key, type: examiner.examiner_type }],
+							institutions_id: effectiveInstitutionId,
+							examination_session_id: selectedSessionId,
+						}),
 					})
-				)
-				setProgressDone(true)
-				await loadAssignments()
+					const data = await res.json().catch(() => ({}))
 
-				if (sentCount > 0) {
-					toast({
-						title: '✅ Emails Sent',
-						description: `${sentCount} appointment email${sentCount !== 1 ? 's' : ''} sent successfully`,
-						className: 'bg-green-50 border-green-200 text-green-800',
-					})
+					if (res.ok && (data.sent_count || 0) > 0) {
+						sentCount++
+						setItem(examiner.examiner_key, { status: 'sent' })
+					} else {
+						failedCount++
+						setItem(examiner.examiner_key, {
+							status: 'failed',
+							error: describeEmailError(data.failed_reasons?.[0] || data.error || null),
+						})
+					}
+				} catch {
+					failedCount++
+					setItem(examiner.examiner_key, { status: 'failed', error: 'No response from the server' })
 				}
-				return
 			}
+		}
 
-			setCurrentBatchId(batchId)
-			startPolling(batchId, items)
-		} catch (err) {
+		await Promise.all(Array.from({ length: Math.min(SEND_CONCURRENCY, queue.length) }, () => worker()))
+
+		setProgressDone(true)
+		await loadAssignments()
+
+		if (sentCount > 0) {
 			toast({
-				title: '❌ Send Failed',
-				description: err instanceof Error ? err.message : 'Please try again',
+				title: '✅ Emails Sent',
+				description: `${sentCount} appointment email${sentCount !== 1 ? 's' : ''} sent successfully`,
+				className: 'bg-green-50 border-green-200 text-green-800',
+			})
+		}
+		if (failedCount > 0) {
+			toast({
+				title: '⚠️ Some Failed',
+				description: `${failedCount} email${failedCount !== 1 ? 's' : ''} failed to send — see the Failed tab for the reason`,
 				variant: 'destructive',
 			})
-			setProgressDone(true)
 		}
 	}
-
-	function applyResultsToProgress(results: Array<{ key: string; status: 'sent' | 'failed'; error?: string }>) {
-		setProgressItems(prev =>
-			prev.map(item => {
-				const match = results.find(r => r.key === item.examiner_key)
-				if (!match) return item
-				return {
-					...item,
-					status: match.status === 'sent' ? 'sent' : 'failed',
-					error: match.error,
-				}
-			})
-		)
-	}
-
-	function startPolling(batchId: string, _initialItems: SendProgressItem[]) {
-		if (pollRef.current) clearInterval(pollRef.current)
-
-		let pollCount = 0
-		const MAX_POLLS = 90 // 90 × 2s = 3 minutes max
-
-		pollRef.current = setInterval(async () => {
-			pollCount++
-
-			// Safety: stop polling after max attempts
-			if (pollCount > MAX_POLLS) {
-				if (pollRef.current) clearInterval(pollRef.current)
-				pollRef.current = null
-				setProgressDone(true)
-				setCurrentBatchId(null)
-				toast({
-					title: '⚠️ Timeout',
-					description: 'Email sending is taking longer than expected. Please refresh to check status.',
-					variant: 'destructive',
-				})
-				return
-			}
-
-			try {
-				const res = await fetch(`/api/pre-exam/practical-email/status?batch_id=${batchId}`)
-				if (!res.ok) return
-				const data = await res.json()
-
-				// Status API returns { details: [...], status, sent_count, failed_count }
-				const details = data.details || []
-
-				// Update progress items — match by examiner_name OR examiner_email
-				if (details.length > 0) {
-					setProgressItems(prev =>
-						prev.map(item => {
-							const match = details.find((d: any) =>
-								d.examiner_name === item.examiner_name ||
-								(item.examiner_email && d.examiner_email === item.examiner_email)
-							)
-							if (!match) return item
-							const s = (match.status || '').toLowerCase()
-							return {
-								...item,
-								status: s === 'sent' ? 'sent' : s === 'failed' ? 'failed' : 'sending',
-								error: match.error_message,
-							}
-						})
-					)
-				}
-
-				// Batch is done when status is not 'processing'
-				const isDone = data.status && data.status !== 'processing'
-				if (isDone) {
-					if (pollRef.current) clearInterval(pollRef.current)
-					pollRef.current = null
-
-					// Fallback: if items are still 'pending' after batch completes,
-					// update them based on batch-level sent/failed counts
-					setProgressItems(prev => {
-						const stillPending = prev.filter(i => i.status === 'pending')
-						if (stillPending.length === 0) return prev
-
-						const batchSent = data.sent_count || 0
-						const batchFailed = data.failed_count || 0
-						const alreadySent = prev.filter(i => i.status === 'sent').length
-						const alreadyFailed = prev.filter(i => i.status === 'failed').length
-						const remainingSent = batchSent - alreadySent
-						const remainingFailed = batchFailed - alreadyFailed
-
-						let sentAssigned = 0
-						return prev.map(item => {
-							if (item.status !== 'pending') return item
-							if (sentAssigned < remainingSent) {
-								sentAssigned++
-								return { ...item, status: 'sent' as const }
-							}
-							if (remainingFailed > 0) {
-								return { ...item, status: 'failed' as const }
-							}
-							return { ...item, status: 'sent' as const }
-						})
-					})
-
-					setProgressDone(true)
-					setCurrentBatchId(null)
-					await loadAssignments()
-
-					const sentCount = data.sent_count || 0
-					const failedCount = data.failed_count || 0
-
-					if (sentCount > 0) {
-						toast({
-							title: '✅ Emails Sent',
-							description: `${sentCount} appointment email${sentCount !== 1 ? 's' : ''} sent successfully`,
-							className: 'bg-green-50 border-green-200 text-green-800',
-						})
-					}
-					if (failedCount > 0) {
-						toast({
-							title: '⚠️ Some Failed',
-							description: `${failedCount} email${failedCount !== 1 ? 's' : ''} failed to send`,
-							variant: 'destructive',
-						})
-					}
-				}
-			} catch {
-				// Polling errors are non-fatal — but count toward max
-			}
-		}, 2000)
-	}
-
-	// Cleanup polling on unmount + clear stale batch IDs
-	useEffect(() => {
-		// On mount, clear any stale batch state (survives HMR)
-		setCurrentBatchId(null)
-		setProgressDone(false)
-
-		return () => {
-			if (pollRef.current) {
-				clearInterval(pollRef.current)
-				pollRef.current = null
-			}
-		}
-	}, [])
-
 	// ---------------------------------------------------------------------------
 	// Progress stats
 	// ---------------------------------------------------------------------------
@@ -736,7 +676,7 @@ export default function PracticalEmailPage() {
 							<h1 className="text-xl font-bold text-slate-900 dark:text-slate-100">
 								Practical Examiner Emails
 							</h1>
-							<p className="text-xs text-muted-foreground">
+							<p className="text-sm text-muted-foreground">
 								Send appointment letters to practical exam examiners
 							</p>
 						</div>
@@ -763,7 +703,7 @@ export default function PracticalEmailPage() {
 									{/* Institution (super_admin only) */}
 									{mustSelectInstitution && (
 										<div className="flex flex-col gap-1.5 min-w-[200px]">
-											<span className="text-xs font-medium text-muted-foreground">
+											<span className="text-sm font-medium text-muted-foreground">
 												Institution <span className="text-red-500">*</span>
 											</span>
 											<Select
@@ -771,12 +711,12 @@ export default function PracticalEmailPage() {
 												onValueChange={setSelectedInstitutionId}
 												disabled={loadingInstitutions}
 											>
-												<SelectTrigger className="h-9 text-xs">
+												<SelectTrigger className="h-9 text-sm">
 													<SelectValue placeholder={loadingInstitutions ? 'Loading...' : 'Select institution'} />
 												</SelectTrigger>
 												<SelectContent>
 													{institutions.map(inst => (
-														<SelectItem key={inst.id} value={inst.id} className="text-xs">
+														<SelectItem key={inst.id} value={inst.id} className="text-sm">
 															{inst.institution_code} - {inst.name}
 														</SelectItem>
 													))}
@@ -788,7 +728,7 @@ export default function PracticalEmailPage() {
 									{/* Exam Session */}
 									{mustSelectSession && (
 									<div className="flex flex-col gap-1.5 min-w-[220px]">
-										<span className="text-xs font-medium text-muted-foreground">
+										<span className="text-sm font-medium text-muted-foreground">
 											Exam Session <span className="text-red-500">*</span>
 										</span>
 										<Select
@@ -796,7 +736,7 @@ export default function PracticalEmailPage() {
 											onValueChange={setSelectedSessionId}
 											disabled={!effectiveInstitutionId || loadingSessions}
 										>
-											<SelectTrigger className="h-9 text-xs">
+											<SelectTrigger className="h-9 text-sm">
 												<SelectValue
 													placeholder={
 														loadingSessions
@@ -809,7 +749,7 @@ export default function PracticalEmailPage() {
 											</SelectTrigger>
 											<SelectContent>
 												{sessions.map(s => (
-													<SelectItem key={s.id} value={s.id} className="text-xs">
+													<SelectItem key={s.id} value={s.id} className="text-sm">
 														{s.session_name}
 													</SelectItem>
 												))}
@@ -820,14 +760,14 @@ export default function PracticalEmailPage() {
 
 									{/* Search */}
 									<div className="flex flex-col gap-1.5 flex-1 min-w-[180px]">
-										<span className="text-xs font-medium text-muted-foreground">Search</span>
+										<span className="text-sm font-medium text-muted-foreground">Search</span>
 										<div className="relative">
 											<Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
 											<Input
 												value={searchTerm}
 												onChange={e => setSearchTerm(e.target.value)}
 												placeholder="Name, email, course code..."
-												className="h-9 text-xs pl-8"
+												className="h-9 text-sm pl-8"
 											/>
 										</div>
 									</div>
@@ -836,69 +776,49 @@ export default function PracticalEmailPage() {
 									<Button
 										onClick={loadAssignments}
 										disabled={!effectiveInstitutionId || !selectedSessionId || loadingAssignments}
-										className="h-9 text-xs"
+										className="h-9 text-sm"
 									>
 										{loadingAssignments ? (
 											<Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
 										) : (
 											<RefreshCw className="h-3.5 w-3.5 mr-1.5" />
 										)}
-										Load
+										Refresh
 									</Button>
 								</div>
 							</CardContent>
 						</Card>
 					)}
 
-					{/* Summary Stats */}
+					{/* Summary Stats — Pending / Sent / Failed open their list on click */}
 					{!loadingAssignments && examiners.length > 0 && (
 						<div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-							<Card className="shadow-sm border-l-4 border-l-slate-400">
-								<CardContent className="p-3 flex items-center gap-3">
-									<div className="h-9 w-9 rounded-lg bg-slate-100 dark:bg-slate-800 flex items-center justify-center">
-										<Users className="h-4.5 w-4.5 text-slate-600 dark:text-slate-400" />
-									</div>
-									<div>
-										<p className="text-lg font-bold text-slate-900 dark:text-slate-100">{examiners.length}</p>
-										<p className="text-[10px] text-muted-foreground uppercase tracking-wide">Total Examiners</p>
-									</div>
-								</CardContent>
-							</Card>
-							<Card className="shadow-sm border-l-4 border-l-amber-400">
-								<CardContent className="p-3 flex items-center gap-3">
-									<div className="h-9 w-9 rounded-lg bg-amber-50 dark:bg-amber-900/20 flex items-center justify-center">
-										<Clock className="h-4.5 w-4.5 text-amber-600 dark:text-amber-400" />
-									</div>
-									<div>
-										<p className="text-lg font-bold text-amber-700 dark:text-amber-400">{pendingExaminers.length}</p>
-										<p className="text-[10px] text-muted-foreground uppercase tracking-wide">Pending</p>
-									</div>
-								</CardContent>
-							</Card>
-							<Card className="shadow-sm border-l-4 border-l-green-400">
-								<CardContent className="p-3 flex items-center gap-3">
-									<div className="h-9 w-9 rounded-lg bg-green-50 dark:bg-green-900/20 flex items-center justify-center">
-										<MailCheck className="h-4.5 w-4.5 text-green-600 dark:text-green-400" />
-									</div>
-									<div>
-										<p className="text-lg font-bold text-green-700 dark:text-green-400">{sentExaminers.length}</p>
-										<p className="text-[10px] text-muted-foreground uppercase tracking-wide">Sent</p>
-									</div>
-								</CardContent>
-							</Card>
-							<Card className="shadow-sm border-l-4 border-l-red-400">
-								<CardContent className="p-3 flex items-center gap-3">
-									<div className="h-9 w-9 rounded-lg bg-red-50 dark:bg-red-900/20 flex items-center justify-center">
-										<AlertCircle className="h-4.5 w-4.5 text-red-600 dark:text-red-400" />
-									</div>
-									<div>
-										<p className="text-lg font-bold text-red-700 dark:text-red-400">
-											{examiners.filter(ex => ex.last_email_status === 'FAILED').length}
-										</p>
-										<p className="text-[10px] text-muted-foreground uppercase tracking-wide">Failed</p>
-									</div>
-								</CardContent>
-							</Card>
+							{statCards.map(card => {
+								const tab = card.tab
+								return (
+									<button
+										key={card.label}
+										type="button"
+										disabled={!tab}
+										onClick={() => tab && switchTab(tab)}
+										title={tab ? `Show the ${card.label.toLowerCase()} list` : undefined}
+										className={cn(
+											'rounded-xl p-3 flex items-center gap-3 text-left text-white shadow-md bg-gradient-to-br transition-all',
+											card.gradient,
+											tab && 'cursor-pointer hover:shadow-lg hover:-translate-y-0.5',
+											tab && activeTab === tab && cn('ring-2 ring-offset-2 ring-offset-background', card.ring)
+										)}
+									>
+										<div className="h-10 w-10 rounded-lg bg-white/20 flex items-center justify-center shrink-0">
+											<card.icon className="h-5 w-5" />
+										</div>
+										<div>
+											<p className="text-2xl font-bold leading-tight">{card.count}</p>
+											<p className="text-xs font-medium uppercase tracking-wide text-white/90">{card.label}</p>
+										</div>
+									</button>
+								)
+							})}
 						</div>
 					)}
 
@@ -916,48 +836,56 @@ export default function PracticalEmailPage() {
 
 					{/* Tabs */}
 					{!loadingAssignments && examiners.length > 0 && (
-						<Tabs defaultValue="assigned" className="space-y-3">
-							<TabsList className="h-9">
-								<TabsTrigger value="assigned" className="text-xs gap-1.5">
-									Pending
-									<Badge
-										variant="secondary"
-										className="h-4 min-w-[20px] px-1 text-[10px] font-semibold"
+						<Tabs
+							value={activeTab}
+							onValueChange={value => switchTab(value as 'assigned' | 'status' | 'failed')}
+							className="space-y-3"
+						>
+							<TabsList className="h-10 p-1 gap-1 rounded-lg border border-slate-200 bg-slate-100 dark:border-slate-700 dark:bg-slate-800/60">
+								{statCards.map(card => card.tab && (
+									<TabsTrigger
+										key={card.tab}
+										value={card.tab}
+										className={cn(
+											'text-sm gap-1.5 rounded-md px-3 font-medium data-[state=active]:text-white data-[state=active]:font-semibold data-[state=active]:shadow-md',
+											card.tabIdle,
+											card.tabActive
+										)}
 									>
-										{pendingExaminers.length}
-									</Badge>
-								</TabsTrigger>
-								<TabsTrigger value="status" className="text-xs gap-1.5">
-									Sent
-									<Badge
-										variant="secondary"
-										className="h-4 min-w-[20px] px-1 text-[10px] font-semibold"
-									>
-										{sentExaminers.length}
-									</Badge>
-								</TabsTrigger>
+										{card.label}
+										<span
+											className={cn(
+												'h-4 min-w-[20px] px-1 rounded-full text-xs font-semibold inline-flex items-center justify-center',
+												activeTab === card.tab ? 'bg-white/25 text-white' : card.chip
+											)}
+										>
+											{card.count}
+										</span>
+									</TabsTrigger>
+								))}
 							</TabsList>
 
 							{/* ------------------------------------------------------------------ */}
-							{/* Tab 1: Pending (not yet sent) */}
+							{/* Tab 1: Pending (not yet sent) — also renders the Failed tab */}
 							{/* ------------------------------------------------------------------ */}
-							<TabsContent value="assigned">
+							<TabsContent value={activeTab === 'failed' ? 'failed' : 'assigned'}>
 								<Card className="shadow-sm">
 									<CardHeader className="pb-3 pt-4 px-4">
 										<div className="flex items-center justify-between flex-wrap gap-2">
-											<CardTitle className="text-sm font-semibold">
-												Pending Examiners
+											<CardTitle className="text-base font-semibold flex items-center gap-2">
+												<span className={cn('h-2 w-2 rounded-full', activeTab === 'failed' ? 'bg-red-500' : 'bg-amber-500')} />
+												{activeTab === 'failed' ? 'Failed Examiners' : 'Pending Examiners'}
 											</CardTitle>
 											<Button
 												onClick={handleSendSelected}
 												disabled={selectedKeys.size === 0}
 												size="sm"
-												className="h-8 text-xs gap-1.5"
+												className="h-8 text-sm gap-1.5"
 											>
 												<Send className="h-3.5 w-3.5" />
-												Send Selected Emails
+												{activeTab === 'failed' ? 'Retry Selected Emails' : 'Send Selected Emails'}
 												{selectedKeys.size > 0 && (
-													<Badge className="ml-1 h-4 px-1 text-[10px] bg-white/20">
+													<Badge className="ml-1 h-4 px-1 text-xs bg-white/20">
 														{selectedKeys.size}
 													</Badge>
 												)}
@@ -968,31 +896,32 @@ export default function PracticalEmailPage() {
 										<div className="rounded-lg border overflow-hidden">
 											<Table>
 												<TableHeader>
-													<TableRow className="bg-slate-50 dark:bg-slate-900/50 hover:bg-slate-50 dark:hover:bg-slate-900/50">
+													<TableRow className="bg-slate-800 dark:bg-slate-900 hover:bg-slate-800 dark:hover:bg-slate-900">
 														<TableHead className="w-10 py-2">
 															<Checkbox
 																checked={allVisibleSelected}
 																onCheckedChange={checked => toggleSelectAll(!!checked)}
 																aria-label="Select all"
+																className="border-white data-[state=checked]:bg-white data-[state=checked]:text-slate-900"
 															/>
 														</TableHead>
-														<TableHead className="text-xs font-semibold py-2">Examiner Name</TableHead>
-														<TableHead className="text-xs font-semibold py-2">Type</TableHead>
-														<TableHead className="text-xs font-semibold py-2">Email</TableHead>
-														<TableHead className="text-xs font-semibold py-2 text-center">Courses</TableHead>
-														<TableHead className="text-xs font-semibold py-2">Last Status</TableHead>
-														<TableHead className="text-xs font-semibold py-2 text-right">Actions</TableHead>
+														<TableHead className="text-white text-sm font-semibold py-2">Examiner Name</TableHead>
+														<TableHead className="text-white text-sm font-semibold py-2">Type</TableHead>
+														<TableHead className="text-white text-sm font-semibold py-2">Email</TableHead>
+														<TableHead className="text-white text-sm font-semibold py-2 text-center">Courses</TableHead>
+														<TableHead className="text-white text-sm font-semibold py-2">{activeTab === 'failed' ? 'Failure Reason' : 'Last Status'}</TableHead>
+														<TableHead className="text-white text-sm font-semibold py-2 text-right">Actions</TableHead>
 													</TableRow>
 												</TableHeader>
 												<TableBody>
-													{pendingExaminers.length === 0 ? (
+													{unsentExaminers.length === 0 ? (
 														<TableRow>
 															<TableCell colSpan={7} className="text-center py-8 text-muted-foreground text-sm">
-																No pending examiners
+																{activeTab === 'failed' ? 'No failed emails' : 'No pending examiners'}
 															</TableCell>
 														</TableRow>
 													) : (
-														pendingExaminers.map(examiner => (
+														unsentExaminers.map(examiner => (
 															<Fragment key={examiner.examiner_key}>
 																<TableRow
 																	className={cn(
@@ -1021,7 +950,7 @@ export default function PracticalEmailPage() {
 																			) : (
 																				<ChevronRight className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
 																			)}
-																			<span className="text-xs font-medium">{examiner.examiner_name}</span>
+																			<span className="text-sm font-medium">{examiner.examiner_name}</span>
 																		</div>
 																	</TableCell>
 																	<TableCell className="py-2">
@@ -1029,20 +958,28 @@ export default function PracticalEmailPage() {
 																	</TableCell>
 																	<TableCell className="py-2">
 																		{examiner.examiner_email ? (
-																			<span className="text-xs text-muted-foreground">{examiner.examiner_email}</span>
+																			<span className="text-sm text-muted-foreground">{examiner.examiner_email}</span>
 																		) : (
-																			<span className="text-xs text-red-500 italic">No email</span>
+																			<span className="text-sm text-red-500 italic">No email</span>
 																		)}
 																	</TableCell>
 																	<TableCell className="py-2 text-center">
-																		<Badge variant="outline" className="text-xs">
+																		<Badge variant="outline" className="text-sm">
 																			{examiner.courses.length}
 																		</Badge>
 																	</TableCell>
 																	<TableCell className="py-2">
 																		<EmailStatusBadge status={examiner.last_email_status} />
+																		{examiner.last_email_status === 'FAILED' && (
+																			<div
+																				className="text-[13px] text-red-600 dark:text-red-400 mt-1 max-w-[320px] whitespace-normal"
+																				title={examiner.last_email_error || ''}
+																			>
+																				{describeEmailError(examiner.last_email_error)}
+																			</div>
+																		)}
 																		{examiner.last_email_sent_at && (
-																			<div className="text-[10px] text-muted-foreground mt-0.5">
+																			<div className="text-xs text-muted-foreground mt-0.5">
 																				{formatDateTime(examiner.last_email_sent_at)}
 																			</div>
 																		)}
@@ -1090,12 +1027,12 @@ export default function PracticalEmailPage() {
 																				<Table>
 																					<TableHeader>
 																						<TableRow className="bg-slate-50/70 dark:bg-slate-800/30 hover:bg-slate-50/70 dark:hover:bg-slate-800/30">
-																							<TableHead className="text-[11px] py-1.5 font-medium">Date</TableHead>
-																							<TableHead className="text-[11px] py-1.5 font-medium">Session</TableHead>
-																							<TableHead className="text-[11px] py-1.5 font-medium">Programme</TableHead>
-																							<TableHead className="text-[11px] py-1.5 font-medium">Course Code</TableHead>
-																							<TableHead className="text-[11px] py-1.5 font-medium">Course Name</TableHead>
-																							<TableHead className="text-[11px] py-1.5 font-medium text-center">Students</TableHead>
+																							<TableHead className="text-[13px] py-1.5 font-medium">Date</TableHead>
+																							<TableHead className="text-[13px] py-1.5 font-medium">Session</TableHead>
+																							<TableHead className="text-[13px] py-1.5 font-medium">Programme</TableHead>
+																							<TableHead className="text-[13px] py-1.5 font-medium">Course Code</TableHead>
+																							<TableHead className="text-[13px] py-1.5 font-medium">Course Name</TableHead>
+																							<TableHead className="text-[13px] py-1.5 font-medium text-center">Students</TableHead>
 																						</TableRow>
 																					</TableHeader>
 																					<TableBody>
@@ -1103,7 +1040,7 @@ export default function PracticalEmailPage() {
 																							<TableRow>
 																								<TableCell
 																									colSpan={6}
-																									className="text-center py-3 text-[11px] text-muted-foreground"
+																									className="text-center py-3 text-[13px] text-muted-foreground"
 																								>
 																									No courses found
 																								</TableCell>
@@ -1114,12 +1051,12 @@ export default function PracticalEmailPage() {
 																									key={`${course.timetable_id}-${idx}`}
 																									className="hover:bg-slate-50/50"
 																								>
-																									<TableCell className="text-[11px] py-1.5">
+																									<TableCell className="text-[13px] py-1.5">
 																										{formatDate(course.exam_date)}
 																									</TableCell>
-																									<TableCell className="text-[11px] py-1.5">
+																									<TableCell className="text-[13px] py-1.5">
 																										<span className={cn(
-																											'px-1.5 py-0.5 rounded text-[10px] font-medium',
+																											'px-1.5 py-0.5 rounded text-xs font-medium',
 																											course.session === 'FN'
 																												? 'bg-blue-50 text-blue-700 dark:bg-blue-900/20 dark:text-blue-300'
 																												: 'bg-orange-50 text-orange-700 dark:bg-orange-900/20 dark:text-orange-300'
@@ -1127,17 +1064,17 @@ export default function PracticalEmailPage() {
 																											{course.session}
 																										</span>
 																									</TableCell>
-																									<TableCell className="text-[11px] py-1.5 text-muted-foreground">
+																									<TableCell className="text-[13px] py-1.5 text-muted-foreground">
 																										{course.programme || '—'}
 																									</TableCell>
-																									<TableCell className="text-[11px] py-1.5 font-medium">
+																									<TableCell className="text-[13px] py-1.5 font-medium">
 																										{course.course_code}
 																									</TableCell>
-																									<TableCell className="text-[11px] py-1.5">
+																									<TableCell className="text-[13px] py-1.5">
 																										{course.course_name}
 																									</TableCell>
-																									<TableCell className="text-[11px] py-1.5 text-center">
-																										<Badge variant="outline" className="text-[10px] h-4 px-1.5">
+																									<TableCell className="text-[13px] py-1.5 text-center">
+																										<Badge variant="outline" className="text-xs h-4 px-1.5">
 																											{course.student_count}
 																										</Badge>
 																									</TableCell>
@@ -1167,18 +1104,21 @@ export default function PracticalEmailPage() {
 								<Card className="shadow-sm">
 									<CardHeader className="pb-3 pt-4 px-4">
 										<div className="flex items-center justify-between flex-wrap gap-2">
-											<CardTitle className="text-sm font-semibold">Sent Examiners</CardTitle>
+											<CardTitle className="text-base font-semibold flex items-center gap-2">
+												<span className="h-2 w-2 rounded-full bg-emerald-500" />
+												Sent Examiners
+											</CardTitle>
 											<Button
 												onClick={handleResendSelected}
 												disabled={resendKeys.size === 0}
 												size="sm"
 												variant="outline"
-												className="h-8 text-xs gap-1.5"
+												className="h-8 text-sm gap-1.5"
 											>
 												<RefreshCw className="h-3.5 w-3.5" />
 												Resend Selected
 												{resendKeys.size > 0 && (
-													<Badge className="ml-1 h-4 px-1 text-[10px] bg-primary/20">
+													<Badge className="ml-1 h-4 px-1 text-xs bg-primary/20">
 														{resendKeys.size}
 													</Badge>
 												)}
@@ -1189,20 +1129,21 @@ export default function PracticalEmailPage() {
 										<div className="rounded-lg border overflow-hidden">
 											<Table>
 												<TableHeader>
-													<TableRow className="bg-slate-50 dark:bg-slate-900/50 hover:bg-slate-50 dark:hover:bg-slate-900/50">
+													<TableRow className="bg-slate-800 dark:bg-slate-900 hover:bg-slate-800 dark:hover:bg-slate-900">
 														<TableHead className="w-10 py-2">
 															<Checkbox
 																checked={allSentSelected}
 																onCheckedChange={checked => toggleResendSelectAll(!!checked)}
 																aria-label="Select all sent"
+																className="border-white data-[state=checked]:bg-white data-[state=checked]:text-slate-900"
 															/>
 														</TableHead>
-														<TableHead className="text-xs font-semibold py-2">Examiner Name</TableHead>
-														<TableHead className="text-xs font-semibold py-2">Type</TableHead>
-														<TableHead className="text-xs font-semibold py-2">Email</TableHead>
-														<TableHead className="text-xs font-semibold py-2 text-center">Courses</TableHead>
-														<TableHead className="text-xs font-semibold py-2">Sent At</TableHead>
-														<TableHead className="text-xs font-semibold py-2 text-right">Actions</TableHead>
+														<TableHead className="text-white text-sm font-semibold py-2">Examiner Name</TableHead>
+														<TableHead className="text-white text-sm font-semibold py-2">Type</TableHead>
+														<TableHead className="text-white text-sm font-semibold py-2">Email</TableHead>
+														<TableHead className="text-white text-sm font-semibold py-2 text-center">Courses</TableHead>
+														<TableHead className="text-white text-sm font-semibold py-2">Sent At</TableHead>
+														<TableHead className="text-white text-sm font-semibold py-2 text-right">Actions</TableHead>
 													</TableRow>
 												</TableHeader>
 												<TableBody>
@@ -1232,26 +1173,26 @@ export default function PracticalEmailPage() {
 																	/>
 																</TableCell>
 																<TableCell className="py-2">
-																	<span className="text-xs font-medium">{examiner.examiner_name}</span>
+																	<span className="text-sm font-medium">{examiner.examiner_name}</span>
 																</TableCell>
 																<TableCell className="py-2">
 																	<ExaminerTypeBadge type={examiner.examiner_type} />
 																</TableCell>
 																<TableCell className="py-2">
 																	{examiner.examiner_email ? (
-																		<span className="text-xs text-muted-foreground">{examiner.examiner_email}</span>
+																		<span className="text-sm text-muted-foreground">{examiner.examiner_email}</span>
 																	) : (
-																		<span className="text-xs text-red-500 italic">No email</span>
+																		<span className="text-sm text-red-500 italic">No email</span>
 																	)}
 																</TableCell>
 																<TableCell className="py-2 text-center">
-																	<Badge variant="outline" className="text-xs">
+																	<Badge variant="outline" className="text-sm">
 																		{examiner.courses.length}
 																	</Badge>
 																</TableCell>
 																<TableCell className="py-2">
 																	{examiner.last_email_sent_at && (
-																		<span className="text-xs text-muted-foreground">
+																		<span className="text-sm text-muted-foreground">
 																			{formatDateTime(examiner.last_email_sent_at)}
 																		</span>
 																	)}
@@ -1299,7 +1240,7 @@ export default function PracticalEmailPage() {
 								<div className="flex flex-col items-center justify-center gap-2 text-muted-foreground">
 									<Mail className="h-8 w-8 opacity-40" />
 									<p className="text-sm font-medium">No examiner assignments found</p>
-									<p className="text-xs">
+									<p className="text-sm">
 										Ensure examiners have been assigned in the Examiner Allotment page for this session
 									</p>
 								</div>
@@ -1314,7 +1255,7 @@ export default function PracticalEmailPage() {
 								<div className="flex flex-col items-center justify-center gap-2 text-muted-foreground">
 									<Mail className="h-8 w-8 opacity-30" />
 									<p className="text-sm font-medium">Select filters and click Load</p>
-									<p className="text-xs">Choose an institution and exam session to view examiner assignments</p>
+									<p className="text-sm">Choose an institution and exam session to view examiner assignments</p>
 								</div>
 							</CardContent>
 						</Card>
@@ -1343,7 +1284,7 @@ export default function PracticalEmailPage() {
 					</DialogHeader>
 					<div className="py-2 space-y-2">
 						<div className="rounded-lg bg-muted/50 p-3 text-sm text-muted-foreground">
-							<ul className="space-y-1 list-disc list-inside text-xs">
+							<ul className="space-y-1 list-disc list-inside text-sm">
 								<li>Each examiner will receive a PDF appointment letter</li>
 								<li>Examiners without an email address will be skipped</li>
 								{confirmIsResend && <li>This will send updated appointment letters replacing previous ones</li>}
@@ -1392,7 +1333,7 @@ export default function PracticalEmailPage() {
 					<div className="space-y-3 py-2">
 						{/* Progress bar */}
 						<Progress value={progressPercent} className="h-2" />
-						<p className="text-xs text-muted-foreground text-right">
+						<p className="text-sm text-muted-foreground text-right">
 							{progressPercent}%
 						</p>
 
@@ -1401,7 +1342,7 @@ export default function PracticalEmailPage() {
 							{progressItems.map(item => (
 								<div
 									key={item.examiner_key}
-									className="flex items-center gap-2 px-2 py-1.5 rounded text-xs"
+									className="flex items-center gap-2 px-2 py-1.5 rounded text-sm"
 								>
 									{item.status === 'pending' && (
 										<Clock className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
@@ -1426,7 +1367,7 @@ export default function PracticalEmailPage() {
 										{item.examiner_name}
 									</span>
 									{item.status === 'failed' && item.error && (
-										<span className="text-[10px] text-red-500 truncate max-w-[120px]" title={item.error}>
+										<span className="text-xs text-red-500 truncate max-w-[120px]" title={item.error}>
 											{item.error}
 										</span>
 									)}

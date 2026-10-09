@@ -1,4 +1,6 @@
 import nodemailer from 'nodemailer'
+import net from 'net'
+import { lookup } from 'dns/promises'
 import { getSupabaseServer } from '@/lib/supabase-server'
 
 interface EmailOptions {
@@ -81,11 +83,31 @@ export async function getSmtpConfig(institutionCode?: string): Promise<SmtpConfi
 }
 
 /**
+ * Resolve the SMTP host through the OS resolver before handing it to nodemailer.
+ *
+ * nodemailer looks the host up with direct DNS queries (resolve4, then resolve6) and
+ * only falls back to the OS resolver once both have timed out. On a network where
+ * those queries get no answer, the first send waits about two minutes, and again
+ * every time nodemailer's 5-minute DNS cache expires. Given an IP address it skips
+ * the lookup; servername keeps the TLS certificate check on the real host name.
+ */
+export async function resolveSmtpHost(host: string): Promise<{ host: string; servername?: string }> {
+	if (!host || net.isIP(host)) return { host }
+	try {
+		const { address } = await lookup(host, { family: 4 })
+		return { host: address, servername: host }
+	} catch {
+		// No IPv4 answer from the OS — leave the lookup to nodemailer
+		return { host }
+	}
+}
+
+/**
  * Create nodemailer transporter
  */
-function createTransporter(config: SmtpConfig) {
+async function createTransporter(config: SmtpConfig) {
 	return nodemailer.createTransport({
-		host: config.smtp_host,
+		...(await resolveSmtpHost(config.smtp_host)),
 		port: config.smtp_port,
 		secure: config.smtp_secure,
 		auth: {
@@ -106,7 +128,7 @@ export async function sendEmail(options: EmailOptions, institutionCode?: string)
 			return { success: false, error: 'SMTP configuration not found' }
 		}
 
-		const transporter = createTransporter(config)
+		const transporter = await createTransporter(config)
 
 		const mailOptions = {
 			from: `"${config.sender_name}" <${config.sender_email}>`,

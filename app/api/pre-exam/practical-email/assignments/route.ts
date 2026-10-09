@@ -337,97 +337,101 @@ export async function GET(request: Request) {
 		}
 
 		// ------------------------------------------------------------------
-		// Step 7: Fetch last email status for each examiner
-		// For external: query by examiner_id
-		// For internal/skilled: query by email_to + examiner_type
+		// Step 7: Fetch last email status for each examiner — THIS session only
+		// examiner_email_logs is shared across sessions, so a log counts only when
+		// it belongs to a practical_email_batches row of the selected session.
+		// Otherwise an examiner mailed in an earlier session shows as "Sent" the
+		// moment they are allotted, although nothing was sent for this session.
+		// For external: match by examiner_id
+		// For internal/skilled: match by email_to + examiner_type
 		// ------------------------------------------------------------------
 
-		// Collect external examiner UUIDs and internal/skilled emails
-		const externalIds = [...examinerGroupMap.values()]
-			.filter((e) => e.examiner_type === 'external')
-			.map((e) => e.examiner_key.replace('external_', ''))
-
-		// For internal/skilled we look up by email_to + examiner_type since examiner_email_logs.examiner_id
-		// is a FK to examiners table (not applicable for staff).
-		// We use a separate lookup: email_to (staff_email) + examiner_type column (added in migration).
-		const internalSkilledEntries = [...examinerGroupMap.values()].filter(
-			(e) => e.examiner_type === 'internal' || e.examiner_type === 'skilled'
-		)
-
-		// Fetch email logs in parallel where possible
 		const emailStatusMap = new Map<
 			string,
-			{ last_email_status: 'PENDING' | 'SENT' | 'FAILED' | null; last_email_sent_at: string | null }
+			{
+				last_email_status: 'PENDING' | 'SENT' | 'FAILED' | null
+				last_email_sent_at: string | null
+				last_email_error: string | null
+			}
 		>()
 
-		const logFetches: Promise<void>[] = []
+		const PAGE_SIZE = 1000
+		const sessionBatchIds: string[] = []
+		for (let from = 0; ; from += PAGE_SIZE) {
+			const { data: batches, error: batchError } = await supabase
+				.from('practical_email_batches')
+				.select('id')
+				.eq('institutions_id', institutionsId)
+				.eq('examination_session_id', examinationSessionId)
+				.order('id')
+				.range(from, from + PAGE_SIZE - 1)
 
-		// External examiner logs — query by examiner_id
-		if (externalIds.length > 0) {
-			const fetchExternalLogs = supabase
-				.from('examiner_email_logs')
-				.select('examiner_id, status, sent_at')
-				.in('examiner_id', externalIds)
-				.order('created_at', { ascending: false })
-				.range(0, 9999)
-				.then(({ data: logs }) => {
-					// Keep only the latest log per examiner_id
-					const seenIds = new Set<string>()
-					for (const log of logs || []) {
-						const key = `external_${log.examiner_id}`
-						if (!seenIds.has(log.examiner_id)) {
-							seenIds.add(log.examiner_id)
-							emailStatusMap.set(key, {
-								last_email_status: log.status as 'PENDING' | 'SENT' | 'FAILED' | null,
-								last_email_sent_at: log.sent_at || null,
-							})
-						}
-					}
-				})
-			logFetches.push(fetchExternalLogs)
+			if (batchError) {
+				console.error('Error fetching practical email batches:', batchError)
+				break
+			}
+			sessionBatchIds.push(...(batches || []).map((b) => b.id as string))
+			if (!batches || batches.length < PAGE_SIZE) break
 		}
 
-		// Internal/skilled logs — query by email_to + examiner_type
-		// Only fetch if there are internal/skilled examiners with emails
-		const internalSkilledWithEmail = internalSkilledEntries.filter((e) => e.examiner_email)
+		const sessionLogs: Array<{
+			examiner_id: string | null
+			email_to: string | null
+			examiner_type: string | null
+			status: string | null
+			error_message: string | null
+			sent_at: string | null
+			created_at: string
+		}> = []
+		const BATCH_ID_CHUNK = 100
+		for (let i = 0; i < sessionBatchIds.length; i += BATCH_ID_CHUNK) {
+			const idChunk = sessionBatchIds.slice(i, i + BATCH_ID_CHUNK)
+			for (let from = 0; ; from += PAGE_SIZE) {
+				const { data: logs, error: logsError } = await supabase
+					.from('examiner_email_logs')
+					.select('examiner_id, email_to, examiner_type, status, error_message, sent_at, created_at')
+					.in('practical_batch_id', idChunk)
+					.order('id')
+					.range(from, from + PAGE_SIZE - 1)
 
-		if (internalSkilledWithEmail.length > 0) {
-			const staffEmails = internalSkilledWithEmail.map((e) => e.examiner_email as string)
-
-			const fetchInternalLogs = supabase
-				.from('examiner_email_logs')
-				.select('email_to, examiner_type, status, sent_at')
-				.in('email_to', staffEmails)
-				.not('examiner_type', 'is', null)
-				.order('created_at', { ascending: false })
-				.range(0, 9999)
-				.then(({ data: logs }) => {
-					// Keep only the latest log per email_to + examiner_type combination
-					const seenKeys = new Set<string>()
-					for (const log of logs || []) {
-						if (!log.examiner_type) continue
-						const dedupeKey = `${log.examiner_type}_email_${log.email_to}`
-						if (!seenKeys.has(dedupeKey)) {
-							seenKeys.add(dedupeKey)
-							// Match back to examiner_key by finding the entry
-							const matchingEntry = internalSkilledWithEmail.find(
-								(e) =>
-									e.examiner_email === log.email_to &&
-									e.examiner_type === log.examiner_type
-							)
-							if (matchingEntry) {
-								emailStatusMap.set(matchingEntry.examiner_key, {
-									last_email_status: log.status as 'PENDING' | 'SENT' | 'FAILED' | null,
-									last_email_sent_at: log.sent_at || null,
-								})
-							}
-						}
-					}
-				})
-			logFetches.push(fetchInternalLogs)
+				if (logsError) {
+					console.error('Error fetching practical email logs:', logsError)
+					break
+				}
+				sessionLogs.push(...(logs || []))
+				if (!logs || logs.length < PAGE_SIZE) break
+			}
 		}
 
-		await Promise.all(logFetches)
+		// Newest first, so the first log seen per examiner is the latest one
+		sessionLogs.sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at))
+
+		// For internal/skilled we match by email_to + examiner_type since examiner_email_logs.examiner_id
+		// is a FK to examiners table (not applicable for staff).
+		const staffKeyByEmail = new Map<string, string>()
+		for (const e of examinerGroupMap.values()) {
+			if ((e.examiner_type === 'internal' || e.examiner_type === 'skilled') && e.examiner_email) {
+				staffKeyByEmail.set(`${e.examiner_type}_email_${e.examiner_email}`, e.examiner_key)
+			}
+		}
+
+		for (const log of sessionLogs) {
+			// A send that failed before an address was resolved (e.g. no email on record)
+			// stores the examiner_key itself in email_to
+			const examinerKey = log.examiner_id
+				? `external_${log.examiner_id}`
+				: (log.examiner_type && log.email_to
+					? staffKeyByEmail.get(`${log.examiner_type}_email_${log.email_to}`)
+					: undefined) || log.email_to || undefined
+
+			if (!examinerKey || !examinerGroupMap.has(examinerKey) || emailStatusMap.has(examinerKey)) continue
+
+			emailStatusMap.set(examinerKey, {
+				last_email_status: log.status as 'PENDING' | 'SENT' | 'FAILED' | null,
+				last_email_sent_at: log.sent_at || null,
+				last_email_error: log.status === 'FAILED' ? log.error_message || null : null,
+			})
+		}
 
 		// ------------------------------------------------------------------
 		// Step 8: Build final response array
@@ -446,6 +450,7 @@ export async function GET(request: Request) {
 				courses: entry.courses,
 				last_email_status: emailStatus?.last_email_status ?? null,
 				last_email_sent_at: emailStatus?.last_email_sent_at ?? null,
+				last_email_error: emailStatus?.last_email_error ?? null,
 			}
 		})
 

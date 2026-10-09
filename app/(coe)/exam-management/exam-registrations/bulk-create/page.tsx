@@ -29,12 +29,14 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { ArrowLeft, BookOpen, Check, ChevronsUpDown, ClipboardCheck, Loader2, Save, Search, Users } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useDebounce } from '@/hooks/common/use-debounce'
+import { placeCohortByRegulation, regulationKey, type CohortLearner } from '@/lib/exam-registration-cohort-regulation'
 
 const ROMAN = ['', 'I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X']
 
 interface ProgramOption { program_code: string; program_name: string; program_order?: number }
 interface CourseRow { course_offering_id: string; course_mapping_id: string; course_code: string; course_name: string; semester: number; semester_code: string }
-interface LearnerRow { id: string; stu_register_no: string; student_name: string }
+// regulation_code is the learner's own regulation as recorded in MyJKKN ('' when unset).
+interface LearnerRow extends CohortLearner { student_name: string }
 
 // Rows are fixed-height so the lists can be virtualized; long lists only mount
 // the visible rows. Below this count we render a plain map (cheaper, no measuring).
@@ -235,7 +237,9 @@ export default function BulkCreateExamRegistrationPage() {
 	const [regulations, setRegulations] = useState<string[]>([])
 	const [semesters, setSemesters] = useState<{ value: string; id: string; label: string }[]>([])
 	const [courses, setCourses] = useState<CourseRow[]>([])
-	const [learners, setLearners] = useState<LearnerRow[]>([])
+	// Everyone in the selected program + semester, whatever their regulation. The
+	// `learners` list the rest of the page works with is derived from this below.
+	const [cohortLearners, setCohortLearners] = useState<LearnerRow[]>([])
 	const [registeredKeys, setRegisteredKeys] = useState<Set<string>>(new Set()) // `studentId|courseOfferingId`
 
 	// Selection state
@@ -269,7 +273,7 @@ export default function BulkCreateExamRegistrationPage() {
 		setRegulations([])
 		setSemesters([])
 		setCourses([])
-		setLearners([])
+		setCohortLearners([])
 		setSelectedCourses(new Set())
 		setSelectedLearners(new Set())
 		setRegisteredKeys(new Set())
@@ -288,7 +292,7 @@ export default function BulkCreateExamRegistrationPage() {
 		setRegulations([])
 		setSemesters([])
 		setCourses([])
-		setLearners([])
+		setCohortLearners([])
 		setSelectedCourses(new Set())
 		setSelectedLearners(new Set())
 
@@ -327,7 +331,7 @@ export default function BulkCreateExamRegistrationPage() {
 		setSemesterCode('')
 		setSemesters([])
 		setCourses([])
-		setLearners([])
+		setCohortLearners([])
 		setSelectedCourses(new Set())
 		setSelectedLearners(new Set())
 
@@ -347,7 +351,7 @@ export default function BulkCreateExamRegistrationPage() {
 		setLoadingSemesters(true)
 		setSemesterCode('')
 		setCourses([])
-		setLearners([])
+		setCohortLearners([])
 		setSelectedCourses(new Set())
 		setSelectedLearners(new Set())
 
@@ -411,8 +415,8 @@ export default function BulkCreateExamRegistrationPage() {
 		return parseSemesterNumber(String(val))
 	}, [])
 
-	// ── Fallback: fetch ALL institution learners from MyJKKN and filter client-side. ──
-	// Used only when the local mirror returns nothing (stale/unsynced). Also records the
+	// ── Fallback: fetch ALL learners from MyJKKN and filter client-side. ──
+	// Used only when the semester_id lookup returns nothing. Also records the
 	// diagnostic counts shown in the empty state.
 	const loadLearnersFromMyJKKN = useCallback(async (): Promise<LearnerRow[]> => {
 		const targetSemesterNum = parseSemesterNumber(semesterCode)
@@ -424,17 +428,25 @@ export default function BulkCreateExamRegistrationPage() {
 		const sampleSemesterMismatches: Array<{ reg: string; raw: string; parsed: number }> = []
 		const allowedInstitutions = new Set(myjkknInstitutionIds)
 
-		for (const myjkknInstId of myjkknInstitutionIds) {
-			// MyJKKN server-side program_code/current_semester filtering is unreliable
-			// and returns a stripped record shape where semester_id no longer resolves.
-			// Fetch by institution only, then filter client-side.
-			const params = new URLSearchParams({ institution_id: myjkknInstId, fetchAll: 'true' })
-			const res = await fetch(`/api/myjkkn/learner-profiles?${params}`)
-			if (!res.ok) continue
+		// MyJKKN ignores the institution_id / program_code / current_semester query
+		// filters and returns every learner on the platform, so one sweep covers every
+		// institution id - looping per institution only downloaded the same list again.
+		const [res, regulationsRes] = await Promise.all([
+			fetch('/api/myjkkn/learner-profiles?fetchAll=true'),
+			fetch('/api/myjkkn/regulations?limit=200').catch(() => null),
+		])
+		const regulationCodes = new Map<string, string>()
+		if (regulationsRes?.ok) {
+			const regs = await parseJsonResponse(regulationsRes).catch(() => null)
+			for (const r of (regs?.data || []) as any[]) {
+				if (r?.id && r.regulation_code) regulationCodes.set(r.id, r.regulation_code)
+			}
+		}
+
+		if (res.ok) {
 			const raw = await parseJsonResponse(res)
 			const list: any[] = raw?.data || raw || []
-			// MyJKKN ignores the institution_id query filter and returns every learner
-			// on the platform, so the response must be scoped here. Only trust the field
+			// The response must be scoped to this institution here. Only trust the field
 			// when the response actually carries it - some MyJKKN record shapes strip
 			// institution_id, and filtering on a missing field would empty the list.
 			const responseCarriesInstitution = list.some((s: any) => s?.institution_id)
@@ -462,6 +474,8 @@ export default function BulkCreateExamRegistrationPage() {
 					id,
 					stu_register_no: s.register_number || s.roll_number || '',
 					student_name: `${s.first_name || ''} ${s.last_name || ''}`.trim() || s.name || '',
+					regulation_code: (s.regulation_id && regulationCodes.get(s.regulation_id)) || '',
+					admission_year: s.admission_year ?? null,
 				})
 			}
 		}
@@ -474,24 +488,23 @@ export default function BulkCreateExamRegistrationPage() {
 		return all
 	}, [programCode, semesterCode, myjkknInstitutionIds, getSemesterNum])
 
-	// ── Load learners: fast local-mirror query first, live MyJKKN fetch as fallback ──
+	// ── Load learners: one-cohort semester_id query first, full MyJKKN sweep as fallback ──
 	const loadLearners = useCallback(async () => {
 		if (!programCode || !semesterCode || myjkknInstitutionIds.length === 0) {
-			setLearners([])
+			setCohortLearners([])
 			setLearnerFilterStats({ total: 0, programMismatch: 0, semesterMismatch: 0 })
 			return
 		}
 		setLoadingLearners(true)
 		setSelectedLearners(new Set())
 		try {
-			// Fast path: one indexed query against the local learners_profiles mirror,
-			// keyed by institution + semester_id (semester_id is program-specific).
+			// Fast path: one MyJKKN request for exactly this cohort, keyed by
+			// semester_id (semester_id is program-specific).
 			let rows: LearnerRow[] = []
 			if (semesterId) {
 				const params = new URLSearchParams({
 					institution_ids: myjkknInstitutionIds.join(','),
 					semester_id: semesterId,
-					program_code: programCode,
 				})
 				const res = await fetch(`/api/exam-management/exam-registrations/bulk-create/eligible-learners?${params}`)
 				if (res.ok) {
@@ -500,17 +513,20 @@ export default function BulkCreateExamRegistrationPage() {
 						id: l.id,
 						stu_register_no: l.stu_register_no || '',
 						student_name: l.student_name || '',
+						regulation_code: l.regulation_code || '',
+						admission_year: l.admission_year ?? null,
 					}))
 				}
 			}
 
 			if (rows.length > 0) {
-				setLearners(rows)
+				setCohortLearners(rows)
 				setLearnerFilterStats({ total: rows.length, programMismatch: 0, semesterMismatch: 0 })
 			} else {
-				// Mirror empty/stale → fall back to the live MyJKKN fetch + client filter.
+				// No semester_id on the mapping, or it matched nobody → sweep every
+				// MyJKKN learner and match on program + semester number instead.
 				const fallback = await loadLearnersFromMyJKKN()
-				setLearners(fallback)
+				setCohortLearners(fallback)
 			}
 		} catch (e) {
 			console.error('[bulk-create] load learners failed:', e)
@@ -521,6 +537,42 @@ export default function BulkCreateExamRegistrationPage() {
 	}, [programCode, semesterCode, semesterId, myjkknInstitutionIds, toast, loadLearnersFromMyJKKN])
 
 	useEffect(() => { loadLearners() }, [loadLearners])
+
+	// ── Regulation filter ──
+	// A semester_id is shared by every regulation of a program, so the cohort can hold
+	// learners of a regulation other than the one selected. Only the selected regulation's
+	// learners are ever listed: registering a learner against another regulation's courses
+	// is never right. Learners MyJKKN records no regulation for are placed with their batch.
+	const regulationFilter = useMemo(() => {
+		const placements = placeCohortByRegulation(cohortLearners, regulations)
+		const selectedKey = regulationKey(regulationCode)
+		const listed: LearnerRow[] = []
+		const otherCodes = new Map<string, string>() // regulation key → code as recorded
+		let inferredCount = 0
+		let otherCount = 0
+		let unplacedCount = 0
+		for (const l of cohortLearners) {
+			const placement = placements.get(l.id)
+			if (!placement) { unplacedCount++; continue }
+			const key = regulationKey(placement.regulation_code)
+			if (key === selectedKey) {
+				listed.push(l)
+				if (placement.inferred) inferredCount++
+			} else {
+				otherCount++
+				if (!otherCodes.has(key)) otherCodes.set(key, placement.regulation_code)
+			}
+		}
+		return {
+			listed,
+			inferredCount,
+			otherCount,
+			otherCodes: [...otherCodes.values()].sort().join(', '),
+			unplacedCount,
+		}
+	}, [cohortLearners, regulations, regulationCode])
+
+	const learners = regulationFilter.listed
 
 	// ── Load existing registrations for the selected courses ──
 	useEffect(() => {
@@ -639,9 +691,10 @@ export default function BulkCreateExamRegistrationPage() {
 	// ── Computed: pairs (cross-product), excluding already-registered ──
 	const pairs = useMemo(() => {
 		const result: Array<{ course_offering_id: string; student_id: string }> = []
+		const learnerById = new Map(learners.map(l => [l.id, l]))
 		for (const cid of selectedCourses) {
 			for (const lid of selectedLearners) {
-				const learner = learners.find(l => l.id === lid)
+				const learner = learnerById.get(lid)
 				const sidKey = `${lid}|${cid}`
 				const regKey = learner ? `reg:${learner.stu_register_no}|${cid}` : ''
 				if (registeredKeys.has(sidKey) || (regKey && registeredKeys.has(regKey))) continue
@@ -1035,10 +1088,25 @@ export default function BulkCreateExamRegistrationPage() {
 											<p className="text-xs text-muted-foreground">
 												{loadingLearners
 													? 'Loading learners...'
-													: learners.length === 0
-														? 'Select program & semester to load learners'
+													: cohortLearners.length === 0
+														? 'Select program, regulation & semester to load learners'
 														: `${filteredLearners.length} of ${learners.length} • ${selectedLearners.size} selected`}
 											</p>
+											{!loadingLearners && learners.length > 0 && regulationFilter.otherCount > 0 && (
+												<p className="text-xs text-muted-foreground mt-0.5">
+													{regulationFilter.otherCount} more in this semester follow {regulationFilter.otherCodes} — not listed
+												</p>
+											)}
+											{!loadingLearners && regulationFilter.inferredCount > 0 && (
+												<p className="text-xs text-muted-foreground mt-0.5">
+													{regulationFilter.inferredCount} have no regulation set in MyJKKN — taken as {regulationCode} from their batch
+												</p>
+											)}
+											{!loadingLearners && learners.length > 0 && regulationFilter.unplacedCount > 0 && (
+												<p className="text-xs text-amber-700 dark:text-amber-300 mt-0.5">
+													{regulationFilter.unplacedCount} not listed — no regulation set in MyJKKN
+												</p>
+											)}
 										</div>
 										{learners.length > 0 && (
 											<div className="relative">
@@ -1062,7 +1130,21 @@ export default function BulkCreateExamRegistrationPage() {
 										<div className="flex flex-col items-center justify-center flex-1 p-8 text-sm text-muted-foreground text-center">
 											<Users className="h-8 w-8 mb-2 opacity-40" />
 											{learners.length === 0 ? (
-												learnerFilterStats.total === 0 ? (
+												cohortLearners.length > 0 ? (
+													<div className="space-y-1">
+														<p>No <span className="font-medium">{regulationCode}</span> learners in Semester {ROMAN[parseSemesterNumber(semesterCode)] || parseSemesterNumber(semesterCode)}</p>
+														{regulationFilter.otherCount > 0 && (
+															<p className="text-xs">
+																The {regulationFilter.otherCount} learner{regulationFilter.otherCount !== 1 ? 's' : ''} in this semester follow{regulationFilter.otherCount === 1 ? 's' : ''} {regulationFilter.otherCodes}.
+															</p>
+														)}
+														{regulationFilter.unplacedCount > 0 && (
+															<p className="text-xs">
+																{regulationFilter.unplacedCount} learner{regulationFilter.unplacedCount !== 1 ? 's have' : ' has'} no regulation set in MyJKKN.
+															</p>
+														)}
+													</div>
+												) : learnerFilterStats.total === 0 ? (
 													<p>No learners to show</p>
 												) : (
 													<div className="space-y-1">

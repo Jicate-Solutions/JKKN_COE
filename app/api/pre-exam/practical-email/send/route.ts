@@ -97,6 +97,13 @@ export async function POST(request: Request) {
 			.eq('id', batch.id)
 			.single()
 
+		// Why each mail of this request failed — the page shows it next to the examiner
+		const { data: failedLogs } = await supabase
+			.from('examiner_email_logs')
+			.select('error_message')
+			.eq('practical_batch_id', batch.id)
+			.eq('status', 'FAILED')
+
 		return NextResponse.json(
 			{
 				batch_id: batch.id,
@@ -105,6 +112,7 @@ export async function POST(request: Request) {
 				failed_count: finalBatch?.failed_count || 0,
 				status: finalBatch?.status || 'completed',
 				error: processingError,
+				failed_reasons: (failedLogs || []).map((l) => l.error_message).filter(Boolean),
 			},
 			{ status: 200 }
 		)

@@ -253,6 +253,8 @@ export interface MyJKKNLearnerProfile {
 	department_code?: string
 	batch_id?: string
 	batch_name?: string
+	semester_id?: string
+	regulation_id?: string | null
 	current_semester?: number
 	admission_year?: number
 	is_active: boolean
@@ -370,6 +372,7 @@ export interface MyJKKNLearnerProfileFetchOptions extends MyJKKNBaseFetchOptions
 	department_id?: string
 	department_code?: string
 	batch_id?: string
+	semester_id?: string
 	current_semester?: number
 	admission_year?: number
 	lifecycle_status?: string

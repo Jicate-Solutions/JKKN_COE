@@ -9,6 +9,7 @@
 
 import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
+import { fetchAllRows } from '@/lib/exam-applications/paginate'
 
 export async function GET(request: Request) {
 	try {
@@ -21,20 +22,26 @@ export async function GET(request: Request) {
 			return NextResponse.json({ error: 'institution_id and examination_session_id are required' }, { status: 400 })
 		}
 
-		const { data, error } = await supabase
-			.from('exam_timetables')
-			.select('exam_date')
-			.eq('institutions_id', institutionId)
-			.eq('examination_session_id', sessionId)
-			.eq('is_published', true)
-			.order('exam_date', { ascending: true })
-
-		if (error) {
-			return NextResponse.json({ error: 'Failed to fetch exam dates', details: error }, { status: 500 })
+		// Paged to completion - a session's timetable can pass Supabase's 1000-row cap,
+		// and a single fetch would then silently drop the last exam dates.
+		let data: any[]
+		try {
+			data = await fetchAllRows(
+				() => supabase
+					.from('exam_timetables')
+					.select('exam_date')
+					.eq('institutions_id', institutionId)
+					.eq('examination_session_id', sessionId)
+					.eq('is_published', true),
+				{ orderColumn: 'exam_date', label: 'exam dates' }
+			)
+		} catch (error) {
+			console.error('[AttendanceSheet/Dates] Fetch error:', error)
+			return NextResponse.json({ error: 'Failed to fetch exam dates' }, { status: 500 })
 		}
 
 		// Deduplicate dates
-		const uniqueDates = [...new Set((data || []).map(d => d.exam_date).filter(Boolean))]
+		const uniqueDates = [...new Set(data.map(d => d.exam_date).filter(Boolean))]
 
 		return NextResponse.json(uniqueDates.map(date => ({ exam_date: date })))
 	} catch (e) {

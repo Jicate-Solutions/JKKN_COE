@@ -16,7 +16,11 @@
 
 import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
+import { fetchAllRows, tryFetchAllRows, fetchAllInChunks } from '@/lib/exam-applications/paginate'
 import type { AttendanceSheetPdfData, AttendanceSheet, AttendanceSheetStudent } from '@/types/exam-attendance-sheet'
+
+// Ids / codes per `.in()` request - keeps the GET URL well under its length limit
+const IN_CHUNK_SIZE = 100
 
 export async function GET(request: Request) {
 	try {
@@ -70,38 +74,49 @@ export async function GET(request: Request) {
 			.single()
 
 		// Step 4: Find all exam_timetables for this date + session → get course_ids
-		const { data: timetables, error: ttError } = await supabase
-			.from('exam_timetables')
-			.select('id, course_id')
-			.eq('institutions_id', institutionId)
-			.eq('examination_session_id', examinationSessionId)
-			.eq('exam_date', examDate)
-			.eq('session', session)
-			.eq('is_published', true)
-			.range(0, 9999)
-
-		if (ttError) {
-			return NextResponse.json({ error: 'Failed to fetch exam timetables', details: ttError }, { status: 500 })
+		// Every list read below is paged to completion: Supabase returns at most 1000
+		// rows per request and `.range(0, 9999)` does not lift that - it truncates in
+		// silence, which is how learners went missing from the printed sheet.
+		let timetables: any[]
+		try {
+			timetables = await fetchAllRows(
+				() => supabase
+					.from('exam_timetables')
+					.select('id, course_id')
+					.eq('institutions_id', institutionId)
+					.eq('examination_session_id', examinationSessionId)
+					.eq('exam_date', examDate)
+					.eq('session', session)
+					.eq('is_published', true),
+				{ label: 'exam timetables' }
+			)
+		} catch (ttError) {
+			console.error('[AttendanceSheet] Timetables fetch error:', ttError)
+			return NextResponse.json({ error: 'Failed to fetch exam timetables' }, { status: 500 })
 		}
 
-		if (!timetables || timetables.length === 0) {
+		if (timetables.length === 0) {
 			return NextResponse.json({ error: 'No exams scheduled for this date and session' }, { status: 404 })
 		}
 
 		// Step 5: Get course details (course_code, course_name) from timetable course_ids
 		const courseIds = [...new Set(timetables.map(t => t.course_id).filter(Boolean))]
 
-		const { data: courses, error: coursesError } = await supabase
-			.from('courses')
-			.select('id, course_code, course_name')
-			.in('id', courseIds)
-			.range(0, 9999)
-
-		if (coursesError) {
-			return NextResponse.json({ error: 'Failed to fetch courses', details: coursesError }, { status: 500 })
+		// Chunked so a long id list cannot overflow the GET URL
+		let courses: any[]
+		try {
+			courses = await fetchAllInChunks(courseIds, IN_CHUNK_SIZE, batch =>
+				fetchAllRows(
+					() => supabase.from('courses').select('id, course_code, course_name').in('id', batch),
+					{ label: 'courses' }
+				)
+			)
+		} catch (coursesError) {
+			console.error('[AttendanceSheet] Courses fetch error:', coursesError)
+			return NextResponse.json({ error: 'Failed to fetch courses' }, { status: 500 })
 		}
 
-		const courseMap = new Map((courses || []).map(c => [c.id, c]))
+		const courseMap = new Map(courses.map(c => [c.id, c]))
 		// Build course_code list from timetable courses
 		const timetableCourseCodeSet = new Set<string>()
 		const courseCodeToTitle = new Map<string, string>()
@@ -121,23 +136,31 @@ export async function GET(request: Request) {
 
 		// Step 6: Fetch ALL registrations for these course_codes (across ALL programs)
 		// Include course_offerings join to get semester for proper ordering
-		const { data: allRegistrations, error: regError } = await supabase
-			.from('exam_registrations')
-			.select('id, student_id, stu_register_no, student_name, is_regular, attempt_number, program_code, course_code, course_offering_id, course_offerings(semester)')
-			.eq('institutions_id', institutionId)
-			.eq('examination_session_id', examinationSessionId)
-			.in('course_code', allCourseCodesFromTimetable)
-			// fee_paid is not filtered on - the flag is unreliable here (many rows are
-			// true with no amount and no payment_date), and gating on it left genuinely
-			// registered learners off the printed sheet.
-			.order('stu_register_no', { ascending: true })
-			.range(0, 9999)
-
-		if (regError) {
-			return NextResponse.json({ error: 'Failed to fetch registrations', details: regError }, { status: 500 })
+		// A busy date + session passes the 1000-row cap (16-10-2026 FN had 1005), which
+		// dropped the last register numbers off the printed sheet. Order within a sheet
+		// is settled in Step 10, so the chunks need no merge sort here.
+		let allRegistrations: any[]
+		try {
+			allRegistrations = await fetchAllInChunks(allCourseCodesFromTimetable, IN_CHUNK_SIZE, codes =>
+				fetchAllRows(
+					() => supabase
+						.from('exam_registrations')
+						.select('id, student_id, stu_register_no, student_name, is_regular, attempt_number, program_code, course_code, course_offering_id, course_offerings(semester)')
+						.eq('institutions_id', institutionId)
+						.eq('examination_session_id', examinationSessionId)
+						// fee_paid is not filtered on - the flag is unreliable here (many rows are
+						// true with no amount and no payment_date), and gating on it left genuinely
+						// registered learners off the printed sheet.
+						.in('course_code', codes),
+					{ orderColumn: 'stu_register_no', label: 'exam registrations' }
+				)
+			)
+		} catch (regError) {
+			console.error('[AttendanceSheet] Registrations fetch error:', regError)
+			return NextResponse.json({ error: 'Failed to fetch registrations' }, { status: 500 })
 		}
 
-		if (!allRegistrations || allRegistrations.length === 0) {
+		if (allRegistrations.length === 0) {
 			return NextResponse.json({ error: 'No registrations found for scheduled exams' }, { status: 404 })
 		}
 
@@ -155,12 +178,15 @@ export async function GET(request: Request) {
 
 		// Step 7b: If a practical batch is specified, filter to only batch-assigned students
 		if (batchTimetableId) {
-			const { data: batchAssignments } = await supabase
-				.from('practical_batch_students')
-				.select('exam_registration_id')
-				.eq('exam_timetable_id', batchTimetableId)
+			const batchAssignments = await tryFetchAllRows(
+				() => supabase
+					.from('practical_batch_students')
+					.select('exam_registration_id')
+					.eq('exam_timetable_id', batchTimetableId),
+				{ label: 'practical batch students' }
+			)
 
-			if (batchAssignments && batchAssignments.length > 0) {
+			if (batchAssignments.length > 0) {
 				const batchRegIds = new Set(batchAssignments.map((a: any) => a.exam_registration_id))
 
 				// Filter registrationMap to only include batch students

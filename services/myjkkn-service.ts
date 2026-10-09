@@ -540,14 +540,21 @@ export async function fetchAllMyJKKNAcademicYears(
 // LEARNER PROFILES
 // =====================================================
 
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
 export async function fetchMyJKKNLearnerProfiles(
 	options: MyJKKNLearnerProfileFetchOptions = {}
 ): Promise<MyJKKNPaginatedResponse<MyJKKNLearnerProfile>> {
 	const { page = 1, limit = 10, search, is_active, institution_id, institution_code, program_id, program_code, department_id, department_code, batch_id, current_semester, admission_year, lifecycle_status } = options
 
+	// semester_id is one of the few filters MyJKKN applies server-side, so forwarding it
+	// returns one cohort instead of every learner on the platform. Only a real UUID is
+	// sent: MyJKKN compares it against a uuid column and answers 500 for anything else.
+	const semester_id = options.semester_id && UUID_PATTERN.test(options.semester_id) ? options.semester_id : undefined
+
 	return fetchFromMyJKKN<MyJKKNPaginatedResponse<MyJKKNLearnerProfile>>(
 		'/api-management/learners/profiles',
-		{ page, limit, search, is_active, institution_id, institution_code, program_id, program_code, department_id, department_code, batch_id, current_semester, admission_year, lifecycle_status }
+		{ page, limit, search, is_active, institution_id, institution_code, program_id, program_code, department_id, department_code, batch_id, semester_id, current_semester, admission_year, lifecycle_status }
 	)
 }
 

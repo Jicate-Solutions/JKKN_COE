@@ -32,6 +32,8 @@ export interface PracticalExaminerAssignment {
 	/** Last email status from logs */
 	last_email_status: 'PENDING' | 'SENT' | 'FAILED' | null
 	last_email_sent_at: string | null
+	/** Why the last send failed (only when last_email_status is FAILED) */
+	last_email_error: string | null
 }
 
 // =============================================================================

@@ -731,6 +731,7 @@ export default function ExaminerAllotmentPage() {
 																<TableCell className="py-1">
 																	<ExternalExaminerCell
 																		row={row}
+																		effectiveInstitutionId={effectiveInstitutionId}
 																		saveStatus={saveStatus[`${row.timetable_id}-external`]}
 																		onSelect={(examiner) => {
 																			setRows(prev => prev.map(r =>
@@ -964,11 +965,13 @@ function InternalExaminerCell({
 
 function ExternalExaminerCell({
 	row,
+	effectiveInstitutionId,
 	saveStatus,
 	onSelect,
 	onRemove,
 }: {
 	row: TimetableRow
+	effectiveInstitutionId: string
 	saveStatus?: string
 	onSelect: (examiner: ExternalExaminer) => void
 	onRemove: () => void
@@ -986,7 +989,7 @@ function ExternalExaminerCell({
 		debounceRef.current = setTimeout(async () => {
 			setLoading(true)
 			try {
-				const url = `/api/pre-exam/examiner-allotment?action=examiner-search&search=${encodeURIComponent(value)}`
+				const url = `/api/pre-exam/examiner-allotment?action=examiner-search&institutionId=${effectiveInstitutionId}&search=${encodeURIComponent(value)}`
 				const res = await fetch(url)
 				const data = await res.json()
 				setOptions(Array.isArray(data) ? data : [])

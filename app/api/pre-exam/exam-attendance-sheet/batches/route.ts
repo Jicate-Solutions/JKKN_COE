@@ -8,6 +8,7 @@
 
 import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
+import { fetchAllRows } from '@/lib/exam-applications/paginate'
 
 export async function GET(request: Request) {
 	try {
@@ -22,24 +23,28 @@ export async function GET(request: Request) {
 			return NextResponse.json({ error: 'All params required' }, { status: 400 })
 		}
 
-		const { data, error } = await supabase
-			.from('exam_timetables')
-			.select('id, exam_date, session, batch_capacity, course_id, courses(course_code, course_name)')
-			.eq('institutions_id', institutionId)
-			.eq('examination_session_id', sessionId)
-			.eq('exam_date', examDate)
-			.eq('session', session)
-			.eq('exam_type', 'Practical')
-			.eq('is_published', true)
-			.order('exam_date', { ascending: true })
-
-		if (error) {
+		// Paged to completion so Supabase's 1000-row cap cannot hide a batch
+		let data: any[]
+		try {
+			data = await fetchAllRows(
+				() => supabase
+					.from('exam_timetables')
+					.select('id, exam_date, session, batch_capacity, course_id, courses(course_code, course_name)')
+					.eq('institutions_id', institutionId)
+					.eq('examination_session_id', sessionId)
+					.eq('exam_date', examDate)
+					.eq('session', session)
+					.eq('exam_type', 'Practical')
+					.eq('is_published', true),
+				{ orderColumn: 'exam_date', label: 'practical batches' }
+			)
+		} catch (error) {
 			console.error('[AttendanceSheet/Batches] Error:', error)
 			return NextResponse.json({ error: 'Failed to fetch' }, { status: 500 })
 		}
 
 		// Sort FN before AN, then by date
-		const sorted = (data || []).sort((a: any, b: any) => {
+		const sorted = data.sort((a: any, b: any) => {
 			const dateCompare = a.exam_date.localeCompare(b.exam_date)
 			if (dateCompare !== 0) return dateCompare
 			return a.session === 'FN' ? -1 : 1

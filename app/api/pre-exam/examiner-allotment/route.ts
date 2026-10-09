@@ -455,14 +455,23 @@ export async function GET(request: Request) {
 			// ------------------------------------------------------------------
 			// action='examiner-search'
 			// Search local examiners table for external examiner
+			// Scoped to the institution the examiner registered under
+			// (examiners.institution_id is singular, unlike institutions_id elsewhere)
 			// ------------------------------------------------------------------
 			case 'examiner-search': {
 				const search = searchParams.get('search')
+				const institutionId = searchParams.get('institutionId') || institutionsIdParam
 
 				let query = supabase
 					.from('examiners')
 					.select('id, full_name, mobile, designation, department, institution_name')
 					.eq('status', 'ACTIVE')
+
+				if (institutionId) {
+					query = query.eq('institution_id', institutionId)
+				} else if (institutionCode) {
+					query = query.eq('institution_code', institutionCode)
+				}
 
 				if (search) {
 					query = query.or(`full_name.ilike.%${search}%,mobile.ilike.%${search}%,department.ilike.%${search}%,institution_name.ilike.%${search}%`)
