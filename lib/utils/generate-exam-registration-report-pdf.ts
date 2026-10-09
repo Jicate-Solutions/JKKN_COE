@@ -669,6 +669,10 @@ function generateStudentFeeDetailsPdf(opts: ReportPdfOptions): string {
 			const courseRowHeights = student.courses.length > 0
 				? student.courses.map((c: any) => calcWrappedRowHeight(doc, c.course_name, colWidths[6] - 2, rowHeight))
 				: [rowHeight]
+			// The candidate name wraps too - a long name on a short subject list grows the last row
+			const nameHeight = calcWrappedRowHeight(doc, student.name, colWidths[2] - 2, rowHeight)
+			const coursesHeight = courseRowHeights.reduce((a: number, b: number) => a + b, 0)
+			if (nameHeight > coursesHeight) courseRowHeights[courseRowHeights.length - 1] += nameHeight - coursesHeight
 			const groupHeight = courseRowHeights.reduce((a: number, b: number) => a + b, 0)
 			const courseCount = courseRowHeights.length
 
@@ -700,13 +704,8 @@ function generateStudentFeeDetailsPdf(opts: ReportPdfOptions): string {
 			tx += colWidths[0]
 			doc.text(student.regNo, tx + colWidths[1] / 2, midY, { align: 'center' })
 			tx += colWidths[1]
-			// Truncate name if too wide
-			let nameText = student.name
-			const nameMaxW = colWidths[2] - 2
-			while (doc.getTextWidth(nameText) > nameMaxW && nameText.length > 3) {
-				nameText = nameText.slice(0, -4) + '...'
-			}
-			doc.text(nameText, tx + colWidths[2] / 2, midY, { align: 'center' })
+			// Name wraps inside the merged cell
+			drawWrappedCell(doc, student.name, tx, tableY, colWidths[2], groupHeight, 'center')
 			tx += colWidths[2]
 			// DOB
 			if (student.dob) {
@@ -939,6 +938,10 @@ function generateStudentExamRegistrationPdf(opts: ReportPdfOptions): string {
 			const courseRowHeights = student.courses.length > 0
 				? student.courses.map((c: any) => calcWrappedRowHeight(doc, c.course_name, colWidths[6] - 2, rowHeight))
 				: [rowHeight]
+			// The candidate name wraps too - a long name on a short subject list grows the last row
+			const nameHeight = calcWrappedRowHeight(doc, student.name, colWidths[2] - 2, rowHeight)
+			const coursesHeight = courseRowHeights.reduce((a: number, b: number) => a + b, 0)
+			if (nameHeight > coursesHeight) courseRowHeights[courseRowHeights.length - 1] += nameHeight - coursesHeight
 			const groupHeight = courseRowHeights.reduce((a: number, b: number) => a + b, 0)
 			const courseCount = courseRowHeights.length
 
@@ -970,13 +973,8 @@ function generateStudentExamRegistrationPdf(opts: ReportPdfOptions): string {
 			tx += colWidths[0]
 			doc.text(student.regNo, tx + colWidths[1] / 2, midY, { align: 'center' })
 			tx += colWidths[1]
-			// Truncate name if too wide
-			let nameText = student.name
-			const nameMaxW = colWidths[2] - 2
-			while (doc.getTextWidth(nameText) > nameMaxW && nameText.length > 3) {
-				nameText = nameText.slice(0, -4) + '...'
-			}
-			doc.text(nameText, tx + colWidths[2] / 2, midY, { align: 'center' })
+			// Name wraps inside the merged cell
+			drawWrappedCell(doc, student.name, tx, tableY, colWidths[2], groupHeight, 'center')
 			tx += colWidths[2]
 			// DOB
 			if (student.dob) {
@@ -3380,10 +3378,14 @@ function generateStudentWiseFormPdf(opts: ReportPdfOptions): string {
 			{ label: 'UMIS', value: '' },
 		]
 		const lineH = 4
-		// Program & Branch is a lower row → wraps in the full-width value column
-		const fieldHeights = fields.map(f => {
-			if (f.label === 'Program & Branch' && f.value) {
-				const lines = doc.splitTextToSize(f.value, valueWide - 4)
+		// Program & Branch is a lower row → wraps in the full-width value column;
+		// the name wraps in the narrow one beside Gender / Semester
+		const wrapsValue = (label: string) => label === 'Program & Branch' || label === 'Name of the Student'
+		doc.setFont('times', 'normal')
+		doc.setFontSize(10)
+		const fieldHeights = fields.map((f, i) => {
+			if (wrapsValue(f.label) && f.value) {
+				const lines = doc.splitTextToSize(f.value, (i < 2 ? valueNarrow : valueWide) - 4)
 				return Math.max(infoRowHeight, lines.length * lineH + 3)
 			}
 			return infoRowHeight
@@ -3421,7 +3423,7 @@ function generateStudentWiseFormPdf(opts: ReportPdfOptions): string {
 			doc.text(field.label, xLabel + 2, textY)
 			doc.setFont('times', 'normal')
 			const wrapW = (i < 2 ? valueNarrow : valueWide) - 4
-			if (field.label === 'Program & Branch' && field.value) {
+			if (wrapsValue(field.label) && field.value) {
 				const lines = doc.splitTextToSize(field.value, wrapW)
 				const totalH = lines.length * lineH
 				const sY = rowY + (rowH - totalH) / 2 + lineH * 0.75

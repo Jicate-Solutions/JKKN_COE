@@ -10,6 +10,7 @@ import {
 } from '@/lib/exam-fee/calculate'
 import type { ProgramLevel } from '@/lib/exam-fee-catalog'
 import { normalizeDateOfBirth } from '@/lib/myjkkn-learner-enrichment'
+import { loadProgramNames } from '@/lib/exam-registration-final-approval/cohort'
 
 // Helper: fetch all pages from Supabase in parallel batches
 async function fetchAllPaginated(
@@ -241,7 +242,7 @@ async function buildFinalApprovalReport(
 	examination_session_id: string
 ) {
 	const [{ data: institution }, { data: session }, { data: localPrograms }] = await Promise.all([
-		supabase.from('institutions').select('id, institution_code, name').eq('id', institutions_id).single(),
+		supabase.from('institutions').select('id, institution_code, name, myjkkn_institution_ids').eq('id', institutions_id).single(),
 		supabase.from('examination_sessions').select('id, session_code, session_name').eq('id', examination_session_id).single(),
 		supabase.from('programs').select('program_code, program_name, program_order').eq('institutions_id', institutions_id),
 	])
@@ -249,6 +250,14 @@ async function buildFinalApprovalReport(
 	if (!institution || !session) {
 		return NextResponse.json({ error: 'Institution or Session not found' }, { status: 404 })
 	}
+
+	// The local `programs` mirror only carries a handful of PG rows, so names come
+	// from MyJKKN first - the same lookup the Pending tab's programme filter uses.
+	const programNameByCode = await loadProgramNames(
+		supabase,
+		institutions_id,
+		((institution as any).myjkkn_institution_ids as string[] | null) || []
+	)
 
 	const baseColumns = 'id, student_id, stu_register_no, student_name, regulation_code, program_code, semester, total_subjects, exam_fee, application_fee, mark_statement_fee, late_fine, final_amount, fee_paid, payment_status, registration_status, approved_at'
 	const fetchRows = (columns: string) => fetchAllPaginated(async (from, to) => {
@@ -306,13 +315,14 @@ async function buildFinalApprovalReport(
 	const data = rows.map(r => {
 		const programCode = String(r.program_code || '').trim().toUpperCase() || null
 		const program = programCode ? programByCode.get(programCode) : undefined
+		const programName = (programCode && programNameByCode.get(programCode)) || program?.program_name || null
 		return {
 			id: r.id,
 			student_id: r.student_id,
 			stu_register_no: r.stu_register_no,
 			student_name: r.student_name || '',
 			program_code: programCode,
-			program_name: program?.program_name || null,
+			program_name: programName,
 			regulation_code: r.regulation_code || null,
 			learner_semester: Number(r.semester) || 0,
 			total_subjects: Number(r.total_subjects) || 0,
@@ -331,7 +341,7 @@ async function buildFinalApprovalReport(
 			// Mirrors the shape the programme filter / options read on every report
 			course_offering: {
 				program_code: programCode,
-				program_name: program?.program_name || null,
+				program_name: programName,
 				program_order: program?.program_order ?? 999,
 				semester: Number(r.semester) || 0,
 			},

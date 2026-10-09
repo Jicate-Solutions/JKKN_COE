@@ -92,7 +92,7 @@ const round2 = (value: number) => Math.round(value * 100) / 100
 const PROGRAM_NAME_CACHE_TTL_MS = 10 * 60 * 1000
 const programNameCache = new Map<string, { at: number; names: Map<string, string> }>()
 
-async function loadProgramNames(
+export async function loadProgramNames(
 	supabase: SupabaseClient,
 	institutions_id: string,
 	myjkknInstitutionIds: string[]
@@ -118,6 +118,7 @@ async function loadProgramNames(
 		const name = String(p.program_name || p.name || '').trim()
 		if (code && name && !names.has(code)) names.set(code, name)
 	}
+	const myjkknAnswered = names.size > 0 || myjkknInstitutionIds.length === 0
 
 	const { data: localPrograms } = await supabase
 		.from('programs')
@@ -130,7 +131,9 @@ async function loadProgramNames(
 
 	// Only a sweep that actually found names is worth remembering; an outage
 	// should be retried on the next request rather than cached for ten minutes.
-	if (names.size > 0) programNameCache.set(institutions_id, { at: Date.now(), names })
+	// The local mirror alone does not count - it holds a few PG rows, so caching
+	// it after a MyJKKN failure would print bare UG codes until the cache expired.
+	if (names.size > 0 && myjkknAnswered) programNameCache.set(institutions_id, { at: Date.now(), names })
 	return names
 }
 
