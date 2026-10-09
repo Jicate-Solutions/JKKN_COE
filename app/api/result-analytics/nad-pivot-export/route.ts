@@ -301,16 +301,29 @@ export async function GET(req: NextRequest) {
 			return q
 				.order('STUDENT_NAME', { ascending: true })
 				.order('subject_order', { ascending: true })
+				// Unique tiebreakers — two learners with the same name would otherwise
+				// swap rows across the 1000-row page boundary (duplicated / skipped papers).
+				.order('student_id', { ascending: true })
+				.order('examination_session_id', { ascending: true })
 		}
 
 		const viewData: any[] = []
+		const seenFinalMarks = new Set<string>()
 		let viewError: any = null
 		let nadFrom = 0
 		while (true) {
 			const { data: batch, error: batchErr } = await buildViewQuery().range(nadFrom, nadFrom + 1000 - 1)
 			if (batchErr) { viewError = batchErr; break }
 			if (!batch || batch.length === 0) break
-			viewData.push(...batch)
+			// The view joins course_mapping without a semester, so a course mapped twice in
+			// one programme (24UEVS01 under UCA-3 and UCA-4) returns the same final_marks
+			// row twice. Keep the first copy of each.
+			for (const row of batch) {
+				const rowKey = row.final_mark_id || `${row.student_id}|${row.examination_session_id}|${row.course_id}`
+				if (seenFinalMarks.has(rowKey)) continue
+				seenFinalMarks.add(rowKey)
+				viewData.push(row)
+			}
 			nadFrom += 1000
 			if (batch.length < 1000) break
 		}
@@ -457,7 +470,8 @@ export async function GET(req: NextRequest) {
 				letter_grade: row.letter_grade || '',
 				grade_points: row.grade_points || 0,
 				credit: row.credit || 0,
-				credit_points: (row.grade_points || 0) * (row.credit || 0),
+				// Rounded: 5.1 × 3 is 15.299999999999999 in floating point and went into the CSV like that.
+				credit_points: Math.round((row.grade_points || 0) * (row.credit || 0) * 100) / 100,
 				pass_status: row.RESULT_STATUS || 'PASS',
 				raw_pass_status: row.raw_pass_status || 'Pass',  // For REMARKS mapping
 				is_regular: row.is_regular_subject !== false,
@@ -547,6 +561,12 @@ export async function GET(req: NextRequest) {
 		// keyed by course_type_code (alternatives share 'NME-II') or course_code, and
 		// a learner without that course leaves the column blank. Arrear papers differ
 		// per learner and follow the regular columns positionally.
+		// A paper only owns a column when it belongs to the learner's current semester:
+		// a first-attempt registration of a lower-semester paper is flagged is_regular
+		// (25JUGCCA134 took semester-1 24UCSGEP04 in semester 2) and would otherwise open
+		// a column that stays blank for the other 149 learners of the cohort.
+		const ownsColumn = (student: StudentData, s: SubjectData) =>
+			s.is_regular && s.subject_semester === student.semester
 		const cohorts = new Map<string, StudentData[]>()
 		for (const student of Array.from(studentMap.values())) {
 			const cohortKey = `${student.program_code}|${student.semester}`
@@ -561,7 +581,7 @@ export async function GET(req: NextRequest) {
 			for (const student of cohortStudents) {
 				const seen = new Set<string>()
 				for (const s of student.subjects) {
-					if (!s.is_regular || !s.course_type_code) continue
+					if (!ownsColumn(student, s) || !s.course_type_code) continue
 					if (seen.has(s.course_type_code)) ambiguousTypes.add(s.course_type_code)
 					seen.add(s.course_type_code)
 				}
@@ -574,7 +594,7 @@ export async function GET(req: NextRequest) {
 			// Column order = average position of the slot across the cohort.
 			const positions = new Map<string, { sum: number; n: number }>()
 			for (const student of cohortStudents) {
-				student.subjects.filter(s => s.is_regular).forEach((s, idx) => {
+				student.subjects.filter(s => ownsColumn(student, s)).forEach((s, idx) => {
 					const p = positions.get(slotKey(s)) || { sum: 0, n: 0 }
 					p.sum += idx
 					p.n += 1
@@ -587,11 +607,15 @@ export async function GET(req: NextRequest) {
 
 			for (const student of cohortStudents) {
 				const bySlot = new Map<string, SubjectData>()
-				for (const s of student.subjects) if (s.is_regular) bySlot.set(slotKey(s), s)
-				student.columns = [
-					...slotOrder.map(key => bySlot.get(key) || null),
-					...student.subjects.filter(s => !s.is_regular)
-				]
+				for (const s of student.subjects) if (ownsColumn(student, s)) bySlot.set(slotKey(s), s)
+				// A learner writing only arrear papers has nothing for the cohort columns —
+				// start their papers at SUB1 instead of after a run of blank columns.
+				student.columns = bySlot.size === 0
+					? [...student.subjects]
+					: [
+						...slotOrder.map(key => bySlot.get(key) || null),
+						...student.subjects.filter(s => !ownsColumn(student, s))
+					]
 			}
 		}
 
@@ -903,7 +927,7 @@ export async function GET(req: NextRequest) {
 			// TOT_CREDIT_POINTS — prefer semester_results.total_credit_points (authoritative,
 			// decimal), fall back to subject-credit-points sum if the semester result row is missing.
 			row.push(
-				(student.total_credit_points_earned ?? student.total_credit_points).toString()
+				(Math.round((student.total_credit_points_earned ?? student.total_credit_points) * 100) / 100).toString()
 			)                                                     // TOT_CREDIT_POINTS
 			row.push('')                                          // CGPA - empty (not fetched)
 			row.push(student.aadhar_number)                       // ABC_ACCOUNT_ID

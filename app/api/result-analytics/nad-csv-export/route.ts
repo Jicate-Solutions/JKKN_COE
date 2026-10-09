@@ -82,16 +82,29 @@ export async function GET(req: NextRequest) {
 			return q
 				.order('STUDENT_NAME', { ascending: true })
 				.order('subject_order', { ascending: true })
+				// Unique tiebreakers — two learners with the same name would otherwise
+				// swap rows across the 1000-row page boundary (duplicated / skipped papers).
+				.order('student_id', { ascending: true })
+				.order('examination_session_id', { ascending: true })
 		}
 
 		const viewData: any[] = []
+		const seenFinalMarks = new Set<string>()
 		let viewError: any = null
 		let nadFrom = 0
 		while (true) {
 			const { data: batch, error: batchErr } = await buildViewQuery().range(nadFrom, nadFrom + 1000 - 1)
 			if (batchErr) { viewError = batchErr; break }
 			if (!batch || batch.length === 0) break
-			viewData.push(...batch)
+			// The view joins course_mapping without a semester, so a course mapped twice in
+			// one programme (24UEVS01 under UCA-3 and UCA-4) returns the same final_marks
+			// row twice. Keep the first copy of each.
+			for (const row of batch) {
+				const rowKey = row.final_mark_id || `${row.student_id}|${row.examination_session_id}|${row.course_id}`
+				if (seenFinalMarks.has(rowKey)) continue
+				seenFinalMarks.add(rowKey)
+				viewData.push(row)
+			}
 			nadFrom += 1000
 			if (batch.length < 1000) break
 		}
