@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
 
 // =====================================================
 // GET /api/revaluation/reports/course-analysis
@@ -12,8 +13,8 @@ export async function GET(request: NextRequest) {
 		const { searchParams } = new URL(request.url)
 
 		// Extract filters
-		const institutionCode = searchParams.get('institution_code')
-		const institutionsId = searchParams.get('institutions_id')
+		const institutionCode = (await institutionParam(searchParams, 'institution_code'))
+		const institutionsId = (await institutionParam(searchParams, 'institutions_id'))
 		const examinationSessionId = searchParams.get('examination_session_id')
 
 		// Build base query
@@ -29,7 +30,7 @@ export async function GET(request: NextRequest) {
 			query = query.eq('examination_session_id', examinationSessionId)
 		}
 
-		const { data: registrations, error: regError } = await query.range(0, 9999)
+		const { data: registrations, error: regError } = await query
 
 		if (regError) {
 			console.error('[Course Analysis] Registrations error:', regError)
@@ -43,7 +44,6 @@ export async function GET(request: NextRequest) {
 			.select('*')
 			.in('revaluation_registration_id', revaluationIds)
 			.eq('result_status', 'Published')
-			.range(0, 9999)
 
 		if (finalError) {
 			console.error('[Course Analysis] Final marks error:', finalError)

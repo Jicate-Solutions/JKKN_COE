@@ -96,7 +96,7 @@ export async function POST(request: Request, { params }: Ctx) {
 		if (Array.isArray(setting.program_codes) && setting.program_codes.length > 0) {
 			regQ = regQ.in('program_code', setting.program_codes)
 		}
-		const { data: registrations } = await regQ.range(0, 19999)
+		const { data: registrations } = await regQ
 		if (!registrations?.length) {
 			return NextResponse.json({ error: 'No registrations found for this setting scope' }, { status: 400 })
 		}

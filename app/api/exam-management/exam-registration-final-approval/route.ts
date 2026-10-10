@@ -19,6 +19,7 @@ import type {
 	FinalApprovalResult,
 	FinalApprovalSkipped,
 } from '@/types/exam-registration-final-approval'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
 
 /**
  * Final Exam Registration Approval API
@@ -84,7 +85,7 @@ export async function GET(request: Request) {
 		const supabase = getSupabaseServer()
 		const { searchParams } = new URL(request.url)
 
-		const institutions_id = searchParams.get('institutions_id') || ''
+		const institutions_id = (await institutionParam(searchParams, 'institutions_id')) || ''
 		const examination_session_id = searchParams.get('examination_session_id') || ''
 		// Multi-select: `program_codes=UCA,UCS` (comma list); `program_code` still works
 		const programFilter = new Set(

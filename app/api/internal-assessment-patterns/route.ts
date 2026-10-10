@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
 
 // GET - Fetch all internal assessment patterns with optional filters
 export async function GET(req: NextRequest) {
@@ -8,7 +9,7 @@ export async function GET(req: NextRequest) {
 		const { searchParams } = new URL(req.url)
 
 		// Optional filters
-		const institutionCode = searchParams.get('institution_code')
+		const institutionCode = (await institutionParam(searchParams, 'institution_code'))
 		const regulationCode = searchParams.get('regulation_code')
 		const courseType = searchParams.get('course_type')
 		const programType = searchParams.get('program_type')

@@ -3,6 +3,7 @@ import { getSupabaseServer } from '@/lib/supabase-server'
 import { fetchAllMyJKKNPrograms } from '@/lib/myjkkn-api'
 import { fetchAllPaginated, fetchBatchedIn, detectLearnerClashes } from '@/lib/exam-clash'
 import { ACTIVE_REGISTRATION_STATUSES } from '@/lib/exam-registration-status'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
 
 // DB constraint check_practical_batch_capacity: exam_type 'Theory' → batch_capacity must be NULL;
 // any other exam_type (Practical, Project, Field Work, Theory + Practical, …) → batch_capacity > 0.
@@ -23,7 +24,7 @@ export async function GET(request: Request) {
 	try {
 		const supabase = getSupabaseServer()
 		const { searchParams } = new URL(request.url)
-		const institutions_id = searchParams.get('institutions_id')
+		const institutions_id = (await institutionParam(searchParams, 'institutions_id'))
 		const examination_session_id = searchParams.get('examination_session_id')
 
 		if (!institutions_id || !examination_session_id) {
@@ -116,7 +117,6 @@ export async function GET(request: Request) {
 			.select('program_code, program_name, program_type, program_order')
 			.eq('institutions_id', institutions_id)
 			.eq('is_active', true)
-			.range(0, 9999)
 		for (const lp of localPrograms || []) {
 			if (lp.program_code && !programNameMap.has(lp.program_code) && lp.program_name) {
 				programNameMap.set(lp.program_code, lp.program_name)

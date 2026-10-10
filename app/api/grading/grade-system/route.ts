@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
 import { handleDeleteWithDependencyCheck } from '@/lib/delete-helpers'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
 
 // GET - Fetch all grade systems
 export async function GET(request: Request) {
@@ -8,8 +9,8 @@ export async function GET(request: Request) {
 		const supabase = getSupabaseServer()
 		const { searchParams } = new URL(request.url)
 		// Support both institution_id and institutions_id for compatibility
-		const institutionId = searchParams.get('institutions_id') || searchParams.get('institution_id')
-		const institutionCode = searchParams.get('institution_code')
+		const institutionId = (await institutionParam(searchParams, 'institutions_id')) || (await institutionParam(searchParams, 'institution_id'))
+		const institutionCode = (await institutionParam(searchParams, 'institution_code'))
 		const regulationId = searchParams.get('regulation_id')
 		const gradeId = searchParams.get('grade_id')
 		const isActive = searchParams.get('is_active')

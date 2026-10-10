@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
+import { NO_INSTITUTION_ID } from '@/lib/auth/institution-scope'
 
 // =====================================================
 // GET /api/revaluation/fee-config
@@ -11,18 +13,25 @@ export async function GET(request: NextRequest) {
 		const { searchParams } = new URL(request.url)
 
 		// Extract filters
-		const institutionCode = searchParams.get('institution_code')
-		const institutionsId = searchParams.get('institutions_id')
+		const institutionCode = (await institutionParam(searchParams, 'institution_code'))
+		const institutionsId = (await institutionParam(searchParams, 'institutions_id'))
 		const isActive = searchParams.get('is_active')
 
 		// Build query
 		let query = supabase.from('revaluation_fee_config').select('*')
 
 		// Institution filter
-		if (institutionCode) {
-			query = query.eq('institution_code', institutionCode)
-		} else if (institutionsId) {
+		// revaluation_fee_config has no institution_code column — filter by id, resolving
+		// a code to its institution first.
+		if (institutionsId) {
 			query = query.eq('institutions_id', institutionsId)
+		} else if (institutionCode) {
+			const { data: institution } = await supabase
+				.from('institutions')
+				.select('id')
+				.eq('institution_code', institutionCode)
+				.maybeSingle()
+			query = query.eq('institutions_id', institution?.id ?? NO_INSTITUTION_ID)
 		}
 
 		// Active filter
@@ -34,7 +43,7 @@ export async function GET(request: NextRequest) {
 		query = query.order('effective_from', { ascending: false })
 
 		// Override default row limit
-		const { data, error } = await query.range(0, 9999)
+		const { data, error } = await query
 
 		if (error) {
 			console.error('[Fee Config GET] Error:', error)

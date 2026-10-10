@@ -284,6 +284,31 @@ export const POST = withExternalAuth(async (request: Request, context: ExternalA
 			const recordsWithId = upsertRecords.filter(r => r.id)
 			const recordsWithoutId = upsertRecords.filter(r => !r.id)
 
+			// An upsert on a caller-supplied id must not touch (or re-home) another institution's mapping
+			if (recordsWithId.length > 0) {
+				const { data: existingRows, error: existingError } = await supabase
+					.from('course_mapping')
+					.select('id, institutions_id')
+					.in('id', recordsWithId.map(r => r.id))
+
+				if (existingError) {
+					console.error('Error verifying existing course mappings:', existingError)
+					return NextResponse.json({ error: 'Failed to verify existing course mappings' }, { status: 500 })
+				}
+
+				const existingInstitutionById = new Map<string, string>(
+					(existingRows || []).map((row: any) => [row.id, row.institutions_id])
+				)
+				const crossesInstitution = recordsWithId.some(r => {
+					const existingInstitution = existingInstitutionById.get(r.id)
+					if (!existingInstitution) return false
+					return !checkInstitutionAccess(context, existingInstitution) || existingInstitution !== r.institutions_id
+				})
+				if (crossesInstitution) {
+					return NextResponse.json({ error: 'You do not have permission to perform this action.' }, { status: 403 })
+				}
+			}
+
 			if (recordsWithId.length > 0) {
 				const { data: updateData, error: updateError } = await supabase
 					.from('course_mapping')

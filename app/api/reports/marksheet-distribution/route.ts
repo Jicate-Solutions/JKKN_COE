@@ -6,11 +6,12 @@ import {
 	fetchAllMyJKKNBatches,
 } from '@/lib/myjkkn-api'
 import { normalizeDateOfBirth } from '@/lib/myjkkn-learner-enrichment'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
 
 export async function GET(request: NextRequest) {
 	try {
 		const { searchParams } = new URL(request.url)
-		const institutionId = searchParams.get('institution_id')
+		const institutionId = (await institutionParam(searchParams, 'institution_id'))
 		const programCode = searchParams.get('program_code')
 		const batchCode = searchParams.get('batch_code')
 

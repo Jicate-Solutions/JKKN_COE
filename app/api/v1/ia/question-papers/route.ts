@@ -45,7 +45,7 @@ export const GET = withExternalAuth(async (request: Request, context: ExternalAp
 	// End-semester papers belong to the examiner portal, never to an API key.
 	query = excludeEsePapers(query, await eseTemplateIds(supabase, inst.id))
 
-	const { data, error } = await query.range(0, 9999)
+	const { data, error } = await query
 	if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 	// authored flag from the questions JSONB; drop the array from the list payload
 	const withFlag = (data || []).map((p: any) => {

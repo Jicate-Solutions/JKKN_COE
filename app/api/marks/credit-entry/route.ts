@@ -61,7 +61,6 @@ export async function GET(request: Request) {
 			.eq('examination_session_id', sessionId)
 			.eq('courses.result_type', 'credit')
 			.not('program_code', 'is', null)
-			.range(0, 9999)
 
 		if (error) {
 			console.error('Error fetching programs:', error)
@@ -102,7 +101,7 @@ export async function GET(request: Request) {
 
 		if (programId) query = query.eq('program_id', programId)
 
-		const { data, error } = await query.range(0, 9999)
+		const { data, error } = await query
 
 		if (error) {
 			console.error('Error fetching credit courses:', error)
@@ -130,7 +129,6 @@ export async function GET(request: Request) {
 			.eq('course_offering_id', courseOfferingId)
 			.in('registration_status', ACTIVE_REGISTRATION_STATUSES)
 			.order('stu_register_no')
-			.range(0, 9999)
 
 		if (regError) {
 			console.error('Error fetching registrations:', regError)
@@ -150,7 +148,6 @@ export async function GET(request: Request) {
 			.eq('examination_session_id', sessionId)
 			.eq('course_id', courseId || '')
 			.in('exam_registration_id', examRegIds)
-			.range(0, 9999)
 
 		const finalMarksMap = new Map(
 			(finalMarks || []).map(fm => [fm.exam_registration_id, fm])

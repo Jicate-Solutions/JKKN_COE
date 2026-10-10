@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
 
 /**
  * Registration Lookup API
@@ -14,7 +15,7 @@ export async function GET(request: Request) {
 		const { searchParams } = new URL(request.url)
 
 		// Cascading filter parameters
-		const institutions_id = searchParams.get('institutions_id')
+		const institutions_id = (await institutionParam(searchParams, 'institutions_id'))
 		const examination_session_id = searchParams.get('examination_session_id')
 		const program_code = searchParams.get('program_code')
 		const course_code = searchParams.get('course_code')
@@ -36,7 +37,7 @@ export async function GET(request: Request) {
 					program_code,
 					examination_session_id,
 					institutions_id,
-					course_mapping:course_mapping(course_code, course_title)
+					course_mapping:course_mapping(course_code)
 				)
 			`)
 			.order('created_at', { ascending: false })

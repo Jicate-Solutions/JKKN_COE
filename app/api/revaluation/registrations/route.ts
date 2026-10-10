@@ -5,6 +5,7 @@ import type {
 	RevaluationFilters,
 	RevaluationRegistration,
 } from '@/types/revaluation'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
 
 // =====================================================
 // GET /api/revaluation/registrations
@@ -16,8 +17,8 @@ export async function GET(request: NextRequest) {
 		const { searchParams } = new URL(request.url)
 
 		// Extract filters
-		const institutionCode = searchParams.get('institution_code')
-		const institutionsId = searchParams.get('institutions_id')
+		const institutionCode = (await institutionParam(searchParams, 'institution_code'))
+		const institutionsId = (await institutionParam(searchParams, 'institutions_id'))
 		const examinationSessionId = searchParams.get('examination_session_id')
 		const status = searchParams.get('status')
 		const paymentStatus = searchParams.get('payment_status')
@@ -55,7 +56,7 @@ export async function GET(request: NextRequest) {
 		query = query.order('application_date', { ascending: false })
 
 		// Override default row limit
-		const { data, error } = await query.range(0, 9999)
+		const { data, error } = await query
 
 		if (error) {
 			console.error('[Revaluation Registrations GET] Error:', error)

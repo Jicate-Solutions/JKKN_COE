@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
 
 export async function GET(request: NextRequest) {
 	const supabase = getSupabaseServer()
@@ -7,8 +8,8 @@ export async function GET(request: NextRequest) {
 	const action = searchParams.get('action')
 
 	// Institution filter params (from useInstitutionFilter hook)
-	const filterInstitutionCode = searchParams.get('institution_code')
-	const filterInstitutionsId = searchParams.get('institutions_id')
+	const filterInstitutionCode = (await institutionParam(searchParams, 'institution_code'))
+	const filterInstitutionsId = (await institutionParam(searchParams, 'institutions_id'))
 
 	try {
 		// Get institutions for dropdown
@@ -763,7 +764,7 @@ export async function GET(request: NextRequest) {
 
 			// If no dummy match, try register number
 			if (matchedEntries.length === 0) {
-				const { data: allEntries, error: regErr } = await buildQuery().range(0, 9999)
+				const { data: allEntries, error: regErr } = await buildQuery()
 
 				if (regErr) throw regErr
 

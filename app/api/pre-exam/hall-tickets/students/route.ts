@@ -11,13 +11,14 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
 import { ACTIVE_REGISTRATION_STATUSES } from '@/lib/exam-registration-status'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
 
 export async function GET(request: NextRequest) {
 	try {
 		const supabase = getSupabaseServer()
 		const { searchParams } = new URL(request.url)
 
-		const institution_code = searchParams.get('institution_code')
+		const institution_code = (await institutionParam(searchParams, 'institution_code'))
 		const examination_session_id = searchParams.get('examination_session_id')
 		const program_code = searchParams.get('program_code')
 		const semester = searchParams.get('semester') // optional semester number filter
@@ -61,7 +62,7 @@ export async function GET(request: NextRequest) {
 			regQuery = regQuery.eq('fee_paid', true)
 		}
 
-		const { data: registrations, error: regError } = await regQuery.range(0, 9999)
+		const { data: registrations, error: regError } = await regQuery
 
 		if (regError) {
 			console.error('[HallTicket Students] Query error:', regError)

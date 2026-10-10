@@ -25,6 +25,7 @@ import { isEndSemesterExamType, endSemesterMismatchMessage } from '@/lib/qp-port
 import { resolveQpFeeRates, computeClaim, componentsForType } from '@/lib/qp-portal/fees'
 import { QP_ASSIGNMENT_TYPES, type QpAssignmentCreateInput, type QpAssignmentType } from '@/types/qp-examiner-assignment'
 import { countAuthored, anyAuthored } from '@/lib/ia/sub-questions'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
 
 export const dynamic = 'force-dynamic'
 
@@ -122,7 +123,7 @@ export async function GET(req: NextRequest) {
 	try {
 		const supabase = getSupabaseServer()
 		const { searchParams } = new URL(req.url)
-		const institutionsId = searchParams.get('institutions_id')
+		const institutionsId = (await institutionParam(searchParams, 'institutions_id'))
 		const sessionId = searchParams.get('examination_session_id')
 		const status = searchParams.get('status')
 		const kind = searchParams.get('examiner_kind')

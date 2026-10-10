@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
 import { withExternalAuth } from '@/lib/api-auth/middleware'
 import type { ExternalApiContext } from '@/types/api-management'
-import { resolveInstitutionForKey } from '@/lib/ia/v1-helpers'
+import { resolveInstitutionForKey, institutionAllowed } from '@/lib/ia/v1-helpers'
 
 /**
  * /api/v1/ia/question-types — configurable IA question-type registry.
@@ -72,8 +72,12 @@ export const PUT = withExternalAuth(async (request: Request, context: ExternalAp
 		.eq('id', body.id)
 		.maybeSingle()
 	const inst = await resolveInstitutionForKey(supabase, context, null)
-	if (!row || ('error' in inst ? false : row.institutions_id !== inst.id)) {
+	if (!row) {
 		return NextResponse.json({ error: 'Not found or not permitted' }, { status: 404 })
+	}
+	// Fail closed: a row outside the key's scope, or one that is not the resolved institution's, is refused
+	if (!institutionAllowed(context, row.institutions_id) || (!('error' in inst) && row.institutions_id !== inst.id)) {
+		return NextResponse.json({ error: 'You do not have permission to perform this action.' }, { status: 403 })
 	}
 
 	const { id, institutions_id, institution_code, ...patch } = body
@@ -96,8 +100,12 @@ export const DELETE = withExternalAuth(async (request: Request, context: Externa
 		.eq('id', id)
 		.maybeSingle()
 	const inst = await resolveInstitutionForKey(supabase, context, null)
-	if (!row || ('error' in inst ? false : row.institutions_id !== inst.id)) {
+	if (!row) {
 		return NextResponse.json({ error: 'Not found or not permitted' }, { status: 404 })
+	}
+	// Fail closed: a row outside the key's scope, or one that is not the resolved institution's, is refused
+	if (!institutionAllowed(context, row.institutions_id) || (!('error' in inst) && row.institutions_id !== inst.id)) {
+		return NextResponse.json({ error: 'You do not have permission to perform this action.' }, { status: 403 })
 	}
 
 	const { error } = await supabase.from('ia_question_types').delete().eq('id', id)

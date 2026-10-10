@@ -1,4 +1,5 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
+import { createPaginatedFetch } from '@/lib/supabase-paginated-fetch'
 
 let cachedClient: SupabaseClient | null = null
 
@@ -24,6 +25,9 @@ export function getSupabaseServer(): SupabaseClient {
       persistSession: false,
     },
     global: {
+      // PostgREST caps every response at 1000 rows; this pages through the
+      // rest so a read returns everything it asked for (see the module).
+      fetch: createPaginatedFetch(),
       headers: {
         'Prefer': 'return=representation'
       }

@@ -1,11 +1,12 @@
 import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
 
 export async function GET(request: Request) {
 	const supabase = getSupabaseServer()
 	const { searchParams } = new URL(request.url)
-	const institutionsId = searchParams.get('institutions_id')
-	const institutionCode = searchParams.get('institution_code')
+	const institutionsId = (await institutionParam(searchParams, 'institutions_id'))
+	const institutionCode = (await institutionParam(searchParams, 'institution_code'))
 
 	let query = supabase.from('examiner_form_configs').select('*')
 
@@ -15,7 +16,7 @@ export async function GET(request: Request) {
 		query = query.eq('institution_id', institutionsId)
 	}
 
-	const { data, error } = await query.order('created_at', { ascending: false }).range(0, 9999)
+	const { data, error } = await query.order('created_at', { ascending: false })
 
 	if (error) {
 		console.error('Fetch error:', error)

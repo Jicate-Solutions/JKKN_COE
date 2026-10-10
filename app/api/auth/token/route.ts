@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { bindParentIssuedSession } from '@/lib/auth/server-session';
 
 export async function POST(request: NextRequest) {
   try {
@@ -75,6 +76,13 @@ export async function POST(request: NextRequest) {
       hasRefreshToken: !!tokenData.refresh_token,
       hasUser: !!tokenData.user,
       userEmail: tokenData.user?.email
+    });
+
+    // Bind the tokens to a COE session HERE, while their owner is known for
+    // certain (the parent app just issued them to us server-to-server). Every
+    // protected API request is checked against this binding in proxy.ts.
+    await bindParentIssuedSession(tokenData, {
+      userAgent: request.headers.get('user-agent')?.substring(0, 500) || null,
     });
 
     // Return tokens to frontend

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
 import type { FilterOptions, FilterOption } from '@/types/result-analytics'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
 
 // GET /api/result-analytics/filter-options
 // Fetches all dropdown options for result analytics filters
@@ -9,7 +10,7 @@ export async function GET(req: NextRequest) {
 		const supabase = getSupabaseServer()
 		const { searchParams } = new URL(req.url)
 
-		const institutionId = searchParams.get('institution_id') || undefined
+		const institutionId = (await institutionParam(searchParams, 'institution_id')) || undefined
 
 		// Fetch all filter options in parallel
 		const [

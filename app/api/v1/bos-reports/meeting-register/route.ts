@@ -47,7 +47,7 @@ export const GET = withExternalAuth(async (request: Request, ctx: ExternalApiCon
 	if (startDate) query = query.gte('scheduled_date', startDate)
 	if (endDate) query = query.lte('scheduled_date', endDate)
 
-	const { data, error } = await query.range(0, 9999)
+	const { data, error } = await query
 
 	if (error) {
 		return NextResponse.json({ error: 'Failed to fetch meeting register' }, { status: 500 })

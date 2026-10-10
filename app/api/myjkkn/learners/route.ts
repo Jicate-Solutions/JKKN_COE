@@ -7,6 +7,7 @@
  */
 
 import { NextResponse } from 'next/server'
+import { restrictToCallerInstitution } from '@/lib/auth/institution-scope-request'
 
 const MYJKKN_API_URL = process.env.MYJKKN_API_URL || 'https://www.jkkn.ai/api'
 const MYJKKN_API_KEY = process.env.MYJKKN_API_KEY || ''
@@ -105,7 +106,8 @@ export async function GET(request: Request) {
 					return NextResponse.json({ error: err.message || `MyJKKN API Error: ${response.status}` }, { status: response.status })
 				}
 				const data = await response.json()
-				const profiles = data.data || []
+				// Only the caller's own institution leaves the server (super admins get all).
+				const profiles = await restrictToCallerInstitution<any>(data.data || [])
 				console.log(`[MyJKKN Learners API] Single page: ${profiles.length} profiles`)
 				return NextResponse.json({ data: profiles, total: profiles.length, metadata: data.metadata || {} })
 			} finally {
@@ -176,7 +178,8 @@ export async function GET(request: Request) {
 		}
 
 		console.log(`[MyJKKN Learners API] fetchAll complete: ${allProfiles.length} profiles matched`)
-		return NextResponse.json({ data: allProfiles, total: allProfiles.length })
+		const ownProfiles = await restrictToCallerInstitution(allProfiles)
+		return NextResponse.json({ data: ownProfiles, total: ownProfiles.length })
 
 	} catch (error) {
 		console.error('[MyJKKN Learners API] Error:', error)

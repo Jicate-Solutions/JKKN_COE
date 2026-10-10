@@ -15,6 +15,7 @@ import type {
 	SubtotalRow,
 	YearCount,
 } from '@/types/student-strength-report'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
 
 // ── Next.js data cache for MyJKKN API responses ───────────────────────────────
 // These endpoints are slow (~39 pages × 200 records for learners).
@@ -150,7 +151,7 @@ export async function GET(request: Request) {
 	try {
 		const supabase = getSupabaseServer()
 		const { searchParams } = new URL(request.url)
-		const institutions_id = searchParams.get('institutions_id')
+		const institutions_id = (await institutionParam(searchParams, 'institutions_id'))
 		const examination_session_id = searchParams.get('examination_session_id')
 
 		if (!institutions_id || !examination_session_id) {

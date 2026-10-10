@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { fetchMyJKKNStaff, MyJKKNApiError } from '@/lib/myjkkn-api'
+import { restrictToCallerInstitution } from '@/lib/auth/institution-scope-request'
 
 export async function GET(request: NextRequest) {
 	try {
@@ -26,7 +27,8 @@ export async function GET(request: NextRequest) {
 			designation: designation || undefined,
 		})
 
-		return NextResponse.json(response)
+		// Only the caller's own institution leaves the server (super admins get all).
+		return NextResponse.json({ ...response, data: await restrictToCallerInstitution(response.data) })
 	} catch (error) {
 		console.error('Error fetching staff from MyJKKN:', error)
 		if (error instanceof MyJKKNApiError) {

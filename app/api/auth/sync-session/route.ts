@@ -1,7 +1,14 @@
 import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
 import { getSupabaseParent } from '@/lib/supabase-parent'
-import { headers } from 'next/headers'
+import { cookies, headers } from 'next/headers'
+import {
+	COE_SESSION_TTL_SECONDS,
+	type ParentProfile,
+	bindSession,
+	validateTokenWithParent,
+	verifyAccessToken,
+} from '@/lib/auth/server-session'
 
 /**
  * Fetch a user's COE roles AND their permissions in a SINGLE pass.
@@ -145,6 +152,59 @@ async function fetchParentAvatar(userId: string): Promise<string | null> {
 	}
 }
 
+type VerifiedCaller =
+	| { ok: true; email: string; accessToken: string; parentUserId: string | null; parentProfile: ParentProfile | null }
+	| { ok: false; status: 401 | 503; code: string }
+
+/**
+ * Prove who the caller is before anything is read or written.
+ *
+ * This route is public (the browser calls it straight after the OAuth
+ * redirect, before any COE session exists), so nothing in the request body
+ * can be trusted — least of all `email`. A token is accepted when either:
+ *   1. it is already bound to a live COE session (a periodic re-sync), or
+ *   2. the parent app confirms it and names its owner (first sync after login).
+ * The cookie is tried before the body: after a token refresh the cookie holds
+ * the rotated token while a retried request still carries the old one.
+ */
+async function resolveVerifiedCaller(bodyToken: unknown): Promise<VerifiedCaller> {
+	const cookieStore = await cookies()
+	const candidates = Array.from(
+		new Set(
+			[cookieStore.get('access_token')?.value, typeof bodyToken === 'string' ? bodyToken : undefined]
+				.filter((t): t is string => Boolean(t))
+		)
+	)
+
+	let failure: { status: 401 | 503; code: string } = { status: 401, code: 'INVALID_SESSION' }
+
+	for (const token of candidates) {
+		const known = await verifyAccessToken(token)
+		if (known.ok) {
+			return { ok: true, email: known.session.email, accessToken: token, parentUserId: null, parentProfile: null }
+		}
+		if (known.code === 'SESSION_CHECK_FAILED') {
+			failure = { status: 503, code: known.code }
+			continue
+		}
+		// A deactivated COE user stays out even with a valid parent token.
+		if (known.code === 'USER_INACTIVE') {
+			failure = { status: 401, code: known.code }
+			continue
+		}
+		if (known.code === 'SESSION_EXPIRED' && failure.status !== 503) {
+			failure = { status: 401, code: known.code }
+		}
+
+		const validated = await validateTokenWithParent(token)
+		if (validated) {
+			return { ok: true, email: validated.email, accessToken: token, parentUserId: validated.parentUserId, parentProfile: validated.parentProfile }
+		}
+	}
+
+	return { ok: false, ...failure }
+}
+
 /**
  * Sync user session data after parent app OAuth login
  * Updates last_login, syncs user data, fetches permissions, and creates/updates both sessions and user_sessions records
@@ -153,11 +213,32 @@ export async function POST(request: Request) {
 	try {
 		const body = await request.json()
 		// Extract institution_id (UUID) from MyJKKN session - this is the KEY for institution lookup
-		const { email, avatar_url, role, access_token, refresh_token, expires_in, institution_id: sessionInstitutionId } = body
+		const { avatar_url, role, refresh_token, institution_id: sessionInstitutionId } = body
 
-		if (!email) {
-			return NextResponse.json({ error: 'Email is required' }, { status: 400 })
+		const caller = await resolveVerifiedCaller(body.access_token)
+		if (!caller.ok) {
+			return NextResponse.json(
+				caller.status === 503
+					? { error: 'Unable to verify your session right now. Please try again.', code: caller.code }
+					: { error: 'Your session has expired. Please sign in again.', code: caller.code },
+				{ status: caller.status }
+			)
 		}
+
+		// The verified identity wins. A body that names someone else is either
+		// stale client state or an attempt to act as another user.
+		if (typeof body.email === 'string' && body.email.trim().toLowerCase() !== caller.email.toLowerCase()) {
+			return NextResponse.json(
+				{ error: 'You do not have permission to perform this action.' },
+				{ status: 403 }
+			)
+		}
+		const email = caller.email
+		const access_token = caller.accessToken
+		// Parent user id for the avatar lookup: prefer the one the parent app
+		// returned for this token over anything the browser sent.
+		const parentUserId: string | null =
+			caller.parentUserId || (typeof body.user_id === 'string' ? body.user_id : null)
 
 		const supabase = getSupabaseServer()
 
@@ -193,6 +274,13 @@ export async function POST(request: Request) {
 		const now = new Date()
 		const nowISO = now.toISOString()
 
+		if (existingUser && existingUser.is_active === false) {
+			return NextResponse.json(
+				{ error: 'Your account is inactive. Contact the administrator.', code: 'USER_INACTIVE' },
+				{ status: 403 }
+			)
+		}
+
 		if (existingUser) {
 			// User exists - update last_login
 			const { error: updateError } = await supabase
@@ -209,8 +297,8 @@ export async function POST(request: Request) {
 				console.error('Error updating user:', updateError)
 			}
 
-			// Calculate expires_at based on actual token expiry (default 1 hour if not provided)
-			const expiresAt = new Date(now.getTime() + (expires_in || 3600) * 1000).toISOString()
+			// COE decides how long its own session lives — never the browser.
+			const expiresAt = new Date(now.getTime() + COE_SESSION_TTL_SECONDS * 1000).toISOString()
 
 			// The session writes, roles/permissions read, and avatar resolution
 			// are all independent — run them CONCURRENTLY. Previously these were
@@ -226,52 +314,51 @@ export async function POST(request: Request) {
 						raw: userAgent.substring(0, 255) // Truncate to avoid overflow
 					}
 
-					// sessions table: mark old sessions inactive THEN upsert the new
-					// active one. These two MUST stay ordered — if the upsert ran
-					// first, the mark-inactive update would flip it back to inactive.
+					// sessions table: retire this user's EXPIRED rows, then bind the
+					// verified token. Live rows are left alone — every API request is
+					// now checked against this table, so deactivating them would sign
+					// the user out of their other browser or device mid-work.
 					const sessionsTable = (async () => {
 						await supabase
 							.from('sessions')
 							.update({ is_active: false, updated_at: nowISO })
 							.eq('user_id', existingUser.id)
 							.eq('is_active', true)
+							.lt('expires_at', nowISO)
 
-						await supabase
-							.from('sessions')
-							.upsert({
-								user_id: existingUser.id,
-								session_token: access_token,
-								refresh_token: refresh_token || null,
-								device_info: deviceInfo,
-								ip_address: ipAddress,
-								user_agent: userAgent.substring(0, 500),
-								is_active: true,
-								expires_at: expiresAt,
-								created_at: nowISO,
-								updated_at: nowISO,
-							}, { onConflict: 'session_token' })
+						await bindSession({
+							userId: existingUser.id,
+							accessToken: access_token,
+							refreshToken: typeof refresh_token === 'string' ? refresh_token : null,
+							deviceInfo,
+							parentProfile: caller.parentProfile,
+							ipAddress,
+							userAgent: userAgent.substring(0, 500),
+						})
 					})()
 
 					// user_sessions table (legacy/backup): independent of `sessions`,
 					// so it runs in parallel with the block above.
 					const userSessionsTable = (async () => {
+						// Only recorded when a refresh_token is known (column is NOT NULL).
+						// A re-sync from the browser carries none, and must not delete the
+						// row written at login.
+						if (typeof refresh_token !== 'string' || !refresh_token) return
+
 						await supabase
 							.from('user_sessions')
 							.delete()
 							.eq('user_id', existingUser.id)
 
-						// Only insert if refresh_token exists (column is NOT NULL)
-						if (refresh_token) {
-							await supabase
-								.from('user_sessions')
-								.insert({
-									user_id: existingUser.id,
-									access_token: access_token,
-									refresh_token: refresh_token,
-									expires_at: expiresAt,
-									created_at: nowISO,
-								})
-						}
+						await supabase
+							.from('user_sessions')
+							.insert({
+								user_id: existingUser.id,
+								access_token: access_token,
+								refresh_token: refresh_token,
+								expires_at: expiresAt,
+								created_at: nowISO,
+							})
 					})()
 
 					await Promise.all([sessionsTable, userSessionsTable])
@@ -284,8 +371,8 @@ export async function POST(request: Request) {
 			// (c) Resolve avatar: COE local → parent Supabase Auth (Google profile photo)
 			const avatarPromise = (async () => {
 				let resolvedAvatar = existingUser.avatar_url || avatar_url || null
-				if (!resolvedAvatar && body.user_id) {
-					resolvedAvatar = await fetchParentAvatar(body.user_id)
+				if (!resolvedAvatar && parentUserId) {
+					resolvedAvatar = await fetchParentAvatar(parentUserId)
 					// Cache the avatar in COE users table for future requests
 					if (resolvedAvatar) {
 						await supabase
@@ -309,7 +396,7 @@ export async function POST(request: Request) {
 				message: 'Session synced',
 				user_id: existingUser.id,
 				is_new_user: false,
-				expires_at: new Date(now.getTime() + (expires_in || 3600) * 1000).toISOString(),
+				expires_at: expiresAt,
 				avatar_url: resolvedAvatar,
 				// Return institution details from COE local table (looked up by MyJKKN institution_id)
 				// institution_code in COE = counselling_code in MyJKKN (e.g., "CET")
@@ -368,8 +455,8 @@ export async function POST(request: Request) {
 
 			// Fetch avatar from parent Supabase Auth (Google profile photo)
 			let parentAvatar: string | null = avatar_url || null
-			if (!parentAvatar && body.user_id) {
-				parentAvatar = await fetchParentAvatar(body.user_id)
+			if (!parentAvatar && parentUserId) {
+				parentAvatar = await fetchParentAvatar(parentUserId)
 			}
 
 			return NextResponse.json({

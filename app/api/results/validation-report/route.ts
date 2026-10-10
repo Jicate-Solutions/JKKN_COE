@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
 
 /**
  * GET /api/results/validation-report
@@ -12,7 +13,7 @@ export async function GET(request: NextRequest) {
 		const { searchParams } = new URL(request.url)
 		const supabase = getSupabaseServer()
 
-		const institutions_id = searchParams.get('institutions_id')
+		const institutions_id = (await institutionParam(searchParams, 'institutions_id'))
 		const examination_session_id = searchParams.get('examination_session_id')
 		const program_code = searchParams.get('program_code')
 
@@ -46,7 +47,6 @@ export async function GET(request: NextRequest) {
 			.eq('institutions_id', institutions_id)
 			.eq('examination_session_id', examination_session_id)
 			.eq('program_code', program_code)
-			.range(0, 9999)
 
 		if (examRegsError) {
 			console.error('Error fetching exam registrations:', examRegsError)

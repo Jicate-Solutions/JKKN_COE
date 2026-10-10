@@ -1,6 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
 import { sendVerificationEmail } from '@/services/shared/email-service'
+import { randomInt } from 'crypto'
+
+// Minimum gap between two codes for the same email. Together with the
+// one-guess-per-code rule in /api/auth/verify-email this caps guessing at one
+// attempt per interval, each of which emails the account owner.
+const RESEND_INTERVAL_MS = 60 * 1000
 
 export async function POST(req: NextRequest) {
   try {
@@ -48,8 +54,22 @@ export async function POST(req: NextRequest) {
       }, { status: 403 })
     }
 
-    // Generate 6-digit verification code
-    const code = Math.floor(100000 + Math.random() * 900000).toString()
+    const { data: recentCode } = await supabase
+      .from('verification_codes')
+      .select('id')
+      .eq('email', email.toLowerCase())
+      .gt('created_at', new Date(Date.now() - RESEND_INTERVAL_MS).toISOString())
+      .limit(1)
+      .maybeSingle()
+
+    if (recentCode) {
+      return NextResponse.json({ 
+        error: 'Too many attempts. Please wait before trying again.' 
+      }, { status: 429 })
+    }
+
+    // Generate 6-digit verification code (cryptographically random)
+    const code = randomInt(100000, 1000000).toString()
     const expiresAt = new Date(Date.now() + 5 * 60 * 1000) // 5 minutes from now
 
     // Delete any existing verification codes for this email
@@ -91,8 +111,7 @@ export async function POST(req: NextRequest) {
   } catch (err) {
     console.error('API Error:', err)
     return NextResponse.json({ 
-      error: 'Internal server error', 
-      details: err instanceof Error ? err.message : 'Unknown error' 
+      error: 'Something went wrong. Try again later.' 
     }, { status: 500 })
   }
 }

@@ -36,7 +36,7 @@ export const GET = withExternalAuth(async (request: Request, ctx: ExternalApiCon
 	if (institutionId) sessionQuery = sessionQuery.eq('institutions_id', institutionId)
 	if (sessionId) sessionQuery = sessionQuery.eq('id', sessionId)
 
-	const { data: liveSessions, error: sessionError } = await sessionQuery.range(0, 9999)
+	const { data: liveSessions, error: sessionError } = await sessionQuery
 
 	if (sessionError) {
 		console.error('External API - fetch declared sessions error:', sessionError)
@@ -101,7 +101,7 @@ export const GET = withExternalAuth(async (request: Request, ctx: ExternalApiCon
 	if (institutionId) query = query.eq('institutions_id', institutionId)
 	if (learnerId) query = query.eq('student_id', learnerId)
 
-	const { data, error } = await query.range(0, 9999)
+	const { data, error } = await query
 
 	if (error) {
 		console.error('External API - fetch results error:', error)

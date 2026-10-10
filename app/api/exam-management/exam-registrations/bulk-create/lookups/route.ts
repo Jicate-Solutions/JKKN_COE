@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
 
 /**
  * Bulk-Create Exam Registration Lookups
@@ -27,8 +28,8 @@ export async function GET(request: Request) {
 		}
 
 		if (type === 'courses') {
-			const institutionsId = searchParams.get('institutions_id')
-			const institutionCode = searchParams.get('institution_code')
+			const institutionsId = (await institutionParam(searchParams, 'institutions_id'))
+			const institutionCode = (await institutionParam(searchParams, 'institution_code'))
 			const examinationSessionId = searchParams.get('examination_session_id')
 			const programCode = searchParams.get('program_code')
 			const regulationCode = searchParams.get('regulation_code')
@@ -49,7 +50,6 @@ export async function GET(request: Request) {
 				.eq('regulation_code', regulationCode)
 				.eq('semester_code', semesterCode)
 				.order('course_order', { ascending: true })
-				.range(0, 9999)
 
 			if (mappingErr) {
 				console.error('[bulk-create lookups] course_mapping error:', mappingErr)
@@ -72,7 +72,6 @@ export async function GET(request: Request) {
 				.eq('program_code', programCode)
 				.eq('semester_code', semesterCode)
 				.in('course_mapping_id', mappingIds)
-				.range(0, 9999)
 
 			if (offerErr) {
 				console.error('[bulk-create lookups] course_offerings error:', offerErr)
@@ -92,7 +91,6 @@ export async function GET(request: Request) {
 					.from('courses')
 					.select('id, course_code, course_name')
 					.in('id', courseIds)
-					.range(0, 9999)
 				;(courses || []).forEach(c => {
 					courseNamesMap.set(c.id, c.course_name || c.course_code)
 				})
@@ -116,8 +114,8 @@ export async function GET(request: Request) {
 		}
 
 		if (type === 'registered') {
-			const institutionsId = searchParams.get('institutions_id')
-			const institutionCode = searchParams.get('institution_code')
+			const institutionsId = (await institutionParam(searchParams, 'institutions_id'))
+			const institutionCode = (await institutionParam(searchParams, 'institution_code'))
 			const examinationSessionId = searchParams.get('examination_session_id')
 			const courseOfferingIds = searchParams.get('course_offering_ids') // comma-separated
 

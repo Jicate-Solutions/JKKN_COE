@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
 
 const MARK_ENTRY_TYPES = ['direct', 'question_wise']
 
@@ -23,8 +24,8 @@ export async function GET(request: Request) {
 		const { searchParams } = new URL(request.url)
 		const supabase = getSupabaseServer()
 
-		const institutionsId = searchParams.get('institutions_id')
-		const institutionCode = searchParams.get('institution_code')
+		const institutionsId = (await institutionParam(searchParams, 'institutions_id'))
+		const institutionCode = (await institutionParam(searchParams, 'institution_code'))
 		const sessionId = searchParams.get('examination_session_id')
 		const programCode = searchParams.get('program_code')
 		const courseType = searchParams.get('course_type')

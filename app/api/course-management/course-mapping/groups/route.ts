@@ -1,12 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
 import { fetchAllMyJKKNPrograms, fetchAllMyJKKNRegulations } from '@/lib/myjkkn-api'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
 
 export async function GET(request: NextRequest) {
 	try {
 		const supabase = getSupabaseServer()
 		const { searchParams } = new URL(request.url)
-		const institutionCode = searchParams.get('institution_code')
+		const institutionCode = (await institutionParam(searchParams, 'institution_code'))
 
 		// Try using RPC function first (most efficient - single SQL query with GROUP BY and JOINs)
 		// Note: The RPC function doesn't support filtering, so we filter in JS if institutionCode is provided

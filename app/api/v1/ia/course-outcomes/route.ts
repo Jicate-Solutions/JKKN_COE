@@ -40,6 +40,16 @@ export const POST = withExternalAuth(async (request: Request, context: ExternalA
 		return NextResponse.json({ error: 'course_id and course_code are required' }, { status: 400 })
 	}
 
+	// The course must belong to the resolved institution (rows are upserted on course_id + co_code)
+	const { data: course } = await supabase
+		.from('courses')
+		.select('institutions_id')
+		.eq('id', body.course_id)
+		.maybeSingle()
+	if (!course || course.institutions_id !== inst.id || !institutionAllowed(context, course.institutions_id)) {
+		return NextResponse.json({ error: 'You do not have permission to perform this action.' }, { status: 403 })
+	}
+
 	if (Array.isArray(body.outcomes) && body.outcomes.length > 0) {
 		const rows = body.outcomes.map((o: any, i: number) => ({
 			institutions_id: inst.id,

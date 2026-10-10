@@ -1,12 +1,13 @@
 import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
 
 // GET - Fetch all courses for a specific exam date and session
 export async function GET(request: Request) {
 	try {
 		const supabase = getSupabaseServer()
 		const { searchParams } = new URL(request.url)
-		const institution_id = searchParams.get('institution_id')
+		const institution_id = (await institutionParam(searchParams, 'institution_id'))
 		const exam_date = searchParams.get('exam_date')
 		const session = searchParams.get('session')
 

@@ -33,7 +33,7 @@ export async function GET(request: Request, { params }: Ctx) {
 			query = query.eq('regulation_code', setting.regulation_code)
 		}
 
-		const { data: offerings } = await query.range(0, 9999)
+		const { data: offerings } = await query
 		let filtered = offerings || []
 
 		// Filter by course_type if specified

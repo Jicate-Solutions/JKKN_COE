@@ -8,6 +8,7 @@ import {
 	fetchMyJKKNDepartments,
 	fetchMyJKKNPrograms,
 } from '@/lib/myjkkn-api'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
 
 // Timeout wrapper - returns fallback if promise takes too long
 function withTimeout<T>(promise: Promise<T>, ms: number, fallback: T): Promise<T> {
@@ -24,7 +25,7 @@ export async function GET(request: Request) {
 
 		const paramUserId = searchParams.get('user_id')
 		const paramEmail = searchParams.get('email')
-		const requestInstitutionId = searchParams.get('institutions_id')
+		const requestInstitutionId = (await institutionParam(searchParams, 'institutions_id'))
 
 		// ── Step 1: Auth + user lookup in PARALLEL ────────────────────────
 		const [authResult, userByEmailResult, userByIdResult] = await Promise.all([
@@ -190,7 +191,7 @@ export async function GET(request: Request) {
 					.gte('exam_date', threeMonthsAgo.toISOString().split('T')[0])
 					.lte('exam_date', threeMonthsAhead.toISOString().split('T')[0])
 					.order('exam_date', { ascending: true })
-			).range(0, 9999),
+			),
 			// MyJKKN with 300ms timeout
 			myJKKNPromises,
 		])

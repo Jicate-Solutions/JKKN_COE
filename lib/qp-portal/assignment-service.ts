@@ -405,7 +405,6 @@ export async function nextOrderRef(
 		.select('order_ref_no')
 		.eq('institutions_id', institutionsId)
 		.not('order_ref_no', 'is', null)
-		.range(0, 9999)
 	for (const r of singles || []) max = Math.max(max, seqOf(r.order_ref_no))
 	// The combined column arrives with 20260911_qp_assignment_combined_ref; before
 	// that migration the query errors and is simply skipped.
@@ -414,7 +413,6 @@ export async function nextOrderRef(
 		.select('combined_order_ref_no')
 		.eq('institutions_id', institutionsId)
 		.not('combined_order_ref_no', 'is', null)
-		.range(0, 9999)
 	if (!error) for (const r of combined || []) max = Math.max(max, seqOf(r.combined_order_ref_no))
 	// Numbers issued under an older prefix (before the short name was added)
 	// still count, so the sequence continues rather than restarting at 001.

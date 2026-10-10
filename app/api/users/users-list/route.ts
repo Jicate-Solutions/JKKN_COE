@@ -3,13 +3,14 @@ import { randomUUID } from 'crypto'
 import { getSupabaseServer } from '@/lib/supabase-server'
 import { sendWelcomeEmail } from '@/services/shared/email-service'
 import { sanitizeSearch } from '@/lib/security/escape-like'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
 
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url)
     const q = searchParams.get('q') || undefined
-    const institutionCode = searchParams.get('institution_code') || undefined
-    const institutionsId = searchParams.get('institutions_id') || undefined
+    const institutionCode = (await institutionParam(searchParams, 'institution_code')) || undefined
+    const institutionsId = (await institutionParam(searchParams, 'institutions_id')) || undefined
 
     let supabase
     try {

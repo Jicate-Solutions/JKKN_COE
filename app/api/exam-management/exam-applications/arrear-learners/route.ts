@@ -8,6 +8,7 @@ import { levelOf, loadProgramLevelMap, parseProgramCodes } from '@/lib/exam-appl
 import { isApplicationDone } from '@/lib/exam-registration-status'
 import type { ArrearLearner, ArrearLearnersResponse, CohortFilterOption, CohortFilterTotals } from '@/types/exam-applications'
 import { getOffRollRegisterNumbers, isOffRoll } from '@/lib/myjkkn-off-roll-learners'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
 
 /** Distinct-learner and row counts per filter value, sorted numerically when possible */
 function countBy<T>(rows: T[], valueOf: (row: T) => string | null, learnerOf: (row: T) => string): CohortFilterOption[] {
@@ -268,7 +269,7 @@ export async function GET(request: Request) {
 		const supabase = getSupabaseServer()
 		const { searchParams } = new URL(request.url)
 
-		const institutions_id = searchParams.get('institutions_id') || ''
+		const institutions_id = (await institutionParam(searchParams, 'institutions_id')) || ''
 		const examination_session_id = searchParams.get('examination_session_id') || ''
 		const programCodes = parseProgramCodes(
 			searchParams.get('program_codes') || searchParams.get('program_code')

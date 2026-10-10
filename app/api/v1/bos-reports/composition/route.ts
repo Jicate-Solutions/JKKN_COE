@@ -48,7 +48,7 @@ export const GET = withExternalAuth(async (request: Request, ctx: ExternalApiCon
 		query = query.eq('is_active', true)
 	}
 
-	const { data, error } = await query.range(0, 9999)
+	const { data, error } = await query
 
 	if (error) {
 		return NextResponse.json({ error: 'Failed to fetch composition report' }, { status: 500 })

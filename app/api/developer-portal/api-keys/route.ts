@@ -20,7 +20,7 @@ export async function GET(request: NextRequest) {
 		query = query.eq('app_id', appId)
 	}
 
-	const { data, error } = await query.range(0, 9999)
+	const { data, error } = await query
 
 	if (error) {
 		console.error('Fetch API keys error:', error)

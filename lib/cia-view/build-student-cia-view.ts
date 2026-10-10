@@ -266,7 +266,7 @@ export async function buildStudentCiaView(
 		regQuery.eq('examination_session_id', examinationSessionId)
 	}
 
-	const { data: regs, error: regError } = await regQuery.range(0, 9999)
+	const { data: regs, error: regError } = await regQuery
 	if (regError) throw regError
 
 	const registerNo: string | null = identity.stu_register_no ?? regs?.[0]?.stu_register_no ?? null
@@ -320,7 +320,6 @@ export async function buildStudentCiaView(
 				.from('examination_sessions')
 				.select('id, session_code, session_name, session_status')
 				.in('id', sessionIds)
-				.range(0, 9999)
 			: Promise.resolve({ data: [], error: null } as any),
 		// CIA round/component config for these sessions.
 		sessionIds.length > 0
@@ -330,7 +329,6 @@ export async function buildStudentCiaView(
 				.eq('institutions_id', institutionId)
 				.in('examination_session_id', sessionIds)
 				.eq('is_active', true)
-				.range(0, 9999)
 			: Promise.resolve({ data: [], error: null } as any),
 		// THIS learner's CIA marks across all their course offerings + sessions.
 		courseOfferingIds.length > 0
@@ -341,7 +339,6 @@ export async function buildStudentCiaView(
 				.in('course_offering_id', courseOfferingIds)
 				.in('examination_session_id', sessionIds)
 				.eq('is_active', true)
-				.range(0, 9999)
 			: Promise.resolve({ data: [], error: null } as any),
 		// Course identity + internal max + type (for setting/course matching).
 		allCodes.length > 0
@@ -350,7 +347,6 @@ export async function buildStudentCiaView(
 				.select('course_code, course_name, internal_max_mark, course_type, course_type_code')
 				.eq('institutions_id', institutionId)
 				.in('course_code', allCodes)
-				.range(0, 9999)
 			: Promise.resolve({ data: [], error: null } as any),
 		// semester_code + course_order, keyed by (program_code, course_code).
 		allCodes.length > 0 && programCodes.length > 0
@@ -359,7 +355,6 @@ export async function buildStudentCiaView(
 				.select('program_code, course_code, semester_code, course_order')
 				.in('program_code', programCodes)
 				.in('course_code', allCodes)
-				.range(0, 9999)
 			: Promise.resolve({ data: [], error: null } as any),
 	])
 

@@ -9,6 +9,7 @@ import {
 	searchFilter,
 } from '@/lib/coe-calendar/validate'
 import { resolveProgramCodes } from '@/lib/coe-calendar/programs'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
 
 /**
  * GET /api/coe-calendar
@@ -32,8 +33,8 @@ export async function GET(request: Request) {
 	const supabase = getSupabaseServer()
 	const { searchParams } = new URL(request.url)
 
-	const institutionsId = searchParams.get('institutions_id')
-	const institutionCode = searchParams.get('institution_code')
+	const institutionsId = (await institutionParam(searchParams, 'institutions_id'))
+	const institutionCode = (await institutionParam(searchParams, 'institution_code'))
 	const myjkknIds = csv(searchParams.get('myjkkn_institution_ids'))
 	const academicYear = searchParams.get('academic_year')
 	const categories = csv(searchParams.get('exam_category'))
@@ -88,7 +89,7 @@ export async function GET(request: Request) {
 		.order('event_start_date', { ascending: true })
 		.order('id', { ascending: true })
 
-	const { data, error } = await query.range(0, 9999)
+	const { data, error } = await query
 
 	if (error) {
 		console.error('coe_calendar GET error:', error)

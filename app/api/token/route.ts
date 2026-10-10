@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { bindParentIssuedSession } from '@/lib/auth/server-session';
 
 export async function POST(req: NextRequest) {
   try {
@@ -32,7 +33,16 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(error, { status: response.status });
     }
 
-    return NextResponse.json(await response.json());
+    const tokenData = await response.json();
+
+    // Bind the tokens to a COE session while their owner is known for certain
+    // (issued to us server-to-server) — proxy.ts checks every protected API
+    // request against this binding.
+    await bindParentIssuedSession(tokenData, {
+      userAgent: req.headers.get('user-agent')?.substring(0, 500) || null,
+    });
+
+    return NextResponse.json(tokenData);
   } catch (error) {
     return NextResponse.json(
       { error: 'server_error', error_description: 'Token exchange failed' },

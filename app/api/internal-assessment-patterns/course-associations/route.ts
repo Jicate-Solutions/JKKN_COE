@@ -27,7 +27,7 @@ export async function GET(request: NextRequest) {
 				courses (
 					id,
 					course_code,
-					course_title
+					course_title:course_name
 				)
 			`)
 			.order('effective_from_date', { ascending: false })

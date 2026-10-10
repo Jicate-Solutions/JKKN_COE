@@ -31,7 +31,7 @@ export async function GET(request: NextRequest) {
 	if (dateTo) query = query.lte('created_at', dateTo)
 
 	if (format) {
-		const { data, error } = await query.range(0, 9999)
+		const { data, error } = await query
 		if (error) {
 			return NextResponse.json({ error: 'Failed to fetch logs' }, { status: 500 })
 		}

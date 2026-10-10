@@ -170,10 +170,10 @@ export const navMain: NavItem[] = [
 			{ title: 'Grade Card Report', url: '#', icon: FileText },
 			{ title: 'Hall', url: '#', icon: Shapes },
 			{ title: 'QP Template', url: '#', icon: NotepadText },
-			{ title: 'Fee Details', url: '/fee-details', icon: Tags },
+			{ title: 'Fee Details', url: '/fee-details', icon: Tags, permission: 'page.exam_management.exam_registration_final_approval.view' },
 			{ title: 'Fee Structure', url: '#', icon: CreditCard },
-			{ title: 'BoS Compositions', url: '/bos/compositions', icon: ShieldCheck, coe_roles: ['super_admin'] },
-			{ title: 'BoS TA/DA Rates', url: '/bos/ta-da-rates', icon: CreditCard, coe_roles: ['super_admin'] },
+			{ title: 'BoS Compositions', url: '/bos/compositions', icon: ShieldCheck, permission: 'page.master.boards.view', coe_roles: ['super_admin'] },
+			{ title: 'BoS TA/DA Rates', url: '/bos/ta-da-rates', icon: CreditCard, permission: 'page.master.boards.view', coe_roles: ['super_admin'] },
 			{ title: 'Moderation Mark Setup', url: '#', icon: ListChecks },
 		],
 	},
@@ -294,7 +294,7 @@ export const navMain: NavItem[] = [
 		icon: CheckSquare,
 		coe_roles: ['super_admin', 'coe', 'coe_mark_entry', 'coe_office_1'],
 		items: [
-			{ title: 'Result Release', url: '/post-exam/result-release', icon: CheckSquare },
+			{ title: 'Result Release', url: '/post-exam/result-release', icon: CheckSquare, permission: 'page.grading.semester_results.view' },
 			{ title: 'Dummy Numbers', url: '/utilities/dummy-numbers', icon: Hash, permission: 'page.utilities.dummy_numbers.view' },
 			{ title: 'Answer Sheet Packets', url: '/post-exam/answer-sheet-packets', icon: Package, permission: 'page.post_exam.answer_sheet_packets.view' },
 			{ title: 'Central Valuation', url: '/post-exam/central-valuation/dates', icon: ClipboardCheck, permission: 'page.post_exam.central_valuation.dates.view' },
@@ -376,6 +376,48 @@ export const navMain: NavItem[] = [
 ]
 
 /**
+ * Screens that have no sidebar entry but still need a permission.
+ *
+ * A screen missing from `navMain` used to have no permission at all, so any
+ * signed-in user could open it by typing its URL — and the APIs behind it had
+ * to stay open to everyone too. Each one here takes the permission of the
+ * sidebar screen it belongs with, so no new permission has to be created or
+ * granted: whoever can open the related screen can open this one.
+ *
+ * Add a screen here whenever you create one that the sidebar does not list,
+ * then run `node scripts/generate-api-policy.cjs`.
+ */
+const unlistedPagePermissions: Array<{ url: string; permission: string }> = [
+	// Course mapping editor (opened from Course Mapping)
+	{ url: '/course-management/course-mapping', permission: 'page.course_management.course_mapping_index.view' },
+	// Galley report tabs (all-clear, pass-percentage) and its older stand-alone report
+	{ url: '/grading/galley-report', permission: 'page.grading.galley_report.report.view' },
+	{ url: '/grading/pass-percentage-report', permission: 'page.grading.galley_report.report.view' },
+	{ url: '/grading/test-gpa-cgpa', permission: 'page.grading.test_gpa_workflow.view' },
+	{ url: '/marks-management/status-grades', permission: 'page.marks_management.comment_grades.view' },
+	// COE-local master screens, alongside their MyJKKN counterparts
+	{ url: '/master/departments', permission: 'page.master.departments_myjkkn.view' },
+	{ url: '/master/programs', permission: 'page.master.programs_myjkkn.view' },
+	{ url: '/master/regulations', permission: 'page.master.regulations_myjkkn.view' },
+	{ url: '/master/semesters', permission: 'page.master.semesters_myjkkn.view' },
+	// Central valuation section (dates / email / examiner tabs)
+	{ url: '/post-exam/central-valuation', permission: 'page.post_exam.central_valuation.dates.view' },
+	// Practical allotment section (batch, examiner, e-mail)
+	{ url: '/pre-exam/batch-allotment', permission: 'page.pre_exam.practical_allotment.view' },
+	{ url: '/pre-exam/examiner-allotment', permission: 'page.pre_exam.practical_allotment.view' },
+	{ url: '/pre-exam/practical-email', permission: 'page.pre_exam.practical_allotment.view' },
+	{ url: '/pre-exam/cia-marks-entry', permission: 'page.pre_exam.internal_mark_entry.view' },
+	{ url: '/exam-management/exam-fee-concessions', permission: 'page.exam_management.exam_fee_concessions.view' },
+	// Learner screens
+	{ url: '/users/learner', permission: 'page.users.learners_myjkkn.view' },
+	{ url: '/users/learners-list', permission: 'page.users.learners_myjkkn.view' },
+	// User and role administration
+	{ url: '/users/users-list', permission: 'page.admin.role_management.view' },
+	{ url: '/users/user-roles', permission: 'page.admin.role_management.view' },
+	{ url: '/users/staff-myjkkn', permission: 'page.admin.role_management.view' },
+]
+
+/**
  * Map of (pathname → permission) for every nav route that declares one.
  * Sorted by path length descending so `getPermissionForPath()` can do
  * a longest-prefix match for nested routes (e.g. `/post-exam/central-valuation/dates/123`
@@ -393,6 +435,10 @@ const pagePermissionMap: Array<{ path: string; permission: string }> = (() => {
 				entries.push({ path: sub.url.split('?')[0], permission: sub.permission })
 			}
 		}
+	}
+	// Screens without a sidebar entry (a sidebar entry for the same URL wins)
+	for (const page of unlistedPagePermissions) {
+		entries.push({ path: page.url, permission: page.permission })
 	}
 	// Dedupe (a few items share the same URL — keep the first occurrence)
 	const seen = new Set<string>()

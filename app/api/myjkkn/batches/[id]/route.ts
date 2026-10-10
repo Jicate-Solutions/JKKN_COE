@@ -15,6 +15,12 @@ export async function GET(
 			)
 		}
 
+		// The id is placed in the upstream URL; anything but a UUID ("../..")
+		// could steer the request to a different MyJKKN endpoint under our API key.
+		if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) {
+			return NextResponse.json({ error: 'Invalid ID' }, { status: 400 })
+		}
+
 		const batch = await fetchMyJKKNBatchById(id)
 		return NextResponse.json(batch)
 	} catch (error) {

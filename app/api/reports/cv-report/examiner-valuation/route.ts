@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
 
 /**
  * UG-Valuation Report of the Examiner.
@@ -33,7 +34,7 @@ function parseExaminerKey(key: string): { type: ExaminerType; id: string } | nul
 export async function GET(request: Request) {
 	try {
 		const { searchParams } = new URL(request.url)
-		const institutionsId = searchParams.get('institutions_id')
+		const institutionsId = (await institutionParam(searchParams, 'institutions_id'))
 		const sessionId = searchParams.get('session_id')
 		const boardCode = searchParams.get('board_code')
 		const action = searchParams.get('action')
@@ -58,7 +59,6 @@ export async function GET(request: Request) {
 			.from('courses')
 			.select('id, course_code, external_pass_mark')
 			.eq('board_code', boardCode)
-			.range(0, 9999)
 
 		const courseIds = (courses || []).map((c: any) => c.id)
 		const courseCodeById = new Map((courses || []).map((c: any) => [c.id, c.course_code]))
@@ -98,7 +98,6 @@ export async function GET(request: Request) {
 			.eq('examination_session_id', sessionId)
 			.eq('is_active', true)
 			.in('course_id', courseIds)
-			.range(0, 9999)
 
 		// LIST EXAMINERS MODE -----------------------------------------------------
 		if (action === 'list-examiners') {
@@ -181,7 +180,6 @@ export async function GET(request: Request) {
 				.eq('examination_session_id', sessionId)
 				.in('course_id', myCourseIds)
 				.eq('is_active', true)
-				.range(0, 99999)
 			marks = (data || []) as any
 		}
 

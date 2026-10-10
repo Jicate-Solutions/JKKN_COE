@@ -22,6 +22,7 @@ import type {
 	MissingDataReportSummary
 } from '@/types/comprehensive-reports'
 import { ACTIVE_REGISTRATION_STATUSES } from '@/lib/exam-registration-status'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
 
 export async function GET(request: NextRequest) {
 	const supabase = getSupabaseServer()
@@ -29,7 +30,7 @@ export async function GET(request: NextRequest) {
 
 	const action = searchParams.get('action') || 'dropdowns'
 	const reportType = searchParams.get('report_type') as ReportTabKey | null
-	const institutionId = searchParams.get('institution_id')
+	const institutionId = (await institutionParam(searchParams, 'institution_id'))
 	const sessionId = searchParams.get('session_id')
 	const programId = searchParams.get('program_id')
 	const programCode = searchParams.get('program_code') // Used when programs come from MyJKKN API

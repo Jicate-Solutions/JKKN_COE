@@ -1,12 +1,13 @@
 import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
 import { handleDeleteWithDependencyCheck } from '@/lib/delete-helpers'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
 
 export async function GET(request: Request) {
 	try {
 		const supabase = getSupabaseServer()
 		const { searchParams } = new URL(request.url)
-		const institution_code = searchParams.get('institution_code')
+		const institution_code = (await institutionParam(searchParams, 'institution_code'))
 
 		let query = supabase
 			.from('academic_years')

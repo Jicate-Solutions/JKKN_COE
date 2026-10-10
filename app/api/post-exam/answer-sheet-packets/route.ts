@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
 
 /**
  * GET /api/post-exam/answer-sheet-packets
@@ -10,7 +11,7 @@ export async function GET(request: NextRequest) {
 		const supabase = getSupabaseServer()
 		const { searchParams } = new URL(request.url)
 
-		const institutionCode = searchParams.get('institution_code')
+		const institutionCode = (await institutionParam(searchParams, 'institution_code'))
 		const examSession = searchParams.get('exam_session')
 		const courseCode = searchParams.get('course_code')
 		const status = searchParams.get('status')

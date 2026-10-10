@@ -4,6 +4,7 @@ import { generateAppointmentPdf } from '@/lib/pdf/practical-appointment-letter'
 import { getPdfSettingsWithFallback } from '@/lib/pdf/settings-service'
 import { fetchMyJKKNStaffById } from '@/services/myjkkn-service'
 import type { AppointmentLetterData } from '@/types/practical-email'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -172,8 +173,8 @@ async function fetchExaminerCourses(
 export async function GET(request: Request) {
 	try {
 		const { searchParams } = new URL(request.url)
-		const institutionsId = searchParams.get('institutions_id')
-		const institutionCode = searchParams.get('institution_code')
+		const institutionsId = (await institutionParam(searchParams, 'institutions_id'))
+		const institutionCode = (await institutionParam(searchParams, 'institution_code'))
 		const examinationSessionId = searchParams.get('examination_session_id')
 		const examinerKey = searchParams.get('examiner_key')
 

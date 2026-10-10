@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
 import type { NAADComplianceSummary, NAADStudentRecord, NAADUploadBatch } from '@/types/result-analytics'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
 
 // GET /api/result-analytics/naad-reports
 // Fetches NAAD (National Academic Depository) compliance data
@@ -10,7 +11,7 @@ export async function GET(req: NextRequest) {
 		const { searchParams } = new URL(req.url)
 
 		// Parse filter parameters
-		const institutionId = searchParams.get('institution_id') || undefined
+		const institutionId = (await institutionParam(searchParams, 'institution_id')) || undefined
 		const academicYearId = searchParams.get('academic_year_id') || undefined
 		const programId = searchParams.get('program_id') || undefined
 

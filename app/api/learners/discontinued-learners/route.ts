@@ -3,6 +3,7 @@ import { getSupabaseServer } from '@/lib/supabase-server'
 import { loadDiscontinuedLearners } from '@/lib/discontinued-learners/report'
 import { isEndSemesterExamType, sessionSortKey } from '@/lib/discontinued-learners/sessions'
 import type { DiscontinuedSessionOption } from '@/types/discontinued-learners'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
 
 /**
  * Discontinued Learners report
@@ -17,7 +18,7 @@ export async function GET(request: Request) {
 	try {
 		const supabase = getSupabaseServer()
 		const { searchParams } = new URL(request.url)
-		const institutions_id = searchParams.get('institutions_id')
+		const institutions_id = (await institutionParam(searchParams, 'institutions_id'))
 
 		if (!institutions_id) {
 			return NextResponse.json({ error: 'institutions_id is required' }, { status: 400 })

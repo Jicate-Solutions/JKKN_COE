@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
 import { ACTIVE_REGISTRATION_STATUSES } from '@/lib/exam-registration-status'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
 
 // Helper: generate dummy number from format string (matches /generate route logic)
 function generateDummyNumber(format: string, index: number, startFrom: number): string {
@@ -99,7 +100,7 @@ async function fetchMissingLearners(
 			coQuery = coQuery.eq('program_code', filters.program_code)
 		}
 
-		const { data: filteredOfferings, error: coError } = await coQuery.range(0, 9999)
+		const { data: filteredOfferings, error: coError } = await coQuery
 		if (coError) throw new Error('Failed to filter course offerings: ' + coError.message)
 
 		let offerings = filteredOfferings || []
@@ -344,7 +345,7 @@ export async function GET(request: Request) {
 	try {
 		const supabase = getSupabaseServer()
 		const { searchParams } = new URL(request.url)
-		const institutions_id = searchParams.get('institutions_id')
+		const institutions_id = (await institutionParam(searchParams, 'institutions_id'))
 		const examination_session_id = searchParams.get('examination_session_id')
 		const board_code = searchParams.get('board_code')
 		const program_code = searchParams.get('program_code')

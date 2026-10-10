@@ -31,7 +31,6 @@ export const GET = withExternalAuth(async (request: Request, _context: ExternalA
 			.select('id, course_type, display_code, description, sort_order, status, created_at, updated_at', { count: 'exact' })
 			.order('sort_order', { ascending: true })
 			.order('course_type', { ascending: true })
-			.range(0, 9999)
 
 		if (status === 'active') {
 			query = query.eq('status', true)

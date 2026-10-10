@@ -15,6 +15,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
 import { fetchAllMyJKKNStaff } from '@/services/myjkkn-service'
 import { QP_SETTER_ROLE, type QpExaminerOption } from '@/types/qp-examiner-assignment'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
 
 export const dynamic = 'force-dynamic'
 
@@ -56,7 +57,7 @@ export async function GET(req: NextRequest) {
 		const supabase = getSupabaseServer()
 		const { searchParams } = new URL(req.url)
 		const kind = searchParams.get('kind') === 'internal' ? 'internal' : 'external'
-		const institutionsId = searchParams.get('institutions_id')
+		const institutionsId = (await institutionParam(searchParams, 'institutions_id'))
 		const sessionId = searchParams.get('examination_session_id')
 		const search = (searchParams.get('search') || '').trim().toLowerCase()
 

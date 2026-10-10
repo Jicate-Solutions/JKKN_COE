@@ -299,7 +299,6 @@ export async function fetchLookupData(): Promise<LookupMaps> {
 		const { data: localInsts, error: instErr } = await supabase
 			.from('institutions')
 			.select('id, institution_code, name')
-			.range(0, 9999)
 
 		if (instErr) console.warn('[Learner Profiles API] local institutions query error:', instErr.message)
 
@@ -323,7 +322,6 @@ export async function fetchLookupData(): Promise<LookupMaps> {
 			.select('semester_id, semester_code')
 			.not('semester_id', 'is', null)
 			.not('semester_code', 'is', null)
-			.range(0, 99999)
 
 		if (cmErr) console.warn('[Learner Profiles API] course_mapping semesters query error:', cmErr.message)
 

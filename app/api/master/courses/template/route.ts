@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
 import { generateCourseTemplate, workbookToBuffer, CourseReferenceData } from '@/lib/utils/excel-template-generator'
 import { fetchAllMyJKKNRegulations } from '@/services/myjkkn-service'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
 
 /**
  * GET /api/master/courses/template?institution_code=CAS
@@ -16,7 +17,7 @@ export async function GET(req: NextRequest) {
 	try {
 		const supabase = getSupabaseServer()
 		const { searchParams } = new URL(req.url)
-		const institutionCode = searchParams.get('institution_code')
+		const institutionCode = (await institutionParam(searchParams, 'institution_code'))
 
 		// ── 1. Fetch institutions from local DB ──────────────────────────
 		let instQuery = supabase

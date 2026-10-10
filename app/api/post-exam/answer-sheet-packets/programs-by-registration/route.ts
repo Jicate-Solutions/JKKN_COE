@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
 
 /**
  * GET /api/post-exam/answer-sheet-packets/programs-by-registration
@@ -16,7 +17,7 @@ export async function GET(request: NextRequest) {
 		const supabase = getSupabaseServer()
 		const { searchParams } = new URL(request.url)
 
-		const institutionCode = searchParams.get('institution_code')
+		const institutionCode = (await institutionParam(searchParams, 'institution_code'))
 		const examSession = searchParams.get('exam_session')
 		const boardCode = searchParams.get('board_code') // optional
 
@@ -61,7 +62,6 @@ export async function GET(request: NextRequest) {
 			.select('program_code, course_code, student_id')
 			.eq('institutions_id', institutionData.id)
 			.eq('examination_session_id', sessionData.id)
-			.range(0, 99999)
 
 		if (regsError) {
 			console.error('Error fetching exam_registrations:', regsError)

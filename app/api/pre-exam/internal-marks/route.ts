@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
 import { createHash } from 'crypto'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
 
 export async function GET(request: Request) {
 	try {
@@ -145,7 +146,7 @@ export async function GET(request: Request) {
 
 			case 'marks': {
 				// institutionId is optional - if not provided, fetch all (for super_admin)
-				const institutionId = searchParams.get('institutionId') || searchParams.get('institutions_id')
+				const institutionId = searchParams.get('institutionId') || (await institutionParam(searchParams, 'institutions_id'))
 				const sessionId = searchParams.get('sessionId')
 				const programCode = searchParams.get('programCode')
 				const courseId = searchParams.get('courseId')

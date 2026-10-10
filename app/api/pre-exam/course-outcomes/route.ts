@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
 
 // GET - list COs for a course (by course_id, or course_code + institution)
 export async function GET(req: NextRequest) {
@@ -8,7 +9,7 @@ export async function GET(req: NextRequest) {
 		const { searchParams } = new URL(req.url)
 		const courseId = searchParams.get('course_id')
 		const courseCode = searchParams.get('course_code')
-		const institutionsId = searchParams.get('institutions_id')
+		const institutionsId = (await institutionParam(searchParams, 'institutions_id'))
 
 		let query = supabase
 			.from('ia_course_outcomes')

@@ -4,6 +4,7 @@ import ExcelJS from 'exceljs'
 import { parseRoleTags, COE_ROLE_TAGS, type CoeRoleTag } from '@/lib/coe-calendar/visibility'
 import { PROGRAMME_TYPES, mapCalendarDbError, parseProgramCodes } from '@/lib/coe-calendar/validate'
 import { fetchInstitutionPrograms } from '@/lib/coe-calendar/programs'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
 
 /**
  * True only for a real calendar date. Guards against impossible values such as
@@ -182,7 +183,7 @@ export async function POST(request: Request) {
 	// page posts multipart, and the year must not silently default (it used to
 	// stamp every import 2025-2026 regardless of the year being imported).
 	const institutionsId =
-		(formData.get('institutions_id') as string | null) || searchParams.get('institutions_id')
+		(formData.get('institutions_id') as string | null) || (await institutionParam(searchParams, 'institutions_id'))
 	const academicYear =
 		(formData.get('academic_year') as string | null) || searchParams.get('academic_year')
 

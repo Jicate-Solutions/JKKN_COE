@@ -221,7 +221,6 @@ export async function POST(request: NextRequest) {
 					.eq('examination_session_id', sessionData.id)
 					.eq('course_id', course.id)
 					.eq('attendance_status', 'Present')
-					.range(0, 9999)
 
 				if (attendanceData) {
 					for (const att of attendanceData) {

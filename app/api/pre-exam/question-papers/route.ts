@@ -3,6 +3,7 @@ import { getSupabaseServer } from '@/lib/supabase-server'
 import { loadCourseMaster } from '@/lib/api-helpers/course-master-for-offerings'
 import { scaffoldQuestions } from '@/lib/ia/paper-scaffold'
 import { formatApplicability, pickTemplateForCourse } from '@/lib/ia/course-type-applicability'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
 
 // Resolve the COE user id from the MyJKKN access_token cookie (best-effort; nullable).
 function resolveUserId(req: NextRequest): string | null {
@@ -85,7 +86,7 @@ export async function GET(req: NextRequest) {
 	try {
 		const supabase = getSupabaseServer()
 		const { searchParams } = new URL(req.url)
-		const institutionsId = searchParams.get('institutions_id')
+		const institutionsId = (await institutionParam(searchParams, 'institutions_id'))
 		const sessionId = searchParams.get('examination_session_id')
 		const ciaRound = searchParams.get('cia_round')
 		const programCode = searchParams.get('program_code')
@@ -179,7 +180,7 @@ export async function GET(req: NextRequest) {
 		if (semester) query = query.eq('semester', Number(semester))
 		if (status) query = query.eq('status', status)
 
-		const { data, error } = await query.range(0, 9999)
+		const { data, error } = await query
 		if (error) {
 			console.error('Error listing papers:', error)
 			return NextResponse.json({ error: error.message }, { status: 500 })

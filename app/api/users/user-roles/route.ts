@@ -15,12 +15,12 @@ export async function GET(request: Request) {
 				users:user_id (
 					id,
 					email,
-					name
+					full_name
 				),
 				roles:role_id (
 					id,
-					role_code,
-					role_name
+					name,
+					description
 				)
 			`)
 			.order('created_at', { ascending: false })
@@ -42,9 +42,9 @@ export async function GET(request: Request) {
 			user_id: row.user_id,
 			role_id: row.role_id,
 			user_email: row.users?.email || null,
-			user_name: row.users?.name || row.users?.email || null,
-			role_code: row.roles?.role_code || null,
-			role_name: row.roles?.role_name || null,
+			user_name: row.users?.full_name || row.users?.email || null,
+			role_code: row.roles?.name || null,
+			role_name: row.roles?.description || row.roles?.name || null,
 			is_active: row.is_active ?? true,
 			created_at: row.created_at,
 			updated_at: row.updated_at
@@ -75,7 +75,7 @@ export async function POST(request: Request) {
 		// Check if user exists
 		const { data: userData, error: userError } = await supabase
 			.from('users')
-			.select('id, email, name')
+			.select('id, email, full_name')
 			.eq('id', user_id)
 			.single()
 
@@ -88,7 +88,7 @@ export async function POST(request: Request) {
 		// Check if role exists
 		const { data: roleData, error: roleError } = await supabase
 			.from('roles')
-			.select('id, role_code, role_name')
+			.select('id, name, description')
 			.eq('id', role_id)
 			.single()
 
@@ -126,12 +126,12 @@ export async function POST(request: Request) {
 				users:user_id (
 					id,
 					email,
-					name
+					full_name
 				),
 				roles:role_id (
 					id,
-					role_code,
-					role_name
+					name,
+					description
 				)
 			`)
 			.single()
@@ -162,9 +162,9 @@ export async function POST(request: Request) {
 			user_id: data.user_id,
 			role_id: data.role_id,
 			user_email: data.users?.email || null,
-			user_name: data.users?.name || data.users?.email || null,
-			role_code: data.roles?.role_code || null,
-			role_name: data.roles?.role_name || null,
+			user_name: data.users?.full_name || data.users?.email || null,
+			role_code: data.roles?.name || null,
+			role_name: data.roles?.description || data.roles?.name || null,
 			is_active: data.is_active ?? true,
 			created_at: data.created_at,
 			updated_at: data.updated_at
@@ -252,12 +252,12 @@ export async function PUT(request: Request) {
 				users:user_id (
 					id,
 					email,
-					name
+					full_name
 				),
 				roles:role_id (
 					id,
-					role_code,
-					role_name
+					name,
+					description
 				)
 			`)
 			.single()
@@ -288,9 +288,9 @@ export async function PUT(request: Request) {
 			user_id: data.user_id,
 			role_id: data.role_id,
 			user_email: data.users?.email || null,
-			user_name: data.users?.name || data.users?.email || null,
-			role_code: data.roles?.role_code || null,
-			role_name: data.roles?.role_name || null,
+			user_name: data.users?.full_name || data.users?.email || null,
+			role_code: data.roles?.name || null,
+			role_name: data.roles?.description || data.roles?.name || null,
 			is_active: data.is_active ?? true,
 			created_at: data.created_at,
 			updated_at: data.updated_at

@@ -4,6 +4,7 @@ import { buildExamApplicationCourses } from '@/lib/exam-applications/course-list
 import { fetchAllRows } from '@/lib/exam-applications/paginate'
 import { buildRegistrationPricer } from '@/lib/exam-fee/calculate'
 import type { ExamApplicationSubmitResult } from '@/types/exam-applications'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
 
 /**
  * Exam Application API
@@ -26,7 +27,7 @@ export async function GET(request: Request) {
 		const supabase = getSupabaseServer()
 		const { searchParams } = new URL(request.url)
 
-		const institutions_id = searchParams.get('institutions_id')
+		const institutions_id = (await institutionParam(searchParams, 'institutions_id'))
 		const examination_session_id = searchParams.get('examination_session_id')
 		const student_id = searchParams.get('student_id')
 		const register_number = (searchParams.get('register_number') || '').trim()

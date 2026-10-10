@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
 import { handleDeleteWithDependencyCheck } from '@/lib/delete-helpers'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
 
 // GET: list degrees
 export async function GET(request: Request) {
@@ -8,14 +9,13 @@ export async function GET(request: Request) {
     const supabase = getSupabaseServer()
     const { searchParams } = new URL(request.url)
     const program_id = searchParams.get('program_id')
-    const institutions_id = searchParams.get('institutions_id')
-    const institution_code = searchParams.get('institution_code')
+    const institutions_id = (await institutionParam(searchParams, 'institutions_id'))
+    const institution_code = (await institutionParam(searchParams, 'institution_code'))
 
     let query = supabase
       .from('degrees')
       .select('*', { count: 'exact' })
       .order('created_at', { ascending: false })
-      .range(0, 9999) // Increase limit from default 1000 to 10000 rows
 
     // Institution filtering - supports both institution_code and institutions_id
     if (institution_code) {

@@ -40,7 +40,7 @@ export const GET = withExternalAuth(async (request: Request, ctx: ExternalApiCon
 		query = query.or(`name.ilike.%${search}%,institution_name.ilike.%${search}%,specialization.ilike.%${search}%`)
 	}
 
-	const { data, error } = await query.range(0, 9999)
+	const { data, error } = await query
 
 	if (error) {
 		return NextResponse.json({ error: 'Failed to fetch experts' }, { status: 500 })

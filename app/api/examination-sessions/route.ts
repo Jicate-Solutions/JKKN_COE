@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
 
 // =====================================================
 // GET /api/examination-sessions
@@ -10,7 +11,7 @@ export async function GET(request: Request) {
 	const supabase = getSupabaseServer()
 	const { searchParams } = new URL(request.url)
 
-	const institutionsId = searchParams.get('institutions_id')
+	const institutionsId = (await institutionParam(searchParams, 'institutions_id'))
 	const search = searchParams.get('search')
 
 	try {
@@ -30,7 +31,7 @@ export async function GET(request: Request) {
 		}
 
 		// Override default 1000-row limit
-		const { data, error } = await query.range(0, 9999)
+		const { data, error } = await query
 
 		if (error) {
 			console.error('Examination sessions fetch error:', error)

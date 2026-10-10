@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
 import { PROGRAM_LEVELS } from '@/lib/exam-fee-catalog'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
 
 // =====================================================
 // Programme Fee Tier API
@@ -37,7 +38,7 @@ export async function GET(request: Request) {
 	const supabase = getSupabaseServer()
 	const { searchParams } = new URL(request.url)
 
-	const institutionsId = searchParams.get('institutions_id')
+	const institutionsId = (await institutionParam(searchParams, 'institutions_id'))
 	const isActive = searchParams.get('is_active')
 
 	try {
@@ -45,7 +46,6 @@ export async function GET(request: Request) {
 			.from('exam_fee_program_levels')
 			.select('*')
 			.order('program_code', { ascending: true })
-			.range(0, 9999)
 
 		if (institutionsId) query = query.eq('institutions_id', institutionsId)
 		if (isActive !== null && isActive !== undefined) query = query.eq('is_active', isActive === 'true')

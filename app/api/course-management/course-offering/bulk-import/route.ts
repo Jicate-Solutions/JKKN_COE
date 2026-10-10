@@ -115,7 +115,6 @@ export async function POST(request: Request) {
 			.in('institution_code', uniqueInstitutionCodes)
 			.in('course_code', uniqueCourseCodes)
 			.in('program_code', uniqueProgramCodes)
-			.range(0, 9999)
 
 		// Build composite key map for course mappings
 		const courseMappingMap = new Map<string, { id: string; course_id: string; course_code: string }>()
@@ -132,7 +131,6 @@ export async function POST(request: Request) {
 			.in('institution_code', uniqueInstitutionCodes)
 			.in('program_code', uniqueProgramCodes)
 			.in('semester_code', uniqueSemesterCodes)
-			.range(0, 9999)
 
 		const existingSet = new Set(
 			(existingOfferings || []).map(o =>

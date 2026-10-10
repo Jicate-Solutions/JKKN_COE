@@ -2,12 +2,13 @@ import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
 import { fetchAllMyJKKNPrograms } from '@/services/myjkkn-service'
 import { ACTIVE_REGISTRATION_STATUSES } from '@/lib/exam-registration-status'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
 
 export async function GET(request: Request) {
 	try {
 		const supabase = getSupabaseServer()
 		const { searchParams } = new URL(request.url)
-		const institutionId = searchParams.get('institutions_id')
+		const institutionId = (await institutionParam(searchParams, 'institutions_id'))
 		const examinationSessionId = searchParams.get('examination_session_id')
 		const examDate = searchParams.get('exam_date')
 		const session = searchParams.get('session')
@@ -66,7 +67,6 @@ export async function GET(request: Request) {
 			.in('course_code', courseCodes)
 			.in('registration_status', ACTIVE_REGISTRATION_STATUSES)
 			.order('stu_register_no', { ascending: true })
-			.range(0, 99999)
 
 		if (regError) {
 			console.error('Registration fetch error:', regError)

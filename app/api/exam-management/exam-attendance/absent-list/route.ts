@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
 
 // GET: Fetch absent learners grouped by course (course-wise absent list)
 export async function GET(request: Request) {
@@ -7,7 +8,7 @@ export async function GET(request: Request) {
 		const supabase = getSupabaseServer()
 		const { searchParams } = new URL(request.url)
 
-		const institutionId = searchParams.get('institution_id')
+		const institutionId = (await institutionParam(searchParams, 'institution_id'))
 		const sessionId = searchParams.get('session_id')
 		const examDate = searchParams.get('exam_date')
 		const sessionType = searchParams.get('session') // FN or AN

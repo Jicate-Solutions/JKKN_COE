@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
 
 /**
  * Central Valuation lunch requirement & attendance certificate report.
@@ -18,7 +19,7 @@ export async function GET(request: Request) {
 	const { searchParams } = new URL(request.url)
 	const action = searchParams.get('action')
 
-	const filterInstitutionsId = searchParams.get('institutions_id')
+	const filterInstitutionsId = (await institutionParam(searchParams, 'institutions_id'))
 
 	try {
 		if (action === 'lunch-data') {
@@ -36,7 +37,6 @@ export async function GET(request: Request) {
 				.eq('examination_session_id', sessionId)
 				.eq('is_active', true)
 				.not('valuation_date', 'is', null)
-				.range(0, 99999)
 
 			if (packetErr) throw packetErr
 
@@ -118,7 +118,6 @@ export async function GET(request: Request) {
 				.eq('examination_session_id', sessionId)
 				.eq('is_active', true)
 				.not('valuation_date', 'is', null)
-				.range(0, 99999)
 
 			if (packetErr) throw packetErr
 

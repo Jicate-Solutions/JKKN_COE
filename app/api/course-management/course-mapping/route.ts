@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
 import { handleDeleteWithDependencyCheck } from '@/lib/delete-helpers'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
 
 const ALLOWED_COURSE_MAPPING_STATUSES = ['Pending', 'BOS Approved', 'Locked'] as const
 type AllowedCourseMappingStatus = typeof ALLOWED_COURSE_MAPPING_STATUSES[number]
@@ -35,7 +36,7 @@ export async function GET(request: Request) {
 		const { searchParams } = new URL(request.url)
 
 		const includeDetails = searchParams.get('details') === 'true'
-		const institutionCode = searchParams.get('institution_code')
+		const institutionCode = (await institutionParam(searchParams, 'institution_code'))
 		const programCode = searchParams.get('program_code')
 		const regulationCode = searchParams.get('regulation_code')
 		const semesterCode = searchParams.get('semester_code')

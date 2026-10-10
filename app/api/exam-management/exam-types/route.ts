@@ -1,13 +1,14 @@
 import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
 import { handleDeleteWithDependencyCheck } from '@/lib/delete-helpers'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
 
 // GET - Fetch all exam types
 export async function GET(request: Request) {
 	try {
 		const supabase = getSupabaseServer()
 		const { searchParams } = new URL(request.url)
-		const institutionId = searchParams.get('institutions_id')
+		const institutionId = (await institutionParam(searchParams, 'institutions_id'))
 
 		let query = supabase
 			.from('exam_types')

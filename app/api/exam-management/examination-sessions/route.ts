@@ -1,13 +1,14 @@
 import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
 import { handleDeleteWithDependencyCheck } from '@/lib/delete-helpers'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
 
 // GET - Fetch all examination sessions
 export async function GET(request: Request) {
 	try {
 		const supabase = getSupabaseServer()
 		const { searchParams } = new URL(request.url)
-		const institutionsId = searchParams.get('institutions_id')
+		const institutionsId = (await institutionParam(searchParams, 'institutions_id'))
 		const academicYearId = searchParams.get('academic_year_id')
 		const examTypeId = searchParams.get('exam_type_id')
 		const sessionStatus = searchParams.get('session_status')
@@ -16,7 +17,6 @@ export async function GET(request: Request) {
 			.from('examination_sessions')
 			.select('*', { count: 'exact' })
 			.order('exam_start_date', { ascending: false })
-			.range(0, 9999) // Increase limit from default 1000 to 10000 rows
 
 		if (institutionsId) {
 			query = query.eq('institutions_id', institutionsId)

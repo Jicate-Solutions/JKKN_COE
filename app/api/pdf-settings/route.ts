@@ -19,6 +19,7 @@ import {
 	validateUpdatePdfSettings,
 	sanitizePdfSettingsHtml,
 } from '@/lib/validations/pdf-settings'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
 
 // =============================================================================
 // GET: Fetch PDF settings by institution code
@@ -29,7 +30,7 @@ export async function GET(request: NextRequest) {
 		const supabase = getSupabaseServer()
 		const { searchParams } = new URL(request.url)
 
-		const institution_code = searchParams.get('institution_code')
+		const institution_code = (await institutionParam(searchParams, 'institution_code'))
 		const template_name = searchParams.get('template_name')
 		const template_type = searchParams.get('template_type') || 'default'
 		const list_all = searchParams.get('list_all') === 'true' // List all templates for institution

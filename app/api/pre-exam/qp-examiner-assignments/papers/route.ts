@@ -18,6 +18,7 @@ import { getSupabaseServer } from '@/lib/supabase-server'
 import { windowState } from '@/lib/qp-portal/ist'
 import { hasTheoryPaper } from '@/lib/ia/course-type-applicability'
 import { countAuthored } from '@/lib/ia/sub-questions'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
 
 export const dynamic = 'force-dynamic'
 
@@ -39,7 +40,7 @@ export async function GET(req: NextRequest) {
 	try {
 		const supabase = getSupabaseServer()
 		const { searchParams } = new URL(req.url)
-		const institutionsId = searchParams.get('institutions_id')
+		const institutionsId = (await institutionParam(searchParams, 'institutions_id'))
 		const sessionId = searchParams.get('examination_session_id')
 		const programCode = searchParams.get('program_code')
 		const semester = searchParams.get('semester')

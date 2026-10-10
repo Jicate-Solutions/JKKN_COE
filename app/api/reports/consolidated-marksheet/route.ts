@@ -1655,7 +1655,6 @@ export async function GET(req: NextRequest) {
 				.select('student_id, register_number, formatted_folio_number, cgpa, result_class')
 				.eq('institutions_id', institutionId)
 				.eq('program_id', programUuid)
-				.range(0, 999999)
 
 			if (crErr) {
 				console.error('[Consolidated Marksheet - existing]', crErr)
@@ -1697,7 +1696,6 @@ export async function GET(req: NextRequest) {
 				.eq('student_id', studentId)
 				.eq('result_status', 'Published')
 				.eq('is_active', true)
-				.range(0, 99999)
 
 			if (fmError) {
 				console.error('[Consolidated Marksheet] Error fetching final marks:', fmError)
@@ -2053,7 +2051,6 @@ export async function GET(req: NextRequest) {
 					.in('student_id', allStudentIds)
 					.eq('institutions_id', institutionId)
 					.eq('program_id', programUuid)
-					.range(0, 999999)
 				if (crErr) {
 					console.error('[Consolidated Marksheet Batch] consolidated_results error:', crErr)
 					return
@@ -2243,7 +2240,6 @@ export async function GET(req: NextRequest) {
 				.eq('institutions_id', institutionId)
 				.eq('is_active', true)
 				.order('register_number', { ascending: true })
-				.range(0, 999999)
 
 			if (programUuid) {
 				crQuery = crQuery.eq('program_id', programUuid)
@@ -2669,7 +2665,6 @@ export async function POST(req: NextRequest) {
 				.select('id, student_id, register_number, folio_number, formatted_folio_number')
 				.eq('institutions_id', institutionId)
 				.eq('program_id', programUuid)
-				.range(0, 999999)
 
 			if (exErr) {
 				console.error('[Consolidated Generate] Existing-row lookup failed:', exErr)

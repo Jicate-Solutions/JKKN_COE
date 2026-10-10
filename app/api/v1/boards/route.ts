@@ -35,7 +35,6 @@ export const GET = withExternalAuth(async (request: Request, context: ExternalAp
 			.select('id, institutions_id, institution_code, board_code, board_name, display_name, board_type, board_order, status, created_at, updated_at', { count: 'exact' })
 			.order('board_order', { ascending: true, nullsFirst: false })
 			.order('board_name', { ascending: true })
-			.range(0, 9999)
 
 		// Scope to allowed institutions if key is restricted
 		if (context.allowedInstitutionIds && context.allowedInstitutionIds.length > 0) {

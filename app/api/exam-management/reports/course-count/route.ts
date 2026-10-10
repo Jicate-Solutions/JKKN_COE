@@ -6,6 +6,7 @@ import type {
 	BoardCourseCount,
 	CourseCountReportData
 } from '@/types/course-count-report'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
 
 /**
  * GET /api/exam-management/reports/course-count
@@ -23,7 +24,7 @@ export async function GET(request: NextRequest) {
 		const supabase = getSupabaseServer()
 		const { searchParams } = new URL(request.url)
 
-		const institutionId = searchParams.get('institution_id')
+		const institutionId = (await institutionParam(searchParams, 'institution_id'))
 		const sessionId = searchParams.get('session_id')
 		const courseCodesParam = searchParams.get('course_codes')
 

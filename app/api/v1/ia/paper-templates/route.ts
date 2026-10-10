@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
 import { withExternalAuth } from '@/lib/api-auth/middleware'
 import type { ExternalApiContext } from '@/types/api-management'
-import { resolveInstitutionForKey, V1_ALLOWED_SCOPES, ESE_NOT_AVAILABLE } from '@/lib/ia/v1-helpers'
+import { resolveInstitutionForKey, institutionAllowed, V1_ALLOWED_SCOPES, ESE_NOT_AVAILABLE } from '@/lib/ia/v1-helpers'
 
 /** /api/v1/ia/paper-templates — configurable CIA paper templates + parts. */
 
@@ -158,8 +158,12 @@ export const PUT = withExternalAuth(async (request: Request, context: ExternalAp
 		.eq('id', body.id)
 		.maybeSingle()
 	const inst = await resolveInstitutionForKey(supabase, context, null)
-	if (!row || ('error' in inst ? false : row.institutions_id !== inst.id)) {
+	if (!row) {
 		return NextResponse.json({ error: 'Not found or not permitted' }, { status: 404 })
+	}
+	// Fail closed: a row outside the key's scope, or one that is not the resolved institution's, is refused
+	if (!institutionAllowed(context, row.institutions_id) || (!('error' in inst) && row.institutions_id !== inst.id)) {
+		return NextResponse.json({ error: 'You do not have permission to perform this action.' }, { status: 403 })
 	}
 
 	const { id, parts, ...patch } = body
@@ -219,8 +223,12 @@ export const DELETE = withExternalAuth(async (request: Request, context: Externa
 		.eq('id', id)
 		.maybeSingle()
 	const inst = await resolveInstitutionForKey(supabase, context, null)
-	if (!row || ('error' in inst ? false : row.institutions_id !== inst.id)) {
+	if (!row) {
 		return NextResponse.json({ error: 'Not found or not permitted' }, { status: 404 })
+	}
+	// Fail closed: a row outside the key's scope, or one that is not the resolved institution's, is refused
+	if (!institutionAllowed(context, row.institutions_id) || (!('error' in inst) && row.institutions_id !== inst.id)) {
+		return NextResponse.json({ error: 'You do not have permission to perform this action.' }, { status: 403 })
 	}
 
 	// Both paper tables — an end-semester paper holds its template with ON DELETE

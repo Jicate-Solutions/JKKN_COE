@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
 
 /**
  * Program and semester dropdowns for the Generate Register Number page.
@@ -71,7 +72,6 @@ async function fetchProgramNames(
 		.select('entity_data, entity_name')
 		.eq('entity_type', 'program')
 		.eq('is_active', true)
-		.range(0, 9999)
 
 	if (error) {
 		// Names are cosmetic — the dropdown still works with bare codes.
@@ -112,7 +112,7 @@ export async function GET(request: NextRequest) {
 	try {
 		const { searchParams } = new URL(request.url)
 		const type = searchParams.get('type')
-		const institutionCode = searchParams.get('institution_code') || ''
+		const institutionCode = (await institutionParam(searchParams, 'institution_code')) || ''
 		const programCode = searchParams.get('program_code') || ''
 
 		if (!type || !['programs', 'semesters'].includes(type)) {

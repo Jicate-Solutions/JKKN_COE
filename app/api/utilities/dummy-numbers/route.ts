@@ -1,12 +1,13 @@
 import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
 
 // GET: Fetch dummy numbers with filters (supports up to 100,000 records)
 export async function GET(request: Request) {
 	try {
 		const supabase = getSupabaseServer()
 		const { searchParams } = new URL(request.url)
-		const institutions_id = searchParams.get('institutions_id')
+		const institutions_id = (await institutionParam(searchParams, 'institutions_id'))
 		const examination_session_id = searchParams.get('examination_session_id')
 		const dummy_number = searchParams.get('dummy_number')
 		const actual_register_number = searchParams.get('actual_register_number')
@@ -128,7 +129,7 @@ export async function GET(request: Request) {
 export async function DELETE(request: Request) {
 	try {
 		const { searchParams } = new URL(request.url)
-		const institutions_id = searchParams.get('institutions_id')
+		const institutions_id = (await institutionParam(searchParams, 'institutions_id'))
 		const examination_session_id = searchParams.get('examination_session_id')
 		const id = searchParams.get('id')
 

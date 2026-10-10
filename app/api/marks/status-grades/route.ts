@@ -1,5 +1,7 @@
 import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
+import { forwardSession } from '@/lib/api-helpers/forward-session'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
 
 /**
  * Valid status grades - must match DB check constraints
@@ -34,8 +36,8 @@ export async function GET(request: Request) {
 		if (action) {
 			switch (action) {
 				case 'institutions': {
-					const institutionCode = searchParams.get('institution_code')
-					const institutionsId = searchParams.get('institutions_id')
+					const institutionCode = (await institutionParam(searchParams, 'institution_code'))
+					const institutionsId = (await institutionParam(searchParams, 'institutions_id'))
 
 					let query = supabase
 						.from('institutions')
@@ -123,7 +125,7 @@ export async function GET(request: Request) {
 						coQuery = coQuery.eq('examination_session_id', sessionId)
 					}
 
-					const { data: courseOfferings, error: coError } = await coQuery.range(0, 9999)
+					const { data: courseOfferings, error: coError } = await coQuery
 
 					if (coError) {
 						console.error('[Status Grades Programs API] Error fetching course offerings:', coError)
@@ -195,7 +197,7 @@ export async function GET(request: Request) {
 								institution_id: myjkknInstId
 							})
 
-							const res = await fetch(`${baseUrl}/api/myjkkn/programs?${params.toString()}`)
+							const res = await fetch(`${baseUrl}/api/myjkkn/programs?${params.toString()}`, forwardSession(request))
 
 							if (!res.ok) {
 								console.error(`[Status Grades Programs API] HTTP error ${res.status} for inst ${myjkknInstId}`)
@@ -282,7 +284,7 @@ export async function GET(request: Request) {
 						coQuery = coQuery.eq('program_id', programId)
 					}
 
-					const { data: courseOfferings, error: coError } = await coQuery.range(0, 9999)
+					const { data: courseOfferings, error: coError } = await coQuery
 
 					if (coError) {
 						console.error('Error fetching course offerings:', coError)
@@ -334,7 +336,7 @@ export async function GET(request: Request) {
 		// =========================================================
 		// Main GET: Fetch students with status grades for a course
 		// =========================================================
-		const institutionsId = searchParams.get('institutions_id')
+		const institutionsId = (await institutionParam(searchParams, 'institutions_id'))
 		const sessionId = searchParams.get('examination_session_id')
 		const courseId = searchParams.get('course_id')
 		const statusType = searchParams.get('status_type') as 'internal' | 'external'
@@ -379,7 +381,6 @@ export async function GET(request: Request) {
 			.eq('examination_session_id', sessionId)
 			.eq('course_code', course.course_code)
 			.order('stu_register_no')
-			.range(0, 9999)
 
 		if (erError) {
 			console.error('Error fetching exam registrations:', erError)
@@ -413,7 +414,6 @@ export async function GET(request: Request) {
 				.eq('course_id', courseId)
 				.in('student_id', studentIds)
 				.eq('is_active', true)
-				.range(0, 9999)
 
 			if (imError) {
 				console.error('Error fetching internal marks:', imError)
@@ -430,7 +430,6 @@ export async function GET(request: Request) {
 				.eq('course_id', courseId)
 				.in('exam_registration_id', examRegIds)
 				.eq('is_active', true)
-				.range(0, 9999)
 
 			if (meError) {
 				console.error('Error fetching marks entries:', meError)
@@ -764,7 +763,6 @@ export async function PUT(request: Request) {
 				.eq('course_id', course_id)
 				.in('student_id', allStudentIds)
 				.eq('is_active', true)
-				.range(0, 9999)
 
 			// Build Map: student_id -> existing record id
 			const existingMap = new Map<string, string>()
@@ -786,7 +784,6 @@ export async function PUT(request: Request) {
 					.from('exam_registrations')
 					.select('id, course_offering_id')
 					.in('id', examRegIds)
-					.range(0, 9999)
 
 				if (examRegs) {
 					for (const er of examRegs) {
@@ -876,7 +873,6 @@ export async function PUT(request: Request) {
 				.eq('course_id', course_id)
 				.in('exam_registration_id', allExamRegIds)
 				.eq('is_active', true)
-				.range(0, 9999)
 
 			// Build Map: exam_registration_id -> existing record id
 			const existingMap = new Map<string, string>()

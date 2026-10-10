@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
 import { logTransaction } from '@/lib/logging/server-transaction-log'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
 
 export async function GET(req: NextRequest) {
   try {
@@ -9,7 +10,7 @@ export async function GET(req: NextRequest) {
     const ids = searchParams.get('ids') // Support batch fetching with comma-separated IDs
     const search = searchParams.get('search')
     const program_id = searchParams.get('program_id')
-    const institution_code = searchParams.get('institution_code')
+    const institution_code = (await institutionParam(searchParams, 'institution_code'))
     const program_code = searchParams.get('program_code')
     const regulation_code = searchParams.get('regulation_code')
     const offering_department_code = searchParams.get('offering_department_code')

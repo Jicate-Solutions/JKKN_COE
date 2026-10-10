@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { fetchMyJKKNLearnerProfiles, MyJKKNApiError } from '@/lib/myjkkn-api'
 import { getSupabaseServer } from '@/lib/supabase-server'
+import { restrictToCallerInstitution } from '@/lib/auth/institution-scope-request'
 import {
 	MYJKKN_MAX_PER_PAGE,
 	enrichLearnerData,
@@ -158,6 +159,9 @@ export async function GET(request: NextRequest) {
 				}
 			}
 
+			// Only the caller's own institution leaves the server (super admins get all).
+			enrichedData = await restrictToCallerInstitution(enrichedData)
+
 			return NextResponse.json({
 				data: enrichedData,
 				metadata: {
@@ -220,7 +224,8 @@ export async function GET(request: NextRequest) {
 			}
 		}
 
-		const enrichedData = enrichLearnerData(rawData, lookups)
+		// Only the caller's own institution leaves the server (super admins get all).
+		const enrichedData = await restrictToCallerInstitution(enrichLearnerData(rawData, lookups))
 
 		return NextResponse.json({
 			...response,
@@ -301,7 +306,7 @@ export async function GET(request: NextRequest) {
 			const totalPages = Math.ceil(total / limitNum)
 
 			return NextResponse.json({
-				data: allData,
+				data: await restrictToCallerInstitution(allData),
 				metadata: {
 					page: pageNum,
 					limit: limitNum,

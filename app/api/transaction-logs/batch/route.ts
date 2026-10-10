@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
-import { headers } from 'next/headers'
+import { cookies, headers } from 'next/headers'
+import { getRequestUser } from '@/lib/auth/server-session'
 
 interface TransactionLogEntry {
 	action: string
@@ -49,11 +50,16 @@ async function getSessionByToken(supabase: ReturnType<typeof getSupabaseServer>,
 export async function POST(request: Request) {
 	try {
 		const body = await request.json()
-		const { entries, access_token, user_email } = body as {
-			entries: TransactionLogEntry[]
-			access_token?: string
-			user_email?: string
+		const { entries } = body as { entries: TransactionLogEntry[] }
+
+		// Who did it comes from the verified session — never from the body, or
+		// any signed-in user could file audit entries under someone else's name.
+		const caller = await getRequestUser()
+		if (!caller) {
+			return NextResponse.json({ error: 'Your session has expired. Please sign in again.', code: 'INVALID_SESSION' }, { status: 401 })
 		}
+		const access_token = (await cookies()).get('access_token')?.value
+		const user_email = caller.email
 
 		if (!entries || !Array.isArray(entries) || entries.length === 0) {
 			return NextResponse.json({ error: 'Entries array is required' }, { status: 400 })
@@ -82,7 +88,8 @@ export async function POST(request: Request) {
 			null
 
 		// Get session info by access_token (session_token in sessions table)
-		const { sessionId, userId } = await getSessionByToken(supabase, access_token)
+		const { sessionId } = await getSessionByToken(supabase, access_token)
+		const userId = caller.userId
 
 		// Prepare batch insert
 		const logsToInsert = entries.map((entry) => ({

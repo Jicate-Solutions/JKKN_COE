@@ -1,11 +1,27 @@
 import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
+import { getRequestUser } from '@/lib/auth/server-session'
+
+// /api/v1 is a public prefix in proxy.ts (its routes normally authenticate
+// with an API key). This one is called by the staff attendance-report screen,
+// so it checks the COE session itself.
+async function requireCoeSession() {
+	const caller = await getRequestUser()
+	if (caller?.hasCoeAccess) return null
+	return NextResponse.json(
+		{ error: 'Your session has expired. Please sign in again.', code: 'INVALID_SESSION' },
+		{ status: 401 }
+	)
+}
 
 const DEFAULT_STUDENTS_PER_BUNDLE = 60
 
 // GET: Fetch exam settings for an institution
 export async function GET(request: Request) {
 	try {
+		const denied = await requireCoeSession()
+		if (denied) return denied
+
 		const supabase = getSupabaseServer()
 		const { searchParams } = new URL(request.url)
 		const institutionId = searchParams.get('institution_id')
@@ -51,6 +67,9 @@ export async function GET(request: Request) {
 // PUT: Upsert exam settings for an institution
 export async function PUT(request: Request) {
 	try {
+		const denied = await requireCoeSession()
+		if (denied) return denied
+
 		const supabase = getSupabaseServer()
 		const body = await request.json()
 

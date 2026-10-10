@@ -18,6 +18,7 @@ import type {
 	ExamFeeConcessionListResponse,
 	ExamFeeConcessionSaveResult,
 } from '@/types/exam-fee-concessions'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
 
 /**
  * Exam Fee Concessions API
@@ -62,7 +63,7 @@ export async function GET(request: Request) {
 
 		const supabase = getSupabaseServer()
 		const { searchParams } = new URL(request.url)
-		const institutions_id = searchParams.get('institutions_id') || ''
+		const institutions_id = (await institutionParam(searchParams, 'institutions_id')) || ''
 		const examination_session_id = searchParams.get('examination_session_id') || ''
 
 		if (!institutions_id) return NextResponse.json({ error: 'institutions_id is required' }, { status: 400 })

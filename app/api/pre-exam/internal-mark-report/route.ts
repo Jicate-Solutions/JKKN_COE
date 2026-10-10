@@ -1,5 +1,7 @@
 import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
+import { offeringIdsOfCourseInSemester } from '@/lib/api-helpers/course-semester-offerings'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
 
 export async function GET(request: Request) {
 	try {
@@ -10,7 +12,7 @@ export async function GET(request: Request) {
 		// Reuse filter-cascade from internal-mark-entry for programs/semesters/courses
 		// Assessment options — NO date filtering (show all rounds)
 		if (action === 'assessments') {
-			const institutionsId = searchParams.get('institutions_id')
+			const institutionsId = (await institutionParam(searchParams, 'institutions_id'))
 			const sessionId = searchParams.get('examination_session_id')
 
 			if (!institutionsId || !sessionId) {
@@ -54,28 +56,20 @@ export async function GET(request: Request) {
 				return NextResponse.json({ error: 'course_offering_id and examination_session_id required' }, { status: 400 })
 			}
 
-			// Get course_code from offering
-			const { data: offering } = await supabase
-				.from('course_offerings')
-				.select('course_code')
-				.eq('id', courseOfferingId)
-				.single()
+			const offeringIds = await offeringIdsOfCourseInSemester(supabase, courseOfferingId, sessionId)
 
-			const courseCode = offering?.course_code
-
-			// Fetch registrations
+			// Fetch registrations — the same learner list Internal Mark Entry shows
 			let regQuery = supabase
 				.from('exam_registrations')
 				.select('id, student_id, stu_register_no, student_name, course_offering_id')
 				.eq('examination_session_id', sessionId)
 				.eq('is_regular', true)
+				.in('course_offering_id', offeringIds)
 				.order('stu_register_no')
 
-			if (courseCode) regQuery = regQuery.eq('course_code', courseCode)
-			else regQuery = regQuery.eq('course_offering_id', courseOfferingId)
 			if (programCode) regQuery = regQuery.eq('program_code', programCode)
 
-			const { data: registrations, error: regError } = await regQuery.range(0, 9999)
+			const { data: registrations, error: regError } = await regQuery
 			if (regError) return NextResponse.json({ error: 'Failed to fetch learners' }, { status: 500 })
 			if (!registrations || registrations.length === 0) return NextResponse.json([])
 
@@ -88,7 +82,6 @@ export async function GET(request: Request) {
 				.eq('examination_session_id', sessionId)
 				.eq('cia_round', Number(ciaRound))
 				.eq('is_active', true)
-				.range(0, 9999)
 
 			const marksMap = new Map<string, any>()
 			for (const m of (marks || [])) marksMap.set(m.student_id, m)
@@ -117,7 +110,7 @@ export async function GET(request: Request) {
 
 		// Consolidated report: all courses for a program + semester + CIA round
 		if (action === 'consolidated') {
-			const institutionsId = searchParams.get('institutions_id')
+			const institutionsId = (await institutionParam(searchParams, 'institutions_id'))
 			const sessionId = searchParams.get('examination_session_id')
 			const programCode = searchParams.get('program_code')
 			const semester = searchParams.get('semester')
@@ -135,7 +128,6 @@ export async function GET(request: Request) {
 				.eq('examination_session_id', sessionId)
 				.eq('program_code', programCode)
 				.eq('is_regular', true)
-				.range(0, 49999)
 
 			if (!regs || regs.length === 0) return NextResponse.json({ courses: [], learners: [] })
 
@@ -217,7 +209,6 @@ export async function GET(request: Request) {
 					.eq('examination_session_id', sessionId)
 					.eq('cia_round', Number(ciaRound))
 					.eq('is_active', true)
-					.range(0, 49999)
 				: { data: [] }
 
 			// Build marks lookup: student_id → course_code → total
@@ -263,7 +254,7 @@ export async function GET(request: Request) {
 		// Pending Mark Entry: all programs > semesters > courses with entry status
 		// Scalable: fetches distinct programs first, then processes per-program
 		if (action === 'pending-mark-entry') {
-			const institutionsId = searchParams.get('institutions_id')
+			const institutionsId = (await institutionParam(searchParams, 'institutions_id'))
 			const sessionId = searchParams.get('examination_session_id')
 			const ciaRound = searchParams.get('cia_round') || '1'
 			const programCodesParam = searchParams.get('program_codes') // comma-separated from assessment setting
@@ -308,7 +299,6 @@ export async function GET(request: Request) {
 					.eq('examination_session_id', sessionId)
 					.eq('program_code', progCode)
 					.eq('is_regular', true)
-					.range(0, 49999)
 
 				if (!progRegs || progRegs.length === 0) continue
 
@@ -359,7 +349,6 @@ export async function GET(request: Request) {
 					.eq('examination_session_id', sessionId)
 					.eq('cia_round', Number(ciaRound))
 					.eq('is_active', true)
-					.range(0, 49999)
 
 				const marksPerCO = new Map<string, Set<string>>()
 				for (const m of (progMarks || [])) {
@@ -445,28 +434,20 @@ export async function GET(request: Request) {
 				return NextResponse.json({ error: 'course_offering_id and examination_session_id required' }, { status: 400 })
 			}
 
-			// Get course_code from offering
-			const { data: offering } = await supabase
-				.from('course_offerings')
-				.select('course_code, semester')
-				.eq('id', courseOfferingId)
-				.single()
+			const offeringIds = await offeringIdsOfCourseInSemester(supabase, courseOfferingId, sessionId)
 
-			const courseCode = offering?.course_code
-
-			// Fetch registrations
+			// Fetch registrations — the same learner list Internal Mark Entry shows
 			let regQuery2 = supabase
 				.from('exam_registrations')
 				.select('id, student_id, stu_register_no, student_name, course_offering_id')
 				.eq('examination_session_id', sessionId)
 				.eq('is_regular', true)
+				.in('course_offering_id', offeringIds)
 				.order('stu_register_no')
 
-			if (courseCode) regQuery2 = regQuery2.eq('course_code', courseCode)
-			else regQuery2 = regQuery2.eq('course_offering_id', courseOfferingId)
 			if (programCode) regQuery2 = regQuery2.eq('program_code', programCode)
 
-			const { data: registrations } = await regQuery2.range(0, 9999)
+			const { data: registrations } = await regQuery2
 			if (!registrations || registrations.length === 0) return NextResponse.json([])
 
 			// Get course_offering_ids from registrations that match
@@ -480,7 +461,6 @@ export async function GET(request: Request) {
 				.eq('examination_session_id', sessionId)
 				.eq('cia_round', Number(ciaRound))
 				.eq('is_active', true)
-				.range(0, 49999)
 
 			const markedStudents = new Set((marks || []).map(m => m.student_id))
 

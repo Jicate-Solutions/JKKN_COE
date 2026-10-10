@@ -7,6 +7,7 @@ import {
 	PROGRAM_LEVELS,
 	type CalcBasis,
 } from '@/lib/exam-fee-catalog'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
 
 // =====================================================
 // Exam Fee Master API
@@ -64,7 +65,7 @@ export async function GET(request: Request) {
 	const supabase = getSupabaseServer()
 	const { searchParams } = new URL(request.url)
 
-	const institutionsId = searchParams.get('institutions_id')
+	const institutionsId = (await institutionParam(searchParams, 'institutions_id'))
 	const feeType = searchParams.get('fee_type')
 	const category = searchParams.get('category')
 	const programCode = searchParams.get('program_code')
@@ -76,7 +77,6 @@ export async function GET(request: Request) {
 			.select('*')
 			.order('effective_from', { ascending: false })
 			.order('created_at', { ascending: false })
-			.range(0, 9999)
 
 		if (institutionsId) query = query.eq('institutions_id', institutionsId)
 		if (feeType) query = query.eq('fee_type', feeType)

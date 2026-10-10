@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
 import { numberToWords } from '@/services/post-exam/external-mark-entry-service'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
 
 // ---------------------------------------------------------------------------
 // GET — query-param driven action dispatch
@@ -13,8 +14,8 @@ export async function GET(request: Request) {
 		const supabase = getSupabaseServer()
 
 		// Institution filter params (from useInstitutionFilter hook)
-		const institutionCode = searchParams.get('institution_code')
-		const institutionsIdParam = searchParams.get('institutions_id')
+		const institutionCode = (await institutionParam(searchParams, 'institution_code'))
+		const institutionsIdParam = (await institutionParam(searchParams, 'institutions_id'))
 
 		switch (action) {
 

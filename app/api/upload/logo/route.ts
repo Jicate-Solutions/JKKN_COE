@@ -11,6 +11,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { writeFile, mkdir } from 'fs/promises'
 import { existsSync } from 'fs'
 import path from 'path'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
 
 // Maximum file size: 5MB
 const MAX_FILE_SIZE = 5 * 1024 * 1024
@@ -112,7 +113,7 @@ export async function POST(request: NextRequest) {
 export async function GET(request: NextRequest) {
 	try {
 		const { searchParams } = new URL(request.url)
-		const institutionCode = searchParams.get('institution_code')
+		const institutionCode = (await institutionParam(searchParams, 'institution_code'))
 
 		const uploadDir = path.join(process.cwd(), 'public', 'logo')
 

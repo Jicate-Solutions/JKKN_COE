@@ -1,11 +1,12 @@
 import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
 
 export async function DELETE(request: Request) {
 	try {
 		const supabase = getSupabaseServer()
 		const { searchParams } = new URL(request.url)
-		const institutionId = searchParams.get('institutions_id')
+		const institutionId = (await institutionParam(searchParams, 'institutions_id'))
 		const examDate = searchParams.get('exam_date')
 		const examSession = searchParams.get('exam_session')
 

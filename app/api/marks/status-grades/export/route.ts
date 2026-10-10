@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
 
 /**
  * GET /api/marks/status-grades/export
@@ -19,7 +20,7 @@ export async function GET(request: Request) {
 		const supabase = getSupabaseServer()
 		const { searchParams } = new URL(request.url)
 
-		const institutionsId = searchParams.get('institutions_id')
+		const institutionsId = (await institutionParam(searchParams, 'institutions_id'))
 		const sessionId = searchParams.get('examination_session_id')
 		const courseId = searchParams.get('course_id')
 		const statusType = searchParams.get('status_type') as 'internal' | 'external'
@@ -50,7 +51,6 @@ export async function GET(request: Request) {
 			.eq('examination_session_id', sessionId)
 			.eq('course_code', course.course_code)
 			.order('stu_register_no')
-			.range(0, 9999)
 
 		if (erError) {
 			console.error('Error fetching exam registrations:', erError)
@@ -81,7 +81,6 @@ export async function GET(request: Request) {
 					.eq('course_id', courseId)
 					.in('student_id', studentIds)
 					.eq('is_active', true)
-					.range(0, 9999)
 
 				if (internalMarks) {
 					for (const im of internalMarks) {
@@ -95,7 +94,6 @@ export async function GET(request: Request) {
 					.eq('course_id', courseId)
 					.in('exam_registration_id', examRegIds)
 					.eq('is_active', true)
-					.range(0, 9999)
 
 				if (marksEntries) {
 					for (const me of marksEntries) {

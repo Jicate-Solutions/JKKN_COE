@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
 
 export async function GET(request: Request) {
 	try {
@@ -8,8 +9,8 @@ export async function GET(request: Request) {
 		const supabase = getSupabaseServer()
 
 		// Get institution filter params (from useInstitutionFilter hook)
-		const institutionCode = searchParams.get('institution_code')
-		const institutionsIdParam = searchParams.get('institutions_id')
+		const institutionCode = (await institutionParam(searchParams, 'institution_code'))
+		const institutionsIdParam = (await institutionParam(searchParams, 'institutions_id'))
 
 		switch (action) {
 			case 'institutions': {

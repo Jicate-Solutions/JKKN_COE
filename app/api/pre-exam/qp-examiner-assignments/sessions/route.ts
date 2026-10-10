@@ -10,13 +10,14 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
 import { isEndSemesterExamType } from '@/lib/qp-portal/exam-type'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
 
 export const dynamic = 'force-dynamic'
 
 export async function GET(req: NextRequest) {
 	try {
 		const supabase = getSupabaseServer()
-		const institutionsId = new URL(req.url).searchParams.get('institutions_id')
+		const institutionsId = await institutionParam(new URL(req.url).searchParams, 'institutions_id')
 		if (!institutionsId) {
 			return NextResponse.json({ error: 'institutions_id is required' }, { status: 400 })
 		}

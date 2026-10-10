@@ -3,6 +3,7 @@ import { getSupabaseServer } from '@/lib/supabase-server'
 import { createHash } from 'crypto'
 // Digit-by-digit words ("28" → "TWO EIGHT") — shared with all mark surfaces.
 import { numberToWords } from '@/services/post-exam/external-mark-entry-service'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
 
 export async function GET(request: Request) {
 	try {
@@ -138,7 +139,7 @@ export async function GET(request: Request) {
 
 			case 'marks': {
 				// institutionId is now optional - uses institution filter from query params
-				const institutionId = searchParams.get('institutionId') || searchParams.get('institutions_id')
+				const institutionId = searchParams.get('institutionId') || (await institutionParam(searchParams, 'institutions_id'))
 				const sessionId = searchParams.get('sessionId')
 				const programId = searchParams.get('programId')
 				const courseId = searchParams.get('courseId')

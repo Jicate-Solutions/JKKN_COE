@@ -571,7 +571,7 @@ export async function GET(request: NextRequest) {
 					query = query.eq('course_offerings.program_id', programId)
 				}
 
-				const { data, error } = await query.range(0, 19999) // Override Supabase's default 1000-row limit
+				const { data, error } = await query // Override Supabase's default 1000-row limit
 
 				if (error) {
 					console.error('Error fetching exam registrations:', error)
@@ -959,7 +959,6 @@ export async function POST(request: NextRequest) {
 					.in('course_id', ciaCourseIdsWithoutRegs)
 					.eq('is_active', true)
 					.eq('program_code', programCode)
-					.range(0, 19999) // Override Supabase's default 1000-row limit
 
 				if (ciaError) {
 					console.error('[Final Marks] Error fetching CIA internal marks:', ciaError)
@@ -1172,7 +1171,6 @@ export async function POST(request: NextRequest) {
 				.in('course_id', course_ids)
 				.eq('is_active', true)
 				.order('created_at', { ascending: false })
-				.range(0, 19999)
 
 			if (batchError) {
 				console.error(`Error fetching internal marks batch ${batchNum}:`, batchError)

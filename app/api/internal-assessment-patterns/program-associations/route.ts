@@ -23,11 +23,6 @@ export async function GET(request: NextRequest) {
 					pattern_code,
 					pattern_name,
 					status
-				),
-				programs (
-					id,
-					program_code,
-					program_name
 				)
 			`)
 			.order('effective_from_date', { ascending: false })
@@ -51,7 +46,23 @@ export async function GET(request: NextRequest) {
 			return NextResponse.json({ error: 'Failed to fetch program associations' }, { status: 500 })
 		}
 
-		return NextResponse.json(data)
+		// pattern_program_associations has no foreign key to programs, so the
+		// programme is looked up by code and attached under the same key.
+		const programCodes = [...new Set((data || []).map((row: any) => row.program_code).filter(Boolean))]
+		const programByCode = new Map<string, { id: string; program_code: string; program_name: string }>()
+		if (programCodes.length > 0) {
+			const { data: programs } = await supabase
+				.from('programs')
+				.select('id, program_code, program_name')
+				.in('program_code', programCodes)
+			for (const program of programs || []) {
+				if (!programByCode.has(program.program_code)) programByCode.set(program.program_code, program)
+			}
+		}
+
+		return NextResponse.json(
+			(data || []).map((row: any) => ({ ...row, programs: programByCode.get(row.program_code) || null }))
+		)
 	} catch (error) {
 		console.error('Program associations GET error:', error)
 		return NextResponse.json({ error: 'Internal server error' }, { status: 500 })

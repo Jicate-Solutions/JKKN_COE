@@ -2,12 +2,13 @@ import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
 import { withAdminAuth } from '@/lib/security/admin-guard'
 import { sanitizeSearch } from '@/lib/security/escape-like'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
 
 export const GET = withAdminAuth(async (request, _adminUser) => {
 	const supabase = getSupabaseServer()
 	const { searchParams } = new URL(request.url)
 	const search = sanitizeSearch(searchParams.get('search'))
-	const coeInstitutionId = searchParams.get('institutions_id')
+	const coeInstitutionId = (await institutionParam(searchParams, 'institutions_id'))
 
 	// Fetch COE institutions to build MyJKKN ID → institution code map
 	const { data: institutions } = await supabase

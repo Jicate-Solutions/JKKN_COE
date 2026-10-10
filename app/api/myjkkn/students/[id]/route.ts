@@ -12,16 +12,22 @@ const MYJKKN_API_KEY = process.env.MYJKKN_API_KEY || ''
  */
 export async function GET(
 	request: NextRequest,
-	{ params }: { params: { id: string } }
+	{ params }: { params: Promise<{ id: string }> }
 ) {
 	try {
-		const studentId = params.id
+		const { id: studentId } = await params
 
 		if (!studentId) {
 			return NextResponse.json(
 				{ error: 'Student ID is required' },
 				{ status: 400 }
 			)
+		}
+
+		// The id is placed in the upstream URL; anything but a UUID ("../..")
+		// could steer the request to a different MyJKKN endpoint under our API key.
+		if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(studentId)) {
+			return NextResponse.json({ error: 'Invalid ID' }, { status: 400 })
 		}
 
 		const url = `${MYJKKN_BASE_URL}/api-management/students/${studentId}`

@@ -103,7 +103,9 @@ export const GET = withExternalAuth(async (request: Request, context: ExternalAp
 			query = query.eq('institutions_id', institutionsId)
 		} else if (institutionCode) {
 			query = query.eq('institution_code', institutionCode)
-		} else if (allowed.length > 0) {
+		}
+		// Always apply the key's allow-list, whichever filter the caller supplied
+		if (allowed.length > 0) {
 			query = query.in('institutions_id', allowed)
 		}
 

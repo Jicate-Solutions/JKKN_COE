@@ -1,6 +1,11 @@
 import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
-import { headers } from 'next/headers'
+import { cookies, headers } from 'next/headers'
+import { getRequestUser } from '@/lib/auth/server-session'
+import { requireUserPermission } from '@/lib/auth/check-user-permission'
+
+// Same permission that shows the User Log Activity page in the sidebar.
+const VIEW_PERMISSION = 'page.admin.user_log_activity.view'
 
 /**
  * Get session info by access_token (session_token in sessions table)
@@ -47,9 +52,16 @@ export async function POST(request: Request) {
 			metadata,
 			status = 'success',
 			error_message,
-			access_token, // Client sends access_token to lookup session
-			user_email,   // Client sends email for reference (stored in metadata)
 		} = body
+
+		// Who did it comes from the verified session — never from the body, or
+		// any signed-in user could file audit entries under someone else's name.
+		const caller = await getRequestUser()
+		if (!caller) {
+			return NextResponse.json({ error: 'Your session has expired. Please sign in again.', code: 'INVALID_SESSION' }, { status: 401 })
+		}
+		const access_token = (await cookies()).get('access_token')?.value
+		const user_email = caller.email
 
 		if (!action) {
 			return NextResponse.json({ error: 'Action is required' }, { status: 400 })
@@ -73,7 +85,8 @@ export async function POST(request: Request) {
 			null
 
 		// Get session info by access_token (session_token in sessions table)
-		const { sessionId, userId } = await getSessionByToken(supabase, access_token)
+		const { sessionId } = await getSessionByToken(supabase, access_token)
+		const userId = caller.userId
 
 		// Insert transaction log
 		const { data, error } = await supabase
@@ -116,9 +129,14 @@ export async function POST(request: Request) {
  */
 export async function GET(request: Request) {
 	try {
+		const perm = await requireUserPermission(VIEW_PERMISSION)
+		if (!perm.ok) {
+			return NextResponse.json({ error: 'You do not have permission to perform this action.' }, { status: perm.status })
+		}
+
 		const { searchParams } = new URL(request.url)
 		const page = parseInt(searchParams.get('page') || '1')
-		const limit = parseInt(searchParams.get('limit') || '50')
+		const limit = Math.min(Math.max(parseInt(searchParams.get('limit') || '50') || 50, 1), 1000)
 		const user_id = searchParams.get('user_id')
 		const action = searchParams.get('action')
 		const resource_type = searchParams.get('resource_type')

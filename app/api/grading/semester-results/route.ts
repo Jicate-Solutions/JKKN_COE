@@ -355,7 +355,7 @@ export async function GET(req: NextRequest) {
 			}
 
 			// Override Supabase's default 1000-row limit
-			query = query.range(0, 100000)
+			query = query
 
 			const { data, error } = await query
 
@@ -2380,7 +2380,6 @@ export async function POST(req: NextRequest) {
 					.eq('examination_session_id', sessionId)
 					.in('student_id', allStudentIds)
 					.eq('is_active', true)
-					.range(0, 99999)
 
 				if (allMarks && allMarks.length > 0) {
 					// Get all course IDs from marks
@@ -2400,7 +2399,6 @@ export async function POST(req: NextRequest) {
 						.in('course_id', allCourseIds)
 						.eq('is_cleared', false)
 						.eq('is_active', true)
-						.range(0, 99999)
 
 					// Create lookup map for O(1) access
 					const backlogMap = new Map<string, any>()
@@ -2552,7 +2550,6 @@ export async function POST(req: NextRequest) {
 
 			const { data: resultsWithoutFolio, error: fetchError } = await query
 				.order('register_number', { ascending: true })
-				.range(0, 99999)
 
 			if (fetchError) {
 				return NextResponse.json({ error: fetchError.message }, { status: 500 })
@@ -2690,7 +2687,7 @@ export async function POST(req: NextRequest) {
 				allMarksQuery = allMarksQuery.eq('program_id', programId)
 			}
 
-			const { data: allMarks, error: marksError } = await allMarksQuery.range(0, 99999)
+			const { data: allMarks, error: marksError } = await allMarksQuery
 
 			if (marksError) {
 				console.error('[Update Backlogs] Error fetching marks:', marksError)

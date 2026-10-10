@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
 import type { PracticalExaminerAssignment, PracticalExaminerCourse } from '@/types/practical-email'
 import { fetchMyJKKNStaffById } from '@/services/myjkkn-service'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
 
 // Internal working type for grouping (before email status is attached)
 interface ExaminerGroup {
@@ -24,7 +25,7 @@ interface ExaminerGroup {
 export async function GET(request: Request) {
 	try {
 		const { searchParams } = new URL(request.url)
-		const institutionsId = searchParams.get('institutions_id')
+		const institutionsId = (await institutionParam(searchParams, 'institutions_id'))
 		const examinationSessionId = searchParams.get('examination_session_id')
 
 		if (!institutionsId) {
@@ -47,7 +48,6 @@ export async function GET(request: Request) {
 			.eq('examination_session_id', examinationSessionId)
 			.eq('exam_type', 'Practical')
 			.eq('is_published', true)
-			.range(0, 9999)
 
 		if (ttError) {
 			console.error('Error fetching practical timetables:', ttError)
@@ -73,8 +73,7 @@ export async function GET(request: Request) {
 			supabase
 				.from('exam_timetable_examiners')
 				.select('id, exam_timetable_id, examiner_type, staff_id, staff_name, staff_email, examiner_id, institutions_id')
-				.in('exam_timetable_id', timetableIds)
-				.range(0, 9999),
+				.in('exam_timetable_id', timetableIds),
 			supabase
 				.from('courses')
 				.select('id, course_code, course_name, board_code')
@@ -82,8 +81,7 @@ export async function GET(request: Request) {
 			supabase
 				.from('practical_batch_students')
 				.select('exam_timetable_id')
-				.in('exam_timetable_id', timetableIds)
-				.range(0, 9999),
+				.in('exam_timetable_id', timetableIds),
 		])
 
 		if (eaError) {

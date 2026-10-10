@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
 
 export async function GET(request: NextRequest) {
 	try {
 		const searchParams = request.nextUrl.searchParams
-		const institutionId = searchParams.get('institution_id')
+		const institutionId = (await institutionParam(searchParams, 'institution_id'))
 		const sessionCode = searchParams.get('session_code')
 
 		// Validate required parameters

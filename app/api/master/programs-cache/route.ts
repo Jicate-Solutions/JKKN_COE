@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
 
 export async function GET(req: NextRequest) {
 	const { searchParams } = new URL(req.url)
-	const institution_code = searchParams.get('institution_code')
+	const institution_code = (await institutionParam(searchParams, 'institution_code'))
 
 	const supabase = getSupabaseServer()
 

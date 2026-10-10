@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { getRequestUser } from '@/lib/auth/server-session'
 
 /**
  * Same-origin proxy for the JKKN Bug Reporter SDK.
@@ -34,6 +35,23 @@ const SERVER_API_KEY =
 	process.env.BUG_REPORTER_API_KEY ?? process.env.NEXT_PUBLIC_BUG_REPORTER_API_KEY
 
 async function forward(request: NextRequest, path: string[]) {
+	// The reporter widget only exists on signed-in screens. Without this check
+	// the route is an open relay: anyone could send any method and path to the
+	// upstream under our API key.
+	const caller = await getRequestUser()
+	if (!caller?.hasCoeAccess) {
+		return NextResponse.json(
+			{ success: false, error: { message: 'Your session has expired. Please sign in again.' } },
+			{ status: 401 }
+		)
+	}
+	if (path.some((segment) => segment === '..' || segment === '.' || segment.includes('/') || segment.includes('\\'))) {
+		return NextResponse.json(
+			{ success: false, error: { message: 'Invalid request path' } },
+			{ status: 400 }
+		)
+	}
+
 	if (!UPSTREAM) {
 		return NextResponse.json(
 			{ success: false, error: { message: 'Bug reporter upstream URL is not configured' } },

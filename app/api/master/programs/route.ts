@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
 
 export async function GET(req: NextRequest) {
   try {
@@ -7,7 +8,7 @@ export async function GET(req: NextRequest) {
     const search = searchParams.get('search')
     const is_active = searchParams.get('is_active')
     const department_code = searchParams.get('department_code')
-    const institution_code = searchParams.get('institution_code')
+    const institution_code = (await institutionParam(searchParams, 'institution_code'))
     const program_code = searchParams.get('program_code')
 
     const supabase = getSupabaseServer()
@@ -15,7 +16,6 @@ export async function GET(req: NextRequest) {
       .from('programs')
       .select('*', { count: 'exact' })
       .order('created_at', { ascending: false })
-      .range(0, 9999) // Increase limit from default 1000 to 10000 rows
 
     if (search) {
       query = query.or(`program_code.ilike.%${search}%,program_name.ilike.%${search}%,degree_code.ilike.%${search}%,institution_code.ilike.%${search}%`)

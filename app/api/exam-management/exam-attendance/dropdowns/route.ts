@@ -1,5 +1,7 @@
 import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
+import { forwardSession } from '@/lib/api-helpers/forward-session'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
 
 // GET: Cascading dropdown data for exam attendance form
 export async function GET(request: Request) {
@@ -7,15 +9,15 @@ export async function GET(request: Request) {
 		const supabase = getSupabaseServer()
 		const { searchParams } = new URL(request.url)
 		const type = searchParams.get('type')
-		const institutionId = searchParams.get('institution_id')
+		const institutionId = (await institutionParam(searchParams, 'institution_id'))
 		const sessionId = searchParams.get('session_id')
 		const programCode = searchParams.get('program_code')
 		const examDate = searchParams.get('exam_date')
 		const sessionType = searchParams.get('session_type')
 
 		// Institution filter params (from useInstitutionFilter hook)
-		const filterInstitutionCode = searchParams.get('institution_code')
-		const filterInstitutionsId = searchParams.get('institutions_id')
+		const filterInstitutionCode = (await institutionParam(searchParams, 'institution_code'))
+		const filterInstitutionsId = (await institutionParam(searchParams, 'institutions_id'))
 
 		// 1. Fetch Institutions - Apply institution filter for non-super_admin users
 		if (type === 'institutions') {
@@ -131,7 +133,7 @@ export async function GET(request: Request) {
 						params.set('institution_id', myjkknInstId)
 
 						const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'
-						const res = await fetch(`${baseUrl}/api/myjkkn/programs?${params.toString()}`)
+						const res = await fetch(`${baseUrl}/api/myjkkn/programs?${params.toString()}`, forwardSession(request))
 
 						if (res.ok) {
 							const response = await res.json()
@@ -170,7 +172,7 @@ export async function GET(request: Request) {
 					params.set('is_active', 'true')
 
 					const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'
-					const res = await fetch(`${baseUrl}/api/myjkkn/programs?${params.toString()}`)
+					const res = await fetch(`${baseUrl}/api/myjkkn/programs?${params.toString()}`, forwardSession(request))
 
 					if (res.ok) {
 						const response = await res.json()

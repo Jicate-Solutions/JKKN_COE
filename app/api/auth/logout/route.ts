@@ -1,6 +1,18 @@
 import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
 import { getSupabaseParent } from '@/lib/supabase-parent'
+import { cookies } from 'next/headers'
+import { forgetSession, validateTokenWithParent } from '@/lib/auth/server-session'
+
+/** `sub` claim of a JWT, or null when it can't be read. */
+function tokenSubject(token: string): string | null {
+	try {
+		const payload = JSON.parse(Buffer.from(token.split('.')[1], 'base64url').toString('utf8'))
+		return typeof payload?.sub === 'string' ? payload.sub : null
+	} catch {
+		return null
+	}
+}
 
 /**
  * Logout endpoint - full session cleanup across all 3 layers:
@@ -10,36 +22,57 @@ import { getSupabaseParent } from '@/lib/supabase-parent'
  */
 export async function POST(request: Request) {
 	try {
-		const body = await request.json()
-		const { email, access_token, user_id: parentUserId } = body
+		const body = await request.json().catch(() => ({}))
 
-		if (!email && !access_token) {
-			return NextResponse.json({ error: 'Email or access_token is required' }, { status: 400 })
+		// This route is public (it must work with an expired session), so the
+		// caller is identified ONLY by a token they actually hold. `email` and
+		// `user_id` in the body are ignored: honouring them let anyone sign any
+		// other user out of COE and revoke their MyJKKN sign-in.
+		const cookieStore = await cookies()
+		const tokens = Array.from(
+			new Set(
+				[cookieStore.get('access_token')?.value, typeof body?.access_token === 'string' ? body.access_token : undefined]
+					.filter((t): t is string => Boolean(t))
+			)
+		)
+
+		if (tokens.length === 0) {
+			return NextResponse.json({ success: true, message: 'No active session' })
 		}
 
 		const supabase = getSupabaseServer()
 		const nowISO = new Date().toISOString()
 
-		// Find user by email in COE database
-		let userId: string | null = null
+		// Which COE user do these tokens belong to? Expired or already-revoked
+		// rows still count — logging out of a stale session must work.
+		const { data: ownedSessions } = await supabase
+			.from('sessions')
+			.select('user_id, session_token')
+			.in('session_token', tokens)
 
-		if (email) {
-			const { data: userData } = await supabase
-				.from('users')
-				.select('id')
-				.eq('email', email)
-				.single()
+		const owned = ownedSessions?.[0] ?? null
+		const userId: string | null = owned?.user_id ?? null
 
-			userId = userData?.id || null
+		// Parent (MyJKKN) user id, needed for the parent-side cleanup. A token
+		// bound to a session was verified when the row was written, so its
+		// `sub` claim is authentic; otherwise ask the parent app directly.
+		let effectiveParentUserId: string | null = owned ? tokenSubject(owned.session_token) : null
+		if (!effectiveParentUserId) {
+			for (const token of tokens) {
+				const validated = await validateTokenWithParent(token)
+				if (validated?.parentUserId) {
+					effectiveParentUserId = validated.parentUserId
+					break
+				}
+			}
 		}
 
-		// 1. Invalidate COE sessions by access_token
-		if (access_token) {
-			await supabase
-				.from('sessions')
-				.update({ is_active: false, updated_at: nowISO })
-				.eq('session_token', access_token)
-		}
+		// 1. Invalidate the presented COE sessions
+		await supabase
+			.from('sessions')
+			.update({ is_active: false, updated_at: nowISO })
+			.in('session_token', tokens)
+		tokens.forEach(forgetSession)
 
 		// 2. Invalidate all active COE sessions for this user
 		if (userId) {
@@ -56,7 +89,6 @@ export async function POST(request: Request) {
 		}
 
 		const appId = process.env.NEXT_PUBLIC_APP_ID
-		const effectiveParentUserId = parentUserId || userId
 
 		if (effectiveParentUserId) {
 			try {

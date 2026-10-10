@@ -9,12 +9,13 @@
 import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
 import { fetchAllRows } from '@/lib/exam-applications/paginate'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
 
 export async function GET(request: Request) {
 	try {
 		const supabase = getSupabaseServer()
 		const { searchParams } = new URL(request.url)
-		const institutionId = searchParams.get('institution_id')
+		const institutionId = (await institutionParam(searchParams, 'institution_id'))
 		const sessionId = searchParams.get('examination_session_id')
 		const examDate = searchParams.get('exam_date')
 		const session = searchParams.get('session')

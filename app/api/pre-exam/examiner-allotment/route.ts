@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
 import { fetchMyJKKNStaff } from '@/lib/myjkkn-api'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
 
 // ---------------------------------------------------------------------------
 // GET — Fetch data for examiner allotment page
@@ -12,8 +13,8 @@ export async function GET(request: Request) {
 		const action = searchParams.get('action')
 		const supabase = getSupabaseServer()
 
-		const institutionCode = searchParams.get('institution_code')
-		const institutionsIdParam = searchParams.get('institutions_id')
+		const institutionCode = (await institutionParam(searchParams, 'institution_code'))
+		const institutionsIdParam = (await institutionParam(searchParams, 'institutions_id'))
 
 		switch (action) {
 
@@ -143,7 +144,6 @@ export async function GET(request: Request) {
 					.eq('examination_session_id', sessionId)
 					.eq('exam_type', 'Practical')
 					.eq('is_published', true)
-					.range(0, 49999)
 
 				if (ttError) {
 					console.error('Error fetching timetables:', ttError)
@@ -253,8 +253,7 @@ export async function GET(request: Request) {
 					supabase
 						.from('exam_timetable_examiners')
 						.select('exam_timetable_id, examiner_type, staff_id, staff_name, staff_mobile, staff_designation, examiner_id')
-						.in('exam_timetable_id', timetableIds)
-						.range(0, 49999),
+						.in('exam_timetable_id', timetableIds),
 				])
 
 				const batchStudents = batchStudentResults.flat()

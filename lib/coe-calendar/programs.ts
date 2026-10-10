@@ -21,7 +21,6 @@ export async function fetchInstitutionPrograms(
 		.eq('institutions_id', institutionsId)
 		.eq('is_active', true)
 		.order('program_code')
-		.range(0, 9999)
 
 	if (error) {
 		console.error('fetchInstitutionPrograms error:', error)

@@ -25,6 +25,7 @@ import { buildPaymentStatement } from '@/lib/qp-portal/claim-payment-statement'
 import { logAccess } from '@/lib/qp-portal/guard'
 import { formatIst } from '@/lib/qp-portal/ist'
 import { QP_CLAIM_STATUS_LABELS, type QpClaimStatus } from '@/types/qp-examiner-assignment'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
@@ -331,7 +332,7 @@ export async function GET(req: NextRequest) {
 		if (!perm.ok) return NextResponse.json({ error: perm.error }, { status: perm.status })
 
 		const { searchParams } = new URL(req.url)
-		const institutionsId = searchParams.get('institutions_id')
+		const institutionsId = (await institutionParam(searchParams, 'institutions_id'))
 		const sessionId = searchParams.get('examination_session_id')
 		if (!institutionsId || !sessionId) {
 			return NextResponse.json({ error: 'institutions_id and examination_session_id are required' }, { status: 400 })

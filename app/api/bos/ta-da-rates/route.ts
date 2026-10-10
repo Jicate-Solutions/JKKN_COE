@@ -62,7 +62,6 @@ export async function GET(request: NextRequest) {
 			.eq('institutions_id', institutionId)
 			.order('category')
 			.order('effective_from', { ascending: false })
-			.range(0, 9999)
 
 		if (error) {
 			console.error('[BoS TA/DA Rates] GET error:', error)

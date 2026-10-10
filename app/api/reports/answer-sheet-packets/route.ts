@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
 
 /**
  * GET /api/reports/answer-sheet-packets
@@ -11,7 +12,7 @@ export async function GET(request: NextRequest) {
 		const supabase = getSupabaseServer()
 		const { searchParams } = new URL(request.url)
 
-		const institutionsId = searchParams.get('institutions_id')
+		const institutionsId = (await institutionParam(searchParams, 'institutions_id'))
 		const examinationSessionId = searchParams.get('examination_session_id')
 		const boardCodes = searchParams.get('board_codes') // comma-separated
 
@@ -44,7 +45,7 @@ export async function GET(request: NextRequest) {
 			.eq('is_active', true)
 			.order('packet_no', { ascending: true })
 
-		const { data: packets, error: packetsError } = await query.range(0, 9999)
+		const { data: packets, error: packetsError } = await query
 
 		if (packetsError) {
 			console.error('Error fetching packets:', packetsError)

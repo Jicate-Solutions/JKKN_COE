@@ -79,7 +79,7 @@ export const GET = withExternalAuth(async (request: Request, ctx: ExternalApiCon
 	if (gradeSystemCode) query = query.eq('grade_system_code', gradeSystemCode)
 	if (regulationId) query = query.eq('regulation_id', regulationId)
 
-	const { data, error } = await query.range(0, 9999)
+	const { data, error } = await query
 
 	if (error) {
 		console.error('External API - fetch grade_system error:', error)

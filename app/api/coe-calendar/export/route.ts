@@ -3,6 +3,7 @@ import ExcelJS from 'exceljs'
 import { getSupabaseServer } from '@/lib/supabase-server'
 import { parseRoleTags, toFilterTags } from '@/lib/coe-calendar/visibility'
 import { csv, sanitizeSearch, searchFilter } from '@/lib/coe-calendar/validate'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
 
 /**
  * GET /api/coe-calendar/export
@@ -15,7 +16,7 @@ export async function GET(request: Request) {
 	const supabase = getSupabaseServer()
 	const { searchParams } = new URL(request.url)
 
-	const institutionsId = searchParams.get('institutions_id')
+	const institutionsId = (await institutionParam(searchParams, 'institutions_id'))
 	const academicYear = searchParams.get('academic_year')
 	const categories = csv(searchParams.get('exam_category'))
 	const programmeType = searchParams.get('programme_type')
@@ -48,7 +49,6 @@ export async function GET(request: Request) {
 	const { data, error } = await query
 		.order('event_start_date', { ascending: true })
 		.order('id', { ascending: true })
-		.range(0, 9999)
 
 	if (error) {
 		console.error('coe_calendar export error:', error)

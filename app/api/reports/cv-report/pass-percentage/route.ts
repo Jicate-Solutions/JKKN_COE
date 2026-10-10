@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
 
 /**
  * CV Pass percentage report — board-wise course breakdown.
@@ -53,7 +54,7 @@ function semesterToRoman(semesterCode: string): string {
 export async function GET(request: Request) {
 	try {
 		const { searchParams } = new URL(request.url)
-		const institutionsId = searchParams.get('institutions_id')
+		const institutionsId = (await institutionParam(searchParams, 'institutions_id'))
 		const sessionId = searchParams.get('session_id')
 		const boardCode = searchParams.get('board_code')
 
@@ -78,7 +79,6 @@ export async function GET(request: Request) {
 			.from('courses')
 			.select('id, course_code, course_name, external_pass_mark')
 			.eq('board_code', boardCode)
-			.range(0, 9999)
 
 		if (cErr) {
 			console.error('[cv-report/pass-percentage] courses error', cErr)
@@ -118,7 +118,6 @@ export async function GET(request: Request) {
 				.select('course_id, semester_code, course_order')
 				.in('course_id', batch)
 				.eq('is_active', true)
-				.range(0, 99999)
 		))
 		for (const { data: mappings } of cmResults) {
 			for (const cm of mappings || []) {
@@ -189,7 +188,6 @@ export async function GET(request: Request) {
 						.from('exam_attendance')
 						.select('exam_registration_id, attendance_status')
 						.in('exam_registration_id', batch)
-						.range(0, 99999)
 				},
 			)
 		)
@@ -219,7 +217,6 @@ export async function GET(request: Request) {
 						.from('marks_entry')
 						.select('exam_registration_id, course_id, total_marks_obtained')
 						.in('exam_registration_id', batch)
-						.range(0, 99999)
 				},
 			)
 		)

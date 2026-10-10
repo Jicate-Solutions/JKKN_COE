@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
 import type { CentralValuationBoardRow } from '@/types/central-valuation'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
 
 /**
  * Source courses from exam_registrations (fee_paid=true) so dates can be planned
@@ -9,7 +10,7 @@ import type { CentralValuationBoardRow } from '@/types/central-valuation'
 export async function GET(request: Request) {
 	try {
 		const { searchParams } = new URL(request.url)
-		const institutionsId = searchParams.get('institutions_id')
+		const institutionsId = (await institutionParam(searchParams, 'institutions_id'))
 		const sessionId = searchParams.get('session_id')
 
 		console.log(`[central-valuation/boards] GET institutions_id=${institutionsId} session_id=${sessionId}`)

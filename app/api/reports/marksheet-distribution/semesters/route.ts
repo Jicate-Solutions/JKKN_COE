@@ -1,10 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
+import { forwardSession } from '@/lib/api-helpers/forward-session'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
 
 export async function GET(request: NextRequest) {
 	try {
 		const { searchParams } = new URL(request.url)
-		const institutionId = searchParams.get('institution_id')
+		const institutionId = (await institutionParam(searchParams, 'institution_id'))
 		const programCode = searchParams.get('program_code')
 
 		if (!institutionId) {
@@ -51,7 +53,7 @@ export async function GET(request: NextRequest) {
 					institution_id: myjkknInstId
 				})
 
-				const res = await fetch(`${baseUrl}/api/myjkkn/programs?${params.toString()}`)
+				const res = await fetch(`${baseUrl}/api/myjkkn/programs?${params.toString()}`, forwardSession(request))
 
 				if (!res.ok) {
 					console.error(`[Marksheet Distribution Semesters API] HTTP error ${res.status} for inst ${myjkknInstId}`)

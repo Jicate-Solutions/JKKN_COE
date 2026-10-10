@@ -51,7 +51,7 @@ export const GET = withExternalAuth(async (request: Request, ctx: ExternalApiCon
 		query = query.or(`meeting_title.ilike.%${search}%,venue.ilike.%${search}%`)
 	}
 
-	const { data, error } = await query.range(0, 9999)
+	const { data, error } = await query
 
 	if (error) {
 		return NextResponse.json({ error: 'Failed to fetch meetings' }, { status: 500 })

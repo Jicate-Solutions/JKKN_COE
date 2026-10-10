@@ -64,7 +64,7 @@ async function fetchInBatches(
 		const batchIds = ids.slice(i, i + BATCH_SIZE)
 		let query = supabase.from(table).select(select).in(inColumn, batchIds)
 		if (extraFilter) query = extraFilter(query)
-		const { data, error } = await query.range(0, 9999)
+		const { data, error } = await query
 		if (error) {
 			console.error(`[Reval Final Marks] Error fetching ${table} batch:`, error)
 		} else if (data) {
@@ -192,7 +192,6 @@ export async function GET(request: NextRequest) {
 			.eq('course_id', courseId)
 			.eq('is_active', true)
 			.order('register_number')
-			.range(0, 9999)
 
 		if (fmError) {
 			console.error('[Reval Final Marks] Error fetching final_marks:', fmError)
@@ -449,7 +448,6 @@ async function handleGenerate(supabase: any, body: any) {
 		.eq('program_code', program_code)
 		.eq('course_id', course_id)
 		.eq('is_active', true)
-		.range(0, 9999)
 
 	if (fmError) {
 		console.error('[Reval Final Marks] Error fetching final_marks:', fmError)

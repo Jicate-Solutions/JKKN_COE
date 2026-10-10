@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
 import type { NAACCriterion26Data, NAACCriterion13Data, NAACCriterion27Data } from '@/types/result-analytics'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
 
 // Helper function to calculate pass rate
 function calculatePassRate(passed: number, total: number): number {
@@ -16,7 +17,7 @@ export async function GET(req: NextRequest) {
 		const { searchParams } = new URL(req.url)
 
 		// Parse filter parameters
-		const institutionId = searchParams.get('institution_id') || undefined
+		const institutionId = (await institutionParam(searchParams, 'institution_id')) || undefined
 		const academicYearId = searchParams.get('academic_year_id') || undefined
 		const programId = searchParams.get('program_id') || undefined
 		const reportType = searchParams.get('report_type') || 'criterion_26' // criterion_26, criterion_13, criterion_27
@@ -59,7 +60,7 @@ export async function GET(req: NextRequest) {
 			query = query.eq('program_id', programId)
 		}
 
-		const { data: rawMarksData, error: finalMarksError } = await query.range(0, 9999)
+		const { data: rawMarksData, error: finalMarksError } = await query
 
 		if (finalMarksError) {
 			console.error('Error fetching final marks:', finalMarksError)

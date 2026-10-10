@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
 
 // GET: Fetch exam report with comprehensive student and exam details
 export async function GET(request: Request) {
@@ -8,7 +9,7 @@ export async function GET(request: Request) {
 		const { searchParams } = new URL(request.url)
 
 		// Extract filters with defaults
-		const institutionCode = searchParams.get('institution_code') || 'JKKNCAS'
+		const institutionCode = (await institutionParam(searchParams, 'institution_code')) || 'JKKNCAS'
 		const sessionCode = searchParams.get('session_code') || 'JKKNCAS-NOV-DEC-2025'
 		const programCode = searchParams.get('program_code') || 'BSC-CS'
 		const examDate = searchParams.get('exam_date') || '2025-10-31'

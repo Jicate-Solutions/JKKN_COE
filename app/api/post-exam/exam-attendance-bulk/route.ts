@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
 
 // Server-side cache for batch upload lookup data (avoids 10MB request limit)
 // Key: cache_id, Value: { lookupData, timestamp }
@@ -68,7 +69,7 @@ export async function GET(request: Request) {
 
 			case 'attendance': {
 				// institutionId is optional - uses institution filter from query params
-				const institutionId = searchParams.get('institutionId') || searchParams.get('institutions_id')
+				const institutionId = searchParams.get('institutionId') || (await institutionParam(searchParams, 'institutions_id'))
 				const sessionId = searchParams.get('sessionId')
 
 				console.log('=== DEBUG: Fetching exam attendance ===')

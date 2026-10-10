@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
 
 /**
  * NAD ABC CSV Export API (Official Upload Format)
@@ -56,7 +57,7 @@ export async function GET(req: NextRequest) {
 		const { searchParams } = new URL(req.url)
 
 		// Parse filter parameters
-		const institutionId = searchParams.get('institution_id') || undefined
+		const institutionId = (await institutionParam(searchParams, 'institution_id')) || undefined
 		const examinationSessionId = searchParams.get('examination_session_id') || undefined
 		const programId = searchParams.get('program_id') || undefined
 		const semester = searchParams.get('semester') ? parseInt(searchParams.get('semester')!) : undefined

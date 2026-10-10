@@ -13,6 +13,7 @@ import { getSupabaseServer } from '@/lib/supabase-server'
 import { requireUserPermission } from '@/lib/auth/check-user-permission'
 import { getAllPortalContent, getPortalContent, readClauses } from '@/lib/qp-portal/content'
 import type { QpPortalDocType } from '@/types/qp-examiner-assignment'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
 
 export const dynamic = 'force-dynamic'
 
@@ -35,7 +36,7 @@ function isDocType(v: unknown): v is QpPortalDocType {
 export async function GET(req: NextRequest) {
 	try {
 		const { searchParams } = new URL(req.url)
-		const institutionsId = searchParams.get('institutions_id')
+		const institutionsId = (await institutionParam(searchParams, 'institutions_id'))
 		const sessionId = searchParams.get('examination_session_id')
 		const docType = searchParams.get('doc_type')
 
@@ -150,7 +151,7 @@ export async function DELETE(req: NextRequest) {
 
 		const supabase = getSupabaseServer()
 		const { searchParams } = new URL(req.url)
-		const institutionsId = searchParams.get('institutions_id')
+		const institutionsId = (await institutionParam(searchParams, 'institutions_id'))
 		const docType = searchParams.get('doc_type')
 		const sessionId = searchParams.get('examination_session_id')
 

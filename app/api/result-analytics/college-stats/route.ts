@@ -11,6 +11,7 @@ import type {
 	TopPerformer,
 	RecentSessionResult
 } from '@/types/result-analytics'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
 
 // GET /api/result-analytics/college-stats
 // Fetches comprehensive college-wise result analytics
@@ -21,8 +22,8 @@ export async function GET(req: NextRequest) {
 
 		// Parse filters from query params
 		const filters: ResultAnalyticsFilters = {
-			institution_id: searchParams.get('institution_id') || undefined,
-			institution_code: searchParams.get('institution_code') || undefined,
+			institution_id: (await institutionParam(searchParams, 'institution_id')) || undefined,
+			institution_code: (await institutionParam(searchParams, 'institution_code')) || undefined,
 			academic_year_id: searchParams.get('academic_year_id') || undefined,
 			academic_year: searchParams.get('academic_year') || undefined,
 			examination_session_id: searchParams.get('examination_session_id') || undefined,

@@ -1,5 +1,7 @@
 import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
+import { forwardSession } from '@/lib/api-helpers/forward-session'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
 
 // =====================================================
 // GET /api/revaluation/student-eligibility
@@ -12,7 +14,7 @@ export async function GET(request: Request) {
 
 	const registerNumber = searchParams.get('register_number')?.toUpperCase()
 	const examinationSessionId = searchParams.get('examination_session_id')
-	const institutionsId = searchParams.get('institutions_id')
+	const institutionsId = (await institutionParam(searchParams, 'institutions_id'))
 	// Which revaluation type the learner is applying for — drives the fee
 	// (Revaluation / Retotaling / Copy of Answer Script). Defaults to REVALUATION.
 	const revaluationType = (searchParams.get('revaluation_type') || 'REVALUATION').toUpperCase()
@@ -108,7 +110,8 @@ export async function GET(request: Request) {
 				const myjkknResponse = await fetch(
 					`${origin}/api/myjkkn/learner-profiles?` +
 						`register_number=${encodeURIComponent(registerNumber)}&` +
-						`limit=1000&fetchAll=true`
+						`limit=1000&fetchAll=true`,
+					forwardSession(request)
 				)
 
 				if (myjkknResponse.ok) {

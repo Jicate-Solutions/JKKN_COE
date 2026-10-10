@@ -122,7 +122,6 @@ async function processOne(supabase: any, args: {
 		.eq('examination_session_id', examination_session_id)
 		.eq('is_active', true)
 		.order('packet_no', { ascending: true })
-		.range(0, 99999)
 
 	if (columnStaff) query = query.eq(columnStaff, examiner_key)
 	else query = query.eq('external_examiner_id', examiner_key)
@@ -201,7 +200,6 @@ async function processOne(supabase: any, args: {
 		.eq('is_active', true)
 		.in('course_id', courseIds)
 		.order('packet_no', { ascending: true })
-		.range(0, 99999)
 
 	const totalPacketsByCourse = new Map<string, number>()
 	const indexById = new Map<string, number>()

@@ -5,13 +5,14 @@ import { fetchAllMyJKKNPrograms, fetchAllMyJKKNRegulations, fetchAllMyJKKNSemest
 import { getInstitutionHeaderConfig } from '@/lib/utils/institution-pdf-header-config'
 import path from 'path'
 import fs from 'fs'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
 
 export async function GET(request: NextRequest) {
 	try {
 		const supabase = getSupabaseServer()
 		const { searchParams } = new URL(request.url)
 
-		const institutionCode = searchParams.get('institution_code')
+		const institutionCode = (await institutionParam(searchParams, 'institution_code'))
 		const programCode = searchParams.get('program_code')
 		const regulationCode = searchParams.get('regulation_code')
 

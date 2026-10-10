@@ -173,7 +173,6 @@ export async function loadFeeRateBook(
 		.eq('is_active', true)
 		.lte('effective_from', asOf)
 		.order('effective_from', { ascending: true })
-		.range(0, 9999)
 
 	if (rateError) {
 		console.error('[exam-fee] exam_fee_master error:', rateError)
@@ -200,7 +199,6 @@ export async function loadFeeRateBook(
 		.select('program_code, program_level')
 		.eq('institutions_id', institutions_id)
 		.eq('is_active', true)
-		.range(0, 9999)
 
 	if (levelError) {
 		// The map is an optional refinement - fall back to the heuristic.

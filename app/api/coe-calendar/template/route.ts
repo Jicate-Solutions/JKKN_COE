@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import ExcelJS from 'exceljs'
 import { getSupabaseServer } from '@/lib/supabase-server'
 import { COE_ROLE_TAGS, COE_ROLE_TAG_CONFIG } from '@/lib/coe-calendar/visibility'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
 
 export const DATE_FORMAT_HINT = 'DD-MM-YYYY'
 
@@ -167,7 +168,7 @@ function applyValidations(
 export async function GET(request: Request) {
 	const supabase = getSupabaseServer()
 	const { searchParams } = new URL(request.url)
-	const institutionsId = searchParams.get('institutions_id')
+	const institutionsId = (await institutionParam(searchParams, 'institutions_id'))
 
 	// Categories are database-driven, so the dropdown lists whatever is
 	// currently valid rather than a hardcoded set that drifts out of date.

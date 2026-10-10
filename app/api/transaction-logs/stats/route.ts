@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
+import { requireUserPermission } from '@/lib/auth/check-user-permission'
 
 /**
  * GET /api/transaction-logs/stats
@@ -7,6 +8,11 @@ import { getSupabaseServer } from '@/lib/supabase-server'
  */
 export async function GET() {
 	try {
+		const perm = await requireUserPermission('page.admin.user_log_activity.view')
+		if (!perm.ok) {
+			return NextResponse.json({ error: 'You do not have permission to perform this action.' }, { status: perm.status })
+		}
+
 		const supabase = getSupabaseServer()
 
 		// Today's date range (UTC)
@@ -41,8 +47,7 @@ export async function GET() {
 				.from('transaction_logs')
 				.select('user_id')
 				.gte('created_at', todayISO)
-				.not('user_id', 'is', null)
-				.range(0, 9999),
+				.not('user_id', 'is', null),
 		])
 
 		const todayTotal = todayLogs.count ?? 0

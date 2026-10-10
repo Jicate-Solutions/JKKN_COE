@@ -78,7 +78,7 @@ export async function POST(request: Request) {
 			if (semester != null) coQuery = coQuery.eq('semester', Number(semester))
 		}
 
-		const { data: offerings, error: coErr } = await coQuery.range(0, 9999)
+		const { data: offerings, error: coErr } = await coQuery
 		if (coErr) {
 			console.error('generate-internal-marks: course_offerings fetch failed', coErr)
 			return NextResponse.json({ error: 'Failed to fetch course offerings' }, { status: 500 })
@@ -107,21 +107,18 @@ export async function POST(request: Request) {
 				.select('id, student_id, stu_register_no, student_name, course_offering_id, course_code, program_code, institutions_id, examination_session_id, is_regular')
 				.eq('examination_session_id', examination_session_id)
 				.eq('is_regular', true)
-				.in('course_offering_id', offeringIds)
-				.range(0, 49999),
+				.in('course_offering_id', offeringIds),
 			supabase
 				.from('cia_marks')
 				.select('exam_registration_id, student_id, course_offering_id, cia_round, assignment_marks, quiz_marks, mid_term_marks, presentation_marks, attendance_marks, lab_marks, project_marks, seminar_marks, viva_marks, test_1_mark, test_2_mark, test_3_mark, other_marks, extra_marks')
 				.eq('examination_session_id', examination_session_id)
 				.in('course_offering_id', offeringIds)
-				.eq('is_active', true)
-				.range(0, 49999),
+				.eq('is_active', true),
 			supabase
 				.from('internal_marks')
 				.select('id, exam_registration_id, student_id, course_offering_id, assignment_marks, quiz_marks, mid_term_marks, presentation_marks, attendance_marks, lab_marks, project_marks, seminar_marks, viva_marks, test_1_mark, test_2_mark, test_3_mark, other_marks, is_locked')
 				.eq('examination_session_id', examination_session_id)
-				.in('course_offering_id', offeringIds)
-				.range(0, 49999),
+				.in('course_offering_id', offeringIds),
 		])
 
 		if (coursesRes.error) console.error('courses fetch', coursesRes.error)

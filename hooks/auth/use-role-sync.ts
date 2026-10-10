@@ -1,54 +1,54 @@
 'use client'
 
 import { useEffect, useRef } from 'react'
-import { getSupabaseBrowser } from '@/lib/supabase-browser'
-import type { RealtimeChannel } from '@supabase/supabase-js'
 
 interface UseRoleSyncOptions {
 	/** COE user ID (from users table) to watch for role changes */
 	userId: string | null
-	/** Called when role changes are detected — should re-fetch roles from sync-session */
+	/** Called when roles should be re-read — should re-fetch roles from sync-session */
 	onRoleChange: () => void
 }
 
+// Roles are re-read when the user comes back to the tab, at most this often.
+const MIN_INTERVAL_MS = 2 * 60 * 1000
+// …and on this timer while the tab stays in front.
+const POLL_INTERVAL_MS = 5 * 60 * 1000
+
 /**
- * Subscribes to Supabase Realtime on the user_roles table.
- * When the current user's roles are inserted, updated, or deleted,
- * triggers onRoleChange callback to silently refresh permissions.
+ * Keeps the signed-in user's roles and permissions fresh in the browser.
+ *
+ * This used to subscribe to the `user_roles` table through Supabase Realtime,
+ * which only works while the table is readable with the public (anon) key —
+ * and that made every user's role assignments readable by anyone. The table
+ * is now closed to that key, so the roles are re-read from the server
+ * instead: when the tab regains focus, and every few minutes while it is open.
+ *
+ * This only affects what the sidebar shows. What a user may actually do is
+ * decided on the server on every request (proxy.ts), from the database.
  */
 export function useRoleSync({ userId, onRoleChange }: UseRoleSyncOptions) {
-	const channelRef = useRef<RealtimeChannel | null>(null)
 	const onRoleChangeRef = useRef(onRoleChange)
 	onRoleChangeRef.current = onRoleChange
 
 	useEffect(() => {
 		if (!userId) return
 
-		const supabase = getSupabaseBrowser()
+		let lastRun = Date.now()
+		const refresh = () => {
+			if (document.visibilityState !== 'visible') return
+			if (Date.now() - lastRun < MIN_INTERVAL_MS) return
+			lastRun = Date.now()
+			onRoleChangeRef.current()
+		}
 
-		// Subscribe to changes on user_roles table filtered by this user
-		const channel = supabase
-			.channel(`role-sync:${userId}`)
-			.on(
-				'postgres_changes',
-				{
-					event: '*', // INSERT, UPDATE, DELETE
-					schema: 'public',
-					table: 'user_roles',
-					filter: `user_id=eq.${userId}`,
-				},
-				() => {
-					// Role changed — trigger refresh
-					onRoleChangeRef.current()
-				}
-			)
-			.subscribe()
-
-		channelRef.current = channel
+		document.addEventListener('visibilitychange', refresh)
+		window.addEventListener('focus', refresh)
+		const timer = setInterval(refresh, POLL_INTERVAL_MS)
 
 		return () => {
-			supabase.removeChannel(channel)
-			channelRef.current = null
+			document.removeEventListener('visibilitychange', refresh)
+			window.removeEventListener('focus', refresh)
+			clearInterval(timer)
 		}
 	}, [userId])
 }

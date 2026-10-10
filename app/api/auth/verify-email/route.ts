@@ -31,8 +31,18 @@ export async function POST(req: NextRequest) {
       .single()
 
     if (codeError || !verificationCode) {
+      // One guess per issued code. With nothing counting attempts, a 6-digit
+      // code could simply be tried until it matched — and a match signs the
+      // caller in as that user. A wrong guess now burns the code; the real
+      // owner requests a fresh one.
+      await supabase
+        .from('verification_codes')
+        .delete()
+        .eq('email', email.toLowerCase())
+        .is('used_at', null)
+
       return NextResponse.json({ 
-        error: 'Invalid or expired verification code' 
+        error: 'Invalid or expired verification code. Please request a new code and try again.' 
       }, { status: 400 })
     }
 

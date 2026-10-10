@@ -4,6 +4,7 @@ import { withExternalAuth } from '@/lib/api-auth/middleware'
 import type { ExternalApiContext } from '@/types/api-management'
 // Digit-by-digit words ("28" → "TWO EIGHT") — shared with all mark surfaces.
 import { numberToWords } from '@/services/post-exam/external-mark-entry-service'
+import { fetchAllPaginated, fetchBatchedIn } from '@/lib/exam-clash'
 
 /**
  * GET /api/v1/cia-marks/report
@@ -19,6 +20,9 @@ import { numberToWords } from '@/services/post-exam/external-mark-entry-service'
  *   - course_code (required)
  *   - cia_round (required): 1, 2, 3 etc.
  *   - program_code (optional)
+ *   - semester (optional): scope the learner list to the offerings of course_code in
+ *     that semester. Without it the list is matched on course code alone, which merges
+ *     the semesters when a program offers one course code in two of them.
  */
 export const GET = withExternalAuth(async (request: Request, context: ExternalApiContext) => {
 	try {
@@ -30,9 +34,15 @@ export const GET = withExternalAuth(async (request: Request, context: ExternalAp
 		const courseCode = searchParams.get('course_code')
 		const ciaRound = searchParams.get('cia_round')
 		const programCode = searchParams.get('program_code')
+		const semesterParam = searchParams.get('semester')
 
 		if (!institutionsId || !sessionId || !courseCode || !ciaRound) {
 			return NextResponse.json({ error: 'institutions_id, examination_session_id, course_code, and cia_round are required' }, { status: 400 })
+		}
+
+		const semester = semesterParam ? Number(semesterParam) : null
+		if (semester != null && !Number.isInteger(semester)) {
+			return NextResponse.json({ error: 'semester must be a number' }, { status: 400 })
 		}
 
 		// Verify institution access
@@ -42,23 +52,50 @@ export const GET = withExternalAuth(async (request: Request, context: ExternalAp
 			}
 		}
 
-		// Fetch registrations
-		let regQuery = supabase
-			.from('exam_registrations')
-			.select('id, student_id, stu_register_no, student_name, course_offering_id')
-			.eq('institutions_id', institutionsId)
-			.eq('examination_session_id', sessionId)
-			.eq('course_code', courseCode)
-			.eq('is_regular', true)
-			.order('stu_register_no')
+		const emptyReport = { course: { course_code: courseCode }, learners: [], summary: { total_learners: 0, marks_entered: 0, pending: 0 } }
 
-		if (programCode) regQuery = regQuery.eq('program_code', programCode)
-
-		const { data: registrations, error: regError } = await regQuery.range(0, 9999)
-		if (regError) return NextResponse.json({ error: 'Failed to fetch learners' }, { status: 500 })
-		if (!registrations || registrations.length === 0) {
-			return NextResponse.json({ course: { course_code: courseCode }, learners: [], summary: { total_learners: 0, marks_entered: 0, pending: 0 } })
+		// With a semester: every offering of the course in this session AND that semester
+		// (the rule in offeringIdsOfCourseInSemester). It spans programs, so a learner
+		// registered against another program's copy of a shared elective is still listed.
+		let semesterOfferingIds: string[] | null = null
+		if (semester != null) {
+			const { data: offerings, error: offeringError } = await supabase
+				.from('course_offerings')
+				.select('id')
+				.eq('institutions_id', institutionsId)
+				.eq('examination_session_id', sessionId)
+				.eq('course_code', courseCode)
+				.eq('semester', semester)
+			if (offeringError) return NextResponse.json({ error: 'Failed to fetch learners' }, { status: 500 })
+			semesterOfferingIds = (offerings || []).map(o => o.id as string)
+			if (semesterOfferingIds.length === 0) return NextResponse.json(emptyReport)
 		}
+
+		// Fetch registrations — paged, the database caps a single request at 1,000 rows
+		let registrations: any[]
+		try {
+			registrations = await fetchAllPaginated(async (from, to) => {
+				let regQuery = supabase
+					.from('exam_registrations')
+					.select('id, student_id, stu_register_no, student_name, course_offering_id')
+					.eq('institutions_id', institutionsId)
+					.eq('examination_session_id', sessionId)
+					.eq('is_regular', true)
+					.order('stu_register_no')
+					.order('id')
+
+				regQuery = semesterOfferingIds
+					? regQuery.in('course_offering_id', semesterOfferingIds)
+					: regQuery.eq('course_code', courseCode)
+				if (programCode) regQuery = regQuery.eq('program_code', programCode)
+
+				return await regQuery.range(from, to)
+			})
+		} catch (regError) {
+			console.error('CIA report: failed to fetch registrations:', regError)
+			return NextResponse.json({ error: 'Failed to fetch learners' }, { status: 500 })
+		}
+		if (registrations.length === 0) return NextResponse.json(emptyReport)
 
 		// Fetch course info
 		const { data: courseData } = await supabase
@@ -71,28 +108,34 @@ export const GET = withExternalAuth(async (request: Request, context: ExternalAp
 
 		// Fetch marks
 		const allCOIds = [...new Set(registrations.map(r => r.course_offering_id))]
-		const { data: marks } = await supabase
-			.from('cia_marks')
-			.select('*')
-			.in('course_offering_id', allCOIds)
-			.eq('examination_session_id', sessionId)
-			.eq('cia_round', Number(ciaRound))
-			.eq('is_active', true)
+		const marks = await fetchAllPaginated(async (from, to) =>
+			await supabase
+				.from('cia_marks')
+				.select('*')
+				.in('course_offering_id', allCOIds)
+				.eq('examination_session_id', sessionId)
+				.eq('cia_round', Number(ciaRound))
+				.eq('is_active', true)
+				.order('id')
+				.range(from, to)
+		)
 
 		const marksMap = new Map<string, any>()
-		for (const m of (marks || [])) marksMap.set(m.student_id, m)
+		for (const m of marks) marksMap.set(m.student_id, m)
 
 		// Fetch dummy numbers
 		const regIds = registrations.map(r => r.id)
-		const { data: dummyNumbers } = await supabase
-			.from('student_dummy_numbers')
-			.select('exam_registration_id, dummy_number')
-			.in('exam_registration_id', regIds)
-			.eq('examination_session_id', sessionId)
-			.eq('is_active', true)
+		const dummyNumbers = await fetchBatchedIn(regIds, async batch =>
+			await supabase
+				.from('student_dummy_numbers')
+				.select('exam_registration_id, dummy_number')
+				.in('exam_registration_id', batch)
+				.eq('examination_session_id', sessionId)
+				.eq('is_active', true)
+		)
 
 		const dummyMap = new Map<string, string>()
-		for (const d of (dummyNumbers || [])) dummyMap.set(d.exam_registration_id, d.dummy_number)
+		for (const d of dummyNumbers) dummyMap.set(d.exam_registration_id, d.dummy_number)
 
 		// Mark field mapping
 		const markFields: Record<string, string> = {

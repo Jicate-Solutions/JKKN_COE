@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
 
 // =====================================================
 // GET /api/revaluation/draft-applications
@@ -11,7 +12,7 @@ export async function GET(request: Request) {
 	const { searchParams } = new URL(request.url)
 
 	const examinationSessionId = searchParams.get('examination_session_id')
-	const institutionsId = searchParams.get('institutions_id')
+	const institutionsId = (await institutionParam(searchParams, 'institutions_id'))
 	const programCode = searchParams.get('program_code')
 	const search = searchParams.get('search')
 	const page = parseInt(searchParams.get('page') || '1')

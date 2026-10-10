@@ -123,7 +123,6 @@ export async function POST(request: Request) {
 					.from('courses')
 					.select('id, course_code, course_name, qp_code')
 					.in('course_code', batch)
-					.range(0, 9999)
 				;(courses || []).forEach((c: any) => {
 					coursesMap.set(c.course_code, {
 						course_code: c.course_code,
@@ -146,7 +145,6 @@ export async function POST(request: Request) {
 					.from('courses')
 					.select('id, course_code, course_name, qp_code')
 					.in('id', batch)
-					.range(0, 9999)
 				;(courses || []).forEach((c: any) => {
 					coursesByIdMap.set(c.id, {
 						course_code: c.course_code || '',

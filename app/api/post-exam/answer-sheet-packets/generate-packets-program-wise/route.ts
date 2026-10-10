@@ -133,7 +133,6 @@ export async function POST(request: NextRequest) {
 			.eq('examination_session_id', sessionData.id)
 			.eq('exam_registrations.course_code', course.course_code)
 			.order('dummy_number', { ascending: true })
-			.range(0, 99999)
 
 		if (dummyError) {
 			console.error('Error fetching student_dummy_numbers:', dummyError)
@@ -156,7 +155,6 @@ export async function POST(request: NextRequest) {
 			.eq('examination_session_id', sessionData.id)
 			.eq('course_id', course.id)
 			.eq('attendance_status', 'Present')
-			.range(0, 99999)
 
 		const presentRegIds = new Set<string>()
 		for (const a of attendanceData || []) {

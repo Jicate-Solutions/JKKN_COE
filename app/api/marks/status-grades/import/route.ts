@@ -73,7 +73,6 @@ export async function POST(request: Request) {
 			.eq('institutions_id', institutions_id)
 			.eq('examination_session_id', examination_session_id)
 			.eq('course_code', course.course_code)
-			.range(0, 9999)
 
 		if (erError) {
 			console.error('Error fetching exam registrations:', erError)

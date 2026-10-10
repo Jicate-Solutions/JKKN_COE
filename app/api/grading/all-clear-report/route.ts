@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
 import { fetchAllMyJKKNPrograms } from '@/lib/myjkkn-api'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
 
 const BATCH_SIZE = 1000
 
@@ -26,7 +27,7 @@ export async function GET(request: NextRequest) {
 	const supabase = getSupabaseServer()
 	const searchParams = request.nextUrl.searchParams
 
-	const institutionId = searchParams.get('institution_id')
+	const institutionId = (await institutionParam(searchParams, 'institution_id'))
 	const sessionId = searchParams.get('session_id')
 	const programCode = searchParams.get('program_code')
 

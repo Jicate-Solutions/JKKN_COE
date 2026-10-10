@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
 import { handleDeleteWithDependencyCheck } from '@/lib/delete-helpers'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
 
 export async function GET(request: Request) {
 	try {
@@ -11,8 +12,8 @@ export async function GET(request: Request) {
 		const examiner_type = searchParams.get('examiner_type')
 		const board_id = searchParams.get('board_id')
 		const search = searchParams.get('search')
-		const institution_code = searchParams.get('institution_code')
-		const institutions_id = searchParams.get('institutions_id') // from global filter (maps to institution_id column)
+		const institution_code = (await institutionParam(searchParams, 'institution_code'))
+		const institutions_id = (await institutionParam(searchParams, 'institutions_id')) // from global filter (maps to institution_id column)
 		const page = parseInt(searchParams.get('page') || '1')
 		const limit = parseInt(searchParams.get('limit') || '10')
 		const sort_by = searchParams.get('sort_by') || 'created_at'
@@ -146,7 +147,7 @@ export async function GET(request: Request) {
 		// because Supabase can't filter on nested relations easily
 		if (board_id) {
 			const [{ data, error }, statsResults] = await Promise.all([
-				query.range(0, 9999),
+				query,
 				statsPromises,
 			])
 
@@ -197,7 +198,7 @@ export async function GET(request: Request) {
 		// For export, return all data (no pagination)
 		if (exportAll) {
 			const [{ data, error }, { count }, statsResults] = await Promise.all([
-				query.range(0, 9999),
+				query,
 				countQuery,
 				statsPromises,
 			])

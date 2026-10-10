@@ -1,12 +1,13 @@
 import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
 
 export async function GET(request: Request) {
 	try {
 		const supabase = getSupabaseServer()
 		const { searchParams } = new URL(request.url)
 
-		const institutionId = searchParams.get('institution_id')
+		const institutionId = (await institutionParam(searchParams, 'institution_id'))
 		const programId = searchParams.get('program_id')
 		const semesterId = searchParams.get('semester_id')
 		const sectionId = searchParams.get('section_id')
@@ -17,7 +18,6 @@ export async function GET(request: Request) {
 			.from('students_detailed_view')
 			.select('*', { count: 'exact' })
 			.order('created_at', { ascending: false })
-			.range(0, 9999)
 
 		if (institutionId) query = query.eq('institution_id', institutionId)
 		if (programId) query = query.eq('program_id', programId)
@@ -34,7 +34,6 @@ export async function GET(request: Request) {
 				.from('students')
 				.select('*', { count: 'exact' })
 				.order('created_at', { ascending: false })
-				.range(0, 9999)
 
 			if (institutionId) fallbackQuery = fallbackQuery.eq('institution_id', institutionId)
 			if (programId) fallbackQuery = fallbackQuery.eq('program_id', programId)

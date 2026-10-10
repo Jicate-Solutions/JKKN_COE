@@ -37,6 +37,8 @@ interface ProgramOption { program_code: string; program_name: string; program_or
 interface CourseRow { course_offering_id: string; course_mapping_id: string; course_code: string; course_name: string; semester: number; semester_code: string }
 // regulation_code is the learner's own regulation as recorded in MyJKKN ('' when unset).
 interface LearnerRow extends CohortLearner { student_name: string }
+// by_regulation is keyed by the regulation's year ("2021"), see regulationKey().
+interface ActiveSemester { semester_id: string; semester_code: string; total: number; by_regulation: Record<string, number> }
 
 // Rows are fixed-height so the lists can be virtualized; long lists only mount
 // the visible rows. Below this count we render a plain map (cheaper, no measuring).
@@ -223,6 +225,7 @@ export default function BulkCreateExamRegistrationPage() {
 		if (mustSelectInstitution) return selectedInstitution?.myjkkn_institution_ids || []
 		return currentMyJKKNInstitutionIds || []
 	}, [mustSelectInstitution, selectedInstitution, currentMyJKKNInstitutionIds])
+	const myjkknInstitutionIdsKey = myjkknInstitutionIds.join(',')
 
 	// Cascade state
 	const { selectedSessionId: sessionId, setSelectedSessionId: setSessionId, mustSelectSession } = useSessionSync()
@@ -230,12 +233,16 @@ export default function BulkCreateExamRegistrationPage() {
 	const [programCode, setProgramCode] = useState('')
 	const [regulationCode, setRegulationCode] = useState('')
 	const [semesterCode, setSemesterCode] = useState('')
-	const [semesterId, setSemesterId] = useState('')
 
 	// Dropdown data
 	const [programs, setPrograms] = useState<ProgramOption[]>([])
 	const [regulations, setRegulations] = useState<string[]>([])
 	const [semesters, setSemesters] = useState<{ value: string; id: string; label: string }[]>([])
+	// The program's MyJKKN semesters with their learner counts per regulation. null while
+	// it is not known (still loading, or the lookup failed) - then every mapped semester
+	// is offered, as before.
+	const [activeSemesters, setActiveSemesters] = useState<ActiveSemester[] | null>(null)
+	const [loadingActiveSemesters, setLoadingActiveSemesters] = useState(false)
 	const [courses, setCourses] = useState<CourseRow[]>([])
 	// Everyone in the selected program + semester, whatever their regulation. The
 	// `learners` list the rest of the page works with is derived from this below.
@@ -320,12 +327,14 @@ export default function BulkCreateExamRegistrationPage() {
 			.finally(() => setLoadingPrograms(false))
 	}, [institutionCode, sessionId])
 
-	// ── Load regulations (institution + program) ──
+	// ── Load regulations (institution + program), then the semesters each one is active in ──
 	useEffect(() => {
+		setActiveSemesters(null)
 		if (!institutionCode || !programCode) {
 			setRegulations([])
 			return
 		}
+		let cancelled = false
 		setLoadingRegulations(true)
 		setRegulationCode('')
 		setSemesterCode('')
@@ -337,10 +346,39 @@ export default function BulkCreateExamRegistrationPage() {
 
 		fetch(`/api/course-management/course-offering/lookups?type=regulations&institution_code=${encodeURIComponent(institutionCode)}&program_code=${encodeURIComponent(programCode)}`)
 			.then(r => r.json())
-			.then(data => setRegulations(Array.isArray(data) ? data : []))
-			.catch(() => setRegulations([]))
-			.finally(() => setLoadingRegulations(false))
-	}, [institutionCode, programCode])
+			.then(data => (Array.isArray(data) ? data as string[] : []))
+			.catch(() => [] as string[])
+			.then(async list => {
+				if (cancelled) return
+				setRegulations(list)
+				setLoadingRegulations(false)
+				if (list.length === 0 || !myjkknInstitutionIdsKey) return
+
+				// Which semesters hold learners right now, per regulation. Runs once per
+				// program; a failure leaves activeSemesters null and every semester offered.
+				setLoadingActiveSemesters(true)
+				try {
+					const params = new URLSearchParams({
+						institution_ids: myjkknInstitutionIdsKey,
+						program_code: programCode,
+						regulations: list.join(','),
+					})
+					const res = await fetch(`/api/exam-management/exam-registrations/bulk-create/active-semesters?${params}`)
+					const json = res.ok ? await parseJsonResponse(res) : null
+					if (!cancelled && Array.isArray(json?.data)) setActiveSemesters(json.data)
+				} catch (e) {
+					console.error('[bulk-create] load active semesters failed:', e)
+				} finally {
+					if (!cancelled) setLoadingActiveSemesters(false)
+				}
+			})
+
+		return () => {
+			cancelled = true
+			setLoadingRegulations(false)
+			setLoadingActiveSemesters(false)
+		}
+	}, [institutionCode, programCode, myjkknInstitutionIdsKey])
 
 	// ── Load semesters (institution + program + regulation) ──
 	useEffect(() => {
@@ -372,6 +410,36 @@ export default function BulkCreateExamRegistrationPage() {
 			.catch(() => setSemesters([]))
 			.finally(() => setLoadingSemesters(false))
 	}, [institutionCode, programCode, regulationCode])
+
+	// ── Semesters offered: only those the selected regulation's learners are in now ──
+	// A regulation is taught in a few semesters at a time (EEE R-2021: V and VII), and
+	// any other semester would list no learner of it. A mapped semester MyJKKN has no
+	// row for can't be judged, so it stays selectable.
+	const semesterOptions = useMemo(() => {
+		const selectedKey = regulationKey(regulationCode)
+		return semesters
+			.map(s => {
+				const matches = (activeSemesters || []).filter(a =>
+					a.semester_id === s.id || a.semester_code.toUpperCase() === s.value.toUpperCase()
+				)
+				if (matches.length === 0) {
+					return { ...s, semesterIds: s.id ? [s.id] : [], learnerCount: null as number | null }
+				}
+				const active = matches.filter(a => (a.by_regulation[selectedKey] || 0) > 0)
+				return {
+					...s,
+					semesterIds: active.map(a => a.semester_id),
+					learnerCount: active.reduce((sum, a) => sum + a.by_regulation[selectedKey], 0) as number | null,
+				}
+			})
+			.filter(s => s.learnerCount === null || s.learnerCount > 0)
+	}, [semesters, activeSemesters, regulationCode])
+
+	const hiddenSemesterCount = semesters.length - semesterOptions.length
+
+	// MyJKKN semester ids of the selected semester, as one stable string. More than one
+	// when the institution spans two MyJKKN institutions with their own semester rows.
+	const semesterIdsKey = semesterOptions.find(s => s.value === semesterCode)?.semesterIds.join(',') || ''
 
 	// ── Load courses for selected scope ──
 	const loadCourses = useCallback(async () => {
@@ -501,10 +569,10 @@ export default function BulkCreateExamRegistrationPage() {
 			// Fast path: one MyJKKN request for exactly this cohort, keyed by
 			// semester_id (semester_id is program-specific).
 			let rows: LearnerRow[] = []
-			if (semesterId) {
+			if (semesterIdsKey) {
 				const params = new URLSearchParams({
 					institution_ids: myjkknInstitutionIds.join(','),
-					semester_id: semesterId,
+					semester_ids: semesterIdsKey,
 				})
 				const res = await fetch(`/api/exam-management/exam-registrations/bulk-create/eligible-learners?${params}`)
 				if (res.ok) {
@@ -534,7 +602,7 @@ export default function BulkCreateExamRegistrationPage() {
 		} finally {
 			setLoadingLearners(false)
 		}
-	}, [programCode, semesterCode, semesterId, myjkknInstitutionIds, toast, loadLearnersFromMyJKKN])
+	}, [programCode, semesterCode, semesterIdsKey, myjkknInstitutionIds, toast, loadLearnersFromMyJKKN])
 
 	useEffect(() => { loadLearners() }, [loadLearners])
 
@@ -975,21 +1043,35 @@ export default function BulkCreateExamRegistrationPage() {
 									{/* Semester */}
 									<div className="space-y-1.5">
 										<Label className="text-xs font-medium">Semester <span className="text-red-500">*</span></Label>
-										<Select value={semesterCode} onValueChange={(code) => {
-											setSemesterCode(code)
-											const sem = semesters.find(s => s.value === code)
-											setSemesterId(sem?.id || '')
-										}} disabled={!regulationCode || loadingSemesters}>
+										<Select
+											value={semesterCode}
+											onValueChange={setSemesterCode}
+											disabled={!regulationCode || loadingSemesters || loadingActiveSemesters || semesterOptions.length === 0}
+										>
 											<SelectTrigger className="h-9 text-sm">
-												{loadingSemesters
+												{regulationCode && (loadingSemesters || loadingActiveSemesters)
 													? <span className="flex items-center gap-2 text-muted-foreground"><Loader2 className="h-3 w-3 animate-spin" />Loading...</span>
-													: <SelectValue placeholder="Select semester" />
+													: <SelectValue placeholder={hiddenSemesterCount > 0 && semesterOptions.length === 0 ? 'No active semester' : 'Select semester'} />
 												}
 											</SelectTrigger>
 											<SelectContent>
-												{semesters.map(s => <SelectItem key={s.value} value={s.value}>{s.label}</SelectItem>)}
+												{semesterOptions.map(s => (
+													<SelectItem key={s.value} value={s.value}>
+														{s.label}
+														{s.learnerCount !== null && (
+															<span className="ml-1.5 text-muted-foreground">· {s.learnerCount} learner{s.learnerCount !== 1 ? 's' : ''}</span>
+														)}
+													</SelectItem>
+												))}
 											</SelectContent>
 										</Select>
+										{regulationCode && !loadingSemesters && !loadingActiveSemesters && hiddenSemesterCount > 0 && (
+											<p className="text-xs text-muted-foreground">
+												{semesterOptions.length === 0
+													? `No ${regulationCode} learners are in any semester now`
+													: `Only semesters with ${regulationCode} learners now`}
+											</p>
+										)}
 									</div>
 								</div>
 							</CardContent>

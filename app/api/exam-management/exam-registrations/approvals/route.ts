@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
 import { getOffRollRegisterNumbers, isOffRoll } from '@/lib/myjkkn-off-roll-learners'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
 
 interface ApprovalPayload {
 	registration_ids: string[]
@@ -74,7 +75,7 @@ export async function GET(request: Request) {
 		const supabase = getSupabaseServer()
 		const { searchParams } = new URL(request.url)
 
-		const institutions_id = searchParams.get('institutions_id')
+		const institutions_id = (await institutionParam(searchParams, 'institutions_id'))
 		const examination_session_id = searchParams.get('examination_session_id')
 		const program_code = searchParams.get('program_code')
 		const registration_status = searchParams.get('registration_status') || 'Pending'
@@ -93,13 +94,11 @@ export async function GET(request: Request) {
 				created_at,
 				course_offering:course_offerings(
 					id,
-					course_code,
-					course_mapping:course_mapping(course_title)
+					course_code
 				)
 			`)
 			.eq('registration_status', registration_status)
 			.order('program_code, stu_register_no', { ascending: true })
-			.range(0, 9999)
 
 		if (institutions_id) query = query.eq('institutions_id', institutions_id)
 		if (examination_session_id) query = query.eq('examination_session_id', examination_session_id)

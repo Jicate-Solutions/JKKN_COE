@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
 import { getISTDate } from '@/lib/utils/date-utils'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
 
 // GET: Fetch exam attendance records or student list
 export async function GET(request: Request) {
@@ -8,7 +9,7 @@ export async function GET(request: Request) {
 		const supabase = getSupabaseServer()
 		const { searchParams } = new URL(request.url)
 		const mode = searchParams.get('mode') // 'check' or 'list'
-		const institution_id = searchParams.get('institution_id')
+		const institution_id = (await institutionParam(searchParams, 'institution_id'))
 		const examination_session_id = searchParams.get('examination_session_id')
 		const course_code = searchParams.get('course_code')
 		const exam_date = searchParams.get('exam_date')

@@ -1,15 +1,29 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
+import {
+	COE_SESSION_TTL_SECONDS,
+	bindSession,
+	extractParentProfile,
+	forgetSession,
+	loadCoeUser,
+	parentTokenOwnerEmail,
+	validateTokenWithParent,
+} from '@/lib/auth/server-session'
 
-/** `sub` claim of a parent-app access token (JWT), or null when it can't be read. */
-function tokenSubject(token: string | undefined): string | null {
+function tokenPayload(token: string | undefined): Record<string, unknown> | null {
 	if (!token) return null
 	try {
 		const payload = JSON.parse(Buffer.from(token.split('.')[1], 'base64url').toString('utf8'))
-		return typeof payload?.sub === 'string' ? payload.sub : null
+		return payload && typeof payload === 'object' ? payload : null
 	} catch {
 		return null
 	}
+}
+
+/** `sub` claim of a parent-app access token (JWT), or null when it can't be read. */
+function tokenSubject(token: string | undefined): string | null {
+	const sub = tokenPayload(token)?.sub
+	return typeof sub === 'string' ? sub : null
 }
 
 export async function POST(request: NextRequest) {
@@ -59,66 +73,109 @@ export async function POST(request: NextRequest) {
 		const tokenData = await response.json()
 		const res = NextResponse.json(tokenData)
 
-		// Sync rotated tokens to sessions table so withAdminAuth stays aligned
-		// with the new access_token cookie. Without this, admin-guarded API routes
-		// return 401 after every token refresh.
+		// Sync rotated tokens to sessions table so the session check in proxy.ts
+		// (and withAdminAuth) stays aligned with the new access_token cookie.
+		// Without this, every API route returns 401 after a token refresh.
 		if (tokenData.access_token) {
 			const supabase = getSupabaseServer()
 			const nowISO = new Date().toISOString()
 			const newRefreshToken = tokenData.refresh_token || refresh_token
 			const expiresAt = new Date(
-				Date.now() + (tokenData.expires_in || 3600) * 1000
+				Date.now() + COE_SESSION_TTL_SECONDS * 1000
 			).toISOString()
 
-			let { data: existing } = await supabase
-				.from('sessions')
-				.select('id, user_id')
-				.eq('refresh_token', refresh_token)
-				.eq('is_active', true)
-				.maybeSingle()
-
-			// sync-session re-syncs store refresh_token = null (the browser can't
-			// read the httpOnly cookie to send it), so most rows only match on the
-			// access token being replaced. Only rebind the row when the new token
-			// was issued to the same parent user as the old one.
+			// Session bookkeeping must never cost the user their rotated tokens: the
+			// parent has already retired the old refresh token, so the cookies below
+			// are set even when this fails.
 			const previousAccessToken = request.cookies.get('access_token')?.value
-			const previousSubject = tokenSubject(previousAccessToken)
-			if (
-				!existing &&
-				previousAccessToken &&
-				previousSubject &&
-				previousSubject === tokenSubject(tokenData.access_token)
-			) {
-				const { data: byAccessToken } = await supabase
+			try {
+				let { data: existing } = await supabase
 					.from('sessions')
-					.select('id, user_id')
-					.eq('session_token', previousAccessToken)
+					.select('id, user_id, device_info')
+					.eq('refresh_token', refresh_token)
 					.eq('is_active', true)
 					.maybeSingle()
-				existing = byAccessToken
-			}
 
-			if (existing) {
-				await supabase
-					.from('sessions')
-					.update({
-						session_token: tokenData.access_token,
-						refresh_token: newRefreshToken,
-						expires_at: expiresAt,
-						updated_at: nowISO,
-					})
-					.eq('id', existing.id)
+				// sync-session re-syncs store no refresh_token (the browser can't read
+				// the httpOnly cookie to send it), so most rows only match on the
+				// access token being replaced. Only rebind the row when the new token
+				// was issued to the same parent user as the old one.
+				const previousSubject = tokenSubject(previousAccessToken)
+				if (
+					!existing &&
+					previousAccessToken &&
+					previousSubject &&
+					previousSubject === tokenSubject(tokenData.access_token)
+				) {
+					const { data: byAccessToken } = await supabase
+						.from('sessions')
+						.select('id, user_id, device_info')
+						.eq('session_token', previousAccessToken)
+						.eq('is_active', true)
+						.maybeSingle()
+					existing = byAccessToken
+				}
 
-				if (tokenData.refresh_token && existing.user_id) {
+				// The new token came straight from the parent app in exchange for the
+				// refresh token, so its owner is known for certain.
+				const ownerEmail = parentTokenOwnerEmail(tokenData)
+				const owner = ownerEmail ? await loadCoeUser({ email: ownerEmail }) : null
+
+				// The parent's record of this user (institution, super admin) is what
+				// institution scoping is checked against. A refresh response may not
+				// carry it; ask the parent once when the session has none yet.
+				const parentProfileFor = async (hasStoredProfile: boolean) => {
+					const fromResponse = extractParentProfile(tokenData.user)
+					if (fromResponse || hasStoredProfile) return fromResponse
+					return (await validateTokenWithParent(tokenData.access_token))?.parentProfile ?? null
+				}
+
+				if (existing && (!owner || owner.userId === existing.user_id)) {
 					await supabase
-						.from('user_sessions')
+						.from('sessions')
 						.update({
-							access_token: tokenData.access_token,
+							session_token: tokenData.access_token,
 							refresh_token: newRefreshToken,
 							expires_at: expiresAt,
+							updated_at: nowISO,
 						})
-						.eq('user_id', existing.user_id)
+						.eq('id', existing.id)
+					forgetSession(previousAccessToken)
+					forgetSession(tokenData.access_token)
+
+					const stored = (existing.device_info as Record<string, unknown> | null)?.parent_profile
+					const parentProfile = await parentProfileFor(Boolean(stored))
+					if (parentProfile) {
+						await bindSession({
+							userId: existing.user_id,
+							accessToken: tokenData.access_token,
+							parentProfile,
+						})
+					}
+
+					if (tokenData.refresh_token && existing.user_id) {
+						await supabase
+							.from('user_sessions')
+							.update({
+								access_token: tokenData.access_token,
+								refresh_token: newRefreshToken,
+								expires_at: expiresAt,
+							})
+							.eq('user_id', existing.user_id)
+					}
+				} else if (owner) {
+					// No live row to rebind (it expired and was retired, or this browser
+					// never synced one) — bind a fresh session for the token's owner.
+					await bindSession({
+						userId: owner.userId,
+						accessToken: tokenData.access_token,
+						refreshToken: newRefreshToken,
+						parentProfile: await parentProfileFor(false),
+						userAgent: request.headers.get('user-agent')?.substring(0, 500) || null,
+					})
 				}
+			} catch (err) {
+				console.error('[token/refresh] Session bookkeeping failed:', err)
 			}
 
 			// Mirror the cookies sync-session sets, so the rotated tokens reach the

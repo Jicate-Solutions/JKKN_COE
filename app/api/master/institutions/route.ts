@@ -53,7 +53,6 @@ export async function GET(request: Request) {
         updated_at
       `, { count: 'exact' })
       .order('name', { ascending: true })
-      .range(0, 9999)
 
     if (error) {
       console.error('Institutions table error:', error)

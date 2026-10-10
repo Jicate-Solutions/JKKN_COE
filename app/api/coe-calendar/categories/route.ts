@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
 import { parseRoleTags } from '@/lib/coe-calendar/visibility'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
 
 /**
  * GET /api/coe-calendar/categories
@@ -17,7 +18,7 @@ export async function GET(request: Request) {
 	const supabase = getSupabaseServer()
 	const { searchParams } = new URL(request.url)
 
-	const institutionsId = searchParams.get('institutions_id')
+	const institutionsId = (await institutionParam(searchParams, 'institutions_id'))
 	const includeInactive = searchParams.get('include_inactive') === 'true'
 
 	let query = supabase

@@ -5,6 +5,7 @@ import type {
 	CentralValuationCourseEntry,
 	CentralValuationExaminerType,
 } from '@/types/central-valuation-email'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
 
 /**
  * GET — Per-examiner aggregate for the Send Appointments tab.
@@ -16,7 +17,7 @@ import type {
  */
 export async function GET(request: Request) {
 	const { searchParams } = new URL(request.url)
-	const institutionsId = searchParams.get('institutions_id')
+	const institutionsId = (await institutionParam(searchParams, 'institutions_id'))
 	const sessionId = searchParams.get('session_id')
 	const boardCode = searchParams.get('board_code')
 
@@ -49,7 +50,6 @@ export async function GET(request: Request) {
 		.eq('examination_session_id', sessionId)
 		.eq('is_active', true)
 		.order('packet_no', { ascending: true })
-		.range(0, 99999)
 
 	if (pErr) {
 		console.error('assignments packet fetch error:', pErr)

@@ -36,7 +36,7 @@ export async function GET(request: NextRequest) {
 		if (academicYear) query = query.eq('academic_year', academicYear)
 		if (isActive !== null) query = query.eq('is_active', isActive === 'true')
 
-		const { data: compositions, error } = await query.range(0, 9999)
+		const { data: compositions, error } = await query
 
 		if (error) {
 			console.error('[BoS Compositions] GET error:', error)
@@ -52,7 +52,7 @@ export async function GET(request: NextRequest) {
 				? supabase.from('board').select('id, board_code, board_name, display_name').in('id', boardIds)
 				: Promise.resolve({ data: [] as any[] }),
 			compositionIds.length > 0
-				? supabase.from('bos_members').select('composition_id').in('composition_id', compositionIds).eq('is_active', true).range(0, 9999)
+				? supabase.from('bos_members').select('composition_id').in('composition_id', compositionIds).eq('is_active', true)
 				: Promise.resolve({ data: [] as any[] })
 		])
 

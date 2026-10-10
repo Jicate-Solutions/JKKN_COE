@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
 
 /**
  * GET /api/post-exam/bundle-numbers
@@ -15,14 +16,14 @@ export async function GET(request: NextRequest) {
 		const supabase = getSupabaseServer()
 		const { searchParams } = new URL(request.url)
 
-		const institutionCode = searchParams.get('institution_code')
+		const institutionCode = (await institutionParam(searchParams, 'institution_code'))
 		const examSession = searchParams.get('exam_session')
 		const courseCode = searchParams.get('course_code')
 
 		// ── Lookup-by-IDs mode (returns single { bundle_number }) ──
 		// Used by foil-sheet PDF generator to fetch the bundle number
 		// for a specific (institution, session, course) combination.
-		const institutionsId = searchParams.get('institutions_id')
+		const institutionsId = (await institutionParam(searchParams, 'institutions_id'))
 		const examinationSessionId = searchParams.get('examination_session_id')
 		const courseId = searchParams.get('course_id')
 		if (institutionsId && examinationSessionId && courseId) {
@@ -48,7 +49,6 @@ export async function GET(request: NextRequest) {
 			.select('*')
 			.order('board_order', { ascending: true, nullsFirst: false })
 			.order('bundle_number', { ascending: true })
-			.range(0, 49999)
 
 		if (institutionCode) query = query.eq('institution_code', institutionCode)
 		if (examSession) query = query.eq('session_code', examSession)

@@ -397,7 +397,7 @@ export async function GET(req: NextRequest) {
 				{ data: finalMarks, error: fmError },
 				{ data: semesterResultRows },
 			] = await Promise.all([
-				query.range(0, 100000),
+				query,
 				semesterResultsPromise,
 			])
 
@@ -893,8 +893,8 @@ export async function GET(req: NextRequest) {
 			// params, so they ride along in this same round trip instead of being
 			// fetched afterwards, behind the (much heavier) final_marks read.
 			const [srScopeRes, fmScopeRes, examSessionResult, institutionResult] = await Promise.all([
-				srScopeQuery.range(0, 1000000),
-				fmScopeQuery.range(0, 1000000),
+				srScopeQuery,
+				fmScopeQuery,
 				supabase
 					.from('examination_sessions')
 					.select('session_name, month_year')
@@ -995,7 +995,6 @@ export async function GET(req: NextRequest) {
 						.in('student_id', chunk)
 						.eq('examination_session_id', sessionId)
 						.eq('is_active', true)
-						.range(0, 1000000)
 				)
 			)
 
@@ -1135,7 +1134,7 @@ export async function GET(req: NextRequest) {
 					.in('student_id', studentIds)
 					.eq('examination_session_id', sessionId)
 				if (semester) srQuery = srQuery.eq('semester', parseInt(semester))
-				folioPromise = srQuery.range(0, 1000000)
+				folioPromise = srQuery
 			}
 
 			// Final-semester batches (UG sem 6, PG sem 4) also pull the programme
@@ -1152,7 +1151,6 @@ export async function GET(req: NextRequest) {
 					.in('student_id', studentIds)
 					.eq('institutions_id', institutionId)
 					.eq('is_active', true)
-					.range(0, 999999)
 			}
 
 			if (registerNumbers.length > 0) {
@@ -1515,7 +1513,7 @@ export async function GET(req: NextRequest) {
 			}
 
 			// Override default 1000-row limit so all distinct semesters are captured
-			const { data, error } = await query.range(0, 100000)
+			const { data, error } = await query
 
 			if (error) throw error
 
@@ -1553,7 +1551,7 @@ export async function GET(req: NextRequest) {
 
 			// Override default 1000-row limit; the view has one row per student-course,
 			// so a full program can exceed 1000 rows and drop students before dedup.
-			const { data, error } = await query.order('register_number').range(0, 100000)
+			const { data, error } = await query.order('register_number')
 
 			if (error) throw error
 

@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
 
 // GET - Fetch distinct regulations, semesters, or courses from course_mapping
 // Used by the bulk course offering create page
@@ -8,7 +9,7 @@ export async function GET(request: Request) {
 		const supabase = getSupabaseServer()
 		const { searchParams } = new URL(request.url)
 		const type = searchParams.get('type') // 'regulations' | 'semesters' | 'courses'
-		const institutionCode = searchParams.get('institution_code')
+		const institutionCode = (await institutionParam(searchParams, 'institution_code'))
 		const programCode = searchParams.get('program_code')
 		const regulationCode = searchParams.get('regulation_code')
 		const semesterCode = searchParams.get('semester_code')
@@ -149,7 +150,7 @@ export async function GET(request: Request) {
 
 		if (type === 'existing') {
 			// Get existing course_offering records for session + program + semesters
-			const institutionsId = searchParams.get('institutions_id')
+			const institutionsId = (await institutionParam(searchParams, 'institutions_id'))
 			const sessionId = searchParams.get('examination_session_id')
 			const programCodeParam = searchParams.get('program_code')
 			const semesterCodes = searchParams.get('semester_codes') // comma-separated

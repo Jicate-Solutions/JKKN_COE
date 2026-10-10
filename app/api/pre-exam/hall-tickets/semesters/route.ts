@@ -11,13 +11,14 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
 import { ACTIVE_REGISTRATION_STATUSES } from '@/lib/exam-registration-status'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
 
 export async function GET(request: NextRequest) {
 	try {
 		const supabase = getSupabaseServer()
 		const { searchParams } = new URL(request.url)
 
-		const institution_code = searchParams.get('institution_code')
+		const institution_code = (await institutionParam(searchParams, 'institution_code'))
 		const examination_session_id = searchParams.get('examination_session_id')
 		const program_code = searchParams.get('program_code')
 
@@ -62,7 +63,6 @@ export async function GET(request: NextRequest) {
 				.in('registration_status', ACTIVE_REGISTRATION_STATUSES)
 				.eq('fee_paid', true)
 				.eq('is_regular', true)
-				.range(0, 49999)
 
 			if (fallbackError) {
 				console.error('[HallTicket Semesters] Fallback query error:', fallbackError)
@@ -82,7 +82,6 @@ export async function GET(request: NextRequest) {
 					.eq('fee_paid', true)
 					.eq('is_regular', true)
 					.eq('program_code', program_code)
-					.range(0, 49999)
 
 				filtered = filteredData || []
 			}

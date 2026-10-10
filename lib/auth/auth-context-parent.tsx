@@ -67,6 +67,8 @@ function AuthProviderInner({
 		coe_user_id: string | null
 		coe_roles: string[]
 		has_coe_access: boolean
+		/** false when the server could not be reached or refused — the fields above are then placeholders, not facts. */
+		synced: boolean
 	}> => {
 		try {
 			const response = await fetch('/api/auth/sync-session', {
@@ -103,6 +105,7 @@ function AuthProviderInner({
 					coe_user_id: data.user_id || null,
 					coe_roles: data.coe_roles || [],
 					has_coe_access: data.has_coe_access || false,
+					synced: true,
 				}
 			}
 			return {
@@ -117,6 +120,7 @@ function AuthProviderInner({
 				coe_user_id: null,
 				coe_roles: [],
 				has_coe_access: false,
+				synced: false,
 			}
 		} catch (err) {
 			// Non-critical - just log and continue
@@ -133,6 +137,7 @@ function AuthProviderInner({
 				coe_user_id: null,
 				coe_roles: [],
 				has_coe_access: false,
+				synced: false,
 			}
 		}
 	}, [])
@@ -380,8 +385,8 @@ function AuthProviderInner({
 		return () => clearInterval(intervalId)
 	}, [user?.id])
 
-	// Real-time role sync — listens to user_roles table changes via Supabase Realtime
-	// When admin assigns/revokes roles, the user's session updates immediately
+	// Role sync — re-reads the user's roles from the server when the tab regains
+	// focus and every few minutes (hooks/auth/use-role-sync.ts)
 	const handleRoleChange = useCallback(async () => {
 		const storedUser = parentAuthService.getStoredUser()
 		const accessToken = parentAuthService.getAccessToken()
@@ -392,7 +397,12 @@ function AuthProviderInner({
 			coe_roles,
 			has_coe_access,
 			permissions,
+			synced,
 		} = await syncSession(storedUser, accessToken)
+
+		// A failed check says nothing about the user's access — never sign
+		// someone out over a network blip or a busy server.
+		if (!synced) return
 
 		if (!has_coe_access) {
 			// Access revoked — force logout immediately

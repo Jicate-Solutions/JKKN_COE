@@ -30,6 +30,7 @@ import { deleteEsePaper, assignmentEverSubmitted } from '@/lib/qp-portal/delete-
 import { isEndSemesterExamType, endSemesterMismatchMessage } from '@/lib/qp-portal/exam-type'
 import type { EseGenerateInput } from '@/types/ese-question-paper'
 import { countAuthored } from '@/lib/ia/sub-questions'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
 
 export const dynamic = 'force-dynamic'
 
@@ -97,7 +98,7 @@ export async function GET(req: NextRequest) {
 	try {
 		const supabase = getSupabaseServer()
 		const { searchParams } = new URL(req.url)
-		const institutionsId = searchParams.get('institutions_id')
+		const institutionsId = (await institutionParam(searchParams, 'institutions_id'))
 		const sessionId = searchParams.get('examination_session_id')
 
 		if (!institutionsId || !sessionId) {

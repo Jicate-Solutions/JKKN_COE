@@ -16,9 +16,9 @@
  * { ok: false, status, error } with a suggested HTTP status code.
  */
 
-import { cookies } from 'next/headers'
 import { createRouteHandlerSupabaseClient } from '@/lib/supabase-route-handler'
 import { getSupabaseServer } from '@/lib/supabase-server'
+import { getRequestUser } from '@/lib/auth/server-session'
 
 // Must match the TTL used by /api/auth/permissions/current so that
 // server-side API checks and the UI's hasPermission() never diverge.
@@ -43,12 +43,14 @@ export type PermissionCheckOutcome = PermissionCheckSuccess | PermissionCheckFai
  * Resolve the caller's email from whichever session mechanism is present.
  *
  * The COE app authenticates via the MyJKKN parent-app OAuth flow, which sets
- * an `access_token` cookie (a JWT issued by MyJKKN) — there is usually NO
- * Supabase Auth session, so `auth.getUser()` alone would treat every caller
- * as anonymous. Mirror the pattern used by pre-exam/internal-mark-entry:
+ * an `access_token` cookie — there is usually NO Supabase Auth session, so
+ * `auth.getUser()` alone would treat every caller as anonymous.
  *   1. Supabase SSR session (kept for deployments that do use Supabase Auth)
- *   2. Decode the `access_token` JWT payload locally (no network call)
- *   3. Fall back to MyJKKN's /api/auth/validate endpoint
+ *   2. The `access_token` cookie, checked against the `sessions` table
+ *
+ * The token's own JWT payload is deliberately NOT read here: it is not
+ * signature-checked on this side, so anyone could write an email into it.
+ * Only a token bound to a live session (lib/auth/server-session.ts) counts.
  */
 export async function resolveCallerEmail(): Promise<string | null> {
 	// 1) Supabase Auth session, if one exists
@@ -60,43 +62,14 @@ export async function resolveCallerEmail(): Promise<string | null> {
 		// No Supabase session — fall through to the parent-app token
 	}
 
+	// 2) Parent-app token bound to a verified COE session
 	try {
-		const cookieStore = await cookies()
-		const accessToken = cookieStore.get('access_token')?.value
-		if (!accessToken) return null
-
-		// 2) Decode the JWT payload to read the email directly
-		const parts = accessToken.split('.')
-		if (parts.length === 3) {
-			try {
-				const payloadB64 = parts[1].replace(/-/g, '+').replace(/_/g, '/')
-				const padded = payloadB64 + '='.repeat((4 - payloadB64.length % 4) % 4)
-				const payload = JSON.parse(Buffer.from(padded, 'base64').toString('utf-8'))
-				const email = payload.email || payload.user_email || payload.preferred_username
-				if (typeof email === 'string' && email.includes('@')) return email
-			} catch {
-				// JWT decode failed — fall through to validate endpoint
-			}
-		}
-
-		// 3) Validate with the parent app if the JWT didn't yield an email
-		const validateRes = await fetch(`${process.env.NEXT_PUBLIC_PARENT_APP_URL}/api/auth/validate`, {
-			method: 'POST',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({
-				access_token: accessToken,
-				child_app_id: process.env.NEXT_PUBLIC_APP_ID,
-			}),
-		})
-		if (validateRes.ok) {
-			const data = await validateRes.json()
-			if (data?.user?.email) return data.user.email
-		}
+		const caller = await getRequestUser()
+		return caller?.email ?? null
 	} catch (err) {
-		console.warn('[resolveCallerEmail] Parent-app token resolution failed:', err)
+		console.warn('[resolveCallerEmail] Session resolution failed:', err)
+		return null
 	}
-
-	return null
 }
 
 /**

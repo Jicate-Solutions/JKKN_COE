@@ -159,12 +159,12 @@ export const POST = withExternalAuth(async (request: Request, ctx: ExternalApiCo
 	const uniqueCOIds = [...new Set(records.map(r => String(r.course_offering_id)).filter(Boolean))]
 	const { data: offerings } = await supabase
 		.from('course_offerings')
-		.select('id, course_id, program_id')
+		.select('id, course_id, program_id, institutions_id')
 		.in('id', uniqueCOIds)
 
-	const offeringMap = new Map<string, { course_id: string, program_id: string }>()
+	const offeringMap = new Map<string, { course_id: string, program_id: string, institutions_id: string }>()
 	for (const o of (offerings || [])) {
-		offeringMap.set(o.id, { course_id: o.course_id, program_id: o.program_id })
+		offeringMap.set(o.id, { course_id: o.course_id, program_id: o.program_id, institutions_id: o.institutions_id })
 	}
 
 	// ── Index the question papers referenced by this batch (one pair of queries) ──
@@ -197,6 +197,12 @@ export const POST = withExternalAuth(async (request: Request, ctx: ExternalApiCo
 		const resolved = offeringMap.get(coId)
 		if (!resolved) {
 			results.push({ index: i, student_id: String(raw.student_id), course_offering_id: coId, status: 'error', error: `course_offering_id "${coId}" not found` })
+			continue
+		}
+
+		// The course offering must belong to the institution being claimed
+		if (resolved.institutions_id !== String(raw.institutions_id)) {
+			results.push({ index: i, student_id: String(raw.student_id), course_offering_id: coId, status: 'error', error: 'Not authorized for this institution' })
 			continue
 		}
 
@@ -422,6 +428,7 @@ export const POST = withExternalAuth(async (request: Request, ctx: ExternalApiCo
 			.eq('course_offering_id', course_offering_id)
 			.eq('examination_session_id', examination_session_id)
 			.eq('cia_round', cia_round)
+			.eq('institutions_id', institutions_id)
 
 		const idx = results.findIndex(r => r.student_id === student_id && r.status !== 'error')
 		if (error) {

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
+import { getRequestUser } from '@/lib/auth/server-session'
 
 /**
  * Fetch permissions for a user based on their role name
@@ -15,6 +16,26 @@ export async function GET(req: NextRequest) {
 		const { searchParams } = new URL(req.url)
 		const roleName = searchParams.get('role')
 		const email = searchParams.get('email')
+
+		// /api/auth is a public prefix in proxy.ts, so this route checks the
+		// session itself. Without it, anyone could list any user's roles and
+		// permissions by email.
+		const caller = await getRequestUser()
+		if (!caller) {
+			return NextResponse.json({
+				roles: [],
+				permissions: [],
+				error: 'Your session has expired. Please sign in again.',
+				code: 'INVALID_SESSION'
+			}, { status: 401 })
+		}
+		if (email && !caller.isSuperAdmin && email.trim().toLowerCase() !== caller.email.toLowerCase()) {
+			return NextResponse.json({
+				roles: [],
+				permissions: [],
+				error: 'You do not have permission to perform this action.'
+			}, { status: 403 })
+		}
 
 		if (!roleName && !email) {
 			return NextResponse.json({

@@ -282,7 +282,7 @@ export async function buildStudentResultView(
 		regQuery.eq('examination_session_id', examinationSessionId)
 	}
 
-	const { data: regs, error: regError } = await regQuery.range(0, 9999)
+	const { data: regs, error: regError } = await regQuery
 	if (regError) throw regError
 
 	const registerNo: string | null = identity.stu_register_no ?? regs?.[0]?.stu_register_no ?? null
@@ -395,7 +395,6 @@ export async function buildStudentResultView(
 			.from('examination_sessions')
 			.select('id, session_code, session_name, session_status, result_declaration_date')
 			.in('id', sessionIds)
-			.range(0, 9999)
 		if (sessionError) throw sessionError
 		for (const s of sessions || []) {
 			sessionMeta.set(s.id, {
@@ -436,7 +435,6 @@ export async function buildStudentResultView(
 			.select('course_code, course_name, credit, credit_included')
 			.eq('institutions_id', institutionId)
 			.in('course_code', allCodes)
-			.range(0, 9999)
 		for (const cr of courseRows || []) {
 			if (!coursesByCode.has(cr.course_code)) coursesByCode.set(cr.course_code, cr)
 		}
@@ -452,7 +450,6 @@ export async function buildStudentResultView(
 			.select('program_code, course_code, semester_code, course_order')
 			.in('program_code', programCodes)
 			.in('course_code', allCodes)
-			.range(0, 9999)
 		for (const m of cmRows || []) {
 			const key = `${m.program_code}::${m.course_code}`
 			if (!mappingByKey.has(key)) {

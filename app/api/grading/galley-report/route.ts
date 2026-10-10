@@ -1,13 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
 import { fetchMyJKKNBatchById, fetchAllMyJKKNPrograms } from '@/lib/myjkkn-api'
+import { forwardSession } from '@/lib/api-helpers/forward-session'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
 
 export async function GET(request: NextRequest) {
 	const supabase = getSupabaseServer()
 	const searchParams = request.nextUrl.searchParams
 
 	const type = searchParams.get('type')
-	const institutionId = searchParams.get('institution_id')
+	const institutionId = (await institutionParam(searchParams, 'institution_id'))
 	const sessionId = searchParams.get('session_id')
 	const programId = searchParams.get('program_id')
 	const semester = searchParams.get('semester')
@@ -278,7 +280,7 @@ export async function GET(request: NextRequest) {
 
 		for (const myjkknInstId of myjkknIds) {
 			try {
-				const programsRes = await fetch(`${baseUrl}/api/myjkkn/programs?institution_id=${myjkknInstId}&is_active=true&limit=1000`)
+				const programsRes = await fetch(`${baseUrl}/api/myjkkn/programs?institution_id=${myjkknInstId}&is_active=true&limit=1000`, forwardSession(request))
 				if (programsRes.ok) {
 					const programsResponse = await programsRes.json()
 					const programsData = programsResponse.data || programsResponse || []
@@ -456,7 +458,6 @@ export async function GET(request: NextRequest) {
 				.in('course_id', courseIds)
 				.eq('program_code', programId)
 				.eq('is_active', true)
-				.range(0, 99999)
 
 			if (!cmError && courseMappings) {
 				console.log('Course mapping data with course_order:', courseMappings.map((cm: any) => ({
@@ -617,7 +618,6 @@ export async function GET(request: NextRequest) {
 			.eq('program_code', programId)
 			.eq('semester', parseInt(semester))
 			.eq('is_active', true)
-			.range(0, 99999)
 
 		if (!srExactError && srExact && srExact.length > 0) {
 			semesterResults = srExact
@@ -632,7 +632,6 @@ export async function GET(request: NextRequest) {
 				.ilike('program_code', `%${programId}%`)
 				.eq('semester', parseInt(semester))
 				.eq('is_active', true)
-				.range(0, 99999)
 
 			if (srIlikeError) console.error('Error fetching semester_results:', srIlikeError)
 			semesterResults = srIlike
@@ -906,7 +905,7 @@ export async function GET(request: NextRequest) {
 					const learnerUrl = `${baseUrl}/api/myjkkn/learner-profiles?register_number=${encodeURIComponent(firstStudentRegNo)}&limit=1000&fetchAll=true`
 					console.log('[Galley Report] Fetching learner from:', learnerUrl)
 
-					const learnerRes = await fetch(learnerUrl)
+					const learnerRes = await fetch(learnerUrl, forwardSession(request))
 					if (learnerRes.ok) {
 						const learnerResponse = await learnerRes.json()
 						const learners = learnerResponse.data || []

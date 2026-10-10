@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
 
 /**
  * Question types are per-institution rows, so a mutation must name the
@@ -37,7 +38,7 @@ export async function GET(req: NextRequest) {
 	try {
 		const supabase = getSupabaseServer()
 		const { searchParams } = new URL(req.url)
-		const institutionCode = searchParams.get('institution_code')
+		const institutionCode = (await institutionParam(searchParams, 'institution_code'))
 		const includeInactive = searchParams.get('include_inactive') === 'true'
 
 		let query = supabase
@@ -186,7 +187,7 @@ export async function DELETE(req: NextRequest) {
 		const ownership = await assertTypeInInstitution(
 			supabase,
 			id,
-			searchParams.get('institution_code')
+			(await institutionParam(searchParams, 'institution_code'))
 		)
 		if (ownership) {
 			return NextResponse.json({ error: ownership.error }, { status: ownership.status })

@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
 import { fetchAllMyJKKNPrograms } from '@/services/myjkkn-service'
 import { handleDeleteWithDependencyCheck } from '@/lib/delete-helpers'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
 
 // Module-level cache for MyJKKN programs with 5-minute TTL
 let programsCache: { data: any[]; timestamp: number } | null = null
@@ -23,8 +24,8 @@ export async function GET(request: Request) {
 		const { searchParams } = new URL(request.url)
 		const examinationSessionId = searchParams.get('examination_session_id')
 		const courseId = searchParams.get('course_id')
-		const institutionId = searchParams.get('institutions_id')
-		const institutionCode = searchParams.get('institution_code')
+		const institutionId = (await institutionParam(searchParams, 'institutions_id'))
+		const institutionCode = (await institutionParam(searchParams, 'institution_code'))
 		const programId = searchParams.get('program_id')
 		const programCode = searchParams.get('program_code')
 		const semester = searchParams.get('semester')

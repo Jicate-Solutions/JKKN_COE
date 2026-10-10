@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
 
 interface BatchEntry {
 	packet_id: string | null
@@ -20,7 +21,7 @@ interface BatchEntry {
  */
 export async function GET(request: Request) {
 	const { searchParams } = new URL(request.url)
-	const institutionsId = searchParams.get('institutions_id')
+	const institutionsId = (await institutionParam(searchParams, 'institutions_id'))
 	const sessionId = searchParams.get('session_id')
 	const boardCode = searchParams.get('board_code')
 
@@ -91,7 +92,6 @@ export async function GET(request: Request) {
 		.eq('is_active', true)
 		.in('course_id', courseIds)
 		.order('packet_no', { ascending: true })
-		.range(0, 99999)
 
 	const packetsByCourse = new Map<string, Array<{ id: string; packet_no: string; total_sheets: number; valuation_date: string | null }>>()
 	for (const p of packets || []) {

@@ -6,6 +6,7 @@ import {
 	fetchLookupData,
 } from '@/lib/myjkkn-learner-enrichment'
 import type { LearnerDirectoryRow } from '@/types/learner-directory'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
 
 /**
  * GET /api/learners/directory
@@ -178,7 +179,7 @@ async function getSweep(forceRefresh: boolean): Promise<SweepResult> {
 
 export async function GET(request: NextRequest) {
 	const { searchParams } = new URL(request.url)
-	const institutionCode = searchParams.get('institution_code')
+	const institutionCode = (await institutionParam(searchParams, 'institution_code'))
 	const forceRefresh = searchParams.get('refresh') === 'true'
 
 	try {

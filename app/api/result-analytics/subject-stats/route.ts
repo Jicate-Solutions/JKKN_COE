@@ -10,6 +10,7 @@ import type {
 	InternalExternalComparison,
 	SubjectHeatmapData
 } from '@/types/result-analytics'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
 
 // GET /api/result-analytics/subject-stats
 // Fetches subject-wise result analytics
@@ -20,7 +21,7 @@ export async function GET(req: NextRequest) {
 
 		// Parse filters
 		const filters: ResultAnalyticsFilters = {
-			institution_id: searchParams.get('institution_id') || undefined,
+			institution_id: (await institutionParam(searchParams, 'institution_id')) || undefined,
 			academic_year_id: searchParams.get('academic_year_id') || undefined,
 			examination_session_id: searchParams.get('examination_session_id') || undefined,
 			program_id: searchParams.get('program_id') || undefined,
@@ -75,7 +76,7 @@ export async function GET(req: NextRequest) {
 			query = query.eq('program_id', filters.program_id)
 		}
 
-		const { data: rawMarksData, error } = await query.range(0, 9999)
+		const { data: rawMarksData, error } = await query
 
 		if (error) {
 			console.error('Error fetching subject stats:', error)

@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
 import { fetchAllMyJKKNPrograms } from '@/lib/myjkkn-api'
 import { getOffRollRegisterNumbers, isOffRoll } from '@/lib/myjkkn-off-roll-learners'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
 
 const ID_CHUNK = 200   // keeps .in() lists inside the GET URL limit
 
@@ -41,8 +42,8 @@ export async function GET(request: Request) {
 		const supabase = getSupabaseServer()
 
 		// Institution filter params
-		const institutionCode = searchParams.get('institution_code')
-		const institutionsIdParam = searchParams.get('institutions_id')
+		const institutionCode = (await institutionParam(searchParams, 'institution_code'))
+		const institutionsIdParam = (await institutionParam(searchParams, 'institutions_id'))
 
 		switch (action) {
 
@@ -232,7 +233,6 @@ export async function GET(request: Request) {
 					.eq('institutions_id', institutionId)
 					.eq('examination_session_id', sessionId)
 					.eq('course_code', (course as any).course_code)
-					.range(0, 9999)
 
 				if (regError) {
 					console.error('Error fetching registrations:', regError)

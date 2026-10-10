@@ -1,5 +1,7 @@
 import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
+import { forwardSession } from '@/lib/api-helpers/forward-session'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
 
 // GET: Fetch attendance data for bundle cover generation
 export async function GET(request: Request) {
@@ -7,7 +9,7 @@ export async function GET(request: Request) {
 		const supabase = getSupabaseServer()
 		const { searchParams } = new URL(request.url)
 
-		const institutionId = searchParams.get('institution_id')
+		const institutionId = (await institutionParam(searchParams, 'institution_id'))
 		const sessionId = searchParams.get('session_id')
 		const programCode = searchParams.get('program_code') // Optional
 		const examDate = searchParams.get('exam_date')
@@ -73,7 +75,8 @@ export async function GET(request: Request) {
 						// Fetch programs from MyJKKN for the first institution
 						const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'
 						const myjkknResponse = await fetch(
-							`${baseUrl}/api/myjkkn/programs?institution_id=${myjkknIds[0]}&is_active=true&limit=1000`
+							`${baseUrl}/api/myjkkn/programs?institution_id=${myjkknIds[0]}&is_active=true&limit=1000`,
+							forwardSession(request)
 						)
 						if (myjkknResponse.ok) {
 							const myjkknData = await myjkknResponse.json()

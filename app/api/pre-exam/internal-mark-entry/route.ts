@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
 import { loadCourseMaster } from '@/lib/api-helpers/course-master-for-offerings'
+import { offeringIdsOfCourseInSemester } from '@/lib/api-helpers/course-semester-offerings'
 import { flattenEntryQuestions } from '@/lib/ia/sub-questions'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
 
 export async function GET(request: Request) {
 	try {
@@ -14,7 +16,7 @@ export async function GET(request: Request) {
 			// All steps query course_offerings (small table) — never scans exam_registrations
 			case 'filter-cascade': {
 				const step = searchParams.get('step')
-				const institutionsId = searchParams.get('institutions_id')
+				const institutionsId = (await institutionParam(searchParams, 'institutions_id'))
 				const sessionId = searchParams.get('examination_session_id')
 
 				if (!institutionsId || !sessionId) {
@@ -159,7 +161,7 @@ export async function GET(request: Request) {
 
 			// ─── Get CIA config for a course (resolves setting → rounds + components) ───
 			case 'cia-config': {
-				const institutionsId = searchParams.get('institutions_id')
+				const institutionsId = (await institutionParam(searchParams, 'institutions_id'))
 				const sessionId = searchParams.get('examination_session_id')
 				const programCode = searchParams.get('program_code')
 				const courseType = searchParams.get('course_type')
@@ -333,35 +335,23 @@ export async function GET(request: Request) {
 					return NextResponse.json({ error: 'course_offering_id and examination_session_id are required' }, { status: 400 })
 				}
 
-				// Get the course_code from the selected offering
-				const { data: selectedOffering } = await supabase
-					.from('course_offerings')
-					.select('course_code')
-					.eq('id', courseOfferingId)
-					.single()
+				const offeringIds = await offeringIdsOfCourseInSemester(supabase, courseOfferingId, sessionId)
 
-				const courseCode = selectedOffering?.course_code
-
-				// Fetch learners for this course_code + program
+				// Every regular registration counts, whatever its registration_status
 				let regQuery = supabase
 					.from('exam_registrations')
 					.select('id, student_id, stu_register_no, student_name, course_offering_id, institutions_id, is_regular, program_code')
 					.eq('examination_session_id', sessionId)
 					.eq('is_regular', true)
+					.in('course_offering_id', offeringIds)
 					.order('stu_register_no')
-
-				if (courseCode) {
-					regQuery = regQuery.eq('course_code', courseCode)
-				} else {
-					regQuery = regQuery.eq('course_offering_id', courseOfferingId)
-				}
 
 				// Filter by program if provided
 				if (programCode) {
 					regQuery = regQuery.eq('program_code', programCode)
 				}
 
-				const { data: registrations, error: regError } = await regQuery.range(0, 9999)
+				const { data: registrations, error: regError } = await regQuery
 
 				if (regError) {
 					console.error('Error fetching exam registrations:', regError)
@@ -404,7 +394,7 @@ export async function GET(request: Request) {
 			case 'pattern-components': {
 				const courseId = searchParams.get('course_id')
 				const programId = searchParams.get('program_id')
-				const institutionsId = searchParams.get('institutions_id')
+				const institutionsId = (await institutionParam(searchParams, 'institutions_id'))
 
 				if (!courseId || !institutionsId) {
 					return NextResponse.json({ error: 'course_id and institutions_id are required' }, { status: 400 })

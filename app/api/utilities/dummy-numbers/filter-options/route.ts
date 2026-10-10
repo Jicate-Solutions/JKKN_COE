@@ -1,12 +1,13 @@
 import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
 
 // GET: Return unique boards, programs, and courses from course_offerings for cascading filters
 export async function GET(request: Request) {
 	try {
 		const supabase = getSupabaseServer()
 		const { searchParams } = new URL(request.url)
-		const institutions_id = searchParams.get('institutions_id')
+		const institutions_id = (await institutionParam(searchParams, 'institutions_id'))
 		const examination_session_id = searchParams.get('examination_session_id')
 
 		if (!institutions_id || !examination_session_id) {
@@ -40,7 +41,6 @@ export async function GET(request: Request) {
 			`)
 			.eq('institutions_id', institutions_id)
 			.eq('examination_session_id', examination_session_id)
-			.range(0, 49999)
 
 		if (error) {
 			console.error('Error fetching filter options:', error)

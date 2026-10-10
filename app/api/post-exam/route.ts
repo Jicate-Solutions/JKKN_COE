@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
 
 // =====================================================================
 // POST-EXAM RESULT RELEASE CONTROL
@@ -21,13 +22,12 @@ export async function GET(request: Request) {
 	try {
 		const supabase = getSupabaseServer()
 		const { searchParams } = new URL(request.url)
-		const institutionsId = searchParams.get('institutions_id')
+		const institutionsId = (await institutionParam(searchParams, 'institutions_id'))
 
 		let sessionsQuery = supabase
 			.from('examination_sessions')
 			.select('id, session_code, session_name, session_status, exam_start_date, exam_end_date, result_declaration_date, institutions_id, month_year')
 			.order('exam_end_date', { ascending: false })
-			.range(0, 9999)
 
 		if (institutionsId) {
 			sessionsQuery = sessionsQuery.eq('institutions_id', institutionsId)

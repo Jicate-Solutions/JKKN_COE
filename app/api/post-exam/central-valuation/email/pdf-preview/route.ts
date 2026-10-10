@@ -8,12 +8,13 @@ import type {
 	CentralValuationCourseEntry,
 	CentralValuationExaminerType,
 } from '@/types/central-valuation-email'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
 
 export const maxDuration = 60
 
 export async function GET(request: Request) {
 	const { searchParams } = new URL(request.url)
-	const institutionsId = searchParams.get('institutions_id')
+	const institutionsId = (await institutionParam(searchParams, 'institutions_id'))
 	const sessionId = searchParams.get('session_id')
 	const examinerType = searchParams.get('examiner_type') as CentralValuationExaminerType | null
 	const examinerKey = searchParams.get('examiner_key')
@@ -77,7 +78,6 @@ export async function GET(request: Request) {
 		.eq('examination_session_id', sessionId)
 		.eq('is_active', true)
 		.order('packet_no', { ascending: true })
-		.range(0, 99999)
 
 	if (columnStaff) query = query.eq(columnStaff, examinerKey)
 	if (columnExternal) query = query.eq('external_examiner_id', examinerKey)
@@ -154,7 +154,6 @@ export async function GET(request: Request) {
 		.eq('is_active', true)
 		.in('course_id', courseIds)
 		.order('packet_no', { ascending: true })
-		.range(0, 99999)
 
 	const totalPacketsByCourse = new Map<string, number>()
 	const indexById = new Map<string, number>()

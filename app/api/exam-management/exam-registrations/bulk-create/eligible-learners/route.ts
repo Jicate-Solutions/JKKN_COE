@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { fetchMyJKKNLearnerProfiles, fetchMyJKKNRegulations } from '@/lib/myjkkn-api'
-import { MYJKKN_MAX_PER_PAGE } from '@/lib/myjkkn-learner-enrichment'
+import { UUID_PATTERN, fetchSemesterCohort, getRegulationCodes } from '@/lib/myjkkn-semester-cohort'
 
 /**
  * GET /api/exam-management/exam-registrations/bulk-create/eligible-learners
@@ -17,110 +16,73 @@ import { MYJKKN_MAX_PER_PAGE } from '@/lib/myjkkn-learner-enrichment'
  *
  * Query params:
  *  - institution_ids : comma-separated MyJKKN institution UUIDs (required)
- *  - semester_id     : MyJKKN semester UUID, as stored on course_mapping (required)
+ *  - semester_ids    : comma-separated MyJKKN semester UUIDs (required). More than one
+ *                      when the COE institution spans two MyJKKN institutions that each
+ *                      hold their own row for the same program semester. `semester_id`
+ *                      (a single UUID) is still accepted.
  *
  * Returns: { data: LearnerRow[], count, source: 'myjkkn' }
  * regulation_code is '' when MyJKKN has no regulation recorded for the learner.
  * The caller should fall back to the full MyJKKN sweep when count === 0.
  */
-
-// Regulations change a few times a year; resolving id → code per request would add a
-// MyJKKN round-trip to every cohort load.
-const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-
-const REGULATION_CACHE_TTL = 5 * 60 * 1000
-let regulationCache: { codes: Map<string, string>; timestamp: number } | null = null
-
-async function getRegulationCodes(): Promise<Map<string, string>> {
-	if (regulationCache && Date.now() - regulationCache.timestamp < REGULATION_CACHE_TTL) {
-		return regulationCache.codes
-	}
-	const codes = new Map<string, string>()
-	for (let page = 1; ; page++) {
-		const res = await fetchMyJKKNRegulations({ page, limit: MYJKKN_MAX_PER_PAGE })
-		const rows = res.data || []
-		for (const r of rows) {
-			if (r.id && r.regulation_code) codes.set(r.id, r.regulation_code)
-		}
-		if (rows.length < MYJKKN_MAX_PER_PAGE) break
-	}
-	regulationCache = { codes, timestamp: Date.now() }
-	return codes
-}
-
 export async function GET(request: NextRequest) {
 	const { searchParams } = new URL(request.url)
-	const institutionIdsParam = searchParams.get('institution_ids') || ''
-	const semesterId = searchParams.get('semester_id') || ''
-
-	const institutionIds = institutionIdsParam
+	const institutionIds = (searchParams.get('institution_ids') || '')
 		.split(',')
 		.map(s => s.trim())
 		.filter(Boolean)
+	const semesterIds = [...new Set(
+		`${searchParams.get('semester_ids') || ''},${searchParams.get('semester_id') || ''}`
+			.split(',')
+			.map(s => s.trim())
+			.filter(Boolean)
+	)]
 
-	if (institutionIds.length === 0 || !semesterId) {
+	if (institutionIds.length === 0 || semesterIds.length === 0) {
 		return NextResponse.json(
-			{ error: 'institution_ids and semester_id are required', data: [], count: 0, source: 'myjkkn' },
+			{ error: 'institution_ids and semester_ids are required', data: [], count: 0, source: 'myjkkn' },
 			{ status: 400 }
 		)
 	}
 
 	// The MyJKKN client only forwards a UUID semester_id; anything else would be sent
 	// unfiltered and pull every learner on the platform just to match none of them.
-	if (!UUID_PATTERN.test(semesterId)) {
+	if (semesterIds.some(id => !UUID_PATTERN.test(id))) {
 		return NextResponse.json(
-			{ error: 'semester_id must be a UUID', data: [], count: 0, source: 'myjkkn' },
+			{ error: 'semester_ids must be UUIDs', data: [], count: 0, source: 'myjkkn' },
 			{ status: 400 }
 		)
 	}
 
 	try {
-		const fetchPage = (page: number) =>
-			fetchMyJKKNLearnerProfiles({ semester_id: semesterId, page, limit: MYJKKN_MAX_PER_PAGE })
+		// A regulation lookup failure must not block registration: learners then come
+		// back with no regulation_code and the page places them by intake year.
+		const regulationCodes = await getRegulationCodes().catch(e => {
+			console.error('[eligible-learners] regulation lookup failed:', e)
+			return new Map<string, string>()
+		})
 
-		const [firstPage, regulationCodes] = await Promise.all([
-			fetchPage(1),
-			// A regulation lookup failure must not block registration: learners then come
-			// back with no regulation_code and the page places them by intake year.
-			getRegulationCodes().catch(e => {
-				console.error('[eligible-learners] regulation lookup failed:', e)
-				return new Map<string, string>()
-			}),
-		])
+		const cohorts = await Promise.all(
+			semesterIds.map(id => fetchSemesterCohort(id, institutionIds, regulationCodes))
+		)
 
-		const learners: any[] = [...(firstPage.data || [])]
-		const paginationInfo = (firstPage as any).metadata || (firstPage as any).pagination || {}
-		const totalPages = paginationInfo.totalPages || 1
-		if (totalPages > 1) {
-			const rest = await Promise.all(
-				Array.from({ length: totalPages - 1 }, (_, i) => fetchPage(i + 2))
-			)
-			for (const res of rest) learners.push(...(res.data || []))
-		}
-
-		const allowedInstitutions = new Set(institutionIds)
 		const seen = new Set<string>()
-		const rows = learners
-			.filter(l => {
-				// Guard against MyJKKN ignoring the filter (it does for most other params).
-				if (!l?.id || seen.has(l.id) || l.semester_id !== semesterId) return false
-				if (l.institution_id && !allowedInstitutions.has(l.institution_id)) return false
-				seen.add(l.id)
-				return true
-			})
+		const rows = cohorts
+			.flat()
+			.filter(l => !seen.has(l.id) && seen.add(l.id))
 			.map(l => ({
 				id: l.id,
-				stu_register_no: l.register_number || l.roll_number || '',
-				student_name: `${l.first_name || ''} ${l.last_name || ''}`.trim(),
-				student_photo_url: l.student_photo_url || '',
-				regulation_code: (l.regulation_id && regulationCodes.get(l.regulation_id)) || '',
-				admission_year: l.admission_year ?? null,
+				stu_register_no: l.stu_register_no,
+				student_name: l.student_name,
+				student_photo_url: l.student_photo_url,
+				regulation_code: l.regulation_code,
+				admission_year: l.admission_year,
 			}))
 
 		rows.sort((a, b) => a.stu_register_no.localeCompare(b.stu_register_no))
 
 		console.log(
-			`[eligible-learners] institutions=${institutionIds.length} semester_id=${semesterId} → ${rows.length} learners`
+			`[eligible-learners] institutions=${institutionIds.length} semesters=${semesterIds.length} → ${rows.length} learners`
 		)
 
 		return NextResponse.json({ data: rows, count: rows.length, source: 'myjkkn' })

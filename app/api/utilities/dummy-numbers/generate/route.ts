@@ -120,7 +120,7 @@ export async function POST(request: Request) {
 			let filteredOfferings: any[] | null = null
 			let coError: any = null
 			for (let attempt = 1; attempt <= 3; attempt++) {
-				const result = await coQuery.range(0, 9999)
+				const result = await coQuery
 				filteredOfferings = result.data
 				coError = result.error
 				if (!coError) break

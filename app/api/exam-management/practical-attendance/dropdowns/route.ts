@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
 
 // GET: Cascading dropdown data for practical exam attendance form
 export async function GET(request: Request) {
@@ -7,13 +8,13 @@ export async function GET(request: Request) {
 		const supabase = getSupabaseServer()
 		const { searchParams } = new URL(request.url)
 		const type = searchParams.get('type')
-		const institutionId = searchParams.get('institution_id')
+		const institutionId = (await institutionParam(searchParams, 'institution_id'))
 		const sessionId = searchParams.get('session_id')
 		const courseId = searchParams.get('course_id')
 
 		// Institution filter params (from useInstitutionFilter hook)
-		const filterInstitutionCode = searchParams.get('institution_code')
-		const filterInstitutionsId = searchParams.get('institutions_id')
+		const filterInstitutionCode = (await institutionParam(searchParams, 'institution_code'))
+		const filterInstitutionsId = (await institutionParam(searchParams, 'institutions_id'))
 
 		// 1. Fetch Institutions - Apply institution filter for non-super_admin users
 		if (type === 'institutions') {

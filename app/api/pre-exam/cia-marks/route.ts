@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
 
 // Standard component codes that have dedicated columns on cia_marks.
 // Anything outside this set must come in via the extra_marks JSONB column.
@@ -73,7 +74,7 @@ export async function GET(request: Request) {
 
 		const settingId = searchParams.get('cia_setting_id')
 		const roundNumber = searchParams.get('cia_round')
-		const institutionId = searchParams.get('institutions_id')
+		const institutionId = (await institutionParam(searchParams, 'institutions_id'))
 		const sessionId = searchParams.get('examination_session_id')
 
 		let query = supabase.from('cia_marks').select('*')
@@ -83,7 +84,7 @@ export async function GET(request: Request) {
 		if (institutionId) query = query.eq('institutions_id', institutionId)
 		if (sessionId) query = query.eq('examination_session_id', sessionId)
 
-		const { data, error } = await query.order('created_at', { ascending: false }).range(0, 9999)
+		const { data, error } = await query.order('created_at', { ascending: false })
 
 		if (error) {
 			console.error('Error fetching CIA marks:', error)

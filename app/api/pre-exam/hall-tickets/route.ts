@@ -19,6 +19,7 @@ import type {
 	HallTicketApiResponse
 } from '@/types/hall-ticket'
 import { ACTIVE_REGISTRATION_STATUSES } from '@/lib/exam-registration-status'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
 
 export async function GET(request: NextRequest) {
 	try {
@@ -26,7 +27,7 @@ export async function GET(request: NextRequest) {
 		const { searchParams } = new URL(request.url)
 
 		// Required parameters
-		const institution_code = searchParams.get('institution_code')
+		const institution_code = (await institutionParam(searchParams, 'institution_code'))
 		const examination_session_id = searchParams.get('examination_session_id')
 
 		// Required filters
@@ -245,7 +246,6 @@ export async function GET(request: NextRequest) {
 					courses(id, course_code)
 				`)
 				.eq('examination_session_id', examination_session_id)
-				.range(0, 9999)
 
 			if (ttError) {
 				console.error('Error fetching exam timetables:', ttError)
@@ -288,7 +288,6 @@ export async function GET(request: NextRequest) {
 					.from('practical_batch_students')
 					.select('exam_registration_id, exam_timetable_id')
 					.in('exam_timetable_id', ttChunk)
-					.range(0, 9999)
 
 				if (batchError) {
 					console.warn('[HallTickets] Error fetching practical_batch_students chunk:', batchError.message)

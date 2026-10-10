@@ -1,12 +1,13 @@
 import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
 
 // GET /api/pre-exam/mark-conversion-rules?institutions_id=...&institution_code=...&regulation_code=...&search=...
 export async function GET(request: Request) {
 	try {
 		const { searchParams } = new URL(request.url)
-		const institutionsId = searchParams.get('institutions_id')
-		const institutionCode = searchParams.get('institution_code')
+		const institutionsId = (await institutionParam(searchParams, 'institutions_id'))
+		const institutionCode = (await institutionParam(searchParams, 'institution_code'))
 		const regulationCode = searchParams.get('regulation_code')
 		const search = searchParams.get('search')
 
@@ -32,7 +33,7 @@ export async function GET(request: Request) {
 			query = query.or(`rule_name.ilike.${s},description.ilike.${s}`)
 		}
 
-		const { data, error } = await query.range(0, 9999)
+		const { data, error } = await query
 		if (error) {
 			console.error('MCR GET error:', error)
 			return NextResponse.json({ error: 'Failed to fetch rules' }, { status: 500 })

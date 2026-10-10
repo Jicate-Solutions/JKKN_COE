@@ -4,6 +4,10 @@ import { checkRateLimit, addRateLimitHeaders } from '@/lib/security/rate-limit'
 import { applySecurityHeaders } from '@/lib/security/headers'
 import { logSecurityEvent } from '@/lib/security/audit-log'
 import { checkIpAllowlist } from '@/lib/security/ip-allowlist'
+import { loadUserPermissions, verifyAccessToken } from '@/lib/auth/server-session'
+import { findApiPolicyRule, satisfiesApiPolicy } from '@/lib/auth/api-policy'
+import { activeApiPolicyRules, generatedPolicyMode } from '@/lib/auth/api-policy-rules'
+import { checkInstitutionScope } from '@/lib/auth/institution-scope-request'
 
 // List of public routes that don't require authentication
 const publicRoutes = [
@@ -24,7 +28,10 @@ const publicRoutes = [
 const publicApiRoutes = [
 	'/api/auth',
 	'/api/token',
-	'/api/myjkkn',
+	// NOTE: /api/myjkkn is deliberately NOT here. Those routes relay MyJKKN
+	// learner and staff profiles using the server-side API key, so they need a
+	// COE session like everything else. Route handlers that call them
+	// server-side forward the caller's cookies (lib/api-helpers/forward-session.ts).
 	'/api/public',
 	'/api/v1',
 	// Examiner portal: reached by external examiners who have no COE account.
@@ -54,11 +61,14 @@ const publicApiPatterns = [
 export async function proxy(request: NextRequest) {
 	const { pathname } = request.nextUrl
 
-	// Allow static assets and Next.js internals (no security overhead needed)
+	// Allow static assets and Next.js internals (no security overhead needed).
+	// The "has a dot" shortcut is for files with extensions (images, etc.) and
+	// must never apply to /api: a dot inside a dynamic segment
+	// (/api/thing/abc.def) would otherwise skip every check below.
 	if (
 		pathname.startsWith('/_next') ||
 		pathname.startsWith('/static') ||
-		pathname.includes('.') // Files with extensions (images, etc.)
+		(pathname.includes('.') && !pathname.startsWith('/api/'))
 	) {
 		return NextResponse.next()
 	}
@@ -109,7 +119,8 @@ export async function proxy(request: NextRequest) {
 	}
 
 	// Allow public API routes
-	if (publicApiRoutes.some((route) => pathname.startsWith(route)) || publicApiPatterns.some((re) => re.test(pathname))) {
+	// Whole-segment match: '/api/v1' must not also open '/api/v1-anything'.
+	if (publicApiRoutes.some((route) => pathname === route || pathname.startsWith(route + '/')) || publicApiPatterns.some((re) => re.test(pathname))) {
 		const res = NextResponse.next()
 		applySecurityHeaders(res)
 		addRateLimitHeaders(request, res)
@@ -140,7 +151,119 @@ export async function proxy(request: NextRequest) {
 		return res
 	}
 
-	// ── Layer 4: COE Authorization ──────────────────────────────
+	// ── Layer 3b: Session verification (API) ────────────────────
+	// A cookie's presence proves nothing — anyone can set one. Every protected
+	// API call must carry a token bound to a live COE session, and COE access
+	// is read from the user's roles in the database, not from the client-set
+	// `coe_access` cookie. Pages stay on the cheap cookie check below: they
+	// are static shells whose data all comes from these API routes, and a
+	// page-level redirect here would fight the client's token refresh.
+	if (pathname.startsWith('/api')) {
+		const verification = await verifyAccessToken(accessToken)
+
+		if (!verification.ok) {
+			if (verification.code === 'SESSION_CHECK_FAILED') {
+				const res = NextResponse.json(
+					{ error: 'Unable to verify your session right now. Please try again.', code: verification.code },
+					{ status: 503 }
+				)
+				applySecurityHeaders(res)
+				return res
+			}
+
+			logSecurityEvent(request, 'auth_failed', { reason: verification.code })
+			const res = NextResponse.json(
+				{ error: 'Your session has expired. Please sign in again.', code: verification.code },
+				{ status: 401 }
+			)
+			applySecurityHeaders(res)
+			return res
+		}
+
+		if (!verification.session.hasCoeAccess) {
+			logSecurityEvent(request, 'coe_access_denied')
+			const res = NextResponse.json(
+				{ error: 'COE access not granted. Contact administrator for role assignment.' },
+				{ status: 403 }
+			)
+			applySecurityHeaders(res)
+			return res
+		}
+
+		// ── Layer 3c: Permission policy (API) ──────────────────────
+		// Routes with a rule need more than a session: the hand-written rules in
+		// lib/auth/api-policy.ts, then one per route derived from the screens
+		// that call it (lib/auth/api-policy.generated.ts).
+		const rule = findApiPolicyRule(pathname, request.method, activeApiPolicyRules())
+		if (rule && !verification.session.isSuperAdmin) {
+			let allowed = false
+			try {
+				allowed = satisfiesApiPolicy(rule, {
+					isSuperAdmin: false,
+					permissions: await loadUserPermissions(verification.session.userId),
+				})
+			} catch (err) {
+				console.error('[proxy] Permission check failed:', err)
+				const res = NextResponse.json(
+					{ error: 'Unable to verify your permissions right now. Please try again.' },
+					{ status: 503 }
+				)
+				applySecurityHeaders(res)
+				return res
+			}
+
+			if (!allowed && rule.generated && generatedPolicyMode() === 'report') {
+				console.warn(
+					`[api-policy] Would deny ${request.method} ${pathname} for user ${verification.session.userId}: needs one of ${rule.anyOf.join(', ')}`
+				)
+				allowed = true
+			}
+
+			if (!allowed) {
+				console.warn(
+					`[api-policy] Denied ${request.method} ${pathname} for user ${verification.session.userId}: needs one of ${rule.anyOf.join(', ') || '(super admin only)'}`
+				)
+				logSecurityEvent(request, 'coe_access_denied', { reason: 'permission_policy', rule: rule.prefix })
+				const res = NextResponse.json(
+					{ error: 'You do not have permission to perform this action.' },
+					{ status: 403 }
+				)
+				applySecurityHeaders(res)
+				return res
+			}
+		}
+
+		// ── Layer 3d: Institution isolation (API) ──────────────────
+		// A user who is not a super admin may only name their own institution
+		// in a request, and may only reach records that belong to it — whether
+		// by route (/x/<id>), ?id=, or a reference such as examination_session_id
+		// (lib/auth/institution-scope.ts, lib/auth/resource-ownership.ts).
+		const outOfScope = await checkInstitutionScope(request, verification.session)
+		if (outOfScope) {
+			logSecurityEvent(request, 'coe_access_denied', { reason: 'institution_scope', field: outOfScope.field })
+			const res = NextResponse.json(
+				{
+					error: outOfScope.record
+						? 'The requested record could not be found or accessed.'
+						: outOfScope.unlinked
+						? 'Your account is not linked to an institution. Sign out and sign in again; if this continues, contact the administrator.'
+						: 'You do not have permission to access another institution\'s records. If this is your institution, sign out and sign in again.',
+					code: outOfScope.record ? 'RECORD_SCOPE' : outOfScope.unlinked ? 'INSTITUTION_UNLINKED' : 'INSTITUTION_SCOPE',
+				},
+				{ status: 403 }
+			)
+			applySecurityHeaders(res)
+			return res
+		}
+
+		const res = NextResponse.next()
+		applySecurityHeaders(res)
+		ensureCsrfCookie(request, res)
+		addRateLimitHeaders(request, res)
+		return res
+	}
+
+	// ── Layer 4: COE Authorization (pages) ──────────────────────
 	// Check for COE access (user must have COE-specific roles assigned)
 	const coeAccess = request.cookies.get('coe_access')?.value
 

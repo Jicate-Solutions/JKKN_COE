@@ -13,6 +13,7 @@ import { requireUserPermission } from '@/lib/auth/check-user-permission'
 import { loadAssignmentBundle, buildClaimData } from '@/lib/qp-portal/assignment-service'
 import { generateClaimFormPdf, orderFilename } from '@/lib/pdf/examiner-order'
 import { logAccess } from '@/lib/qp-portal/guard'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
 
 export const dynamic = 'force-dynamic'
 // Chromium needs the Node runtime and room for a cold start.
@@ -27,7 +28,7 @@ export async function GET(req: NextRequest) {
 		if (!perm.ok) return NextResponse.json({ error: perm.error }, { status: perm.status })
 
 		const { searchParams } = new URL(req.url)
-		const institutionsId = searchParams.get('institutions_id')
+		const institutionsId = (await institutionParam(searchParams, 'institutions_id'))
 		const sessionId = searchParams.get('examination_session_id')
 		const examinerId = searchParams.get('examiner_id')
 		if (!institutionsId || !sessionId || !examinerId) {

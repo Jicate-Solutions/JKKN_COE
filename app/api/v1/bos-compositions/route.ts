@@ -36,7 +36,7 @@ export const GET = withExternalAuth(async (request: Request, ctx: ExternalApiCon
 	if (academicYear) query = query.eq('academic_year', academicYear)
 	if (isActive !== null) query = query.eq('is_active', isActive === 'true')
 
-	const { data, error } = await query.range(0, 9999)
+	const { data, error } = await query
 
 	if (error) {
 		return NextResponse.json({ error: 'Failed to fetch compositions' }, { status: 500 })

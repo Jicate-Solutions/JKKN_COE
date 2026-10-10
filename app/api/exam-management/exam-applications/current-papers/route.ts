@@ -31,6 +31,7 @@ import type {
 	CurrentPaperSubject,
 } from '@/types/exam-applications'
 import { getOffRollRegisterNumbers, isOffRoll } from '@/lib/myjkkn-off-roll-learners'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
 
 /**
  * Current Papers - Exam Application
@@ -309,7 +310,7 @@ export async function GET(request: Request) {
 		const supabase = getSupabaseServer()
 		const { searchParams } = new URL(request.url)
 
-		const institutions_id = searchParams.get('institutions_id') || ''
+		const institutions_id = (await institutionParam(searchParams, 'institutions_id')) || ''
 		const examination_session_id = searchParams.get('examination_session_id') || ''
 		// program_codes is a CSV so "All UG" can send the whole tier at once;
 		// program_code is still honoured for any older caller.

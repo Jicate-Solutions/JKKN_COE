@@ -27,7 +27,6 @@ export async function GET(request: Request) {
       `)
       .order('exam_date', { ascending: true })
       .order('created_at', { ascending: false })
-      .range(0, 9999)
 
     // Apply filters
     if (examination_session_id) {

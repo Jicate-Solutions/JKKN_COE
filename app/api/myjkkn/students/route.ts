@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { fetchMyJKKNStudents, MyJKKNApiError } from '@/lib/myjkkn-api'
+import { restrictToCallerInstitution } from '@/lib/auth/institution-scope-request'
 
 export async function GET(request: NextRequest) {
 	try {
@@ -34,7 +35,8 @@ export async function GET(request: NextRequest) {
 			admission_year: admission_year ? parseInt(admission_year, 10) : undefined,
 		})
 
-		return NextResponse.json(response)
+		// Only the caller's own institution leaves the server (super admins get all).
+		return NextResponse.json({ ...response, data: await restrictToCallerInstitution(response.data) })
 	} catch (error) {
 		console.error('Error fetching students from MyJKKN:', error)
 		if (error instanceof MyJKKNApiError) {

@@ -18,6 +18,7 @@ import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
 import { fetchAllRows, tryFetchAllRows, fetchAllInChunks } from '@/lib/exam-applications/paginate'
 import type { AttendanceSheetPdfData, AttendanceSheet, AttendanceSheetStudent } from '@/types/exam-attendance-sheet'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
 
 // Ids / codes per `.in()` request - keeps the GET URL well under its length limit
 const IN_CHUNK_SIZE = 100
@@ -27,7 +28,7 @@ export async function GET(request: Request) {
 		const supabase = getSupabaseServer()
 		const { searchParams } = new URL(request.url)
 
-		const institutionId = searchParams.get('institution_id')
+		const institutionId = (await institutionParam(searchParams, 'institution_id'))
 		const examinationSessionId = searchParams.get('examination_session_id')
 		const examDate = searchParams.get('exam_date')
 		const session = searchParams.get('session') // FN or AN

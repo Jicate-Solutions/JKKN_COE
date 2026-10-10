@@ -9,6 +9,7 @@ import type {
 	ProgramComparisonData,
 	DegreeLevelSummary
 } from '@/types/result-analytics'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
 
 // GET /api/result-analytics/program-stats
 // Fetches program-wise result analytics
@@ -19,7 +20,7 @@ export async function GET(req: NextRequest) {
 
 		// Parse filters
 		const filters: ResultAnalyticsFilters = {
-			institution_id: searchParams.get('institution_id') || undefined,
+			institution_id: (await institutionParam(searchParams, 'institution_id')) || undefined,
 			academic_year_id: searchParams.get('academic_year_id') || undefined,
 			examination_session_id: searchParams.get('examination_session_id') || undefined,
 			degree_level: (searchParams.get('degree_level') as ResultAnalyticsFilters['degree_level']) || 'All',
@@ -54,7 +55,7 @@ export async function GET(req: NextRequest) {
 			query = query.eq('examination_session_id', filters.examination_session_id)
 		}
 
-		const { data: rawMarksData, error } = await query.range(0, 9999)
+		const { data: rawMarksData, error } = await query
 
 		if (error) {
 			console.error('Error fetching program stats:', error)

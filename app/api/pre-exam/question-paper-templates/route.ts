@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
 import { hasAnyCoeRole } from '@/lib/auth/check-user-permission'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
 
 function normalizePart(part: any, index: number) {
 	return {
@@ -78,7 +79,7 @@ export async function GET(req: NextRequest) {
 	try {
 		const supabase = getSupabaseServer()
 		const { searchParams } = new URL(req.url)
-		const institutionCode = searchParams.get('institution_code')
+		const institutionCode = (await institutionParam(searchParams, 'institution_code'))
 		const examScope = searchParams.get('exam_scope')
 		const status = searchParams.get('status')
 		// Cross-institution listing must be asked for explicitly, so a caller that
@@ -362,7 +363,7 @@ export async function DELETE(req: NextRequest) {
 		const ownership = await assertTemplateInInstitution(
 			supabase,
 			id,
-			searchParams.get('institution_code')
+			(await institutionParam(searchParams, 'institution_code'))
 		)
 		if (ownership) {
 			return NextResponse.json({ error: ownership.error }, { status: ownership.status })

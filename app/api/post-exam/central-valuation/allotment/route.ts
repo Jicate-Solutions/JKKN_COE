@@ -5,6 +5,7 @@ import type {
 	ExternalExaminer,
 	InternalStaff,
 } from '@/types/central-valuation'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
 
 /**
  * GET — One row per packet for the selected board, so internal/external/chief/
@@ -12,7 +13,7 @@ import type {
  */
 export async function GET(request: Request) {
 	const { searchParams } = new URL(request.url)
-	const institutionsId = searchParams.get('institutions_id')
+	const institutionsId = (await institutionParam(searchParams, 'institutions_id'))
 	const sessionId = searchParams.get('session_id')
 	const boardCode = searchParams.get('board_code')
 
@@ -54,7 +55,6 @@ export async function GET(request: Request) {
 		.eq('examination_session_id', sessionId)
 		.eq('is_active', true)
 		.order('packet_no', { ascending: true })
-		.range(0, 99999)
 
 	const courseIds = [...new Set((packets || []).map(p => p.course_id))]
 	if (!courseIds.length) return NextResponse.json([])

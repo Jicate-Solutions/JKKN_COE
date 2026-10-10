@@ -11,6 +11,7 @@ import {
 import type { ProgramLevel } from '@/lib/exam-fee-catalog'
 import { normalizeDateOfBirth } from '@/lib/myjkkn-learner-enrichment'
 import { loadProgramNames } from '@/lib/exam-registration-final-approval/cohort'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
 
 // Helper: fetch all pages from Supabase in parallel batches
 async function fetchAllPaginated(
@@ -397,7 +398,7 @@ export async function GET(request: Request) {
 	try {
 		const supabase = getSupabaseServer()
 		const { searchParams } = new URL(request.url)
-		const institutions_id = searchParams.get('institutions_id')
+		const institutions_id = (await institutionParam(searchParams, 'institutions_id'))
 		const examination_session_id = searchParams.get('examination_session_id')
 		const report_type = searchParams.get('report_type')
 

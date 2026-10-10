@@ -379,7 +379,6 @@ export const GET = withExternalAuth(async (request: Request, context: ExternalAp
 				.from('courses')
 				.select('id')
 				.in('institutions_id', scope.ids)
-				.range(0, 9999)
 
 			if (courseCodes.length) courseQuery = courseQuery.in('course_code', courseCodes)
 			if (search) {
@@ -400,7 +399,6 @@ export const GET = withExternalAuth(async (request: Request, context: ExternalAp
 				.select('id')
 				.in('institutions_id', scope.ids)
 				.in('program_code', programCodes)
-				.range(0, 9999)
 
 			if (resolvedSessionIds) offeringQuery = offeringQuery.in('examination_session_id', resolvedSessionIds)
 
@@ -439,7 +437,7 @@ export const GET = withExternalAuth(async (request: Request, context: ExternalAp
 				const { data, error } = await applyFilters(
 					supabase.from('exam_timetables').select(TIMETABLE_SELECT),
 					part,
-				).range(0, 9999)
+				)
 
 				if (error) {
 					console.error('v1 exam-timetables fetch error:', error)

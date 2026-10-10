@@ -15,6 +15,7 @@
 import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
 import type { CourseSheetData, CourseSheetProgram } from '@/types/course-assessment-sheet'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
 
 const PAGE_SIZE = 1000
 // Registrations that must not be printed. Pending ones stay: the sheets are
@@ -27,7 +28,7 @@ export async function GET(request: Request) {
 		const supabase = getSupabaseServer()
 		const { searchParams } = new URL(request.url)
 
-		const institutionId = searchParams.get('institution_id')
+		const institutionId = (await institutionParam(searchParams, 'institution_id'))
 		const examinationSessionId = searchParams.get('examination_session_id')
 		const courseCode = (searchParams.get('course_code') || '').trim().toUpperCase()
 

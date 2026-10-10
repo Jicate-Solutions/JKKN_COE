@@ -1,10 +1,11 @@
 import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
 import { fetchMyJKKNStaff } from '@/lib/myjkkn-api'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
 
 export async function GET(request: Request) {
 	const { searchParams } = new URL(request.url)
-	const institutionId = searchParams.get('institutions_id')
+	const institutionId = (await institutionParam(searchParams, 'institutions_id'))
 	const search = searchParams.get('search')
 
 	if (!institutionId) return NextResponse.json({ error: 'institutions_id required' }, { status: 400 })

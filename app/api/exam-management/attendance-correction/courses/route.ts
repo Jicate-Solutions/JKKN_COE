@@ -23,7 +23,6 @@ export async function GET(request: NextRequest) {
 			.eq('institutions_id', institutionId)
 			.eq('is_published', true)
 			.not('course_id', 'is', null)
-			.range(0, 9999)
 
 		if (sessionId) {
 			timetableQuery = timetableQuery.eq('examination_session_id', sessionId)

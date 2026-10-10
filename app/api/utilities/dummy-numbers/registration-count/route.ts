@@ -1,13 +1,14 @@
 import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
 import { ACTIVE_REGISTRATION_STATUSES } from '@/lib/exam-registration-status'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
 
 // GET: Count exam_registrations matching the given filters
 export async function GET(request: Request) {
 	try {
 		const supabase = getSupabaseServer()
 		const { searchParams } = new URL(request.url)
-		const institutions_id = searchParams.get('institutions_id')
+		const institutions_id = (await institutionParam(searchParams, 'institutions_id'))
 		const examination_session_id = searchParams.get('examination_session_id')
 		const course_code = searchParams.get('course_code')
 
@@ -31,7 +32,7 @@ export async function GET(request: Request) {
 			}
 		}
 
-		const { data: offerings, error: coError } = await coQuery.range(0, 9999)
+		const { data: offerings, error: coError } = await coQuery
 		if (coError) {
 			return NextResponse.json({ error: 'Failed to fetch course offerings' }, { status: 500 })
 		}

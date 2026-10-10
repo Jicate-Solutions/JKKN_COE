@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
+import { type BatchRow, loadBatches } from '@/lib/api-helpers/myjkkn-batches'
 
 export async function GET() {
 	try {
@@ -29,11 +30,10 @@ export async function GET() {
 				.select('regulation_code, regulation_year')
 				.eq('status', true)
 				.order('regulation_code'),
-			supabase
-				.from('batch')
-				.select('batch_code, batch_name, batch_year')
-				.eq('status', true)
-				.order('batch_code'),
+			// Batches are mastered in MyJKKN — there is no local batch table.
+			loadBatches({ status: true })
+				.then((data) => ({ data, error: null as { message: string } | null }))
+				.catch((err: unknown) => ({ data: [] as BatchRow[], error: { message: err instanceof Error ? err.message : 'MyJKKN unavailable' } })),
 			supabase
 				.from('semesters')
 				.select('id, semester_name, display_order')
@@ -41,34 +41,34 @@ export async function GET() {
 			supabase
 				.from('courses')
 				.select('course_code, course_name, course_category, course_type')
-				.eq('is_active', true)
+				.eq('status', true)
 				.order('course_code')
 		])
 
 		// Check for errors with detailed messages
 		if (institutionsResult.error) {
 			console.error('Institutions query error:', institutionsResult.error)
-			return NextResponse.json({ error: `Failed to fetch institutions: ${institutionsResult.error.message}` }, { status: 500 })
+			return NextResponse.json({ error: 'Failed to fetch institutions' }, { status: 500 })
 		}
 		if (programsResult.error) {
 			console.error('Programs query error:', programsResult.error)
-			return NextResponse.json({ error: `Failed to fetch programs: ${programsResult.error.message}` }, { status: 500 })
+			return NextResponse.json({ error: 'Failed to fetch programs' }, { status: 500 })
 		}
 		if (regulationsResult.error) {
 			console.error('Regulations query error:', regulationsResult.error)
-			return NextResponse.json({ error: `Failed to fetch regulations: ${regulationsResult.error.message}` }, { status: 500 })
+			return NextResponse.json({ error: 'Failed to fetch regulations' }, { status: 500 })
 		}
 		if (batchesResult.error) {
 			console.error('Batches query error:', batchesResult.error)
-			return NextResponse.json({ error: `Failed to fetch batches: ${batchesResult.error.message}` }, { status: 500 })
+			return NextResponse.json({ error: 'Failed to fetch batches' }, { status: 500 })
 		}
 		if (semestersResult.error) {
 			console.error('Semesters query error:', semestersResult.error)
-			return NextResponse.json({ error: `Failed to fetch semesters: ${semestersResult.error.message}` }, { status: 500 })
+			return NextResponse.json({ error: 'Failed to fetch semesters' }, { status: 500 })
 		}
 		if (coursesResult.error) {
 			console.error('Courses query error:', coursesResult.error)
-			return NextResponse.json({ error: `Failed to fetch courses: ${coursesResult.error.message}` }, { status: 500 })
+			return NextResponse.json({ error: 'Failed to fetch courses' }, { status: 500 })
 		}
 
 		// Transform data for template

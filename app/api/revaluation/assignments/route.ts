@@ -1,5 +1,54 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
+import { NO_INSTITUTION_ID } from '@/lib/auth/institution-scope'
+import { getRequestUser } from '@/lib/auth/server-session'
+
+// Revaluation examiner assignments live in `examiner_assignments`. Its column
+// names differ from the ones this API has always spoken (examiner_id,
+// deadline, status, assigned_by), so rows are translated on the way out and
+// the request is translated on the way in.
+//
+// Assigning needs migration 20261010_revaluation_examiner_assignments.sql:
+// the table originally required the evaluator to be a COE user and the
+// programme to be a local `programs` row, which the examiner panel and
+// MyJKKN programmes cannot satisfy.
+
+const MIGRATION = '20261010_revaluation_examiner_assignments.sql'
+
+/** The examiner an assignment row names: a panel examiner, or a COE user. */
+const assignedTo = (row: Record<string, any>): string | null => row.examiner_id ?? row.evaluator_id ?? null
+
+function toResponse(row: Record<string, any>) {
+	return {
+		id: row.id,
+		examination_session_id: row.examination_session_id,
+		examiner_id: assignedTo(row),
+		course_id: row.course_id,
+		course_offering_id: row.course_offering_id,
+		institutions_id: row.institutions_id,
+		revaluation_registration_id: row.revaluation_registration_id ?? null,
+		assignment_type: row.assignment_type,
+		assignment_date: row.assignment_date,
+		deadline: row.completion_deadline,
+		status: row.assignment_status,
+		assigned_by: row.created_by ?? null,
+		created_at: row.created_at,
+		updated_at: row.updated_at,
+	}
+}
+
+/** True when an insert failed because the migration above has not been run. */
+function schemaNotReady(error: { code?: string; message?: string } | null): boolean {
+	if (!error) return false
+	const message = error.message || ''
+	return (
+		(error.code === 'PGRST204' && message.includes('examiner_id')) ||
+		(error.code === '42703' && message.includes('examiner_id')) ||
+		(error.code === '23502' && message.includes('evaluator_id')) ||
+		(error.code === '23503' && message.includes('program_id'))
+	)
+}
 
 // =====================================================
 // GET /api/revaluation/assignments
@@ -11,58 +60,43 @@ export async function GET(request: NextRequest) {
 		const { searchParams } = new URL(request.url)
 
 		// Extract filters
-		const institutionCode = searchParams.get('institution_code')
-		const institutionsId = searchParams.get('institutions_id')
+		const institutionCode = await institutionParam(searchParams, 'institution_code')
+		const institutionsId = await institutionParam(searchParams, 'institutions_id')
 		const examinationSessionId = searchParams.get('examination_session_id')
 		const examinerId = searchParams.get('examiner_id')
 		const status = searchParams.get('status')
 
-		// Build query for revaluation assignments
 		let query = supabase
 			.from('examiner_assignments')
-			.select(
-				`
-				id,
-				examination_session_id,
-				examiner_id,
-				course_id,
-				institution_code,
-				institutions_id,
-				assignment_type,
-				assignment_date,
-				deadline,
-				status,
-				assigned_by,
-				created_at,
-				updated_at
-			`
-			)
+			.select('*')
 			.eq('assignment_type', 'revaluation')
 
-		// Institution filter
-		if (institutionCode) {
-			query = query.eq('institution_code', institutionCode)
-		} else if (institutionsId) {
+		// examiner_assignments has no institution_code column — filter by id,
+		// resolving a code to its institution first.
+		if (institutionsId) {
 			query = query.eq('institutions_id', institutionsId)
+		} else if (institutionCode) {
+			const { data: institution } = await supabase
+				.from('institutions')
+				.select('id')
+				.eq('institution_code', institutionCode)
+				.maybeSingle()
+			query = query.eq('institutions_id', institution?.id ?? NO_INSTITUTION_ID)
 		}
 
-		// Other filters
 		if (examinationSessionId) query = query.eq('examination_session_id', examinationSessionId)
-		if (examinerId) query = query.eq('examiner_id', examinerId)
-		if (status) query = query.eq('status', status)
+		if (status) query = query.eq('assignment_status', status)
 
-		// Order by latest first
-		query = query.order('assignment_date', { ascending: false })
-
-		// Override default row limit
-		const { data, error } = await query.range(0, 9999)
+		const { data, error } = await query.order('assignment_date', { ascending: false })
 
 		if (error) {
 			console.error('[Revaluation Assignments GET] Error:', error)
 			return NextResponse.json({ error: 'Failed to fetch assignments' }, { status: 500 })
 		}
 
-		return NextResponse.json(data || [])
+		// The examiner may be in either column, so this filter is applied here.
+		const rows = (data || []).filter((row) => !examinerId || assignedTo(row) === examinerId)
+		return NextResponse.json(rows.map(toResponse))
 	} catch (error) {
 		console.error('[Revaluation Assignments GET] Exception:', error)
 		return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
@@ -80,16 +114,31 @@ export async function POST(request: NextRequest) {
 		const body = await request.json()
 
 		// Validate required fields
-		if (!body.revaluation_registration_ids || body.revaluation_registration_ids.length === 0) {
+		if (!Array.isArray(body.revaluation_registration_ids) || body.revaluation_registration_ids.length === 0) {
 			return NextResponse.json({ error: 'Select at least one revaluation' }, { status: 400 })
 		}
 
-		if (!body.examiner_id) {
+		if (!body.examiner_id || typeof body.examiner_id !== 'string') {
 			return NextResponse.json({ error: 'Examiner is required' }, { status: 400 })
 		}
 
 		const revaluationIds = body.revaluation_registration_ids as string[]
 		const examinerId = body.examiner_id as string
+		const caller = await getRequestUser()
+
+		// The examiner comes from the examiner panel
+		const { data: examiner } = await supabase
+			.from('examiners')
+			.select('id, full_name, email, mobile, institution_name, is_internal, status')
+			.eq('id', examinerId)
+			.maybeSingle()
+
+		if (!examiner) {
+			return NextResponse.json({ error: 'Examiner not found' }, { status: 404 })
+		}
+		if (examiner.status !== 'ACTIVE') {
+			return NextResponse.json({ error: 'This examiner is not active and cannot be assigned' }, { status: 400 })
+		}
 
 		// Fetch all revaluation registrations
 		const { data: revaluations, error: revalError } = await supabase
@@ -98,7 +147,6 @@ export async function POST(request: NextRequest) {
 				`
 				id,
 				institutions_id,
-				institution_code,
 				examination_session_id,
 				exam_registration_id,
 				course_offering_id,
@@ -114,6 +162,14 @@ export async function POST(request: NextRequest) {
 		if (revalError || !revaluations || revaluations.length === 0) {
 			return NextResponse.json({ error: 'Revaluation applications not found' }, { status: 404 })
 		}
+
+		// The programme of each application comes from its course offering
+		const offeringIds = [...new Set(revaluations.map((r) => r.course_offering_id).filter(Boolean))]
+		const { data: offerings } = await supabase
+			.from('course_offerings')
+			.select('id, program_id')
+			.in('id', offeringIds)
+		const programByOffering = new Map((offerings || []).map((o) => [o.id, o.program_id as string | null]))
 
 		const successfulAssignments: any[] = []
 		const errors: Array<{ revaluation_id: string; error: string }> = []
@@ -134,29 +190,31 @@ export async function POST(request: NextRequest) {
 				// EXAMINER EXCLUSION LOGIC
 				// =====================================================
 
-				// Step 1: Get original examiner for this course
-				const { data: originalAssignment } = await supabase
+				// Step 1: Whoever valued this course offering the first time.
+				// Regular assignments are recorded per course offering, not per
+				// answer script, so every regular evaluator of the offering is
+				// kept away from its revaluation.
+				const { data: originalAssignments } = await supabase
 					.from('examiner_assignments')
-					.select('examiner_id')
-					.eq('exam_registration_id', reval.exam_registration_id)
-					.eq('course_id', reval.course_id)
-					.eq('assignment_type', 'regular')
-					.maybeSingle()
+					.select('*')
+					.eq('course_offering_id', reval.course_offering_id)
+					.neq('assignment_type', 'revaluation')
 
-				const excludedExaminerIds = new Set<string>()
-
-				if (originalAssignment?.examiner_id) {
-					excludedExaminerIds.add(originalAssignment.examiner_id)
+				const originalExaminerIds = new Set<string>()
+				for (const row of originalAssignments || []) {
+					const id = assignedTo(row)
+					if (id) originalExaminerIds.add(id)
 				}
+				const excludedExaminerIds = new Set<string>(originalExaminerIds)
 
 				// Step 2: Get all previous revaluation examiners for this course
 				// Build chain of previous revaluations
-				const previousRevalIds: string[] = []
 				let currentPreviousId = reval.previous_revaluation_id
+				const visited = new Set<string>()
 
 				// Walk the chain backwards
-				while (currentPreviousId) {
-					previousRevalIds.push(currentPreviousId)
+				while (currentPreviousId && !visited.has(currentPreviousId)) {
+					visited.add(currentPreviousId)
 
 					// Get the previous revaluation's previous_revaluation_id
 					const { data: prevReval } = await supabase
@@ -171,13 +229,12 @@ export async function POST(request: NextRequest) {
 					if (prevReval.examiner_assignment_id) {
 						const { data: prevAssignment } = await supabase
 							.from('examiner_assignments')
-							.select('examiner_id')
+							.select('*')
 							.eq('id', prevReval.examiner_assignment_id)
 							.maybeSingle()
 
-						if (prevAssignment?.examiner_id) {
-							excludedExaminerIds.add(prevAssignment.examiner_id)
-						}
+						const previousExaminer = prevAssignment ? assignedTo(prevAssignment) : null
+						if (previousExaminer) excludedExaminerIds.add(previousExaminer)
 					}
 
 					currentPreviousId = prevReval.previous_revaluation_id
@@ -185,16 +242,11 @@ export async function POST(request: NextRequest) {
 
 				// Step 3: Check if selected examiner is excluded
 				if (excludedExaminerIds.has(examinerId)) {
-					const attemptNumber = reval.attempt_number
-					let reason = 'Examiner already evaluated this course'
-					if (originalAssignment?.examiner_id === examinerId) {
-						reason = 'Examiner was the original evaluator'
-					} else {
-						reason = `Examiner evaluated previous revaluation attempt`
-					}
 					errors.push({
 						revaluation_id: reval.id,
-						error: reason,
+						error: originalExaminerIds.has(examinerId)
+							? 'Examiner was the original evaluator'
+							: 'Examiner evaluated previous revaluation attempt',
 					})
 					continue
 				}
@@ -212,25 +264,46 @@ export async function POST(request: NextRequest) {
 					.from('examiner_assignments')
 					.insert({
 						institutions_id: reval.institutions_id,
-						institution_code: reval.institution_code,
 						examination_session_id: reval.examination_session_id,
-						exam_registration_id: reval.exam_registration_id,
+						course_offering_id: reval.course_offering_id,
 						course_id: reval.course_id,
+						program_id: programByOffering.get(reval.course_offering_id) ?? null,
+						revaluation_registration_id: reval.id,
 						examiner_id: examinerId,
+						evaluator_type: examiner.is_internal ? 'Internal' : 'External',
+						evaluator_name: examiner.full_name,
+						evaluator_email: examiner.email,
+						evaluator_phone: examiner.mobile,
+						evaluator_institution: examiner.institution_name,
 						assignment_type: 'revaluation',
 						assignment_date: new Date().toISOString().split('T')[0],
-						deadline: deadline.toISOString().split('T')[0],
-						status: 'Assigned',
-						assigned_by: body.assigned_by_user_id || null,
+						completion_deadline: deadline.toISOString().split('T')[0],
+						assignment_status: 'Assigned',
+						created_by: caller?.userId ?? null,
 					})
 					.select()
 					.single()
+
+				if (schemaNotReady(assignError)) {
+					console.error(`[Assignment POST] Database not ready — run migration ${MIGRATION}:`, assignError)
+					return NextResponse.json(
+						{
+							success: false,
+							error: 'Examiner assignment for revaluation is not set up yet. Ask the administrator to run the pending database update.',
+							code: 'MIGRATION_REQUIRED',
+						},
+						{ status: 503 }
+					)
+				}
 
 				if (assignError) {
 					console.error('[Assignment POST] Error:', assignError)
 					errors.push({
 						revaluation_id: reval.id,
-						error: assignError.message || 'Failed to create assignment',
+						// 23505: the unique index allows one live examiner per application
+						error: assignError.code === '23505'
+							? 'This revaluation already has an examiner assigned'
+							: 'Failed to create assignment',
 					})
 					continue
 				}
@@ -268,7 +341,7 @@ export async function POST(request: NextRequest) {
 				console.error('[Assignment POST] Processing error:', err)
 				errors.push({
 					revaluation_id: reval.id,
-					error: err instanceof Error ? err.message : 'Unknown error',
+					error: 'Failed to assign this revaluation',
 				})
 			}
 		}
@@ -278,6 +351,8 @@ export async function POST(request: NextRequest) {
 			return NextResponse.json(
 				{
 					success: false,
+					// The screen shows `error`; say why the first one failed.
+					error: errors[0]?.error || 'No assignments created',
 					errors,
 					message: 'No assignments created',
 				},

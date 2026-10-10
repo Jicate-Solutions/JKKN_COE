@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { getSupabaseServer } from '@/lib/supabase-server'
+import { institutionParam } from '@/lib/auth/institution-scope-request'
 
 // GET - Fetch room allocations with filters
 export async function GET(request: Request) {
@@ -8,7 +9,7 @@ export async function GET(request: Request) {
 		const { searchParams } = new URL(request.url)
 		const exam_timetable_id = searchParams.get('exam_timetable_id')
 		const exam_room_id = searchParams.get('exam_room_id')
-		const institutions_id = searchParams.get('institutions_id')
+		const institutions_id = (await institutionParam(searchParams, 'institutions_id'))
 
 		let query = supabase
 			.from('room_allocations')
